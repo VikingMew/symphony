@@ -3,6 +3,20 @@
 This directory contains the current Elixir/OTP implementation of Symphony, based on
 [`SPEC.md`](../SPEC.md) at the repository root.
 
+## Fork Status
+
+This Elixir implementation has diverged from the upstream OpenAI Symphony preview. This fork keeps
+the original orchestration model, but now adds local SQLite persistence, optional
+username/password authentication, workflow version storage, and early Web UI pages for projects,
+runs, workflows, and settings.
+
+Use this README together with:
+
+- [docs/user_guide.zh-CN.md](docs/user_guide.zh-CN.md): user installation and startup guide.
+- [docs/persistence_and_auth.md](docs/persistence_and_auth.md): SQLite/auth configuration.
+- [docs/long_term_direction.zh-CN.md](docs/long_term_direction.zh-CN.md): long-term direction and technical choices.
+- [docs/exec-plans/README.md](docs/exec-plans/README.md): completed implementation plans.
+
 > [!WARNING]
 > Symphony Elixir is prototype software intended for evaluation only and is presented as-is.
 > We recommend implementing your own hardened version based on `SPEC.md`.
@@ -19,6 +33,9 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
    workspace
 4. Sends a workflow prompt to Codex
 5. Keeps Codex working on the issue until the work is done
+
+This fork also persists local operational data in SQLite, can protect the Web UI/API with optional
+username/password authentication, and stores workflow versions for future configuration management.
 
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
@@ -61,8 +78,22 @@ cd symphony/elixir
 mise trust
 mise install
 mise exec -- mix setup
+mise exec -- mix ecto.migrate
 mise exec -- mix build
-mise exec -- ./bin/symphony ./WORKFLOW.md
+mise exec -- ./bin/symphony \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --port 4000 \
+  ./WORKFLOW.md
+```
+
+Open the dashboard at `http://127.0.0.1:4000/`.
+
+Optional local authentication:
+
+```bash
+export SYMPHONY_AUTH_ENABLED=true
+export SYMPHONY_ADMIN_USERNAME=admin
+export SYMPHONY_ADMIN_PASSWORD="replace-this-password"
 ```
 
 ## Configuration
@@ -79,6 +110,17 @@ Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
 - `--port` also starts the Phoenix observability service (default: disabled)
+
+SQLite configuration:
+
+- `SYMPHONY_DATABASE_PATH` sets the local SQLite file path (default: `elixir/symphony.db`)
+- Run `mise exec -- mix ecto.migrate` before first use
+
+Authentication configuration:
+
+- `SYMPHONY_AUTH_ENABLED=true` enables login protection
+- `SYMPHONY_ADMIN_USERNAME` sets the admin username
+- `SYMPHONY_ADMIN_PASSWORD` or `SYMPHONY_ADMIN_PASSWORD_HASH` sets the password credential
 
 The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
 Codex session prompt.
@@ -153,9 +195,10 @@ codex:
 
 ## Web dashboard
 
-The observability UI now runs on a minimal Phoenix stack:
+The observability and management UI runs on a Phoenix stack:
 
 - LiveView for the dashboard at `/`
+- LiveView management pages at `/projects`, `/runs`, `/workflows`, and `/settings`
 - JSON API for operational debugging under `/api/v1/*`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap

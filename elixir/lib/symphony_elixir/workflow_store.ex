@@ -6,7 +6,7 @@ defmodule SymphonyElixir.WorkflowStore do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.{Persistence, Workflow}
 
   @poll_interval_ms 1_000
 
@@ -96,10 +96,15 @@ defmodule SymphonyElixir.WorkflowStore do
   defp reload_state(%State{} = state) do
     path = Workflow.workflow_file_path()
 
-    if path != state.path do
-      reload_path(path, state)
-    else
-      reload_current_path(path, state)
+    cond do
+      database_workflow_enabled?() ->
+        reload_path(path, state)
+
+      path != state.path ->
+        reload_path(path, state)
+
+      true ->
+        reload_current_path(path, state)
     end
   end
 
@@ -129,12 +134,45 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp load_state(path) do
-    with {:ok, workflow} <- Workflow.load(path),
-         {:ok, stamp} <- current_stamp(path) do
-      {:ok, %State{path: path, stamp: stamp, workflow: workflow}}
+    case load_database_workflow(path) do
+      {:ok, workflow} ->
+        {:ok, %State{path: path, stamp: {:database, Map.get(workflow, :workflow_version_id)}, workflow: workflow}}
+
+      :missing ->
+        with {:ok, workflow} <- Workflow.load(path),
+             {:ok, stamp} <- current_stamp(path) do
+          {:ok, %State{path: path, stamp: stamp, workflow: workflow}}
+        else
+          {:error, reason} ->
+            {:error, reason}
+        end
+    end
+  end
+
+  defp load_database_workflow(path) do
+    if database_workflow_enabled?() do
+      case Persistence.active_workflow_version() do
+        nil ->
+          seed_database_workflow(path)
+
+        workflow_version ->
+          {:ok, Persistence.workflow_to_loaded(workflow_version)}
+      end
     else
-      {:error, reason} ->
-        {:error, reason}
+      :missing
+    end
+  rescue
+    _error -> :missing
+  end
+
+  defp database_workflow_enabled? do
+    Application.get_env(:symphony_elixir, :workflow_source) in [:database, "database"]
+  end
+
+  defp seed_database_workflow(path) do
+    case Persistence.ensure_workflow_seeded_from_file(path) do
+      {:ok, workflow_version} -> {:ok, Persistence.workflow_to_loaded(workflow_version)}
+      _ -> :missing
     end
   end
 

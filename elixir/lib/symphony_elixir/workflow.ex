@@ -53,14 +53,15 @@ defmodule SymphonyElixir.Workflow do
   def load(path) when is_binary(path) do
     case File.read(path) do
       {:ok, content} ->
-        parse(content)
+        parse_content(content)
 
       {:error, reason} ->
         {:error, {:missing_workflow_file, path, reason}}
     end
   end
 
-  defp parse(content) do
+  @spec parse_content(String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
+  def parse_content(content) when is_binary(content) do
     {front_matter_lines, prompt_lines} = split_front_matter(content)
 
     case front_matter_yaml_to_map(front_matter_lines) do
@@ -81,6 +82,50 @@ defmodule SymphonyElixir.Workflow do
         {:error, {:workflow_parse_error, reason}}
     end
   end
+
+  @spec to_markdown(map(), String.t()) :: String.t()
+  def to_markdown(config, prompt) when is_map(config) and is_binary(prompt) do
+    yaml = yaml_document(config)
+    "---\n" <> String.trim_trailing(yaml) <> "\n---\n\n" <> String.trim(prompt) <> "\n"
+  end
+
+  defp yaml_document(map) when is_map(map) do
+    map
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map_join("\n", fn {key, value} -> yaml_entry(to_string(key), value, 0) end)
+  end
+
+  defp yaml_entry(key, value, indent) when is_map(value) and map_size(value) > 0 do
+    spaces(indent) <> key <> ":\n" <> yaml_nested_map(value, indent + 2)
+  end
+
+  defp yaml_entry(key, value, indent) when is_list(value) do
+    spaces(indent) <> key <> ": " <> yaml_inline(value)
+  end
+
+  defp yaml_entry(key, value, indent) do
+    spaces(indent) <> key <> ": " <> yaml_scalar(value)
+  end
+
+  defp yaml_nested_map(map, indent) do
+    map
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map_join("\n", fn {key, value} -> yaml_entry(to_string(key), value, indent) end)
+  end
+
+  defp yaml_inline(values) when is_list(values) do
+    "[" <> Enum.map_join(values, ", ", &yaml_scalar/1) <> "]"
+  end
+
+  defp yaml_scalar(nil), do: "null"
+  defp yaml_scalar(true), do: "true"
+  defp yaml_scalar(false), do: "false"
+  defp yaml_scalar(value) when is_integer(value) or is_float(value), do: to_string(value)
+  defp yaml_scalar(value) when is_map(value), do: "{" <> Enum.map_join(value, ", ", fn {k, v} -> yaml_scalar(to_string(k)) <> ": " <> yaml_scalar(v) end) <> "}"
+  defp yaml_scalar(value) when is_list(value), do: yaml_inline(value)
+  defp yaml_scalar(value), do: inspect(to_string(value))
+
+  defp spaces(count), do: String.duplicate(" ", count)
 
   defp split_front_matter(content) do
     lines = String.split(content, ~r/\R/, trim: false)

@@ -7,11 +7,12 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, Persistence, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
+  @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -129,32 +130,7 @@ defmodule SymphonyElixir.Orchestrator do
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
 
-        state =
-          case reason do
-            :normal ->
-              Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
-
-              state
-              |> complete_issue(issue_id)
-              |> schedule_issue_retry(issue_id, 1, %{
-                identifier: running_entry.identifier,
-                delay_type: :continuation,
-                worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
-              })
-
-            _ ->
-              Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
-
-              next_attempt = next_retry_attempt_from_running(running_entry)
-
-              schedule_issue_retry(state, issue_id, next_attempt, %{
-                identifier: running_entry.identifier,
-                error: "agent exited: #{inspect(reason)}",
-                worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
-              })
-          end
+        state = handle_worker_down_reason(state, issue_id, running_entry, reason, session_id)
 
         Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
 
@@ -175,6 +151,7 @@ defmodule SymphonyElixir.Orchestrator do
           |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
 
+        persist_workspace_update(updated_running_entry)
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
     end
@@ -190,6 +167,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       running_entry ->
         {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
+        persist_codex_update(updated_running_entry, update)
 
         state =
           state
@@ -221,12 +199,41 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, state}
   end
 
+  defp handle_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
+    Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+
+    state
+    |> complete_issue(issue_id)
+    |> schedule_issue_retry(issue_id, 1, %{
+      identifier: running_entry.identifier,
+      delay_type: :continuation,
+      worker_host: Map.get(running_entry, :worker_host),
+      workspace_path: Map.get(running_entry, :workspace_path)
+    })
+    |> tap(fn _state -> persist_run_finished_async(running_entry, "completed", nil) end)
+  end
+
+  defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
+    Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+
+    next_attempt = next_retry_attempt_from_running(running_entry)
+
+    schedule_issue_retry(state, issue_id, next_attempt, %{
+      identifier: running_entry.identifier,
+      error: "agent exited: #{inspect(reason)}",
+      worker_host: Map.get(running_entry, :worker_host),
+      workspace_path: Map.get(running_entry, :workspace_path)
+    })
+    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", "agent exited: #{inspect(reason)}") end)
+  end
+
   defp maybe_dispatch(%State{} = state) do
     state = reconcile_running_issues(state)
 
     with :ok <- Config.validate!(),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
+      persist_polled_issues(issues)
       choose_issues(issues, state)
     else
       {:error, :missing_linear_api_token} ->
@@ -424,6 +431,8 @@ defmodule SymphonyElixir.Orchestrator do
         if cleanup_workspace do
           cleanup_issue_workspace(identifier, worker_host)
         end
+
+        persist_run_finished(running_entry, "stopped", nil)
 
         if is_pid(pid) do
           terminate_task(pid)
@@ -696,6 +705,7 @@ defmodule SymphonyElixir.Orchestrator do
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
+        run_record = persist_run_started(issue, attempt, worker_host)
 
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
@@ -703,6 +713,7 @@ defmodule SymphonyElixir.Orchestrator do
           Map.put(state.running, issue.id, %{
             pid: pid,
             ref: ref,
+            run_id: run_record && run_record.id,
             identifier: issue.identifier,
             issue: issue,
             worker_host: worker_host,
@@ -732,6 +743,7 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
+        persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
         next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
 
         schedule_issue_retry(state, issue.id, next_attempt, %{
@@ -777,7 +789,7 @@ defmodule SymphonyElixir.Orchestrator do
     delay_ms = retry_delay(next_attempt, metadata)
     old_timer = Map.get(previous_retry, :timer_ref)
     retry_token = make_ref()
-    due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+    due_at_ms = System.monotonic_time(:millisecond) + delay_ms + @retry_due_at_display_grace_ms
     identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
@@ -1652,4 +1664,173 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp integer_like(_value), do: nil
+
+  defp persist_polled_issues(issues) when is_list(issues) do
+    if persistence_enabled?() do
+      Enum.each(issues, fn
+        %Issue{} = issue ->
+          _ =
+            Persistence.upsert_issue(%{
+              tracker_issue_id: issue.id,
+              identifier: issue.identifier,
+              title: issue.title,
+              state: issue.state,
+              url: issue.url,
+              labels: %{"values" => issue.labels || []},
+              snapshot: issue_snapshot(issue)
+            })
+
+        _ ->
+          :ok
+      end)
+    end
+
+    :ok
+  end
+
+  defp persist_polled_issues(_issues), do: :ok
+
+  defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    {:ok, issue_record} =
+      Persistence.upsert_issue(%{
+        tracker_issue_id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        state: issue.state,
+        url: issue.url,
+        labels: %{"values" => issue.labels || []},
+        snapshot: issue_snapshot(issue)
+      })
+
+    workflow_version = Persistence.active_workflow_version()
+
+    {:ok, run} =
+      Persistence.create_run(%{
+        workflow_version_id: workflow_version && workflow_version.id,
+        issue_id: issue_record.id,
+        issue_identifier: issue.identifier,
+        status: "running",
+        attempt: normalize_retry_attempt(attempt),
+        started_at: DateTime.utc_now()
+      })
+
+    persist_event("run.started", issue.identifier, %{issue_id: issue.id, run_id: run.id, worker_host: worker_host}, run.id)
+    run
+  rescue
+    _error -> nil
+  catch
+    :persistence_disabled -> nil
+  end
+
+  defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    run_id = Map.get(running_entry, :run_id)
+
+    if is_binary(run_id) and Persistence.repo_available?() do
+      case SymphonyElixir.Repo.get(SymphonyElixir.Persistence.RunRecord, run_id) do
+        nil ->
+          :ok
+
+        run ->
+          _ =
+            Persistence.update_run(run, %{
+              status: status,
+              failure_reason: failure_reason,
+              finished_at: DateTime.utc_now()
+            })
+
+          persist_event("run.#{status}", Map.get(running_entry, :identifier), %{run_id: run_id, failure_reason: failure_reason}, run_id)
+      end
+    end
+  rescue
+    _error -> :ok
+  catch
+    :persistence_disabled -> :ok
+  end
+
+  defp persist_run_finished_async(running_entry, status, failure_reason) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    _ =
+      Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
+        persist_run_finished(running_entry, status, failure_reason)
+      end)
+
+    :ok
+  rescue
+    _error -> persist_run_finished(running_entry, status, failure_reason)
+  catch
+    :persistence_disabled -> :ok
+  end
+
+  defp persist_workspace_update(running_entry) when is_map(running_entry) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    case Map.get(running_entry, :workspace_path) do
+      path when is_binary(path) ->
+        _ =
+          Persistence.record_workspace(%{
+            issue_identifier: Map.get(running_entry, :identifier),
+            path: path,
+            host: Map.get(running_entry, :worker_host),
+            status: "active"
+          })
+
+        persist_event("workspace.created", Map.get(running_entry, :identifier), %{path: path, host: Map.get(running_entry, :worker_host)}, Map.get(running_entry, :run_id))
+
+      _ ->
+        :ok
+    end
+  rescue
+    _error -> :ok
+  catch
+    :persistence_disabled -> :ok
+  end
+
+  defp persist_codex_update(running_entry, update) when is_map(running_entry) and is_map(update) do
+    persist_event(
+      "codex.update",
+      Map.get(running_entry, :identifier),
+      %{event: Map.get(update, :event), message: Map.get(update, :message)},
+      Map.get(running_entry, :run_id)
+    )
+  end
+
+  defp persist_event(event_type, issue_identifier, payload, run_id \\ nil) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    _ =
+      Persistence.record_event(%{
+        run_id: run_id,
+        issue_identifier: issue_identifier,
+        event_type: event_type,
+        payload: payload || %{}
+      })
+
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    :persistence_disabled -> :ok
+  end
+
+  defp issue_snapshot(%Issue{} = issue) do
+    %{
+      "id" => issue.id,
+      "identifier" => issue.identifier,
+      "title" => issue.title,
+      "description" => issue.description,
+      "priority" => issue.priority,
+      "state" => issue.state,
+      "url" => issue.url,
+      "labels" => issue.labels || []
+    }
+  end
+
+  defp persistence_enabled? do
+    Process.whereis(__MODULE__) == self()
+  end
 end

@@ -19,6 +19,9 @@
 # Local runtime logs.
 /log/
 /logs/
+symphony.db
+symphony.db-shm
+symphony.db-wal
 
 # If the VM crashes, it generates a dump, let's ignore it too.
 erl_crash.dump

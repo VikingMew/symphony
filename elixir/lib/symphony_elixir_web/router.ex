@@ -5,6 +5,7 @@ defmodule SymphonyElixirWeb.Router do
 
   use Phoenix.Router
   import Phoenix.LiveView.Router
+  import SymphonyElixirWeb.AuthPlug
 
   pipeline :browser do
     plug(:fetch_session)
@@ -12,6 +13,18 @@ defmodule SymphonyElixirWeb.Router do
     plug(:put_root_layout, html: {SymphonyElixirWeb.Layouts, :root})
     plug(:protect_from_forgery)
     plug(:put_secure_browser_headers)
+  end
+
+  pipeline :browser_auth do
+    plug(:require_browser_auth)
+  end
+
+  pipeline :api do
+    plug(:fetch_session)
+  end
+
+  pipeline :api_auth do
+    plug(:require_api_auth)
   end
 
   scope "/", SymphonyElixirWeb do
@@ -24,10 +37,24 @@ defmodule SymphonyElixirWeb.Router do
   scope "/", SymphonyElixirWeb do
     pipe_through(:browser)
 
-    live("/", DashboardLive, :index)
+    get("/login", SessionController, :new)
+    post("/login", SessionController, :create)
+    delete("/logout", SessionController, :delete)
   end
 
   scope "/", SymphonyElixirWeb do
+    pipe_through([:browser, :browser_auth])
+
+    live("/", DashboardLive, :index)
+    live("/projects", AdminLive, :projects)
+    live("/runs", AdminLive, :runs)
+    live("/settings", AdminLive, :settings)
+    live("/workflows", AdminLive, :workflows)
+  end
+
+  scope "/", SymphonyElixirWeb do
+    pipe_through([:api, :api_auth])
+
     get("/api/v1/state", ObservabilityApiController, :state)
 
     match(:*, "/", ObservabilityApiController, :method_not_allowed)
