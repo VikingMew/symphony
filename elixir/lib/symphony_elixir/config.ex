@@ -91,6 +91,15 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec execution_mode() :: :centralized | :worker
+  def execution_mode do
+    case Application.get_env(:symphony_elixir, :execution_mode) || System.get_env("SYMPHONY_EXECUTION_MODE") || :centralized do
+      :worker -> :worker
+      "worker" -> :worker
+      _ -> :centralized
+    end
+  end
+
   @spec validate!() :: :ok | {:error, term()}
   def validate! do
     with {:ok, settings} <- settings() do
@@ -135,6 +144,9 @@ defmodule SymphonyElixir.Config do
 
   defp format_config_error(reason) do
     case reason do
+      {:missing_workflow_file, path, :enoent} when path in ["", nil] ->
+        "No active workflow is configured. Open /workflows to create one or start with a WORKFLOW.md file."
+
       {:invalid_workflow_config, message} ->
         "Invalid WORKFLOW.md config: #{message}"
 

@@ -4,8 +4,18 @@ config :phoenix, :json_library, Jason
 
 config :symphony_elixir, ecto_repos: [SymphonyElixir.Repo]
 
+config :symphony_elixir, :start_repo, config_env() != :test
+
+database_path =
+  System.get_env("SYMPHONY_DATABASE_PATH") ||
+    if config_env() == :test do
+      Path.join(System.tmp_dir!(), "symphony-elixir-test-config-#{System.unique_integer([:positive])}.db")
+    else
+      Path.expand("../symphony.db", __DIR__)
+    end
+
 config :symphony_elixir, SymphonyElixir.Repo,
-  database: System.get_env("SYMPHONY_DATABASE_PATH") || Path.expand("../symphony.db", __DIR__),
+  database: database_path,
   pool_size: String.to_integer(System.get_env("SYMPHONY_DATABASE_POOL_SIZE") || "5")
 
 config :symphony_elixir, :auth,

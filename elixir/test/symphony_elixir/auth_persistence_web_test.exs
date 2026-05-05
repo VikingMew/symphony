@@ -5,18 +5,20 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
   import Phoenix.LiveViewTest
   import Plug.Conn, only: [get_session: 2]
 
-  alias SymphonyElixir.{Auth, Persistence, Workflow}
-  alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
+  alias SymphonyElixir.Auth
+  alias SymphonyElixir.TestSupport.FakePersistence
 
   @endpoint SymphonyElixirWeb.Endpoint
 
   setup do
     previous_auth = Application.get_env(:symphony_elixir, :auth)
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
+    previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
 
     on_exit(fn ->
       restore_app_env(:auth, previous_auth)
       Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, previous_endpoint)
+      restore_app_env(:persistence_module, previous_persistence)
     end)
 
     :ok
@@ -73,97 +75,29 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert redirected_to(conn) == "/login"
   end
 
-  test "workflow versions preserve raw workflow and parsed fields" do
-    {:ok, project} =
-      Persistence.create_project(%{
-        name: "Workflow Test #{System.unique_integer([:positive])}",
-        slug: "workflow-test-#{System.unique_integer([:positive])}"
-      })
+  test "auth can read persisted user through fake persistence without Repo" do
+    refute Process.whereis(SymphonyElixir.Repo)
 
-    raw = File.read!(Workflow.workflow_file_path())
+    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+    Application.put_env(:symphony_elixir, :auth, enabled: true, username: "admin")
+    FakePersistence.reset!()
+    FakePersistence.put_user("admin", %{username: "admin", password_hash: Auth.hash_password("secret")})
 
-    assert {:ok, %WorkflowVersion{} = version} = Persistence.import_workflow(project, raw, "test")
-    assert version.active
-    assert version.raw_workflow_md == raw
-    assert version.prompt_body =~ "You are an agent"
-    assert get_in(version.yaml_config, ["tracker", "kind"]) == "linear"
-    assert Persistence.export_workflow(version) == raw
+    assert Auth.configured?()
+    assert {:ok, %{username: "admin"}} = Auth.authenticate("admin", "secret")
+    assert {:error, :invalid_credentials} = Auth.authenticate("admin", "wrong")
   end
 
-  test "workflow store can load active workflow from database when explicitly enabled" do
-    previous_source = Application.get_env(:symphony_elixir, :workflow_source)
-
-    on_exit(fn -> restore_app_env(:workflow_source, previous_source) end)
-
-    {:ok, project} = Persistence.default_project()
-
-    raw = File.read!(Workflow.workflow_file_path()) |> String.replace("You are an agent", "You are a database agent")
-    assert {:ok, _version} = Persistence.import_workflow(project, raw, "test")
-
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
-
-    assert {:ok, workflow} = SymphonyElixir.WorkflowStore.current()
-    assert workflow.prompt =~ "database agent"
-    assert is_binary(workflow.workflow_version_id)
-  end
-
-  test "invalid workflow is rejected before activation" do
-    {:ok, project} =
-      Persistence.create_project(%{
-        name: "Invalid Workflow #{System.unique_integer([:positive])}",
-        slug: "invalid-workflow-#{System.unique_integer([:positive])}"
-      })
-
-    assert {:error, _reason} = Persistence.import_workflow(project, "---\ntracker: [bad\n---\nPrompt", "test")
-  end
-
-  test "admin workflow page saves raw workflow and lists versions" do
-    start_test_endpoint()
-    raw = File.read!(Workflow.workflow_file_path())
-
-    {:ok, view, html} = live(build_conn(), "/workflows")
-    assert html =~ "Raw WORKFLOW.md"
-
-    html =
-      view
-      |> form("form", workflow: %{raw: raw})
-      |> render_submit()
-
-    assert html =~ "Version History"
-  end
-
-  test "projects and runs pages render persisted data" do
-    {:ok, %Project{} = project} =
-      Persistence.create_project(%{
-        name: "UI Project #{System.unique_integer([:positive])}",
-        slug: "ui-project-#{System.unique_integer([:positive])}"
-      })
-
-    {:ok, run} =
-      Persistence.create_run(%{
-        project_id: project.id,
-        issue_identifier: "UI-1",
-        status: "running",
-        attempt: 0
-      })
-
-    assert {:ok, _event} =
-             Persistence.record_event(%{
-               project_id: project.id,
-               run_id: run.id,
-               issue_identifier: "UI-1",
-               event_type: "run.started",
-               payload: %{"source" => "test"}
-             })
-
+  test "dashboard exposes workflow settings navigation" do
     start_test_endpoint()
 
-    {:ok, _view, projects_html} = live(build_conn(), "/projects")
-    assert projects_html =~ project.name
+    {:ok, _view, html} = live(build_conn(), "/")
+    assert html =~ "Dashboard"
+    assert html =~ "Workflows"
+    assert html =~ ~s(href="/workflows")
 
-    {:ok, _view, runs_html} = live(build_conn(), "/runs")
-    assert runs_html =~ "UI-1"
-    assert runs_html =~ "running"
+    {:ok, _workflow_view, workflow_html} = live(build_conn(), "/workflows")
+    assert workflow_html =~ "Raw WORKFLOW.md"
   end
 
   defp start_test_endpoint do

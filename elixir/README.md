@@ -8,7 +8,7 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 This Elixir implementation has diverged from the upstream OpenAI Symphony preview. This fork keeps
 the original orchestration model, but now adds local SQLite persistence, optional
 username/password authentication, workflow version storage, and early Web UI pages for projects,
-runs, workflows, and settings.
+runs, workers, workflows, and settings.
 
 Use this README together with:
 
@@ -35,7 +35,9 @@ Use this README together with:
 5. Keeps Codex working on the issue until the work is done
 
 This fork also persists local operational data in SQLite, can protect the Web UI/API with optional
-username/password authentication, and stores workflow versions for future configuration management.
+username/password authentication, stores workflow versions for future configuration management,
+and includes the first Panel-side worker control-plane APIs. Centralized in-process execution
+remains the default; worker-backed execution is opt-in future work.
 
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
@@ -88,6 +90,31 @@ mise exec -- ./bin/symphony \
 
 Open the dashboard at `http://127.0.0.1:4000/`.
 
+For dashboard-first setup with SQLite, `WORKFLOW.md` is optional when you start with `--port` and
+do not pass an explicit workflow path:
+
+```bash
+mise exec -- ./bin/symphony \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --port 4000
+```
+
+If an active workflow version already exists in SQLite, Symphony loads it. If the database is empty,
+open `/workflows` and create the first workflow from the raw editor. Traditional non-port CLI runs
+still require `WORKFLOW.md` unless database workflow loading is explicitly configured.
+
+Execution mode currently defaults to centralized in-process execution:
+
+```bash
+export SYMPHONY_EXECUTION_MODE=centralized
+```
+
+The Panel-side worker API can be enabled for protocol testing with:
+
+```bash
+export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
+```
+
 Optional local authentication:
 
 ```bash
@@ -104,12 +131,16 @@ Pass a custom workflow file path to `./bin/symphony` when starting the service:
 ./bin/symphony /path/to/custom/WORKFLOW.md
 ```
 
-If no path is passed, Symphony defaults to `./WORKFLOW.md`.
+If no path is passed, Symphony defaults to `./WORKFLOW.md` for non-port CLI runs. In `--port`
+dashboard mode, Symphony uses SQLite as the runtime workflow source. `WORKFLOW.md` is only an
+initial seed when no active database workflow exists; after that, `/workflows` edits the active
+database workflow used by the dashboard and Linear diagnostics.
 
 Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
-- `--port` also starts the Phoenix observability service (default: disabled)
+- `--port` also starts the Phoenix observability service (default: disabled) and enables
+  database-backed workflow loading for dashboard-first setup
 
 SQLite configuration:
 

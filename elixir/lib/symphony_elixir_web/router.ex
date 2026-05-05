@@ -48,8 +48,19 @@ defmodule SymphonyElixirWeb.Router do
     live("/", DashboardLive, :index)
     live("/projects", AdminLive, :projects)
     live("/runs", AdminLive, :runs)
+    live("/workers", AdminLive, :workers)
+    live("/diagnostics/linear", LinearDiagnosticsLive, :index)
     live("/settings", AdminLive, :settings)
     live("/workflows", AdminLive, :workflows)
+  end
+
+  scope "/", SymphonyElixirWeb do
+    pipe_through(:api)
+
+    post("/api/worker/v1/register", WorkerApiController, :register)
+    post("/api/worker/v1/tasks/claim", WorkerApiController, :claim)
+    post("/api/worker/v1/heartbeat", WorkerApiController, :heartbeat)
+    post("/api/worker/v1/tasks/:task_id/events", WorkerApiController, :task_event)
   end
 
   scope "/", SymphonyElixirWeb do

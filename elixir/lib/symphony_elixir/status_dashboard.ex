@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.StatusDashboard do
   @moduledoc """
-  Renders a status snapshot for orchestrator and worker activity as a terminal UI.
+  Emits line-oriented terminal status logs for orchestrator and worker activity.
   """
 
   use GenServer
@@ -27,13 +27,10 @@ defmodule SymphonyElixir.StatusDashboard do
   @default_terminal_columns 115
 
   @ansi_reset IO.ANSI.reset()
-  @ansi_bold IO.ANSI.bright()
   @ansi_blue IO.ANSI.blue()
   @ansi_cyan IO.ANSI.cyan()
-  @ansi_dim IO.ANSI.faint()
   @ansi_green IO.ANSI.green()
   @ansi_red IO.ANSI.red()
-  @ansi_orange IO.ANSI.yellow()
   @ansi_yellow IO.ANSI.yellow()
   @ansi_magenta IO.ANSI.magenta()
   @ansi_gray IO.ANSI.light_black()
@@ -128,15 +125,7 @@ defmodule SymphonyElixir.StatusDashboard do
 
   @spec render_offline_status() :: :ok
   def render_offline_status do
-    content =
-      [
-        colorize("╭─ SYMPHONY STATUS", @ansi_bold),
-        colorize("│ app_status=offline", @ansi_red),
-        closing_border()
-      ]
-      |> Enum.join("\n")
-
-    render_to_terminal(content)
+    render_to_terminal(terminal_log_line("error", "runtime", "app", "app_status=offline", %{}))
     :ok
   rescue
     error in [ArgumentError, RuntimeError] ->
@@ -334,98 +323,171 @@ defmodule SymphonyElixir.StatusDashboard do
     case snapshot_data do
       {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
         rate_limits = Map.get(snapshot, :rate_limits)
-        project_link_lines = format_project_link_lines()
-        project_refresh_line = format_project_refresh_line(Map.get(snapshot, :polling))
         codex_input_tokens = Map.get(codex_totals, :input_tokens, 0)
         codex_output_tokens = Map.get(codex_totals, :output_tokens, 0)
         codex_total_tokens = Map.get(codex_totals, :total_tokens, 0)
         codex_seconds_running = Map.get(codex_totals, :seconds_running, 0)
         agent_count = length(running)
         max_agents = Config.settings!().agent.max_concurrent_agents
-        running_event_width = running_event_width(terminal_columns_override)
-        running_rows = format_running_rows(running, running_event_width)
-        running_to_backoff_spacer = if(running == [], do: [], else: ["│"])
-        backoff_rows = format_retry_rows(retrying)
 
         ([
-           colorize("╭─ SYMPHONY STATUS", @ansi_bold),
-           colorize("│ Agents: ", @ansi_bold) <>
-             colorize("#{agent_count}", @ansi_green) <>
-             colorize("/", @ansi_gray) <>
-             colorize("#{max_agents}", @ansi_gray),
-           colorize("│ Throughput: ", @ansi_bold) <> colorize("#{format_tps(tps)} tps", @ansi_cyan),
-           colorize("│ Runtime: ", @ansi_bold) <>
-             colorize(format_runtime_seconds(codex_seconds_running), @ansi_magenta),
-           colorize("│ Tokens: ", @ansi_bold) <>
-             colorize("in #{format_count(codex_input_tokens)}", @ansi_yellow) <>
-             colorize(" | ", @ansi_gray) <>
-             colorize("out #{format_count(codex_output_tokens)}", @ansi_yellow) <>
-             colorize(" | ", @ansi_gray) <>
-             colorize("total #{format_count(codex_total_tokens)}", @ansi_yellow),
-           colorize("│ Rate Limits: ", @ansi_bold) <> format_rate_limits(rate_limits),
-           project_link_lines,
-           project_refresh_line,
-           colorize("├─ Running", @ansi_bold),
-           "│",
-           running_table_header_row(running_event_width),
-           running_table_separator_row(running_event_width)
+           terminal_log_line("info", "summary", "runtime", "runtime snapshot", %{
+             agents: "#{agent_count}/#{max_agents}",
+             retrying: length(retrying),
+             throughput: "#{format_tps(tps)} tps",
+             runtime: format_runtime_seconds(codex_seconds_running),
+             tokens: "in #{format_count(codex_input_tokens)} out #{format_count(codex_output_tokens)} total #{format_count(codex_total_tokens)}"
+           }),
+           terminal_log_line("info", "linear", "project", project_message(), %{}),
+           terminal_log_line("info", "dashboard", "url", dashboard_message(), %{}),
+           terminal_log_line("info", "polling", "refresh", refresh_message(Map.get(snapshot, :polling)), %{}),
+           terminal_log_line("info", "codex", "rate_limits", strip_ansi(format_rate_limits(rate_limits)), %{})
          ] ++
-           running_rows ++
-           running_to_backoff_spacer ++
-           [colorize("├─ Backoff queue", @ansi_bold), "│"] ++
-           backoff_rows ++
-           [closing_border()])
+           format_running_log_rows(running, terminal_columns_override) ++
+           format_retry_log_rows(retrying))
         |> List.flatten()
         |> Enum.join("\n")
 
       :error ->
         [
-          colorize("╭─ SYMPHONY STATUS", @ansi_bold),
-          colorize("│ Orchestrator snapshot unavailable", @ansi_red),
-          colorize("│ Throughput: ", @ansi_bold) <> colorize("#{format_tps(tps)} tps", @ansi_cyan),
-          format_project_link_lines(),
-          format_project_refresh_line(nil),
-          closing_border()
+          terminal_log_line("error", "runtime", "snapshot", "orchestrator snapshot unavailable", %{}),
+          terminal_log_line("info", "summary", "throughput", "#{format_tps(tps)} tps", %{}),
+          terminal_log_line("info", "linear", "project", project_message(), %{}),
+          terminal_log_line("info", "dashboard", "url", dashboard_message(), %{}),
+          terminal_log_line("info", "polling", "refresh", refresh_message(nil), %{})
         ]
         |> List.flatten()
         |> Enum.join("\n")
     end
   end
 
-  defp format_project_link_lines do
-    project_part =
-      case Config.settings!().tracker.project_slug do
-        project_slug when is_binary(project_slug) and project_slug != "" ->
-          colorize(linear_project_url(project_slug), @ansi_cyan)
+  defp format_running_log_rows([], _terminal_columns_override) do
+    [terminal_log_line("info", "codex", "agents", "no active agents", %{})]
+  end
 
-        _ ->
-          colorize("n/a", @ansi_gray)
+  defp format_running_log_rows(running, terminal_columns_override) do
+    running_event_width = running_event_width(terminal_columns_override)
+
+    Enum.map(running, fn running_entry ->
+      message = summarize_message(running_entry.last_codex_message)
+
+      terminal_log_line(running_level(running_entry), "codex", running_entry.identifier || "unknown", message, %{
+        state: running_entry.state || "unknown",
+        session: compact_session_id(running_entry.session_id),
+        pid: running_entry.codex_app_server_pid || "n/a",
+        runtime: format_runtime_and_turns(running_entry.runtime_seconds || 0, Map.get(running_entry, :turn_count, 0)),
+        tokens: format_count(running_entry.codex_total_tokens || 0),
+        event: format_cell(to_string(running_entry.last_codex_event || "none"), running_event_width)
+      })
+    end)
+  end
+
+  defp format_retry_log_rows([]) do
+    [terminal_log_line("info", "retry", "queue", "no issues backing off", %{})]
+  end
+
+  defp format_retry_log_rows(retrying) do
+    Enum.map(retrying, fn retry ->
+      terminal_log_line("warning", "retry", retry.identifier || "unknown", sanitize_retry_error(retry.error || "retry scheduled"), %{
+        attempt: retry.attempt || 0,
+        due_in: format_due_in(retry.due_in_ms)
+      })
+    end)
+  end
+
+  defp format_due_in(due_in_ms), do: next_in_words(due_in_ms)
+
+  defp sanitize_retry_error(error) when is_binary(error) do
+    error
+    |> String.replace("\\r\\n", " ")
+    |> String.replace("\\r", " ")
+    |> String.replace("\\n", " ")
+    |> String.replace("\r\n", " ")
+    |> String.replace("\r", " ")
+    |> String.replace("\n", " ")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp sanitize_retry_error(_error), do: "retry scheduled"
+
+  defp terminal_log_line(level, source, entity, message, metadata) do
+    color =
+      case level do
+        "error" -> @ansi_red
+        "warning" -> @ansi_yellow
+        "success" -> @ansi_green
+        _ -> @ansi_cyan
       end
 
-    project_line = colorize("│ Project: ", @ansi_bold) <> project_part
+    [
+      colorize("level=#{level}", color),
+      " source=#{source}",
+      " entity=#{entity}",
+      " message=\"#{sanitize_log_value(message)}\"",
+      format_log_metadata(metadata)
+    ]
+    |> Enum.join("")
+  end
 
-    case dashboard_url() do
-      url when is_binary(url) ->
-        [project_line, colorize("│ Dashboard: ", @ansi_bold) <> colorize(url, @ansi_cyan)]
+  defp format_log_metadata(metadata) when metadata in [nil, %{}], do: ""
 
-      _ ->
-        [project_line]
+  defp format_log_metadata(metadata) when is_map(metadata) do
+    metadata
+    |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map(fn {key, value} -> "#{key}=\"#{sanitize_log_value(value)}\"" end)
+    |> case do
+      [] -> ""
+      pairs -> " " <> Enum.join(pairs, " ")
     end
   end
 
-  defp format_project_refresh_line(%{checking?: true}) do
-    colorize("│ Next refresh: ", @ansi_bold) <> colorize("checking now…", @ansi_cyan)
+  defp sanitize_log_value(value) do
+    value
+    |> to_string()
+    |> strip_ansi()
+    |> String.replace(~r/[\r\n]+/, " ")
+    |> String.trim()
   end
 
-  defp format_project_refresh_line(%{next_poll_in_ms: due_in_ms}) when is_integer(due_in_ms) do
+  defp strip_ansi(value), do: Regex.replace(~r/\e\[[0-9;]*m/, to_string(value), "")
+
+  defp running_level(running_entry) do
+    state = running_entry.state |> to_string() |> String.downcase()
+    event = running_entry.last_codex_event |> to_string() |> String.downcase()
+    message = summarize_message(running_entry.last_codex_message) |> String.downcase()
+
+    cond do
+      String.contains?(state <> event <> message, ["failed", "error", "crash"]) -> "error"
+      String.contains?(state, ["retry", "blocked", "queued"]) -> "warning"
+      true -> "info"
+    end
+  end
+
+  defp project_message do
+    case Config.settings!().tracker.project_slug do
+      project_slug when is_binary(project_slug) and project_slug != "" -> linear_project_url(project_slug)
+      _ -> "n/a"
+    end
+  end
+
+  defp dashboard_message do
+    case dashboard_url() do
+      url when is_binary(url) -> url
+      _ -> "n/a"
+    end
+  end
+
+  defp refresh_message(%{checking?: true}), do: "checking now"
+
+  defp refresh_message(%{next_poll_in_ms: due_in_ms}) when is_integer(due_in_ms) do
     due_in_ms = max(due_in_ms, 0)
     seconds = div(due_in_ms + 999, 1000)
-    colorize("│ Next refresh: ", @ansi_bold) <> colorize("#{seconds}s", @ansi_cyan)
+    "#{seconds}s"
   end
 
-  defp format_project_refresh_line(_) do
-    colorize("│ Next refresh: ", @ansi_bold) <> colorize("n/a", @ansi_gray)
-  end
+  defp refresh_message(_polling), do: "n/a"
 
   defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
 
@@ -466,12 +528,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp render_to_terminal(content) do
-    IO.write([
-      IO.ANSI.home(),
-      IO.ANSI.clear(),
-      normalize_status_lines(content),
-      "\n"
-    ])
+    IO.write([normalize_status_lines(content), "\n"])
   end
 
   defp update_token_samples(samples, now_ms, total_tokens) do
@@ -573,19 +630,6 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp format_running_rows(running, running_event_width) do
-    if running == [] do
-      [
-        "│  " <> colorize("No active agents", @ansi_gray),
-        "│"
-      ]
-    else
-      running
-      |> Enum.sort_by(& &1.identifier)
-      |> Enum.map(&format_running_summary(&1, running_event_width))
-    end
-  end
-
   # credo:disable-for-next-line
   defp format_running_summary(running_entry, running_event_width) do
     issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
@@ -645,33 +689,6 @@ defmodule SymphonyElixir.StatusDashboard do
   @spec tps_graph_for_test([{integer(), integer()}], integer(), integer()) :: String.t()
   def tps_graph_for_test(samples, now_ms, current_tokens), do: tps_graph(samples, now_ms, current_tokens)
 
-  defp format_retry_rows(retrying) do
-    if retrying == [] do
-      ["│  " <> colorize("No queued retries", @ansi_gray)]
-    else
-      retrying
-      |> Enum.sort_by(& &1.due_in_ms)
-      |> Enum.map_join(", ", &format_retry_summary/1)
-      |> String.split(", ")
-    end
-  end
-
-  defp format_retry_summary(retry_entry) do
-    issue_id = retry_entry.issue_id || "unknown"
-    identifier = retry_entry.identifier || issue_id
-    attempt = retry_entry.attempt || 0
-    due_in_ms = retry_entry.due_in_ms || 0
-    error = format_retry_error(retry_entry.error)
-
-    "│  #{colorize("↻", @ansi_orange)} " <>
-      colorize("#{identifier}", @ansi_red) <>
-      " " <>
-      colorize("attempt=#{attempt}", @ansi_yellow) <>
-      colorize(" in ", @ansi_dim) <>
-      colorize(next_in_words(due_in_ms), @ansi_cyan) <>
-      error
-  end
-
   defp next_in_words(due_in_ms) when is_integer(due_in_ms) do
     secs = div(due_in_ms, 1000)
     millis = rem(due_in_ms, 1000)
@@ -679,27 +696,6 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp next_in_words(_), do: "n/a"
-
-  defp format_retry_error(error) when is_binary(error) do
-    sanitized =
-      error
-      |> String.replace("\\r\\n", " ")
-      |> String.replace("\\r", " ")
-      |> String.replace("\\n", " ")
-      |> String.replace("\r\n", " ")
-      |> String.replace("\r", " ")
-      |> String.replace("\n", " ")
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-
-    if sanitized == "" do
-      ""
-    else
-      " " <> colorize("error=#{truncate(sanitized, 96)}", @ansi_dim)
-    end
-  end
-
-  defp format_retry_error(_), do: ""
 
   defp format_runtime_seconds(seconds) when is_integer(seconds) do
     mins = div(seconds, 60)
@@ -735,35 +731,6 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp format_count(value), do: to_string(value)
-
-  defp running_table_header_row(running_event_width) do
-    header =
-      [
-        format_cell("ID", @running_id_width),
-        format_cell("STAGE", @running_stage_width),
-        format_cell("PID", @running_pid_width),
-        format_cell("AGE / TURN", @running_age_width),
-        format_cell("TOKENS", @running_tokens_width),
-        format_cell("SESSION", @running_session_width),
-        format_cell("EVENT", running_event_width)
-      ]
-      |> Enum.join(" ")
-
-    "│   " <> colorize(header, @ansi_gray)
-  end
-
-  defp running_table_separator_row(running_event_width) do
-    separator_width =
-      @running_id_width +
-        @running_stage_width +
-        @running_pid_width +
-        @running_age_width +
-        @running_tokens_width +
-        @running_session_width +
-        running_event_width + 6
-
-    "│   " <> colorize(String.duplicate("─", separator_width), @ansi_gray)
-  end
 
   defp running_event_width(terminal_columns) do
     terminal_columns = terminal_columns || terminal_columns()
@@ -1060,8 +1027,6 @@ defmodule SymphonyElixir.StatusDashboard do
   defp normalize_status_lines(content) do
     content
   end
-
-  defp closing_border, do: "╰─"
 
   defp colorize(value, code) do
     "#{code}#{value}#{@ansi_reset}"

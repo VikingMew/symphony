@@ -23,15 +23,17 @@ defmodule SymphonyElixir.Application do
   def start(_type, _args) do
     :ok = SymphonyElixir.LogFile.configure()
 
-    children = [
-      SymphonyElixir.Repo,
-      {Phoenix.PubSub, name: SymphonyElixir.PubSub},
-      {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
-      SymphonyElixir.WorkflowStore,
-      SymphonyElixir.Orchestrator,
-      SymphonyElixir.HttpServer,
-      SymphonyElixir.StatusDashboard
-    ]
+    children =
+      [
+        repo_child(),
+        {Phoenix.PubSub, name: SymphonyElixir.PubSub},
+        {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+        SymphonyElixir.WorkflowStore,
+        SymphonyElixir.Orchestrator,
+        SymphonyElixir.HttpServer,
+        SymphonyElixir.StatusDashboard
+      ]
+      |> Enum.reject(&is_nil/1)
 
     Supervisor.start_link(
       children,
@@ -44,5 +46,11 @@ defmodule SymphonyElixir.Application do
   def stop(_state) do
     SymphonyElixir.StatusDashboard.render_offline_status()
     :ok
+  end
+
+  defp repo_child do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.Repo
+    end
   end
 end

@@ -176,7 +176,7 @@ defmodule SymphonyElixir.Linear.Client do
             linear_error_context(payload, response)
         )
 
-        {:error, {:linear_api_status, response.status}}
+        {:error, {:linear_api_status, response.status, sanitized_error_body(response.body)}}
 
       {:error, reason} ->
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
@@ -370,6 +370,57 @@ defmodule SymphonyElixir.Linear.Client do
     body
     |> inspect(limit: 20, printable_limit: @max_error_body_log_bytes)
     |> truncate_error_body()
+  end
+
+  defp sanitized_error_body(body) do
+    body
+    |> sanitize_error_body()
+    |> truncate_error_body_value()
+  end
+
+  defp sanitize_error_body(%{"errors" => errors} = body) when is_list(errors) do
+    body
+    |> Map.take(["errors"])
+    |> Map.put("errors", Enum.map(errors, &sanitize_graphql_error/1))
+  end
+
+  defp sanitize_error_body(body) when is_map(body) do
+    body
+    |> Map.take(["code", "error", "errors", "extensions", "locations", "message", "path"])
+    |> Enum.into(%{}, fn {key, value} -> {key, sanitize_error_body(value)} end)
+  end
+
+  defp sanitize_error_body(body) when is_list(body), do: Enum.map(body, &sanitize_error_body/1)
+
+  defp sanitize_error_body(body) when is_binary(body) do
+    body
+    |> String.replace(~r/(Authorization|api[_-]?key|token)(["':=>,\s]+)[^,\]\}\s]+/i, "\\1\\2[REDACTED]")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+  end
+
+  defp sanitize_error_body(body), do: body
+
+  defp sanitize_graphql_error(error) when is_map(error) do
+    error
+    |> Map.take(["message", "extensions", "locations", "path"])
+    |> sanitize_error_body()
+  end
+
+  defp sanitize_graphql_error(error), do: sanitize_error_body(error)
+
+  defp truncate_error_body_value(value) when is_binary(value), do: truncate_error_body(value)
+
+  defp truncate_error_body_value(value) do
+    encoded = inspect(value, limit: 20, printable_limit: @max_error_body_log_bytes)
+
+    if byte_size(encoded) > @max_error_body_log_bytes do
+      encoded
+      |> binary_part(0, @max_error_body_log_bytes)
+      |> Kernel.<>("<truncated>")
+    else
+      value
+    end
   end
 
   defp truncate_error_body(body) when is_binary(body) do

@@ -17,6 +17,10 @@ defmodule SymphonyElixir.CLITest do
         send(parent, :workflow_set)
         :ok
       end,
+      set_workflow_source: fn _source ->
+        send(parent, :workflow_source_set)
+        :ok
+      end,
       set_logs_root: fn _path ->
         send(parent, :logs_root_set)
         :ok
@@ -38,21 +42,29 @@ defmodule SymphonyElixir.CLITest do
     assert banner =~ @ack_flag
     refute_received :file_checked
     refute_received :workflow_set
+    refute_received :workflow_source_set
     refute_received :logs_root_set
     refute_received :port_set
     refute_received :started
   end
 
-  test "defaults to WORKFLOW.md when workflow path is missing" do
+  test "defaults to WORKFLOW.md file mode when workflow path is missing" do
+    parent = self()
+
     deps = %{
       file_regular?: fn path -> Path.basename(path) == "WORKFLOW.md" end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_workflow_source: fn source ->
+        send(parent, {:workflow_source, source})
+        :ok
+      end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
     }
 
     assert :ok = CLI.evaluate([@ack_flag], deps)
+    assert_received {:workflow_source, :file}
   end
 
   test "uses an explicit workflow path override when provided" do
@@ -69,6 +81,10 @@ defmodule SymphonyElixir.CLITest do
         send(parent, {:workflow_set, path})
         :ok
       end,
+      set_workflow_source: fn source ->
+        send(parent, {:workflow_source, source})
+        :ok
+      end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
@@ -76,6 +92,7 @@ defmodule SymphonyElixir.CLITest do
 
     assert :ok = CLI.evaluate([@ack_flag, workflow_path], deps)
     assert_received {:workflow_checked, ^expanded_path}
+    assert_received {:workflow_source, :file}
     assert_received {:workflow_set, ^expanded_path}
   end
 
@@ -85,6 +102,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_workflow_source: fn _source -> :ok end,
       set_logs_root: fn path ->
         send(parent, {:logs_root, path})
         :ok
@@ -102,6 +120,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> false end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_workflow_source: fn _source -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
@@ -111,10 +130,69 @@ defmodule SymphonyElixir.CLITest do
     assert message =~ "Workflow file not found:"
   end
 
+  test "allows missing default workflow in port mode and selects database source" do
+    parent = self()
+
+    deps = %{
+      file_regular?: fn _path -> false end,
+      set_workflow_file_path: fn path ->
+        send(parent, {:workflow_set, path})
+        :ok
+      end,
+      set_workflow_source: fn source ->
+        send(parent, {:workflow_source, source})
+        :ok
+      end,
+      set_logs_root: fn _path -> :ok end,
+      set_server_port_override: fn port ->
+        send(parent, {:port, port})
+        :ok
+      end,
+      ensure_all_started: fn ->
+        send(parent, :started)
+        {:ok, [:symphony_elixir]}
+      end
+    }
+
+    assert :ok = CLI.evaluate([@ack_flag, "--port", "4000"], deps)
+    assert_received {:port, 4000}
+    assert_received {:workflow_source, :database}
+    assert_received :started
+    refute_received {:workflow_set, _path}
+  end
+
+  test "port mode selects database source even when WORKFLOW.md exists" do
+    parent = self()
+
+    deps = %{
+      file_regular?: fn _path ->
+        send(parent, :file_checked)
+        true
+      end,
+      set_workflow_file_path: fn path ->
+        send(parent, {:workflow_set, path})
+        :ok
+      end,
+      set_workflow_source: fn source ->
+        send(parent, {:workflow_source, source})
+        :ok
+      end,
+      set_logs_root: fn _path -> :ok end,
+      set_server_port_override: fn _port -> :ok end,
+      ensure_all_started: fn -> {:ok, [:symphony_elixir]} end
+    }
+
+    assert :ok = CLI.evaluate([@ack_flag, "--port", "4000"], deps)
+    assert_received {:workflow_source, :database}
+    refute_received :file_checked
+    refute_received {:workflow_set, _path}
+  end
+
   test "returns startup error when app cannot start" do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_workflow_source: fn _source -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:error, :boom} end
@@ -129,6 +207,7 @@ defmodule SymphonyElixir.CLITest do
     deps = %{
       file_regular?: fn _path -> true end,
       set_workflow_file_path: fn _path -> :ok end,
+      set_workflow_source: fn _source -> :ok end,
       set_logs_root: fn _path -> :ok end,
       set_server_port_override: fn _port -> :ok end,
       ensure_all_started: fn -> {:ok, [:symphony_elixir]} end

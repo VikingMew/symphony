@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Auth do
   Minimal username/password authentication for the local Symphony control plane.
   """
 
-  alias SymphonyElixir.Persistence
+  alias SymphonyElixir.PersistenceProvider
 
   @iterations 210_000
   @salt_bytes 16
@@ -82,13 +82,15 @@ defmodule SymphonyElixir.Auth do
   end
 
   defp config_user(username, _password_hash, _password) when is_binary(username) do
-    case Persistence.get_user(username) do
+    case persistence().get_user(username) do
       nil -> nil
       user -> %{username: user.username, password_hash: user.password_hash}
     end
   end
 
   defp config_user(_username, _password_hash, _password), do: nil
+
+  defp persistence, do: PersistenceProvider.module()
 
   defp auth_config do
     Application.get_env(:symphony_elixir, :auth, [])

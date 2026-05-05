@@ -432,7 +432,16 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   test "linear client logs response bodies for non-200 graphql responses" do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
-        assert {:error, {:linear_api_status, 400}} =
+        assert {:error,
+                {:linear_api_status, 400,
+                 %{
+                   "errors" => [
+                     %{
+                       "extensions" => %{"code" => "BAD_USER_INPUT"},
+                       "message" => "Variable \"$ids\" got invalid value"
+                     }
+                   ]
+                 }}} =
                  Client.graphql(
                    "query Viewer { viewer { id } }",
                    %{},

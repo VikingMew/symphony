@@ -1,24 +1,27 @@
-defmodule SymphonyElixir.StatusDashboardSnapshotTest do
+defmodule SymphonyElixir.StatusDashboardLogTest do
   use SymphonyElixir.TestSupport
-
-  alias SymphonyElixir.TestSupport.Snapshot
 
   @terminal_columns 115
 
-  test "snapshot fixture: idle dashboard" do
-    snapshot_data =
-      {:ok,
-       %{
-         running: [],
-         retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
-       }}
+  test "idle dashboard renders line-oriented status logs" do
+    rendered =
+      idle_snapshot()
+      |> render_status(0.0)
+      |> strip_ansi()
 
-    Snapshot.assert_dashboard_snapshot!("idle", render_snapshot(snapshot_data, 0.0))
+    assert rendered =~ ~S|level=info source=summary entity=runtime message="runtime snapshot"|
+    assert rendered =~ ~S|agents="0/10"|
+    assert rendered =~ ~S|retrying="0"|
+    assert rendered =~ ~S|tokens="in 0 out 0 total 0"|
+    assert rendered =~ ~S|source=linear entity=project message="https://linear.app/project/project/issues"|
+    assert rendered =~ ~S|source=dashboard entity=url message="n/a"|
+    assert rendered =~ ~S|source=codex entity=agents message="no active agents"|
+    assert rendered =~ ~S|source=retry entity=queue message="no issues backing off"|
+
+    refute_tui_chrome(rendered)
   end
 
-  test "snapshot fixture: idle dashboard with observability url" do
+  test "dashboard url renders as a log line when server port is configured" do
     previous_port_override = Application.get_env(:symphony_elixir, :server_port_override)
 
     on_exit(fn ->
@@ -31,19 +34,16 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
 
     Application.put_env(:symphony_elixir, :server_port_override, 4000)
 
-    snapshot_data =
-      {:ok,
-       %{
-         running: [],
-         retrying: [],
-         codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-         rate_limits: nil
-       }}
+    rendered =
+      idle_snapshot()
+      |> render_status(0.0)
+      |> strip_ansi()
 
-    Snapshot.assert_dashboard_snapshot!("idle_with_dashboard_url", render_snapshot(snapshot_data, 0.0))
+    assert rendered =~ ~S|source=dashboard entity=url message="http://127.0.0.1:4000/"|
+    refute_tui_chrome(rendered)
   end
 
-  test "snapshot fixture: super busy dashboard" do
+  test "running agents render as individual log lines with compact metadata" do
     snapshot_data =
       {:ok,
        %{
@@ -82,10 +82,27 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          }
        }}
 
-    Snapshot.assert_dashboard_snapshot!("super_busy", render_snapshot(snapshot_data, 1_842.7))
+    rendered =
+      snapshot_data
+      |> render_status(1_842.7)
+      |> strip_ansi()
+
+    assert rendered =~ ~S|agents="2/10"|
+    assert rendered =~ ~S|throughput="1,842 tps"|
+    assert rendered =~ ~S<source=codex entity=rate_limits message="gpt-5 | primary 12,345/20,000 reset 30s | secondary 45/60 reset 12s | credits 9876.50">
+    assert rendered =~ ~S|source=codex entity=MT-101 message="turn completed (completed)"|
+    assert rendered =~ ~S|event="turn_completed"|
+    assert rendered =~ ~S|runtime="13m 5s / 11"|
+    assert rendered =~ ~S|tokens="120,450"|
+    assert rendered =~ ~S|source=codex entity=MT-102 message="mix test --cover"|
+    assert rendered =~ ~S|pid="5252"|
+    assert rendered =~ ~S|session="thre...567890"|
+    assert rendered =~ ~S|source=retry entity=queue message="no issues backing off"|
+
+    refute_tui_chrome(rendered)
   end
 
-  test "snapshot fixture: backoff queue pressure" do
+  test "retry queue renders every retry as warning log lines and sanitizes newlines" do
     snapshot_data =
       {:ok,
        %{
@@ -101,24 +118,9 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
            })
          ],
          retrying: [
-           retry_entry(%{
-             identifier: "MT-450",
-             attempt: 4,
-             due_in_ms: 1_250,
-             error: "rate limit exhausted"
-           }),
-           retry_entry(%{
-             identifier: "MT-451",
-             attempt: 2,
-             due_in_ms: 3_900,
-             error: "retrying after API timeout with jitter"
-           }),
-           retry_entry(%{
-             identifier: "MT-452",
-             attempt: 6,
-             due_in_ms: 8_100,
-             error: "worker crashed\nrestarting cleanly"
-           }),
+           retry_entry(%{identifier: "MT-450", attempt: 4, due_in_ms: 1_250, error: "rate limit exhausted"}),
+           retry_entry(%{identifier: "MT-451", attempt: 2, due_in_ms: 3_900, error: "retrying after API timeout with jitter"}),
+           retry_entry(%{identifier: "MT-452", attempt: 6, due_in_ms: 8_100, error: "worker crashed\nrestarting cleanly"}),
            retry_entry(%{
              identifier: "MT-453",
              attempt: 1,
@@ -135,10 +137,25 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          }
        }}
 
-    Snapshot.assert_dashboard_snapshot!("backoff_queue", render_snapshot(snapshot_data, 15.4))
+    rendered =
+      snapshot_data
+      |> render_status(15.4)
+      |> strip_ansi()
+
+    assert rendered =~ ~S|level=warning source=codex entity=MT-638|
+    assert rendered =~ ~S|message="agent message streaming: waiting on rate-limit backoff window"|
+    assert rendered =~ ~S|level=warning source=retry entity=MT-450 message="rate limit exhausted" attempt="4" due_in="1.250s"|
+    assert rendered =~ ~S|level=warning source=retry entity=MT-451 message="retrying after API timeout with jitter" attempt="2" due_in="3.900s"|
+    assert rendered =~ ~S|level=warning source=retry entity=MT-452 message="worker crashed restarting cleanly" attempt="6" due_in="8.100s"|
+    assert rendered =~ ~S|level=warning source=retry entity=MT-453 message="fourth queued retry should also render after removing the top-three limit"|
+
+    retry_lines = rendered |> String.split("\n") |> Enum.filter(&String.contains?(&1, "source=retry entity=MT-"))
+    assert length(retry_lines) == 4
+    refute Enum.any?(retry_lines, &String.contains?(&1, "\\n"))
+    refute_tui_chrome(rendered)
   end
 
-  test "backoff queue row escapes escaped newline sequences" do
+  test "escaped newline sequences are sanitized without splitting a retry log line" do
     snapshot_data =
       {:ok,
        %{
@@ -155,18 +172,19 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          rate_limits: nil
        }}
 
-    rendered = render_snapshot(snapshot_data, 0.0)
-    backoff_lines = rendered |> String.split("\n") |> Enum.filter(&String.contains?(&1, "MT-980"))
+    rendered =
+      snapshot_data
+      |> render_status(0.0)
+      |> strip_ansi()
 
-    assert length(backoff_lines) == 1
+    retry_lines = rendered |> String.split("\n") |> Enum.filter(&String.contains?(&1, "MT-980"))
 
-    [backoff_line] = backoff_lines
-
-    assert backoff_line =~ "error=error with newline"
-    refute backoff_line =~ "\\n"
+    assert retry_lines == [
+             ~S|level=warning source=retry entity=MT-980 message="error with newline" attempt="1" due_in="1.500s"|
+           ]
   end
 
-  test "snapshot fixture: unlimited credits variant" do
+  test "unlimited credits rate limit renders in log message" do
     snapshot_data =
       {:ok,
        %{
@@ -191,11 +209,40 @@ defmodule SymphonyElixir.StatusDashboardSnapshotTest do
          }
        }}
 
-    Snapshot.assert_dashboard_snapshot!("credits_unlimited", render_snapshot(snapshot_data, 42.0))
+    rendered =
+      snapshot_data
+      |> render_status(42.0)
+      |> strip_ansi()
+
+    assert rendered =~ ~S<source=codex entity=rate_limits message="priority-tier | primary 100/100 reset 1s | secondary 500/500 reset 1s | credits unlimited">
+    assert rendered =~ ~S|source=codex entity=MT-777 message="thread token usage updated (in 90, out 12, total 102)"|
+    refute_tui_chrome(rendered)
   end
 
-  defp render_snapshot(snapshot_data, tps) do
+  defp render_status(snapshot_data, tps) do
     StatusDashboard.format_snapshot_content_for_test(snapshot_data, tps, @terminal_columns)
+  end
+
+  defp idle_snapshot do
+    {:ok,
+     %{
+       running: [],
+       retrying: [],
+       codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+       rate_limits: nil
+     }}
+  end
+
+  defp strip_ansi(content), do: Regex.replace(~r/\e\[[0-9;]*m/, content, "")
+
+  defp refute_tui_chrome(rendered) do
+    refute rendered =~ "SYMPHONY STATUS"
+    refute rendered =~ "╭"
+    refute rendered =~ "├"
+    refute rendered =~ "╰"
+    refute rendered =~ "│"
+    refute rendered =~ "─"
+    refute rendered =~ "ID       STAGE"
   end
 
   defp running_entry(overrides) do

@@ -14,6 +14,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     field(:issue_identifier, :string)
     field(:workspace_path, :string)
     field(:status, :string)
+    field(:execution_mode, :string, default: "centralized")
     field(:attempt, :integer, default: 0)
     field(:failure_reason, :string)
     field(:started_at, :utc_datetime_usec)
@@ -31,11 +32,13 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :issue_identifier,
       :workspace_path,
       :status,
+      :execution_mode,
       :attempt,
       :failure_reason,
       :started_at,
       :finished_at
     ])
     |> validate_required([:issue_identifier, :status])
+    |> validate_inclusion(:execution_mode, ["centralized", "worker"])
   end
 end

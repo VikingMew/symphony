@@ -41,6 +41,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
+      <SymphonyElixirWeb.Layouts.app_nav current={:dashboard} />
+
       <header class="hero-card">
         <div class="hero-grid">
           <div>

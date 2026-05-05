@@ -184,7 +184,7 @@ mise exec -- ./bin/symphony \
   ./WORKFLOW.md
 ```
 
-启动 Web dashboard，例如监听 4000 端口：
+启动 Web dashboard 且继续使用显式文件模式，例如监听 4000 端口：
 
 ```bash
 mise exec -- ./bin/symphony \
@@ -201,6 +201,25 @@ http://127.0.0.1:4000/
 
 如果启用了认证，先访问 `/login` 登录。
 
+显式传入 `./WORKFLOW.md` 时，运行时配置来源就是这个文件。Web UI 可以查看数据库中的 workflow versions，但不会改变当前运行使用的文件配置。
+
+### dashboard-first 数据库模式启动
+
+如果你希望从数据库或 UI 管理 workflow，只传 `--port`，不要传 `WORKFLOW.md`：
+
+```bash
+mise exec -- ./bin/symphony \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --port 4000
+```
+
+此时规则是：
+
+- 运行时配置来源是 SQLite active workflow version。
+- 如果 SQLite 中还没有 active workflow version，但当前目录有 `WORKFLOW.md`，它只会作为初始化文件导入一次。
+- 如果数据库和 `WORKFLOW.md` 都没有可用 workflow，先访问 `/workflows`，在 raw editor 中创建第一个 workflow。
+- 不带 `--port` 的传统 CLI 启动仍默认需要 `WORKFLOW.md`。
+
 ## 9. 常用页面
 
 启动 dashboard 后可访问：
@@ -209,12 +228,29 @@ http://127.0.0.1:4000/
 /             当前运行状态 dashboard
 /projects     项目列表
 /runs         持久化 run 历史
+/workers      worker、task、lease 状态；集中式部署下可为空
 /workflows    WORKFLOW.md raw 编辑和版本历史
 /settings     tracker/config 摘要
 /api/v1/state JSON 状态 API
 ```
 
-## 10. 开发和验证命令
+## 10. 执行模式
+
+当前默认执行模式仍是集中式：
+
+```bash
+export SYMPHONY_EXECUTION_MODE=centralized
+```
+
+集中式模式下，Phoenix Panel 继续负责本地执行，不需要注册 worker。后续 worker 模式会通过 Rust worker 主动连接 Panel；当前仓库已经提供 Panel 侧 worker API 和 dashboard 基础页面，但不会默认切到 worker-only。
+
+如果要测试 worker API，可以设置：
+
+```bash
+export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
+```
+
+## 11. 开发和验证命令
 
 格式检查：
 
@@ -292,4 +328,3 @@ mise exec -- ./bin/symphony \
 - `WORKFLOW.md` 里的 `tracker.project_slug` 是否正确
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
-

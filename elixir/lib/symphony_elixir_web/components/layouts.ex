@@ -5,6 +5,16 @@ defmodule SymphonyElixirWeb.Layouts do
 
   use Phoenix.Component
 
+  @nav_items [
+    {:dashboard, "Dashboard", "/"},
+    {:workflows, "Workflows", "/workflows"},
+    {:runs, "Runs", "/runs"},
+    {:workers, "Workers", "/workers"},
+    {:linear, "Linear", "/diagnostics/linear"},
+    {:projects, "Projects", "/projects"},
+    {:settings, "Settings", "/settings"}
+  ]
+
   @spec root(map()) :: Phoenix.LiveView.Rendered.t()
   def root(assigns) do
     assigns = assign(assigns, :csrf_token, Plug.CSRFProtection.get_csrf_token())
@@ -51,6 +61,27 @@ defmodule SymphonyElixirWeb.Layouts do
     <main class="app-shell">
       {@inner_content}
     </main>
+    """
+  end
+
+  @spec app_nav(map()) :: Phoenix.LiveView.Rendered.t()
+  def app_nav(assigns) do
+    assigns =
+      assigns
+      |> assign_new(:current, fn -> nil end)
+      |> assign(:items, @nav_items)
+
+    ~H"""
+    <nav class="app-nav" aria-label="Primary">
+      <a
+        :for={{key, label, path} <- @items}
+        class="app-nav-link"
+        href={path}
+        aria-current={if key == @current, do: "page"}
+      >
+        {label}
+      </a>
+    </nav>
     """
   end
 end

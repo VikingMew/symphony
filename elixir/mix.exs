@@ -40,13 +40,13 @@ defmodule SymphonyElixir.MixProject do
         ]
       ],
       test_ignore_filters: [
-        "test/support/snapshot_support.exs",
+        "test/support/database_isolation.exs",
+        "test/support/fake_persistence.exs",
         "test/support/test_support.exs"
       ],
       dialyzer: [
         plt_add_apps: [:mix]
       ],
-      escript: escript(),
       aliases: aliases(),
       deps: deps()
     ]
@@ -84,17 +84,8 @@ defmodule SymphonyElixir.MixProject do
   defp aliases do
     [
       setup: ["deps.get"],
-      build: ["escript.build"],
+      build: ["symphony.build"],
       lint: ["specs.check", "credo --strict"]
-    ]
-  end
-
-  defp escript do
-    [
-      app: nil,
-      main_module: SymphonyElixir.CLI,
-      name: "symphony",
-      path: "bin/symphony"
     ]
   end
 end

@@ -244,6 +244,8 @@ Web UI 应提供两种编辑模式：
 
 Web UI 应优先服务运维、配置和调试，不做营销型页面。
 
+Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面级颜色。推荐采用 [Dashboard 配色系统设计](dashboard_color_system_design.zh-CN.md)：以杰尼龟蓝、小火龙橙、妙蛙种子绿和皮卡丘黄作为灵感来源，落地为 primary、warning、success、accent 等低饱和 CSS token。UI 不使用角色图片、商标素材或游戏化大面积装饰。
+
 建议页面：
 
 ```text
@@ -431,6 +433,11 @@ lib/symphony_elixir_web/
 ### Milestone 5：Worker Runtime 分层
 
 - 将 local run 逻辑抽象为 worker behavior。
+- 支持 Panel / Worker 解耦：Panel 负责调度、配置、持久化和 UI，Worker 主动连接 Panel、握手、心跳、领取任务并回传结果。
+- 当前 Elixir 仓库优先实现 Panel / 服务端能力；生产 worker 按前序技术选型方向使用 Rust 实现，并通过稳定 JSON/HTTP 协议接入 Panel。
+- 详细设计见 [Panel / Worker 解耦设计](worker_panel_decoupling_design.zh-CN.md)。
+- 增加 worker identity、worker session、task queue、task lease、heartbeat 和 capability matching。
+- 设计 worker API 协议版本、预共享注册 token、租约续期、任务取消、late completion 处理和 dashboard 可观测事件。
 - 保留 local worker。
 - 稳定 SSH worker。
 - 增加 Docker worker。

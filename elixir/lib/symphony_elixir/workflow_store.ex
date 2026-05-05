@@ -6,14 +6,14 @@ defmodule SymphonyElixir.WorkflowStore do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Persistence, Workflow}
+  alias SymphonyElixir.{PersistenceProvider, Workflow}
 
   @poll_interval_ms 1_000
 
   defmodule State do
     @moduledoc false
 
-    defstruct [:path, :stamp, :workflow]
+    defstruct [:path, :stamp, :workflow, :source]
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -23,12 +23,23 @@ defmodule SymphonyElixir.WorkflowStore do
 
   @spec current() :: {:ok, Workflow.loaded_workflow()} | {:error, term()}
   def current do
+    with {:ok, current} <- current_with_source() do
+      {:ok, current.workflow}
+    end
+  end
+
+  @spec current_with_source() :: {:ok, %{workflow: Workflow.loaded_workflow(), source: map()}} | {:error, term()}
+  def current_with_source do
     case Process.whereis(__MODULE__) do
       pid when is_pid(pid) ->
-        GenServer.call(__MODULE__, :current)
+        GenServer.call(__MODULE__, :current_with_source)
 
       _ ->
-        Workflow.load()
+        path = Workflow.workflow_file_path()
+
+        with {:ok, state} <- load_state(path) do
+          {:ok, state_payload(state)}
+        end
     end
   end
 
@@ -39,8 +50,8 @@ defmodule SymphonyElixir.WorkflowStore do
         GenServer.call(__MODULE__, :force_reload)
 
       _ ->
-        case Workflow.load() do
-          {:ok, _workflow} -> :ok
+        case load_state(Workflow.workflow_file_path()) do
+          {:ok, _state} -> :ok
           {:error, reason} -> {:error, reason}
         end
     end
@@ -59,13 +70,13 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   @impl true
-  def handle_call(:current, _from, %State{} = state) do
+  def handle_call(:current_with_source, _from, %State{} = state) do
     case reload_state(state) do
       {:ok, new_state} ->
-        {:reply, {:ok, new_state.workflow}, new_state}
+        {:reply, {:ok, state_payload(new_state)}, new_state}
 
       {:error, _reason, new_state} ->
-        {:reply, {:ok, new_state.workflow}, new_state}
+        {:reply, {:ok, state_payload(new_state)}, new_state}
     end
   end
 
@@ -136,13 +147,25 @@ defmodule SymphonyElixir.WorkflowStore do
   defp load_state(path) do
     case load_database_workflow(path) do
       {:ok, workflow} ->
-        {:ok, %State{path: path, stamp: {:database, Map.get(workflow, :workflow_version_id)}, workflow: workflow}}
+        {:ok,
+         %State{
+           path: path,
+           stamp: {:database, Map.get(workflow, :workflow_version_id)},
+           workflow: workflow,
+           source: database_source(workflow)
+         }}
+
+      :setup_required ->
+        setup_required_state(path)
 
       :missing ->
         with {:ok, workflow} <- Workflow.load(path),
              {:ok, stamp} <- current_stamp(path) do
-          {:ok, %State{path: path, stamp: stamp, workflow: workflow}}
+          {:ok, %State{path: path, stamp: stamp, workflow: workflow, source: %{type: :file, path: path}}}
         else
+          {:error, {:missing_workflow_file, _path, _reason}} ->
+            maybe_setup_required_state(path)
+
           {:error, reason} ->
             {:error, reason}
         end
@@ -151,13 +174,7 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp load_database_workflow(path) do
     if database_workflow_enabled?() do
-      case Persistence.active_workflow_version() do
-        nil ->
-          seed_database_workflow(path)
-
-        workflow_version ->
-          {:ok, Persistence.workflow_to_loaded(workflow_version)}
-      end
+      load_database_version_or_seed(path)
     else
       :missing
     end
@@ -165,15 +182,51 @@ defmodule SymphonyElixir.WorkflowStore do
     _error -> :missing
   end
 
+  defp load_database_version_or_seed(path) do
+    case persistence().active_workflow_version() do
+      nil -> seed_database_workflow_or_setup(path)
+      workflow_version -> {:ok, persistence().workflow_to_loaded(workflow_version)}
+    end
+  end
+
+  defp seed_database_workflow_or_setup(path) do
+    case seed_database_workflow(path) do
+      :missing -> :setup_required
+      result -> result
+    end
+  end
+
   defp database_workflow_enabled? do
     Application.get_env(:symphony_elixir, :workflow_source) in [:database, "database"]
   end
 
   defp seed_database_workflow(path) do
-    case Persistence.ensure_workflow_seeded_from_file(path) do
-      {:ok, workflow_version} -> {:ok, Persistence.workflow_to_loaded(workflow_version)}
+    case persistence().ensure_workflow_seeded_from_file(path) do
+      {:ok, workflow_version} -> {:ok, persistence().workflow_to_loaded(workflow_version)}
       _ -> :missing
     end
+  end
+
+  defp persistence, do: PersistenceProvider.module()
+
+  defp maybe_setup_required_state(path) do
+    if database_workflow_enabled?() do
+      setup_required_state(path)
+    else
+      {:error, {:missing_workflow_file, path, :enoent}}
+    end
+  end
+
+  defp setup_required_state(path) do
+    workflow = Workflow.setup_required_workflow(Application.get_env(:symphony_elixir, :server_port_override))
+
+    {:ok,
+     %State{
+       path: path,
+       stamp: {:setup_required, System.system_time(:millisecond)},
+       workflow: workflow,
+       source: %{type: :setup_required}
+     }}
   end
 
   defp current_stamp(path) when is_binary(path) do
@@ -187,5 +240,14 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp log_reload_error(path, reason) do
     Logger.error("Failed to reload workflow path=#{path} reason=#{inspect(reason)}; keeping last known good configuration")
+  end
+
+  defp state_payload(%State{workflow: workflow, source: source}), do: %{workflow: workflow, source: source || %{type: :unknown}}
+
+  defp database_source(workflow) when is_map(workflow) do
+    %{
+      type: :database,
+      workflow_version_id: Map.get(workflow, :workflow_version_id)
+    }
   end
 end

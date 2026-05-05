@@ -1011,9 +1011,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
 
-    assert rendered =~ "│ Project:"
+    assert rendered =~ "source=linear entity=project"
     assert rendered =~ "https://linear.app/project/project/issues"
-    assert rendered =~ "│ Dashboard:"
+    assert rendered =~ "source=dashboard entity=url"
     assert rendered =~ "http://127.0.0.1:4000/"
   end
 
@@ -1037,8 +1037,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        }}
 
     waiting_rendered = StatusDashboard.format_snapshot_content_for_test(waiting_snapshot, 0.0)
-    assert waiting_rendered =~ "Next refresh:"
-    assert waiting_rendered =~ "2s"
+    assert waiting_rendered =~ "source=polling entity=refresh"
+    assert waiting_rendered =~ ~s(message="2s")
 
     checking_snapshot =
       {:ok,
@@ -1051,10 +1051,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        }}
 
     checking_rendered = StatusDashboard.format_snapshot_content_for_test(checking_snapshot, 0.0)
-    assert checking_rendered =~ "checking now…"
+    assert checking_rendered =~ ~s(message="checking now")
   end
 
-  test "status dashboard adds a spacer line before backoff queue when no agents are active" do
+  test "status dashboard renders log rows when no agents are active" do
     snapshot_data =
       {:ok,
        %{
@@ -1067,10 +1067,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
     plain = Regex.replace(~r/\e\[[0-9;]*m/, rendered, "")
 
-    assert plain =~ ~r/No active agents\r?\n│\s*\r?\n├─ Backoff queue/
+    assert plain =~ ~s(source=codex entity=agents message="no active agents")
+    assert plain =~ ~s(source=retry entity=queue message="no issues backing off")
   end
 
-  test "status dashboard adds a spacer line before backoff queue when agents are active" do
+  test "status dashboard renders running agent and retry queue log rows" do
     snapshot_data =
       {:ok,
        %{
@@ -1106,10 +1107,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
     plain = Regex.replace(~r/\e\[[0-9;]*m/, rendered, "")
 
-    assert plain =~ ~r/MT-777.*\r?\n│\s*\r?\n├─ Backoff queue/s
+    assert plain =~ ~s(source=codex entity=MT-777)
+    assert plain =~ ~s(source=retry entity=queue message="no issues backing off")
   end
 
-  test "status dashboard renders an unstyled closing corner when the retry queue is empty" do
+  test "status dashboard does not render terminal border chrome" do
     snapshot_data =
       {:ok,
        %{
@@ -1121,7 +1123,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
 
-    assert rendered |> String.split("\n") |> List.last() == "╰─"
+    refute rendered =~ "╭─"
+    refute rendered =~ "╰─"
+    assert rendered |> String.split("\n") |> List.last() =~ "source=retry entity=queue"
   end
 
   test "status dashboard coalesces rapid updates to one render per interval" do

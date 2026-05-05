@@ -63,13 +63,17 @@ Workflow versions persist the complete `WORKFLOW.md` contract:
 - source
 - active flag
 
-Database-backed workflow loading is explicit during the migration period:
+Database-backed workflow loading supports explicit database mode:
 
 ```elixir
 Application.put_env(:symphony_elixir, :workflow_source, :database)
 ```
 
-Without that setting, the runtime keeps using file-backed `WORKFLOW.md` semantics.
+The CLI enables database mode automatically when started with `--port` and no explicit workflow
+path. In that mode, `WORKFLOW.md` is an initialization file only: if no active SQLite workflow
+exists, Symphony imports it once. If neither SQLite nor `WORKFLOW.md` has a workflow, the dashboard
+starts in setup-required mode and `/workflows` can create the first active workflow. Traditional
+non-port CLI runs and explicit workflow paths keep file-backed `WORKFLOW.md` semantics.
 
 ## Web UI
 
@@ -77,8 +81,8 @@ The following authenticated pages are available when the Phoenix server is enabl
 
 - `/projects`
 - `/runs`
+- `/workers`
 - `/workflows`
 - `/settings`
 
 The workflow page supports raw `WORKFLOW.md` editing and version history. Structured field-by-field editing is intentionally left for the next UI refinement pass.
-

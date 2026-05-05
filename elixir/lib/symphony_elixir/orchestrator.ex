@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, Persistence, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, PersistenceProvider, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -687,6 +687,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
+    if Config.execution_mode() == :worker do
+      enqueue_issue_for_worker(state, issue, attempt)
+    else
+      dispatch_issue_centrally(state, issue, attempt, preferred_worker_host)
+    end
+  end
+
+  defp dispatch_issue_centrally(%State{} = state, issue, attempt, preferred_worker_host) do
     recipient = self()
 
     case select_worker_host(state, preferred_worker_host) do
@@ -696,6 +704,24 @@ defmodule SymphonyElixir.Orchestrator do
 
       worker_host ->
         spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
+    end
+  end
+
+  defp enqueue_issue_for_worker(%State{} = state, %Issue{} = issue, attempt) do
+    case persist_worker_task_queued(issue, attempt) do
+      {:ok, %{run: run, task: task}} ->
+        Logger.info("Queued issue for external worker: #{issue_context(issue)} run_id=#{run.id} task_id=#{task.id}")
+
+        %{
+          state
+          | claimed: MapSet.put(state.claimed, issue.id),
+            retry_attempts: Map.delete(state.retry_attempts, issue.id)
+        }
+
+      {:error, reason} ->
+        Logger.error("Unable to queue worker task for #{issue_context(issue)}: #{inspect(reason)}")
+        persist_event("task.queue_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
+        state
     end
   end
 
@@ -1670,7 +1696,7 @@ defmodule SymphonyElixir.Orchestrator do
       Enum.each(issues, fn
         %Issue{} = issue ->
           _ =
-            Persistence.upsert_issue(%{
+            persistence().upsert_issue(%{
               tracker_issue_id: issue.id,
               identifier: issue.identifier,
               title: issue.title,
@@ -1694,7 +1720,7 @@ defmodule SymphonyElixir.Orchestrator do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
     {:ok, issue_record} =
-      Persistence.upsert_issue(%{
+      persistence().upsert_issue(%{
         tracker_issue_id: issue.id,
         identifier: issue.identifier,
         title: issue.title,
@@ -1704,14 +1730,15 @@ defmodule SymphonyElixir.Orchestrator do
         snapshot: issue_snapshot(issue)
       })
 
-    workflow_version = Persistence.active_workflow_version()
+    workflow_version = persistence().active_workflow_version()
 
     {:ok, run} =
-      Persistence.create_run(%{
+      persistence().create_run(%{
         workflow_version_id: workflow_version && workflow_version.id,
         issue_id: issue_record.id,
         issue_identifier: issue.identifier,
         status: "running",
+        execution_mode: "centralized",
         attempt: normalize_retry_attempt(attempt),
         started_at: DateTime.utc_now()
       })
@@ -1724,19 +1751,68 @@ defmodule SymphonyElixir.Orchestrator do
     :persistence_disabled -> nil
   end
 
+  defp persist_worker_task_queued(%Issue{} = issue, attempt) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    {:ok, issue_record} =
+      persistence().upsert_issue(%{
+        tracker_issue_id: issue.id,
+        identifier: issue.identifier,
+        title: issue.title,
+        state: issue.state,
+        url: issue.url,
+        labels: %{"values" => issue.labels || []},
+        snapshot: issue_snapshot(issue)
+      })
+
+    workflow_version = persistence().active_workflow_version()
+
+    {:ok, run} =
+      persistence().create_run(%{
+        workflow_version_id: workflow_version && workflow_version.id,
+        issue_id: issue_record.id,
+        issue_identifier: issue.identifier,
+        status: "queued",
+        execution_mode: "worker",
+        attempt: normalize_retry_attempt(attempt),
+        started_at: DateTime.utc_now()
+      })
+
+    {:ok, task} =
+      persistence().enqueue_task(%{
+        project_id: run.project_id,
+        run_id: run.id,
+        workflow_version_id: workflow_version && workflow_version.id,
+        issue_identifier: issue.identifier,
+        required_capabilities: %{},
+        payload: %{
+          "issue" => issue_snapshot(issue),
+          "prompt" => Config.workflow_prompt(),
+          "execution_mode" => "worker"
+        }
+      })
+
+    persist_event("task.queued", issue.identifier, %{issue_id: issue.id, run_id: run.id, task_id: task.id}, run.id)
+    {:ok, %{run: run, task: task}}
+  rescue
+    error -> {:error, error}
+  catch
+    :persistence_disabled -> {:error, :persistence_disabled}
+  end
+
   defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
     run_id = Map.get(running_entry, :run_id)
 
-    if is_binary(run_id) and Persistence.repo_available?() do
-      case SymphonyElixir.Repo.get(SymphonyElixir.Persistence.RunRecord, run_id) do
+    if is_binary(run_id) and persistence().repo_available?() do
+      case persistence().get_run(run_id) do
         nil ->
           :ok
 
         run ->
           _ =
-            Persistence.update_run(run, %{
+            persistence().update_run(run, %{
               status: status,
               failure_reason: failure_reason,
               finished_at: DateTime.utc_now()
@@ -1772,7 +1848,7 @@ defmodule SymphonyElixir.Orchestrator do
     case Map.get(running_entry, :workspace_path) do
       path when is_binary(path) ->
         _ =
-          Persistence.record_workspace(%{
+          persistence().record_workspace(%{
             issue_identifier: Map.get(running_entry, :identifier),
             path: path,
             host: Map.get(running_entry, :worker_host),
@@ -1803,7 +1879,7 @@ defmodule SymphonyElixir.Orchestrator do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
     _ =
-      Persistence.record_event(%{
+      persistence().record_event(%{
         run_id: run_id,
         issue_identifier: issue_identifier,
         event_type: event_type,
@@ -1829,6 +1905,8 @@ defmodule SymphonyElixir.Orchestrator do
       "labels" => issue.labels || []
     }
   end
+
+  defp persistence, do: PersistenceProvider.module()
 
   defp persistence_enabled? do
     Process.whereis(__MODULE__) == self()

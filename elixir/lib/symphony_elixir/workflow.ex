@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Workflow do
   alias SymphonyElixir.WorkflowStore
 
   @workflow_file_name "WORKFLOW.md"
+  @setup_prompt "Create a workflow from the Web UI to start running agents."
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
@@ -58,6 +59,26 @@ defmodule SymphonyElixir.Workflow do
       {:error, reason} ->
         {:error, {:missing_workflow_file, path, reason}}
     end
+  end
+
+  @spec setup_required_workflow(non_neg_integer() | nil) :: loaded_workflow()
+  def setup_required_workflow(port \\ nil) do
+    %{
+      config: %{
+        "tracker" => %{
+          "kind" => "memory",
+          "active_states" => ["Todo", "In Progress"],
+          "terminal_states" => ["Done", "Closed", "Cancelled"]
+        },
+        "polling" => %{"interval_ms" => 30_000},
+        "server" => %{"host" => "127.0.0.1", "port" => port},
+        "agent" => %{"max_concurrent_agents" => 1, "max_turns" => 20},
+        "codex" => %{"command" => "codex app-server", "thread_sandbox" => "workspace-write"}
+      },
+      prompt: @setup_prompt,
+      prompt_template: @setup_prompt,
+      setup_required: true
+    }
   end
 
   @spec parse_content(String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
