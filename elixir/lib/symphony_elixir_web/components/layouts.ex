@@ -72,16 +72,26 @@ defmodule SymphonyElixirWeb.Layouts do
       |> assign(:items, @nav_items)
 
     ~H"""
-    <nav class="app-nav" aria-label="Primary">
-      <a
-        :for={{key, label, path} <- @items}
-        class="app-nav-link"
-        href={path}
-        aria-current={if key == @current, do: "page"}
-      >
-        {label}
+    <header class="top-banner">
+      <a class="top-banner-brand" href="/" aria-label="Symphony dashboard">
+        <span class="top-banner-mark" aria-hidden="true">S</span>
+        <span class="top-banner-brand-text">
+          <span class="top-banner-name">Symphony</span>
+          <span class="top-banner-context">Operations Console</span>
+        </span>
       </a>
-    </nav>
+
+      <nav class="app-nav" aria-label="Primary">
+        <a
+          :for={{key, label, path} <- @items}
+          class="app-nav-link"
+          href={path}
+          aria-current={if key == @current, do: "page"}
+        >
+          {label}
+        </a>
+      </nav>
+    </header>
     """
   end
 end

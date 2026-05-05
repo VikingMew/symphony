@@ -92,11 +92,18 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/")
+    assert html =~ ~s(class="top-banner")
+    assert html =~ "Symphony"
+    assert html =~ "Operations Console"
+    assert html =~ ~s(aria-current="page")
     assert html =~ "Dashboard"
     assert html =~ "Workflows"
     assert html =~ ~s(href="/workflows")
 
     {:ok, _workflow_view, workflow_html} = live(build_conn(), "/workflows")
+    assert workflow_html =~ ~s(class="top-banner")
+    assert workflow_html =~ ~s(href="/")
+    assert workflow_html =~ ~s(aria-current="page")
     assert workflow_html =~ "Raw WORKFLOW.md"
   end
 

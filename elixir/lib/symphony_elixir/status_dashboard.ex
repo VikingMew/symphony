@@ -1,39 +1,17 @@
 defmodule SymphonyElixir.StatusDashboard do
   @moduledoc """
-  Emits line-oriented terminal status logs for orchestrator and worker activity.
+  Observes orchestrator status for Web dashboard updates.
+
+  Terminal output is intentionally handled through normal Logger call sites in
+  the runtime modules, not by rendering periodic status snapshots here.
   """
 
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, HttpServer}
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixirWeb.ObservabilityPubSub
-
-  @minimum_idle_rerender_ms 1_000
-  @throughput_window_ms 5_000
-  @throughput_graph_window_ms 10 * 60 * 1000
-  @throughput_graph_columns 24
-  @sparkline_blocks ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"]
-  @running_id_width 8
-  @running_stage_width 14
-  @running_pid_width 8
-  @running_age_width 12
-  @running_tokens_width 10
-  @running_session_width 14
-  @running_event_default_width 44
-  @running_event_min_width 12
-  @running_row_chrome_width 10
-  @default_terminal_columns 115
-
-  @ansi_reset IO.ANSI.reset()
-  @ansi_blue IO.ANSI.blue()
-  @ansi_cyan IO.ANSI.cyan()
-  @ansi_green IO.ANSI.green()
-  @ansi_red IO.ANSI.red()
-  @ansi_yellow IO.ANSI.yellow()
-  @ansi_magenta IO.ANSI.magenta()
-  @ansi_gray IO.ANSI.light_black()
 
   defstruct [
     :refresh_ms,
@@ -42,14 +20,6 @@ defmodule SymphonyElixir.StatusDashboard do
     :refresh_ms_override,
     :enabled_override,
     :render_interval_ms_override,
-    :render_fun,
-    :token_samples,
-    :last_tps_second,
-    :last_tps_value,
-    :last_rendered_content,
-    :last_rendered_at_ms,
-    :pending_content,
-    :flush_timer_ref,
     :last_snapshot_fingerprint
   ]
 
@@ -60,14 +30,6 @@ defmodule SymphonyElixir.StatusDashboard do
           refresh_ms_override: pos_integer() | nil,
           enabled_override: boolean() | nil,
           render_interval_ms_override: pos_integer() | nil,
-          render_fun: (String.t() -> term()),
-          token_samples: [{integer(), integer()}],
-          last_tps_second: integer() | nil,
-          last_tps_value: float() | nil,
-          last_rendered_content: String.t() | nil,
-          last_rendered_at_ms: integer() | nil,
-          pending_content: String.t() | nil,
-          flush_timer_ref: reference() | nil,
           last_snapshot_fingerprint: term() | nil
         }
 
@@ -99,7 +61,6 @@ defmodule SymphonyElixir.StatusDashboard do
     observability = Config.settings!().observability
     refresh_ms = refresh_ms_override || observability.refresh_ms
     render_interval_ms = render_interval_ms_override || observability.render_interval_ms
-    render_fun = Keyword.get(opts, :render_fun, &render_to_terminal/1)
     enabled = resolve_override(enabled_override, observability.dashboard_enabled and dashboard_enabled?())
     schedule_tick(refresh_ms, enabled)
 
@@ -111,26 +72,14 @@ defmodule SymphonyElixir.StatusDashboard do
        refresh_ms_override: refresh_ms_override,
        enabled_override: enabled_override,
        render_interval_ms_override: render_interval_ms_override,
-       render_fun: render_fun,
-       token_samples: [],
-       last_tps_second: nil,
-       last_tps_value: nil,
-       last_rendered_content: nil,
-       last_rendered_at_ms: nil,
-       pending_content: nil,
-       flush_timer_ref: nil,
        last_snapshot_fingerprint: nil
      }}
   end
 
   @spec render_offline_status() :: :ok
   def render_offline_status do
-    render_to_terminal(terminal_log_line("error", "runtime", "app", "app_status=offline", %{}))
+    Logger.error("Symphony application offline")
     :ok
-  rescue
-    error in [ArgumentError, RuntimeError] ->
-      Logger.warning("Failed rendering offline status: #{Exception.message(error)}")
-      :ok
   end
 
   @spec handle_info(term(), t()) :: {:noreply, t()}
@@ -144,25 +93,6 @@ defmodule SymphonyElixir.StatusDashboard do
   def handle_info(:refresh, %{enabled: true} = state), do: {:noreply, maybe_render(refresh_runtime_config(state))}
   def handle_info(:refresh, state), do: {:noreply, state}
 
-  def handle_info({:flush_render, timer_ref}, %{enabled: true, flush_timer_ref: timer_ref} = state) do
-    now_ms = System.monotonic_time(:millisecond)
-
-    state =
-      case state.pending_content do
-        nil ->
-          %{state | flush_timer_ref: nil}
-
-        content ->
-          state
-          |> Map.put(:flush_timer_ref, nil)
-          |> Map.put(:pending_content, nil)
-          |> render_content(content, now_ms)
-      end
-
-    {:noreply, state}
-  end
-
-  def handle_info({:flush_render, _timer_ref}, state), do: {:noreply, state}
   def handle_info(:tick, state), do: {:noreply, state}
 
   defp refresh_runtime_config(%__MODULE__{} = state) do
@@ -180,222 +110,64 @@ defmodule SymphonyElixir.StatusDashboard do
   defp schedule_tick(_refresh_ms, false), do: :ok
 
   defp maybe_render(state) do
-    now_ms = System.monotonic_time(:millisecond)
-    {snapshot_data, token_samples} = snapshot_with_samples(state.token_samples, now_ms)
-    state = Map.put(state, :token_samples, token_samples)
+    snapshot_data = snapshot_payload()
+    fingerprint = loggable_fingerprint(snapshot_data)
 
-    current_tokens = snapshot_total_tokens(snapshot_data)
-
-    {tps_second, tps} =
-      throttled_tps(
-        state.last_tps_second,
-        state.last_tps_value,
-        now_ms,
-        token_samples,
-        current_tokens
-      )
-
-    state =
-      state
-      |> Map.put(:last_tps_second, tps_second)
-      |> Map.put(:last_tps_value, tps)
-
-    if snapshot_data != state.last_snapshot_fingerprint or periodic_rerender_due?(state, now_ms) do
-      content =
-        format_snapshot_content(
-          snapshot_data,
-          tps
-        )
-
-      state
-      |> maybe_update_snapshot_fingerprint(snapshot_data)
-      |> maybe_enqueue_render(content, now_ms)
-    else
-      state
-    end
+    state
+    |> maybe_log_snapshot_unavailable(snapshot_data, fingerprint)
+    |> maybe_update_snapshot_fingerprint(fingerprint)
   rescue
     error in [ArgumentError, RuntimeError] ->
-      Logger.warning("Failed rendering status dashboard: #{Exception.message(error)}")
+      Logger.warning("Failed refreshing status dashboard: #{Exception.message(error)}")
       state
   end
 
-  defp maybe_enqueue_render(state, content, now_ms) do
-    cond do
-      content == state.last_rendered_content ->
-        state
-
-      render_now?(state, now_ms) ->
-        render_content(state, content, now_ms)
-
-      true ->
-        schedule_flush_render(%{state | pending_content: content}, now_ms)
-    end
+  defp maybe_log_snapshot_unavailable(state, :error, fingerprint)
+       when fingerprint != state.last_snapshot_fingerprint do
+    Logger.error("Orchestrator snapshot unavailable")
+    state
   end
 
-  defp maybe_update_snapshot_fingerprint(state, snapshot_data) do
-    if snapshot_data == state.last_snapshot_fingerprint do
+  defp maybe_log_snapshot_unavailable(state, _snapshot_data, _fingerprint), do: state
+
+  defp maybe_update_snapshot_fingerprint(state, fingerprint) do
+    if fingerprint == state.last_snapshot_fingerprint do
       state
     else
-      Map.put(state, :last_snapshot_fingerprint, snapshot_data)
+      Map.put(state, :last_snapshot_fingerprint, fingerprint)
     end
   end
 
-  defp periodic_rerender_due?(%{last_rendered_at_ms: nil}, _now_ms), do: true
-
-  defp periodic_rerender_due?(%{last_rendered_at_ms: last_rendered_at_ms}, now_ms)
-       when is_integer(last_rendered_at_ms) do
-    now_ms - last_rendered_at_ms >= @minimum_idle_rerender_ms
-  end
-
-  defp periodic_rerender_due?(_state, _now_ms), do: false
-
-  defp render_now?(%{last_rendered_at_ms: nil, flush_timer_ref: nil}, _now_ms), do: true
-
-  defp render_now?(%{last_rendered_at_ms: last_rendered_at_ms, render_interval_ms: render_interval_ms}, now_ms)
-       when is_integer(last_rendered_at_ms) and is_integer(render_interval_ms) do
-    now_ms - last_rendered_at_ms >= render_interval_ms
-  end
-
-  defp render_now?(_state, _now_ms), do: false
-
-  defp schedule_flush_render(%{flush_timer_ref: timer_ref} = state, _now_ms) when is_reference(timer_ref),
-    do: state
-
-  defp schedule_flush_render(state, now_ms) do
-    delay_ms = flush_delay_ms(state, now_ms)
-    timer_ref = make_ref()
-    Process.send_after(self(), {:flush_render, timer_ref}, delay_ms)
-    %{state | flush_timer_ref: timer_ref}
-  end
-
-  defp flush_delay_ms(%{last_rendered_at_ms: nil}, _now_ms), do: 1
-
-  defp flush_delay_ms(
-         %{last_rendered_at_ms: last_rendered_at_ms, render_interval_ms: render_interval_ms},
-         now_ms
-       ) do
-    remaining = render_interval_ms - (now_ms - last_rendered_at_ms)
-    max(1, remaining)
-  end
-
-  defp render_content(state, content, now_ms) do
-    state.render_fun.(content)
-
+  defp loggable_fingerprint({:ok, %{running: running, retrying: retrying, rate_limits: rate_limits}}) do
     %{
-      state
-      | last_rendered_content: content,
-        last_rendered_at_ms: now_ms,
-        pending_content: nil,
-        flush_timer_ref: nil
+      running:
+        Enum.map(running, fn running_entry ->
+          %{
+            identifier: running_entry.identifier,
+            state: running_entry.state,
+            session_id: running_entry.session_id,
+            pid: running_entry.codex_app_server_pid,
+            tokens: running_entry.codex_total_tokens,
+            event: running_entry.last_codex_event,
+            message: summarize_message(running_entry.last_codex_message)
+          }
+        end),
+      retrying:
+        Enum.map(retrying, fn retry ->
+          %{
+            identifier: retry.identifier,
+            attempt: retry.attempt,
+            due_in_ms: retry.due_in_ms,
+            error: sanitize_retry_error(retry.error || "retry scheduled")
+          }
+        end),
+      rate_limits: rate_limits
     }
-  rescue
-    error in [ArgumentError, RuntimeError] ->
-      Logger.warning("Failed rendering terminal dashboard frame: #{Exception.message(error)}")
-      %{state | pending_content: nil, flush_timer_ref: nil}
   end
 
-  defp snapshot_with_samples(token_samples, now_ms) do
-    case snapshot_payload() do
-      {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
-        total_tokens = Map.get(codex_totals, :total_tokens, 0)
+  defp loggable_fingerprint(:error), do: :snapshot_unavailable
 
-        {
-          {:ok,
-           %{
-             running: running,
-             retrying: retrying,
-             codex_totals: codex_totals,
-             rate_limits: Map.get(snapshot, :rate_limits),
-             polling: Map.get(snapshot, :polling)
-           }},
-          update_token_samples(token_samples, now_ms, total_tokens)
-        }
-
-      :error ->
-        {
-          :error,
-          prune_samples(token_samples, now_ms)
-        }
-    end
-  end
-
-  defp format_snapshot_content(snapshot_data, tps, terminal_columns_override \\ nil) do
-    case snapshot_data do
-      {:ok, %{running: running, retrying: retrying, codex_totals: codex_totals} = snapshot} ->
-        rate_limits = Map.get(snapshot, :rate_limits)
-        codex_input_tokens = Map.get(codex_totals, :input_tokens, 0)
-        codex_output_tokens = Map.get(codex_totals, :output_tokens, 0)
-        codex_total_tokens = Map.get(codex_totals, :total_tokens, 0)
-        codex_seconds_running = Map.get(codex_totals, :seconds_running, 0)
-        agent_count = length(running)
-        max_agents = Config.settings!().agent.max_concurrent_agents
-
-        ([
-           terminal_log_line("info", "summary", "runtime", "runtime snapshot", %{
-             agents: "#{agent_count}/#{max_agents}",
-             retrying: length(retrying),
-             throughput: "#{format_tps(tps)} tps",
-             runtime: format_runtime_seconds(codex_seconds_running),
-             tokens: "in #{format_count(codex_input_tokens)} out #{format_count(codex_output_tokens)} total #{format_count(codex_total_tokens)}"
-           }),
-           terminal_log_line("info", "linear", "project", project_message(), %{}),
-           terminal_log_line("info", "dashboard", "url", dashboard_message(), %{}),
-           terminal_log_line("info", "polling", "refresh", refresh_message(Map.get(snapshot, :polling)), %{}),
-           terminal_log_line("info", "codex", "rate_limits", strip_ansi(format_rate_limits(rate_limits)), %{})
-         ] ++
-           format_running_log_rows(running, terminal_columns_override) ++
-           format_retry_log_rows(retrying))
-        |> List.flatten()
-        |> Enum.join("\n")
-
-      :error ->
-        [
-          terminal_log_line("error", "runtime", "snapshot", "orchestrator snapshot unavailable", %{}),
-          terminal_log_line("info", "summary", "throughput", "#{format_tps(tps)} tps", %{}),
-          terminal_log_line("info", "linear", "project", project_message(), %{}),
-          terminal_log_line("info", "dashboard", "url", dashboard_message(), %{}),
-          terminal_log_line("info", "polling", "refresh", refresh_message(nil), %{})
-        ]
-        |> List.flatten()
-        |> Enum.join("\n")
-    end
-  end
-
-  defp format_running_log_rows([], _terminal_columns_override) do
-    [terminal_log_line("info", "codex", "agents", "no active agents", %{})]
-  end
-
-  defp format_running_log_rows(running, terminal_columns_override) do
-    running_event_width = running_event_width(terminal_columns_override)
-
-    Enum.map(running, fn running_entry ->
-      message = summarize_message(running_entry.last_codex_message)
-
-      terminal_log_line(running_level(running_entry), "codex", running_entry.identifier || "unknown", message, %{
-        state: running_entry.state || "unknown",
-        session: compact_session_id(running_entry.session_id),
-        pid: running_entry.codex_app_server_pid || "n/a",
-        runtime: format_runtime_and_turns(running_entry.runtime_seconds || 0, Map.get(running_entry, :turn_count, 0)),
-        tokens: format_count(running_entry.codex_total_tokens || 0),
-        event: format_cell(to_string(running_entry.last_codex_event || "none"), running_event_width)
-      })
-    end)
-  end
-
-  defp format_retry_log_rows([]) do
-    [terminal_log_line("info", "retry", "queue", "no issues backing off", %{})]
-  end
-
-  defp format_retry_log_rows(retrying) do
-    Enum.map(retrying, fn retry ->
-      terminal_log_line("warning", "retry", retry.identifier || "unknown", sanitize_retry_error(retry.error || "retry scheduled"), %{
-        attempt: retry.attempt || 0,
-        due_in: format_due_in(retry.due_in_ms)
-      })
-    end)
-  end
-
-  defp format_due_in(due_in_ms), do: next_in_words(due_in_ms)
+  defp format_snapshot_content(_snapshot_data, _tps, _terminal_columns_override \\ nil), do: ""
 
   defp sanitize_retry_error(error) when is_binary(error) do
     error
@@ -411,184 +183,6 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp sanitize_retry_error(_error), do: "retry scheduled"
 
-  defp terminal_log_line(level, source, entity, message, metadata) do
-    color =
-      case level do
-        "error" -> @ansi_red
-        "warning" -> @ansi_yellow
-        "success" -> @ansi_green
-        _ -> @ansi_cyan
-      end
-
-    [
-      colorize("level=#{level}", color),
-      " source=#{source}",
-      " entity=#{entity}",
-      " message=\"#{sanitize_log_value(message)}\"",
-      format_log_metadata(metadata)
-    ]
-    |> Enum.join("")
-  end
-
-  defp format_log_metadata(metadata) when metadata in [nil, %{}], do: ""
-
-  defp format_log_metadata(metadata) when is_map(metadata) do
-    metadata
-    |> Enum.reject(fn {_key, value} -> is_nil(value) or value == "" end)
-    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
-    |> Enum.map(fn {key, value} -> "#{key}=\"#{sanitize_log_value(value)}\"" end)
-    |> case do
-      [] -> ""
-      pairs -> " " <> Enum.join(pairs, " ")
-    end
-  end
-
-  defp sanitize_log_value(value) do
-    value
-    |> to_string()
-    |> strip_ansi()
-    |> String.replace(~r/[\r\n]+/, " ")
-    |> String.trim()
-  end
-
-  defp strip_ansi(value), do: Regex.replace(~r/\e\[[0-9;]*m/, to_string(value), "")
-
-  defp running_level(running_entry) do
-    state = running_entry.state |> to_string() |> String.downcase()
-    event = running_entry.last_codex_event |> to_string() |> String.downcase()
-    message = summarize_message(running_entry.last_codex_message) |> String.downcase()
-
-    cond do
-      String.contains?(state <> event <> message, ["failed", "error", "crash"]) -> "error"
-      String.contains?(state, ["retry", "blocked", "queued"]) -> "warning"
-      true -> "info"
-    end
-  end
-
-  defp project_message do
-    case Config.settings!().tracker.project_slug do
-      project_slug when is_binary(project_slug) and project_slug != "" -> linear_project_url(project_slug)
-      _ -> "n/a"
-    end
-  end
-
-  defp dashboard_message do
-    case dashboard_url() do
-      url when is_binary(url) -> url
-      _ -> "n/a"
-    end
-  end
-
-  defp refresh_message(%{checking?: true}), do: "checking now"
-
-  defp refresh_message(%{next_poll_in_ms: due_in_ms}) when is_integer(due_in_ms) do
-    due_in_ms = max(due_in_ms, 0)
-    seconds = div(due_in_ms + 999, 1000)
-    "#{seconds}s"
-  end
-
-  defp refresh_message(_polling), do: "n/a"
-
-  defp linear_project_url(project_slug), do: "https://linear.app/project/#{project_slug}/issues"
-
-  defp dashboard_url do
-    dashboard_url(Config.settings!().server.host, Config.server_port(), HttpServer.bound_port())
-  end
-
-  defp dashboard_url(_host, nil, _bound_port), do: nil
-
-  defp dashboard_url(host, configured_port, bound_port) do
-    port = bound_port || configured_port
-
-    if is_integer(port) and port > 0 do
-      "http://#{dashboard_url_host(host)}:#{port}/"
-    else
-      nil
-    end
-  end
-
-  defp dashboard_url_host(host) when host in ["0.0.0.0", "::", "[::]", ""], do: "127.0.0.1"
-
-  defp dashboard_url_host(host) when is_binary(host) do
-    trimmed_host = String.trim(host)
-
-    cond do
-      trimmed_host in ["0.0.0.0", "::", "[::]", ""] ->
-        "127.0.0.1"
-
-      String.starts_with?(trimmed_host, "[") and String.ends_with?(trimmed_host, "]") ->
-        trimmed_host
-
-      String.contains?(trimmed_host, ":") ->
-        "[#{trimmed_host}]"
-
-      true ->
-        trimmed_host
-    end
-  end
-
-  defp render_to_terminal(content) do
-    IO.write([normalize_status_lines(content), "\n"])
-  end
-
-  defp update_token_samples(samples, now_ms, total_tokens) do
-    prune_graph_samples([{now_ms, total_tokens} | samples], now_ms)
-  end
-
-  defp prune_samples(samples, now_ms) do
-    min_timestamp = now_ms - @throughput_window_ms
-    Enum.filter(samples, fn {timestamp, _} -> timestamp >= min_timestamp end)
-  end
-
-  defp prune_graph_samples(samples, now_ms) do
-    min_timestamp = now_ms - max(@throughput_window_ms, @throughput_graph_window_ms)
-    Enum.filter(samples, fn {timestamp, _} -> timestamp >= min_timestamp end)
-  end
-
-  @doc false
-  @spec rolling_tps([{integer(), integer()}], integer(), integer()) :: float()
-  def rolling_tps(samples, now_ms, current_tokens) do
-    samples = [{now_ms, current_tokens} | samples]
-    samples = prune_samples(samples, now_ms)
-
-    case samples do
-      [] ->
-        0.0
-
-      [_one] ->
-        0.0
-
-      _ ->
-        first = List.last(samples)
-        {start_ms, start_tokens} = first
-        elapsed_ms = now_ms - start_ms
-        delta_tokens = max(0, current_tokens - start_tokens)
-
-        if elapsed_ms <= 0 do
-          0.0
-        else
-          delta_tokens / (elapsed_ms / 1000.0)
-        end
-    end
-  end
-
-  @doc false
-  @spec throttled_tps(integer() | nil, float() | nil, integer(), [{integer(), integer()}], integer()) ::
-          {integer(), float()}
-  def throttled_tps(last_second, last_value, now_ms, token_samples, current_tokens) do
-    second = div(now_ms, 1000)
-
-    if is_integer(last_second) and last_second == second and is_number(last_value) do
-      {second, last_value}
-    else
-      {second, rolling_tps(token_samples, now_ms, current_tokens)}
-    end
-  end
-
-  @doc false
-  @spec format_timestamp_for_test(DateTime.t()) :: String.t()
-  def format_timestamp_for_test(%DateTime{} = datetime), do: format_timestamp(datetime)
-
   @doc false
   @spec format_snapshot_content_for_test(term(), number()) :: String.t()
   def format_snapshot_content_for_test(snapshot_data, tps), do: format_snapshot_content(snapshot_data, tps)
@@ -597,12 +191,6 @@ defmodule SymphonyElixir.StatusDashboard do
   @spec format_snapshot_content_for_test(term(), number(), integer() | nil) :: String.t()
   def format_snapshot_content_for_test(snapshot_data, tps, terminal_columns),
     do: format_snapshot_content(snapshot_data, tps, terminal_columns)
-
-  @doc false
-  @spec dashboard_url_for_test(String.t(), non_neg_integer() | nil, non_neg_integer() | nil) ::
-          String.t() | nil
-  def dashboard_url_for_test(host, configured_port, bound_port),
-    do: dashboard_url(host, configured_port, bound_port)
 
   defp snapshot_payload do
     if Process.whereis(Orchestrator) do
@@ -630,88 +218,6 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  # credo:disable-for-next-line
-  defp format_running_summary(running_entry, running_event_width) do
-    issue = format_cell(running_entry.identifier || "unknown", @running_id_width)
-    state = running_entry.state || "unknown"
-    state_display = format_cell(to_string(state), @running_stage_width)
-    session = running_entry.session_id |> compact_session_id() |> format_cell(@running_session_width)
-    pid = format_cell(running_entry.codex_app_server_pid || "n/a", @running_pid_width)
-    total_tokens = running_entry.codex_total_tokens || 0
-    runtime_seconds = running_entry.runtime_seconds || 0
-    turn_count = Map.get(running_entry, :turn_count, 0)
-    age = format_cell(format_runtime_and_turns(runtime_seconds, turn_count), @running_age_width)
-    event = running_entry.last_codex_event || "none"
-    event_label = format_cell(summarize_message(running_entry.last_codex_message), running_event_width)
-
-    tokens = format_count(total_tokens) |> format_cell(@running_tokens_width, :right)
-
-    status_color =
-      case event do
-        :none -> @ansi_red
-        "codex/event/token_count" -> @ansi_yellow
-        "codex/event/task_started" -> @ansi_green
-        "turn_completed" -> @ansi_magenta
-        _ -> @ansi_blue
-      end
-
-    [
-      "│ ",
-      status_dot(status_color),
-      " ",
-      colorize(issue, @ansi_cyan),
-      " ",
-      colorize(state_display, status_color),
-      " ",
-      colorize(pid, @ansi_yellow),
-      " ",
-      colorize(age, @ansi_magenta),
-      " ",
-      colorize(tokens, @ansi_yellow),
-      " ",
-      colorize(session, @ansi_cyan),
-      " ",
-      colorize(event_label, status_color)
-    ]
-    |> Enum.join("")
-  end
-
-  @doc false
-  @spec format_running_summary_for_test(map(), integer() | nil) :: String.t()
-  def format_running_summary_for_test(running_entry, terminal_columns \\ nil),
-    do: format_running_summary(running_entry, running_event_width(terminal_columns))
-
-  @doc false
-  @spec format_tps_for_test(number()) :: String.t()
-  def format_tps_for_test(value), do: format_tps(value)
-
-  @doc false
-  @spec tps_graph_for_test([{integer(), integer()}], integer(), integer()) :: String.t()
-  def tps_graph_for_test(samples, now_ms, current_tokens), do: tps_graph(samples, now_ms, current_tokens)
-
-  defp next_in_words(due_in_ms) when is_integer(due_in_ms) do
-    secs = div(due_in_ms, 1000)
-    millis = rem(due_in_ms, 1000)
-    "#{secs}.#{String.pad_leading(to_string(millis), 3, "0")}s"
-  end
-
-  defp next_in_words(_), do: "n/a"
-
-  defp format_runtime_seconds(seconds) when is_integer(seconds) do
-    mins = div(seconds, 60)
-    secs = rem(seconds, 60)
-    "#{mins}m #{secs}s"
-  end
-
-  defp format_runtime_seconds(seconds) when is_binary(seconds), do: seconds
-  defp format_runtime_seconds(_), do: "0m 0s"
-
-  defp format_runtime_and_turns(seconds, turn_count) when is_integer(turn_count) and turn_count > 0 do
-    "#{format_runtime_seconds(seconds)} / #{turn_count}"
-  end
-
-  defp format_runtime_and_turns(seconds, _turn_count), do: format_runtime_seconds(seconds)
-
   defp format_count(nil), do: "0"
 
   defp format_count(value) when is_integer(value) do
@@ -732,81 +238,6 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp format_count(value), do: to_string(value)
 
-  defp running_event_width(terminal_columns) do
-    terminal_columns = terminal_columns || terminal_columns()
-
-    max(
-      @running_event_min_width,
-      terminal_columns - fixed_running_width() - @running_row_chrome_width
-    )
-  end
-
-  defp fixed_running_width do
-    @running_id_width +
-      @running_stage_width +
-      @running_pid_width +
-      @running_age_width +
-      @running_tokens_width +
-      @running_session_width
-  end
-
-  defp terminal_columns do
-    case :io.columns() do
-      {:ok, columns} when is_integer(columns) and columns > 0 ->
-        columns
-
-      _ ->
-        terminal_columns_from_env()
-    end
-  end
-
-  defp terminal_columns_from_env do
-    case System.get_env("COLUMNS") do
-      nil ->
-        fixed_running_width() + @running_row_chrome_width + @running_event_default_width
-
-      value ->
-        case Integer.parse(String.trim(value)) do
-          {columns, ""} when columns > 0 -> columns
-          _ -> @default_terminal_columns
-        end
-    end
-  end
-
-  defp format_cell(value, width, align \\ :left) do
-    value =
-      value
-      |> to_string()
-      |> String.replace("\n", " ")
-      |> String.replace(~r/\s+/, " ")
-      |> String.trim()
-      |> truncate_plain(width)
-
-    case align do
-      :right -> String.pad_leading(value, width)
-      _ -> String.pad_trailing(value, width)
-    end
-  end
-
-  defp truncate_plain(value, width) do
-    if byte_size(value) <= width do
-      value
-    else
-      String.slice(value, 0, width - 3) <> "..."
-    end
-  end
-
-  defp compact_session_id(nil), do: "n/a"
-  defp compact_session_id(session_id) when not is_binary(session_id), do: "n/a"
-
-  defp compact_session_id(session_id) do
-    if String.length(session_id) > 10 do
-      String.slice(session_id, 0, 4) <> "..." <> String.slice(session_id, -6, 6)
-    else
-      session_id
-    end
-  end
-
   defp group_thousands(value) when is_binary(value) do
     sign = if String.starts_with?(value, "-"), do: "-", else: ""
     unsigned = if sign == "", do: value, else: String.slice(value, 1, String.length(value) - 1)
@@ -821,216 +252,11 @@ defmodule SymphonyElixir.StatusDashboard do
   defp prepend("", value), do: value
   defp prepend(prefix, value), do: prefix <> value
 
-  defp format_tps(value) when is_number(value) do
-    value
-    |> trunc()
-    |> Integer.to_string()
-    |> group_thousands()
-  end
-
-  defp tps_graph(samples, now_ms, current_tokens) do
-    bucket_ms = div(@throughput_graph_window_ms, @throughput_graph_columns)
-    active_bucket_start = div(now_ms, bucket_ms) * bucket_ms
-    graph_window_start = active_bucket_start - (@throughput_graph_columns - 1) * bucket_ms
-
-    rates =
-      [{now_ms, current_tokens} | samples]
-      |> prune_graph_samples(now_ms)
-      |> Enum.sort_by(&elem(&1, 0))
-      |> Enum.chunk_every(2, 1, :discard)
-      |> Enum.map(fn [{start_ms, start_tokens}, {end_ms, end_tokens}] ->
-        elapsed_ms = end_ms - start_ms
-        delta_tokens = max(0, end_tokens - start_tokens)
-        tps = if elapsed_ms <= 0, do: 0.0, else: delta_tokens / (elapsed_ms / 1000.0)
-        {end_ms, tps}
-      end)
-
-    bucketed_tps =
-      0..(@throughput_graph_columns - 1)
-      |> Enum.map(fn bucket_idx ->
-        bucket_start = graph_window_start + bucket_idx * bucket_ms
-        bucket_end = bucket_start + bucket_ms
-        last_bucket? = bucket_idx == @throughput_graph_columns - 1
-
-        values =
-          rates
-          |> Enum.filter(fn {timestamp, _tps} ->
-            in_bucket?(timestamp, bucket_start, bucket_end, last_bucket?)
-          end)
-          |> Enum.map(fn {_timestamp, tps} -> tps end)
-
-        if values == [] do
-          0.0
-        else
-          Enum.sum(values) / length(values)
-        end
-      end)
-
-    max_tps = Enum.max(bucketed_tps, fn -> 0.0 end)
-
-    bucketed_tps
-    |> Enum.map_join(fn value ->
-      index =
-        if max_tps <= 0 do
-          0
-        else
-          round(value / max_tps * (length(@sparkline_blocks) - 1))
-        end
-
-      Enum.at(@sparkline_blocks, index, "▁")
-    end)
-  end
-
-  defp in_bucket?(timestamp, bucket_start, bucket_end, true),
-    do: timestamp >= bucket_start and timestamp <= bucket_end
-
-  defp in_bucket?(timestamp, bucket_start, bucket_end, false),
-    do: timestamp >= bucket_start and timestamp < bucket_end
-
-  defp format_rate_limits(nil), do: colorize("unavailable", @ansi_gray)
-
-  defp format_rate_limits(rate_limits) when is_map(rate_limits) do
-    limit_id =
-      map_value(rate_limits, ["limit_id", :limit_id, "limit_name", :limit_name]) ||
-        "unknown"
-
-    primary = format_rate_limit_bucket(map_value(rate_limits, ["primary", :primary]))
-    secondary = format_rate_limit_bucket(map_value(rate_limits, ["secondary", :secondary]))
-    credits = format_rate_limit_credits(map_value(rate_limits, ["credits", :credits]))
-
-    colorize(to_string(limit_id), @ansi_yellow) <>
-      colorize(" | ", @ansi_gray) <>
-      colorize("primary #{primary}", @ansi_cyan) <>
-      colorize(" | ", @ansi_gray) <>
-      colorize("secondary #{secondary}", @ansi_cyan) <>
-      colorize(" | ", @ansi_gray) <>
-      colorize(credits, @ansi_green)
-  end
-
-  defp format_rate_limits(other) do
-    other
-    |> inspect(limit: 10)
-    |> truncate(80)
-    |> colorize(@ansi_gray)
-  end
-
-  defp format_rate_limit_bucket(nil), do: "n/a"
-
-  defp format_rate_limit_bucket(bucket) when is_map(bucket) do
-    remaining = map_value(bucket, ["remaining", :remaining])
-    limit = map_value(bucket, ["limit", :limit])
-
-    reset_value =
-      map_value(bucket, [
-        "reset_in_seconds",
-        :reset_in_seconds,
-        "resetInSeconds",
-        :resetInSeconds,
-        "reset_at",
-        :reset_at,
-        "resetAt",
-        :resetAt,
-        "resets_at",
-        :resets_at,
-        "resetsAt",
-        :resetsAt
-      ])
-
-    base =
-      cond do
-        integer_like?(remaining) and integer_like?(limit) ->
-          "#{format_count(remaining)}/#{format_count(limit)}"
-
-        integer_like?(remaining) ->
-          "remaining #{format_count(remaining)}"
-
-        integer_like?(limit) ->
-          "limit #{format_count(limit)}"
-
-        map_size(bucket) == 0 ->
-          "n/a"
-
-        true ->
-          bucket |> inspect(limit: 6) |> truncate(40)
-      end
-
-    if is_nil(reset_value) do
-      base
-    else
-      "#{base} reset #{format_reset_value(reset_value)}"
-    end
-  end
-
-  defp format_rate_limit_bucket(other), do: to_string(other)
-
-  defp format_rate_limit_credits(nil), do: "credits n/a"
-
-  defp format_rate_limit_credits(credits) when is_map(credits) do
-    unlimited = map_value(credits, ["unlimited", :unlimited]) == true
-    has_credits = map_value(credits, ["has_credits", :has_credits]) == true
-    balance = map_value(credits, ["balance", :balance])
-
-    cond do
-      unlimited ->
-        "credits unlimited"
-
-      has_credits and is_number(balance) ->
-        "credits #{format_number(balance)}"
-
-      has_credits ->
-        "credits available"
-
-      true ->
-        "credits none"
-    end
-  end
-
-  defp format_rate_limit_credits(other), do: "credits #{to_string(other)}"
-
-  defp format_reset_value(value) when is_integer(value), do: "#{format_count(value)}s"
-  defp format_reset_value(value) when is_binary(value), do: value
-  defp format_reset_value(value), do: to_string(value)
-
-  defp format_number(value) when is_integer(value), do: format_count(value)
-
-  defp format_number(value) when is_float(value) do
-    value
-    |> Float.round(2)
-    |> :erlang.float_to_binary(decimals: 2)
-  end
-
   defp map_value(map, keys) when is_map(map) and is_list(keys) do
     Enum.find_value(keys, &Map.get(map, &1))
   end
 
   defp map_value(_map, _keys), do: nil
-
-  defp integer_like?(value) when is_integer(value), do: true
-  defp integer_like?(_value), do: false
-
-  defp status_dot(color_code) do
-    colorize("●", color_code)
-  end
-
-  defp snapshot_total_tokens({:ok, %{codex_totals: codex_totals}}) when is_map(codex_totals) do
-    Map.get(codex_totals, :total_tokens, 0)
-  end
-
-  defp snapshot_total_tokens(_snapshot_data), do: 0
-
-  defp format_timestamp(datetime) do
-    datetime
-    |> DateTime.truncate(:second)
-    |> DateTime.to_string()
-  end
-
-  defp normalize_status_lines(content) do
-    content
-  end
-
-  defp colorize(value, code) do
-    "#{code}#{value}#{@ansi_reset}"
-  end
 
   @doc false
   @spec humanize_codex_message(term()) :: String.t()

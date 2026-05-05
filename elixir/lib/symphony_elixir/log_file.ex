@@ -9,6 +9,7 @@ defmodule SymphonyElixir.LogFile do
   @default_log_relative_path "log/symphony.log"
   @default_max_bytes 10 * 1024 * 1024
   @default_max_files 5
+  @logger_formatter {:logger_formatter, %{single_line: true}}
 
   @spec default_log_file() :: Path.t()
   def default_log_file do
@@ -33,6 +34,7 @@ defmodule SymphonyElixir.LogFile do
     expanded_path = Path.expand(log_file)
     :ok = File.mkdir_p(Path.dirname(expanded_path))
     :ok = remove_existing_handler()
+    :ok = configure_default_console_handler()
 
     case :logger.add_handler(
            @handler_id,
@@ -40,7 +42,6 @@ defmodule SymphonyElixir.LogFile do
            disk_log_handler_config(expanded_path, max_bytes, max_files)
          ) do
       :ok ->
-        remove_default_console_handler()
         :ok
 
       {:error, reason} ->
@@ -57,10 +58,28 @@ defmodule SymphonyElixir.LogFile do
     end
   end
 
-  defp remove_default_console_handler do
-    case :logger.remove_handler(:default) do
+  defp configure_default_console_handler do
+    case :logger.update_handler_config(:default, :formatter, @logger_formatter) do
+      :ok ->
+        :logger.update_handler_config(:default, :level, :info)
+        :ok
+
+      {:error, {:not_found, :default}} ->
+        add_default_console_handler()
+
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp add_default_console_handler do
+    case :logger.add_handler(:default, :logger_std_h, %{
+           level: :info,
+           formatter: @logger_formatter,
+           config: %{type: :standard_error}
+         }) do
       :ok -> :ok
-      {:error, {:not_found, :default}} -> :ok
+      {:error, {:already_exist, :default}} -> :ok
       {:error, _reason} -> :ok
     end
   end
@@ -68,7 +87,7 @@ defmodule SymphonyElixir.LogFile do
   defp disk_log_handler_config(path, max_bytes, max_files) do
     %{
       level: :all,
-      formatter: {:logger_formatter, %{single_line: true}},
+      formatter: @logger_formatter,
       config: %{
         file: String.to_charlist(path),
         type: :wrap,
