@@ -34,6 +34,9 @@ Plans should focus on product and engineering intent rather than full implementa
 26. [026-persistence-boundary-and-mocked-tests.md](completed/026-persistence-boundary-and-mocked-tests.md)
 27. [027-log-oriented-status-dashboard.md](completed/027-log-oriented-status-dashboard.md)
 28. [028-modern-web-top-banner.md](completed/028-modern-web-top-banner.md)
+29. [029-linear-workflow-state-model.md](completed/029-linear-workflow-state-model.md)
+30. [030-docker-image-modes.md](completed/030-docker-image-modes.md)
+31. [031-runtime-proxy-env-support.md](completed/031-runtime-proxy-env-support.md)
 
 ## Plan Guidelines
 
@@ -58,4 +61,11 @@ When implementation starts, keep the plan current. If the implementation discove
 
 ## Active Plans
 
-None.
+32. [032-workflow-profile-policy-schema.md](032-workflow-profile-policy-schema.md)
+33. [033-linear-task-read-update-tools.md](033-linear-task-read-update-tools.md)
+34. [034-codex-sensitive-env-scrub.md](034-codex-sensitive-env-scrub.md)
+35. [035-profile-aware-prompt-builder.md](035-profile-aware-prompt-builder.md)
+36. [036-orchestrator-profile-activity-dispatch.md](036-orchestrator-profile-activity-dispatch.md)
+37. [037-refinement-workflow-execution.md](037-refinement-workflow-execution.md)
+38. [038-implementation-workflow-execution.md](038-implementation-workflow-execution.md)
+39. [039-linear-skill-and-docs-restricted-tools.md](039-linear-skill-and-docs-restricted-tools.md)

@@ -325,6 +325,14 @@ Phoenix Web / Orchestrator
 
 Rust 的优先使用位置不是主 Web 服务，而是未来的 sandbox runner 或 worker launcher。
 
+### Codex 和 Linear 的权限边界
+
+Codex 不应直接持有 Linear API Key，也不应获得对 Linear 的通用 GraphQL 调用能力。长期生产形态
+应由 Symphony 后端托管 Linear API 访问，并向 Codex 暴露窄权限、语义化的 task tools，例如读取当前
+任务、追加当前任务评论、请求受控状态流转。
+
+详细行为契约维护在 [Codex 与 Linear 交互行为设计](codex_linear_interaction.zh-CN.md)。
+
 ## 9. 性能方向
 
 当前系统的性能瓶颈更可能来自：
