@@ -66,10 +66,12 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                       "name" => "Team",
                       "states" => %{
                         "nodes" => [
-                          %{"name" => "Todo"},
+                          %{"name" => "Refining"},
+                          %{"name" => "Ready"},
                           %{"name" => "In Progress"},
+                          %{"name" => "Ready to Merge"},
+                          %{"name" => "Merging"},
                           %{"name" => "Done"},
-                          %{"name" => "Closed"},
                           %{"name" => "Cancelled"},
                           %{"name" => "Canceled"},
                           %{"name" => "Duplicate"}
@@ -113,7 +115,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       id: "issue-1",
       identifier: "LIN-1",
       title: "Wire Linear diagnostics",
-      state: "Todo",
+      state: "Ready",
       assignee_id: "user-1",
       labels: ["backend", "ops"],
       blocked_by: [%{id: "blocker-1", identifier: "LIN-0", state: "Done"}],
@@ -147,7 +149,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert diagnostics.probes.project.status == :ok
     assert diagnostics.probes.states.status == :ok
     assert diagnostics.probes.candidates.status == :ok
-    assert [%{identifier: "LIN-1", state: "Todo", assignee: "assigned"}] = diagnostics.issues
+    assert [%{identifier: "LIN-1", state: "Ready", assignee: "assigned"}] = diagnostics.issues
   end
 
   test "database workflow source controls diagnostics project slug through fake persistence" do
@@ -162,8 +164,8 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       endpoint: "https://api.linear.app/graphql"
       api_key: "token"
       project_slug: "db-project"
-      active_states: ["Todo", "In Progress"]
-      terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]
+      active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+      terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
     workspace:
@@ -222,7 +224,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                 "id" => "project-1",
                 "name" => "Project",
                 "slugId" => "project",
-                "teams" => %{"nodes" => [%{"name" => "Team", "states" => %{"nodes" => [%{"name" => "Todo"}]}}]}
+                "teams" => %{"nodes" => [%{"name" => "Team", "states" => %{"nodes" => [%{"name" => "Ready"}]}}]}
               }
             ]
           }
@@ -233,7 +235,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     diagnostics = Diagnostics.run()
 
     assert diagnostics.probes.states.status == :error
-    assert "In Progress" in diagnostics.probes.states.data.missing_active
+    assert "Refining" in diagnostics.probes.states.data.missing_active
     assert "Done" in diagnostics.probes.states.data.missing_terminal
     assert Enum.any?(diagnostics.log, &(&1.step == "states" and &1.status == :error))
   end

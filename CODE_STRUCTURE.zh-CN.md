@@ -25,7 +25,9 @@
     ├── mix.exs
     ├── mix.lock
     ├── config/
+    ├── docs/
     ├── lib/
+    ├── priv/
     └── test/
 ```
 
@@ -68,6 +70,8 @@ elixir/
 | `elixir/mise.toml` | 运行时工具版本：Erlang 28、Elixir 1.19.5 OTP 28。 |
 | `elixir/mix.exs` | Mix 项目定义，包含依赖、alias、escript 构建配置。 |
 | `elixir/config/config.exs` | Phoenix/Bandit endpoint 和 JSON 配置。 |
+| `elixir/priv/repo/migrations` | SQLite/Ecto migration。 |
+| `elixir/docs` | 用户指南、设计、日志、token 统计和已完成计划文档。 |
 
 ## 4. 应用启动入口
 
@@ -82,6 +86,7 @@ elixir/
 
 ```text
 SymphonyElixir.Supervisor
+├── SymphonyElixir.Repo（MIX_ENV=test 时跳过）
 ├── Phoenix.PubSub
 ├── Task.Supervisor
 ├── SymphonyElixir.WorkflowStore
@@ -104,7 +109,11 @@ elixir/lib/symphony_elixir/
 ├── log_file.ex
 ├── orchestrator.ex
 ├── path_safety.ex
+├── persistence.ex
+├── persistence/
+├── persistence_provider.ex
 ├── prompt_builder.ex
+├── repo.ex
 ├── specs_check.ex
 ├── ssh.ex
 ├── status_dashboard.ex
@@ -131,6 +140,9 @@ elixir/lib/symphony_elixir/
 | `SymphonyElixir.HttpServer` | `http_server.ex` | 启动可选 Phoenix/Bandit 观测 HTTP 服务。 |
 | `SymphonyElixir.StatusDashboard` | `status_dashboard.ex` | 终端/operator 状态展示。 |
 | `SymphonyElixir.LogFile` | `log_file.ex` | 运行日志文件配置和写入。 |
+| `SymphonyElixir.Persistence` | `persistence.ex` | SQLite-backed projects、workflow、runs、tasks、workers、leases 和 events。 |
+| `SymphonyElixir.PersistenceProvider` | `persistence_provider.ex` | 测试中替换 persistence fake 的运行时边界。 |
+| `SymphonyElixir.Repo` | `repo.ex` | Ecto repository。 |
 | `SymphonyElixir.SSH` | `ssh.ex` | SSH worker 支持。 |
 | `SymphonyElixir.SpecsCheck` | `specs_check.ex` | 内部规范一致性检查。 |
 
@@ -174,14 +186,19 @@ elixir/lib/symphony_elixir/codex/
 
 ```text
 elixir/lib/symphony_elixir_web/
+├── auth_plug.ex
 ├── components/layouts.ex
 ├── controllers/
 │   ├── observability_api_controller.ex
-│   └── static_asset_controller.ex
+│   ├── session_controller.ex
+│   ├── static_asset_controller.ex
+│   └── worker_api_controller.ex
 ├── endpoint.ex
 ├── error_html.ex
 ├── error_json.ex
+├── live/admin_live.ex
 ├── live/dashboard_live.ex
+├── live/linear_diagnostics_live.ex
 ├── observability_pubsub.ex
 ├── presenter.ex
 ├── router.ex
@@ -192,8 +209,13 @@ elixir/lib/symphony_elixir_web/
 | --- | --- | --- |
 | `SymphonyElixirWeb.Endpoint` | `endpoint.ex` | Phoenix endpoint。 |
 | `SymphonyElixirWeb.Router` | `router.ex` | dashboard、静态资源和 JSON API 的路由。 |
+| `SymphonyElixirWeb.AuthPlug` | `auth_plug.ex` | 可选 browser/API 登录认证入口。 |
+| `SymphonyElixirWeb.SessionController` | `controllers/session_controller.ex` | 登录/登出 controller。 |
 | `SymphonyElixirWeb.DashboardLive` | `live/dashboard_live.ex` | LiveView dashboard 页面。 |
+| `SymphonyElixirWeb.AdminLive` | `live/admin_live.ex` | projects、runs、workers、workflows、settings 管理页面。 |
+| `SymphonyElixirWeb.LinearDiagnosticsLive` | `live/linear_diagnostics_live.ex` | Linear 诊断页面。 |
 | `SymphonyElixirWeb.ObservabilityApiController` | `controllers/observability_api_controller.ex` | 运行状态 JSON API 和刷新接口。 |
+| `SymphonyElixirWeb.WorkerApiController` | `controllers/worker_api_controller.ex` | 外部 worker 注册、领取任务、心跳和事件 API。 |
 | `SymphonyElixirWeb.StaticAssetController` | `controllers/static_asset_controller.ex` | 提供内置静态资源。 |
 | `SymphonyElixirWeb.Presenter` | `presenter.ex` | 将 runtime state 转换成 UI/API 展示数据。 |
 | `SymphonyElixirWeb.ObservabilityPubSub` | `observability_pubsub.ex` | dashboard 状态更新的 PubSub 辅助模块。 |
@@ -205,10 +227,21 @@ elixir/lib/symphony_elixir_web/
 
 ```text
 GET  /                         LiveView dashboard
+GET  /login                    登录页面（启用认证时使用）
+GET  /projects                 项目管理
+GET  /runs                     run 历史
+GET  /workers                  worker、task 和 lease 状态
+GET  /workflows                workflow 原文编辑和版本历史
+GET  /settings                 运行配置摘要
+GET  /diagnostics/linear       Linear 诊断
 GET  /dashboard.css             Dashboard 样式
 GET  /api/v1/state              完整运行状态 JSON
 POST /api/v1/refresh            触发刷新
 GET  /api/v1/:issue_identifier  单个 issue 的状态 JSON
+POST /api/worker/v1/register    worker 注册
+POST /api/worker/v1/tasks/claim worker 领取任务
+POST /api/worker/v1/heartbeat   worker 心跳和 lease 续期
+POST /api/worker/v1/tasks/:id/events worker task 事件上报
 ```
 
 ## 9. Mix Tasks
@@ -217,6 +250,7 @@ GET  /api/v1/:issue_identifier  单个 issue 的状态 JSON
 elixir/lib/mix/tasks/
 ├── pr_body.check.ex
 ├── specs.check.ex
+├── symphony.build.ex
 └── workspace.before_remove.ex
 ```
 
@@ -224,6 +258,7 @@ elixir/lib/mix/tasks/
 | --- | --- |
 | `mix pr_body.check` | 检查 PR body 是否符合预期。 |
 | `mix specs.check` | 检查实现和规范的一致性。 |
+| `mix symphony.build` | 构建 `mix build` 使用的 escript 可执行文件。 |
 | `mix workspace.before_remove` | workspace 删除前使用的 hook task。 |
 
 ## 10. 测试结构
@@ -232,7 +267,6 @@ elixir/lib/mix/tasks/
 elixir/test/
 ├── mix/tasks/
 ├── support/
-├── fixtures/
 └── symphony_elixir/
 ```
 
@@ -244,14 +278,17 @@ elixir/test/
 | `test/symphony_elixir/dynamic_tool_test.exs` | dynamic tool 行为测试。 |
 | `test/symphony_elixir/cli_test.exs` | CLI 参数和启动行为测试。 |
 | `test/symphony_elixir/orchestrator_status_test.exs` | Orchestrator 状态输出测试。 |
-| `test/symphony_elixir/status_dashboard_snapshot_test.exs` | 状态 dashboard 快照测试。 |
+| `test/symphony_elixir/status_dashboard_log_test.exs` | 状态 dashboard 日志渲染和旧格式回归测试。 |
+| `test/symphony_elixir/auth_persistence_web_test.exs` | 认证和 persistence-backed Web UI 行为测试。 |
 | `test/symphony_elixir/observability_pubsub_test.exs` | 观测 PubSub 行为测试。 |
 | `test/symphony_elixir/log_file_test.exs` | 日志文件行为测试。 |
+| `test/symphony_elixir/persistence_provider_test.exs` | persistence provider 边界行为测试。 |
+| `test/symphony_elixir/web_fake_persistence_test.exs` | Web 和 worker API 的 fake persistence 行为测试。 |
+| `test/symphony_elixir/linear_diagnostics_test.exs` | Linear 诊断行为和路由保护测试。 |
 | `test/symphony_elixir/ssh_test.exs` | SSH worker 行为测试。 |
 | `test/symphony_elixir/live_e2e_test.exs` | 真实外部端到端测试，会使用 Linear 和 Codex。 |
 | `test/mix/tasks/*_test.exs` | 自定义 Mix tasks 测试。 |
 | `test/support/*` | 测试辅助模块。 |
-| `test/fixtures/status_dashboard_snapshots/*` | dashboard 快照 fixture 和 evidence 文件。 |
 
 ## 11. 主调用链
 
@@ -263,6 +300,7 @@ bin/symphony
     └── SymphonyElixir.CLI.evaluate/2
         └── Application.ensure_all_started(:symphony_elixir)
             └── SymphonyElixir.Application.start/2
+                ├── SymphonyElixir.Repo
                 ├── SymphonyElixir.WorkflowStore
                 ├── SymphonyElixir.Orchestrator
                 ├── SymphonyElixir.HttpServer
@@ -275,10 +313,11 @@ issue 执行链路：
 SymphonyElixir.Orchestrator
 ├── 从 WorkflowStore / Config 读取配置
 ├── 通过 Tracker / Linear.Adapter 拉取 issues
-├── 通过 Workspace 准备 issue workspace
-├── 通过 PromptBuilder 渲染 prompt
-├── 通过 AgentRunner 启动 agent run
-└── 通过 Codex.AppServer 与 Codex app-server 通信
+├── centralized 模式：通过 Workspace 准备 issue workspace
+├── centralized 模式：通过 PromptBuilder 渲染 prompt
+├── centralized 模式：通过 AgentRunner 启动 agent run
+├── centralized 模式：通过 Codex.AppServer 与 Codex app-server 通信
+└── worker 模式：持久化 run/task，等待 WorkerApiController 被外部 worker claim
 ```
 
 ## 12. 常见修改入口
@@ -295,8 +334,11 @@ SymphonyElixir.Orchestrator
 | 新增另一个 tracker | `tracker.ex`，然后实现新的 adapter 模块 |
 | 修改 Codex app-server 协议处理 | `codex/app_server.ex` |
 | 修改暴露给 Codex 的 dynamic tools | `codex/dynamic_tool.ex` |
-| 修改 dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `presenter.ex` |
+| 修改 dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `symphony_elixir_web/live/admin_live.ex`, `presenter.ex` |
 | 修改 JSON 观测 API | `symphony_elixir_web/controllers/observability_api_controller.ex` |
+| 修改 worker API 行为 | `symphony_elixir_web/controllers/worker_api_controller.ex`, `persistence.ex` |
+| 修改 persistence schema | `persistence/*.ex`, `priv/repo/migrations/*` |
+| 修改认证行为 | `symphony_elixir_web/auth_plug.ex`, `controllers/session_controller.ex` |
 | 修改终端状态展示 | `status_dashboard.ex` |
 | 修改核心编排测试 | `test/symphony_elixir/core_test.exs` |
 
@@ -317,4 +359,3 @@ mise exec -- make all
 export LINEAR_API_KEY=...
 mise exec -- make e2e
 ```
-

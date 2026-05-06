@@ -16,7 +16,10 @@
 - **Panel**：Elixir/Phoenix 服务，负责配置、调度、持久化、dashboard、审计和 operator control。
 - **Worker**：外部执行进程，主动连接 Panel、领取任务、执行任务并回传状态。生产 worker 按目前技术方向使用 Rust 实现。
 
-本设计文档只描述当前仓库要实现的 **Panel / 服务端设计**。Rust worker 的内部实现不在本文范围内，但 Panel 协议必须足够稳定，让 Rust worker 可以独立开发。
+本设计文档描述当前仓库的 **Panel / 服务端设计**。其中 Panel 侧数据模型、worker
+registration、task claim、heartbeat/lease、task event 上报、dashboard worker 页面，以及
+`SYMPHONY_EXECUTION_MODE=worker` 入队路径已经在 Elixir 仓库中落地。Rust worker 的内部实现
+不在本文范围内，但 Panel 协议必须足够稳定，让 Rust worker 可以独立开发。
 
 ## 2. 设计目标
 
@@ -28,7 +31,8 @@
 - Worker 崩溃或断网后，lease 可以过期并按 retry policy 重新排队。
 - Dashboard 可以展示 worker 在线状态、活跃 lease、任务队列、失败、取消和历史事件。
 - 长期支持集中式部署和 worker 部署两种模式；不会在 worker API 出现后立刻强制切换到 worker-only。
-- 初期保留当前 in-process execution 兼容路径，等 Rust worker 能端到端跑通后，再由配置显式切换默认执行路径。
+- 保留当前 in-process execution 兼容路径；当前默认仍是 `centralized`，显式设置
+  `SYMPHONY_EXECUTION_MODE=worker` 时才切换为外部 worker task 队列。
 
 ## 3. 非目标
 
@@ -84,7 +88,9 @@ worker
   适合需要隔离、远程执行、多机器执行或更强资源边界的部署。
 ```
 
-后续可以评估 `hybrid` 模式：同一个 Panel 同时允许部分 project 使用集中式执行，部分 project 使用 worker 执行。但第一版只需要保证 execution mode 是显式配置，并且 worker 功能不会破坏 centralized 默认路径。
+当前代码通过 `SYMPHONY_EXECUTION_MODE` 在 `centralized` 和 `worker` 之间全局切换。后续可以评估
+`hybrid` 模式：同一个 Panel 同时允许部分 project 使用集中式执行，部分 project 使用 worker
+执行。但当前要求是 execution mode 显式配置，并且 worker 功能不会破坏 centralized 默认路径。
 
 ## 5. Panel 责任边界
 
@@ -490,4 +496,4 @@ Panel UI 需要增加：
 
 Panel / Worker 解耦的核心是把 Symphony 的执行从“Panel 直接跑本地任务”改为“Panel 持久化任务并通过租约分配给外部 worker”。
 
-当前 Elixir 仓库应优先实现 Panel 侧能力：协议、认证、任务队列、租约、心跳、结果回传、dashboard 和兼容迁移。Rust worker 作为独立执行面，通过稳定 HTTP/JSON 协议接入。
+当前 Elixir 仓库已经优先落地 Panel 侧能力：协议、认证、任务队列、租约、心跳、结果回传、dashboard 和兼容迁移。Rust worker 作为独立执行面，通过稳定 HTTP/JSON 协议接入。

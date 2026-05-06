@@ -174,6 +174,25 @@ codex:
 
 `WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
 
+当前默认 Linear 状态流是：
+
+```text
+Backlog
+  -> Refining
+  -> Needs Refinement Review
+  -> Ready
+  -> In Progress
+  -> Needs Implementation Review
+  -> Ready to Merge
+  -> Merging
+  -> Done
+```
+
+其中 `Refining`、`Ready`、`In Progress`、`Ready to Merge`、`Merging` 是 agent 可处理状态，
+会放进 `tracker.active_states`。`Needs Refinement Review` 和
+`Needs Implementation Review` 是人工确认状态，不应放进 active states。`Done`、`Canceled`
+和 `Duplicate` 是终态。
+
 ## 8. 启动 Symphony
 
 只启动编排服务，不开 dashboard：
@@ -231,6 +250,7 @@ mise exec -- ./bin/symphony \
 /workers      worker、task、lease 状态；集中式部署下可为空
 /workflows    WORKFLOW.md raw 编辑和版本历史
 /settings     tracker/config 摘要
+/diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
 ```
 
@@ -242,9 +262,21 @@ mise exec -- ./bin/symphony \
 export SYMPHONY_EXECUTION_MODE=centralized
 ```
 
-集中式模式下，Phoenix Panel 继续负责本地执行，不需要注册 worker。后续 worker 模式会通过 Rust worker 主动连接 Panel；当前仓库已经提供 Panel 侧 worker API 和 dashboard 基础页面，但不会默认切到 worker-only。
+集中式模式下，Phoenix Panel 负责执行，不需要注册外部 worker。如果 `WORKFLOW.md` 配了
+`worker.ssh_hosts`，集中式执行会在这些 SSH host 上准备 workspace、运行 hooks，并启动
+`codex app-server`；否则就在本机运行。
 
-如果要测试 worker API，可以设置：
+worker 模式已经接入当前 orchestrator：
+
+```bash
+export SYMPHONY_EXECUTION_MODE=worker
+```
+
+此模式下，orchestrator 不直接启动 Codex，而是把 issue 持久化为 worker task，等待外部
+worker 通过 `/api/worker/v1/*` 注册、claim、heartbeat 和上报事件。当前仓库实现的是 Panel
+侧 HTTP/JSON 协议和 dashboard；生产级外部 worker 仍由独立进程/仓库提供。
+
+worker API 需要 registration token：
 
 ```bash
 export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
@@ -289,7 +321,7 @@ export LINEAR_API_KEY="..."
 mise exec -- make e2e
 ```
 
-## 11. 常见问题
+## 12. 常见问题
 
 ### 找不到 Elixir 或 Erlang
 
@@ -311,13 +343,21 @@ mise exec -- mix ecto.migrate
 
 ### Dashboard 无法访问
 
-确认启动时传了 `--port`：
+确认启动时传了 `--port`，并且没有被认证重定向挡住：
 
 ```bash
 mise exec -- ./bin/symphony \
   --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   --port 4000 \
   ./WORKFLOW.md
+```
+
+如果使用 dashboard-first 数据库模式，不要传 `./WORKFLOW.md`：
+
+```bash
+mise exec -- ./bin/symphony \
+  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
+  --port 4000
 ```
 
 ### Linear 拉不到 issue
@@ -328,3 +368,6 @@ mise exec -- ./bin/symphony \
 - `WORKFLOW.md` 里的 `tracker.project_slug` 是否正确
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
+
+也可以打开 `/diagnostics/linear` 查看 token、project slug、workflow source、configured
+states 和候选 issue 查询结果。

@@ -3,7 +3,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   Read-only Linear integration diagnostics for the Web UI.
   """
 
-  alias SymphonyElixir.{Config, Linear.Client, Linear.Issue, WorkflowStore}
+  alias SymphonyElixir.{Linear.Client, Linear.Issue, WorkflowStore}
+  alias SymphonyElixir.Config.Schema
   require Logger
 
   @viewer_query """
@@ -72,12 +73,13 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   def run(opts \\ []) do
     client = Keyword.get(opts, :client_module, client_module())
 
-    runtime_source = runtime_source()
+    workflow_context = workflow_context()
+    runtime_source = runtime_source(workflow_context)
 
     context = run_context(runtime_source)
 
     result =
-      case Config.settings() do
+      case settings_from_workflow_context(workflow_context) do
         {:ok, settings} ->
           run_with_settings(settings, client, runtime_source)
 
@@ -87,6 +89,15 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
     finalize_result(result, context)
   end
+
+  defp workflow_context, do: WorkflowStore.current_with_source()
+
+  defp settings_from_workflow_context({:ok, %{workflow: %{config: config}}}) when is_map(config) do
+    Schema.parse(config)
+  end
+
+  defp settings_from_workflow_context({:error, reason}), do: {:error, reason}
+  defp settings_from_workflow_context(_context), do: {:error, :workflow_config_unavailable}
 
   defp run_with_settings(settings, client, runtime_source) do
     tracker = settings.tracker
@@ -499,8 +510,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     "linear_diagnostics step=#{entry.step} status=#{entry.status} message=#{entry.message} metadata=#{inspect(entry.metadata, limit: 20, printable_limit: 500)}"
   end
 
-  defp runtime_source do
-    case WorkflowStore.current_with_source() do
+  defp runtime_source(workflow_context) do
+    case workflow_context do
       {:ok, %{source: source}} -> format_runtime_source(source)
       {:error, reason} -> %{type: "unavailable", detail: format_reason(reason)}
     end

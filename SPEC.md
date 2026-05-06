@@ -24,8 +24,9 @@ The service solves four operational problems:
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps the workflow policy in-repo (`WORKFLOW.md`) so teams version the agent prompt and runtime
-  settings with their code.
+- It keeps the workflow policy in a `WORKFLOW.md` contract so teams can version the agent prompt and
+  runtime settings with their code. Implementations MAY also import, persist, version, and serve an
+  active workflow contract from a control-plane datastore.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
 
 Implementations are expected to document their trust and safety posture explicitly. This
@@ -38,7 +39,7 @@ Important boundary:
 - Symphony is a scheduler/runner and tracker reader.
 - Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
   using tools available in the workflow/runtime environment.
-- A successful run can end at a workflow-defined handoff state (for example `Human Review`), not
+- A successful run can end at a workflow-defined handoff state (for example `Needs Implementation Review`), not
   necessarily `Done`.
 
 ## 2. Goals and Non-Goals
@@ -50,7 +51,8 @@ Important boundary:
 - Create deterministic per-issue workspaces and preserve them across runs.
 - Stop active runs when issue state changes make them ineligible.
 - Recover from transient failures with exponential backoff.
-- Load runtime behavior from a repository-owned `WORKFLOW.md` contract.
+- Load runtime behavior from a `WORKFLOW.md` contract, or from an implementation-defined persisted
+  workflow version derived from that same contract.
 - Expose operator-visible observability (at minimum structured logs).
 - Support tracker/filesystem-driven restart recovery without requiring a persistent database; exact
   in-memory scheduler state is not restored.
@@ -71,7 +73,7 @@ Important boundary:
 ### 3.1 Main Components
 
 1. `Workflow Loader`
-   - Reads `WORKFLOW.md`.
+   - Reads `WORKFLOW.md` or an implementation-defined active persisted workflow version.
    - Parses YAML front matter and prompt body.
    - Returns `{config, prompt_template}`.
 
@@ -359,9 +361,9 @@ Fields:
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
 - `active_states` (list of strings)
-  - Default: `Todo`, `In Progress`
+  - Default: `Refining`, `Ready`, `In Progress`, `Ready to Merge`, `Merging`
 - `terminal_states` (list of strings)
-  - Default: `Closed`, `Cancelled`, `Canceled`, `Duplicate`, `Done`
+  - Default: `Canceled`, `Cancelled`, `Duplicate`, `Done`
 
 #### 5.3.2 `polling` (object)
 
@@ -574,8 +576,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`
-- `tracker.active_states`: list of strings, default `["Todo", "In Progress"]`
-- `tracker.terminal_states`: list of strings, default `["Closed", "Cancelled", "Canceled", "Duplicate", "Done"]`
+- `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]`
+- `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
 - `hooks.after_create`: shell script or null
@@ -602,7 +604,7 @@ reported back to it and converted into explicit state transitions.
 
 ### 7.1 Issue Orchestration States
 
-This is not the same as tracker states (`Todo`, `In Progress`, etc.). This is the service's internal
+This is not the same as tracker states (`Ready`, `In Progress`, etc.). This is the service's internal
 claim state.
 
 1. `Unclaimed`
@@ -724,8 +726,8 @@ An issue is dispatch-eligible only if all are true:
 - It is not already in `claimed`.
 - Global concurrency slots are available.
 - Per-state concurrency slots are available.
-- Blocker rule for `Todo` state passes:
-  - If the issue state is `Todo`, do not dispatch when any blocker is non-terminal.
+- Blocker rule for `Ready` state passes:
+  - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
 
 Sorting order (stable intent):
 
@@ -1205,7 +1207,7 @@ Symphony does not require first-class tracker write APIs in the orchestrator.
   agent using tools defined by the workflow prompt.
 - The service remains a scheduler/runner and tracker reader.
 - Workflow-specific success often means "reached the next handoff state" (for example
-  `Human Review`) rather than tracker terminal state `Done`.
+  `Needs Implementation Review`) rather than tracker terminal state `Done`.
 - If the `linear_graphql` client-side tool extension is implemented, it is still part of the agent
   toolchain rather than orchestrator business logic.
 
@@ -1519,7 +1521,8 @@ API design notes:
 ### 14.1 Failure Classes
 
 1. `Workflow/Config Failures`
-   - Missing `WORKFLOW.md`
+   - Missing `WORKFLOW.md` in file-backed startup mode, or no active persisted workflow in
+     database-backed mode when the implementation requires one before dispatch
    - Invalid YAML front matter
    - Unsupported tracker kind or missing tracker credentials/project slug
    - Missing coding-agent executable
@@ -1979,8 +1982,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 ### 17.4 Orchestrator Dispatch, Reconciliation, and Retry
 
 - Dispatch sort order is priority then oldest creation time
-- `Todo` issue with non-terminal blockers is not eligible
-- `Todo` issue with terminal blockers is eligible
+- `Ready` issue with non-terminal blockers is not eligible
+- `Ready` issue with terminal blockers is eligible
 - Active-state issue refresh updates running entry state
 - Non-active state stops running agent without workspace cleanup
 - Terminal state stops running agent and cleans workspace
@@ -2039,7 +2042,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 - CLI accepts a positional workflow path argument (`path-to-WORKFLOW.md`)
 - CLI uses `./WORKFLOW.md` when no workflow path argument is provided
-- CLI errors on nonexistent explicit workflow path or missing default `./WORKFLOW.md`
+- CLI errors on nonexistent explicit workflow path
+- CLI MAY allow a dashboard/control-plane startup mode without a default `./WORKFLOW.md` when it can
+  create or select an active persisted workflow before dispatch
 - CLI surfaces startup failure cleanly
 - CLI exits with success when application starts and shuts down normally
 - CLI exits nonzero when startup fails or the host process exits abnormally

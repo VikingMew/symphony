@@ -50,8 +50,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
-      field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
-      field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
+      field(:active_states, {:array, :string}, default: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"])
+      field(:terminal_states, {:array, :string}, default: ["Canceled", "Cancelled", "Duplicate", "Done"])
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()

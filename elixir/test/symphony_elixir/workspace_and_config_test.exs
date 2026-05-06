@@ -505,7 +505,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Enum.map(sorted, & &1.identifier) == ["MT-200", "MT-201", "MT-199"]
   end
 
-  test "todo issue with non-terminal blocker is not dispatch-eligible" do
+  test "ready issue with non-terminal blocker is not dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
       running: %{},
@@ -518,7 +518,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "blocked-1",
       identifier: "MT-1001",
       title: "Blocked work",
-      state: "Todo",
+      state: "Ready",
       blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
     }
 
@@ -540,14 +540,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "assigned-away-1",
       identifier: "MT-1007",
       title: "Owned elsewhere",
-      state: "Todo",
+      state: "Ready",
       assigned_to_worker: false
     }
 
     refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
-  test "todo issue with terminal blockers remains dispatch-eligible" do
+  test "ready issue with terminal blockers remains dispatch-eligible" do
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
       running: %{},
@@ -560,19 +560,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "ready-1",
       identifier: "MT-1003",
       title: "Ready work",
-      state: "Todo",
-      blocked_by: [%{id: "blocker-2", identifier: "MT-1004", state: "Closed"}]
+      state: "Ready",
+      blocked_by: [%{id: "blocker-2", identifier: "MT-1004", state: "Done"}]
     }
 
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
-  test "dispatch revalidation skips stale todo issue once a non-terminal blocker appears" do
+  test "dispatch revalidation skips stale ready issue once a non-terminal blocker appears" do
     stale_issue = %Issue{
       id: "blocked-2",
       identifier: "MT-1005",
       title: "Stale blocked work",
-      state: "Todo",
+      state: "Ready",
       blocked_by: []
     }
 
@@ -580,7 +580,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       id: "blocked-2",
       identifier: "MT-1005",
       title: "Stale blocked work",
-      state: "Todo",
+      state: "Ready",
       blocked_by: [%{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}]
     }
 

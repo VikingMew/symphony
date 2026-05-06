@@ -21,8 +21,11 @@ runtime.
 - Create and preserve isolated per-issue workspaces.
 - Run lifecycle hooks to prepare and clean workspaces.
 - Launch Codex App Server sessions with issue-specific prompts.
-- Keep runtime behavior configurable through an in-repository `WORKFLOW.md`.
-- Provide logs, JSON state APIs, and an optional Phoenix LiveView dashboard.
+- Keep runtime behavior configurable through either `WORKFLOW.md` or an active SQLite workflow
+  version.
+- Persist projects, workflow versions, issues, runs, agent turns, workspaces, worker tasks, leases,
+  and events in SQLite when the Repo is available.
+- Provide logs, JSON state APIs, Linear diagnostics, worker APIs, and a Phoenix LiveView dashboard.
 - Stop or clean up active runs when issue states become terminal.
 
 ## 3. Non-Goals
@@ -41,17 +44,20 @@ flowchart TD
     linear[Linear Project / Issues] -->|poll eligible issues| tracker[Tracker Layer]
     tracker --> orchestrator[Orchestrator]
 
-    workflow[WORKFLOW.md] --> loader[Workflow Loader]
+    workflow[WORKFLOW.md / SQLite Workflow Version] --> loader[Workflow Loader]
     loader --> config[Config Layer]
     config --> orchestrator
+    orchestrator --> sqlite[(SQLite / Ecto)]
 
     orchestrator -->|create/reuse| workspace[Workspace Manager]
     workspace --> issuews[Per-Issue Workspace]
     issuews -->|after_create hook| bootstrap[Clone repo / install dependencies]
 
-    orchestrator -->|start run| runner[Agent Runner]
+    orchestrator -->|centralized mode: start run| runner[Agent Runner]
     runner --> appserver[Codex App Server Client]
     appserver --> codex[Codex Coding Agent]
+    orchestrator -->|worker mode: enqueue task| workerapi[Worker Task Queue / HTTP API]
+    extworker[External Worker] -->|register / claim / heartbeat / events| workerapi
 
     codex -->|read/write files, run tests, git| issuews
     codex -->|linear_graphql tool| linear
@@ -62,6 +68,7 @@ flowchart TD
     orchestrator --> http[Optional Phoenix HTTP Server]
     http --> dashboard[LiveView Dashboard]
     http --> api[JSON API]
+    http --> workerapi
 ```
 
 ## 5. Runtime Flow
@@ -69,7 +76,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant CLI as bin/symphony
-    participant Workflow as WORKFLOW.md
+    participant Workflow as WORKFLOW.md / SQLite
     participant Orch as Orchestrator
     participant Linear as Linear API
     participant WS as Workspace
@@ -83,14 +90,19 @@ sequenceDiagram
         Orch->>Linear: Fetch active candidate issues
         Linear-->>Orch: Return normalized issues
         Orch->>Orch: Apply concurrency, state, retry, and blocker rules
-        Orch->>WS: Ensure issue workspace exists
-        WS->>WS: Run after_create hook when newly created
-        Orch->>Codex: Launch app-server session
-        Orch->>Codex: Send rendered issue prompt
-        Codex->>WS: Modify code, run validation, commit changes
-        Codex->>Linear: Update issue comments and status through tools
-        Codex->>GitHub: Push branch and create/update PR
-        Codex-->>Orch: Return turn result
+        alt centralized execution
+            Orch->>WS: Ensure issue workspace exists
+            WS->>WS: Run after_create hook when newly created
+            Orch->>Codex: Launch app-server session
+            Orch->>Codex: Send rendered issue prompt
+            Codex->>WS: Modify code, run validation, commit changes
+            Codex->>Linear: Update issue comments and status through tools
+            Codex->>GitHub: Push branch and create/update PR
+            Codex-->>Orch: Return turn result
+        else worker execution
+            Orch->>Orch: Persist run/task in SQLite
+            Orch->>Orch: External worker claims task through HTTP API
+        end
         Orch->>Orch: Continue, retry, release, stop, or clean up
     end
 ```
@@ -110,6 +122,8 @@ The CLI is the escript entrypoint built as `elixir/bin/symphony`. It accepts:
   runtime behavior
 
 The CLI validates the workflow path, stores runtime overrides, and starts the Elixir application.
+With `--port` and no explicit workflow path, it selects database workflow mode and allows the
+dashboard to create the first workflow when neither SQLite nor local `WORKFLOW.md` has one.
 
 ### 6.2 Workflow Loader
 
@@ -118,8 +132,9 @@ Locations:
 - `elixir/lib/symphony_elixir/workflow.ex`
 - `elixir/lib/symphony_elixir/workflow_store.ex`
 
-The workflow loader reads `WORKFLOW.md`, parses YAML front matter, and keeps the Markdown body as the
-prompt template. Symphony keeps running with the last known good workflow if a later reload fails.
+The workflow loader reads either a file-backed `WORKFLOW.md` or the active SQLite
+`workflow_versions` row, parses YAML front matter, and keeps the Markdown body as the prompt
+template. Symphony keeps running with the last known good workflow if a later reload fails.
 
 ### 6.3 Config Layer
 
@@ -130,7 +145,7 @@ Locations:
 
 The config layer applies defaults and converts workflow settings into typed runtime values. It
 handles tracker settings, polling interval, workspace paths, hooks, agent concurrency, Codex command
-settings, sandbox settings, and optional server settings.
+settings, sandbox settings, worker SSH host settings, and optional server settings.
 
 ### 6.4 Tracker Layer
 
@@ -155,7 +170,9 @@ Locations:
 
 The orchestrator owns the runtime loop. It polls the tracker, dispatches issues, enforces
 concurrency, tracks active runs, handles retries, releases completed work, stops ineligible work,
-and publishes status information.
+and publishes status information. In centralized mode it starts `AgentRunner` locally or over
+configured SSH hosts. In worker mode it persists worker tasks and lets external workers claim them
+through `/api/worker/v1/*`.
 
 ### 6.6 Workspace Manager
 
@@ -167,7 +184,8 @@ Locations:
 The workspace manager maps issue identifiers to deterministic filesystem paths. It creates
 workspaces, runs lifecycle hooks, and removes workspaces for terminal issues. Workspace isolation is
 central to Symphony's execution model: each agent operates inside the issue-specific repository
-copy.
+copy. In centralized SSH-host execution, workspace preparation and hooks run on the selected SSH
+host.
 
 ### 6.7 Agent Runner
 
@@ -205,6 +223,21 @@ port is configured, the service provides:
 - `/api/v1/state`: full state snapshot
 - `/api/v1/<issue_identifier>`: issue-specific state
 - `/api/v1/refresh`: manual refresh endpoint
+- `/projects`, `/runs`, `/workers`, `/workflows`, `/settings`: management pages
+- `/diagnostics/linear`: Linear configuration and candidate issue diagnostics
+
+### 6.10 Persistence and Worker API
+
+Locations:
+
+- `elixir/lib/symphony_elixir/persistence.ex`
+- `elixir/lib/symphony_elixir/persistence/*`
+- `elixir/lib/symphony_elixir_web/controllers/worker_api_controller.ex`
+
+The persistence context owns SQLite-backed records for projects, workflow versions, runs, agent
+turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
+worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
+Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
 
 ## 7. Configuration Model
 
@@ -243,6 +276,7 @@ Important configuration areas:
 - `hooks`: shell commands for workspace lifecycle events.
 - `agent`: concurrency and turn limits.
 - `codex`: app-server command, approval policy, sandbox settings.
+- `worker`: SSH host routing for centralized remote execution.
 - `server`: optional dashboard/API port.
 
 ## 8. State and Ownership Boundaries
@@ -272,7 +306,9 @@ This split keeps Symphony generic while allowing teams to encode project-specifi
 
 Symphony is designed for long-running operation and transient failure recovery:
 
-- Invalid startup workflow configuration prevents boot.
+- Invalid startup workflow configuration prevents boot in explicit file mode.
+- Dashboard-first `--port` mode can boot without a workflow file when no active database workflow
+  exists, so the first workflow can be created through `/workflows`.
 - Invalid workflow reloads are logged, while the last known good workflow remains active.
 - Failed agent turns can be retried according to orchestrator policy.
 - Active runs are stopped when issue states become terminal or ineligible.
@@ -367,4 +403,3 @@ Common extension areas:
     │   └── symphony_elixir_web
     └── test
 ```
-

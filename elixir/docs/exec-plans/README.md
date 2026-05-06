@@ -33,6 +33,7 @@ Plans should focus on product and engineering intent rather than full implementa
 25. [025-test-database-isolation-and-mocking.md](completed/025-test-database-isolation-and-mocking.md)
 26. [026-persistence-boundary-and-mocked-tests.md](completed/026-persistence-boundary-and-mocked-tests.md)
 27. [027-log-oriented-status-dashboard.md](completed/027-log-oriented-status-dashboard.md)
+28. [028-modern-web-top-banner.md](completed/028-modern-web-top-banner.md)
 
 ## Plan Guidelines
 

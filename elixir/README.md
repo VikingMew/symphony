@@ -6,9 +6,9 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 ## Fork Status
 
 This Elixir implementation has diverged from the upstream OpenAI Symphony preview. This fork keeps
-the original orchestration model, but now adds local SQLite persistence, optional
-username/password authentication, workflow version storage, and early Web UI pages for projects,
-runs, workers, workflows, and settings.
+the original orchestration model, but now runs as a Phoenix-backed control plane with local SQLite
+persistence, optional username/password authentication, workflow version storage, Linear
+diagnostics, worker/task management pages, and a versioned HTTP API for external workers.
 
 Use this README together with:
 
@@ -35,15 +35,27 @@ Use this README together with:
 5. Keeps Codex working on the issue until the work is done
 
 This fork also persists local operational data in SQLite, can protect the Web UI/API with optional
-username/password authentication, stores workflow versions for future configuration management,
-and includes the first Panel-side worker control-plane APIs. Centralized in-process execution
-remains the default; worker-backed execution is opt-in future work.
+username/password authentication, stores complete workflow versions, and exposes Panel-side worker
+control-plane APIs. Centralized in-process execution remains the default. When
+`SYMPHONY_EXECUTION_MODE=worker`, the orchestrator queues tasks for external workers through the
+worker HTTP API instead of starting Codex locally.
 
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
 
-If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
+If a claimed issue moves to a terminal state (`Done`, `Canceled`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
+
+The default Linear workflow is gated by human review between agent phases:
+
+```text
+Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
+  -> Needs Implementation Review -> Ready to Merge -> Merging -> Done
+```
+
+Only the agent-work states are configured as active states: `Refining`, `Ready`, `In Progress`,
+`Ready to Merge`, and `Merging`. Human review states are intentionally inactive so Symphony stops
+until a person moves the issue forward.
 
 ## How to use it
 
@@ -58,8 +70,9 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
 5. Customize the copied `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
+   - When creating a workflow based on this repo, note that it depends on a gated Linear state flow:
+     "Refining", "Needs Refinement Review", "Ready", "In Progress", "Needs Implementation Review",
+     "Ready to Merge", "Merging", "Done", "Canceled", and "Duplicate". You can customize them in
      Team Settings → Workflow in Linear.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
@@ -90,6 +103,85 @@ mise exec -- ./bin/symphony \
 
 Open the dashboard at `http://127.0.0.1:4000/`.
 
+### Docker Images
+
+The Dockerfile exposes four targets from the `elixir/` directory.
+
+Builds can use internal registries and mirrors through build args:
+
+```bash
+docker build --target all-in-one -t symphony-all-in-one \
+  --build-arg ELIXIR_IMAGE="registry.example.com/library/elixir:1.19-otp-28-slim" \
+  --build-arg NODE_IMAGE="registry.example.com/library/node:20-bookworm-slim" \
+  --build-arg APT_DEBIAN_MIRROR="https://apt-mirror.example.com/debian" \
+  --build-arg APT_SECURITY_MIRROR="https://apt-mirror.example.com/debian-security" \
+  --build-arg NPM_REGISTRY="https://npm.example.com" \
+  --build-arg HEX_MIRROR_URL="https://hex.example.com" \
+  .
+```
+
+Docker's standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` build args can also be passed when
+the build environment reaches public sources through an internal proxy.
+
+All-in-one runs the Phoenix dashboard, internal SQLite persistence, local workspace execution, and
+the Codex CLI in one container:
+
+```bash
+docker build --target all-in-one -t symphony-all-in-one .
+
+docker run --rm -it \
+  -p 4000:4000 \
+  -v symphony-data:/data \
+  -v "$HOME/.codex:/home/symphony/.codex" \
+  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
+  symphony-all-in-one
+```
+
+Dashboard with internal DB runs the Panel, worker API, and SQLite in `/data`. It defaults to
+`SYMPHONY_EXECUTION_MODE=worker`, so agents are expected to run outside the dashboard container:
+
+```bash
+docker build --target dashboard-internal-db -t symphony-dashboard .
+
+docker run --rm -it \
+  -p 4000:4000 \
+  -v symphony-data:/data \
+  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
+  -e SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token" \
+  symphony-dashboard
+```
+
+Dashboard with external DB uses an externally mounted SQLite path at `/external/symphony.db`.
+Network databases such as PostgreSQL or MySQL are not supported by the current Ecto adapter:
+
+```bash
+docker build --target dashboard-external-db -t symphony-dashboard-external-db .
+
+docker run --rm -it \
+  -p 4000:4000 \
+  -v "$PWD/.symphony-db:/external" \
+  -v symphony-data:/data \
+  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
+  -e SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token" \
+  symphony-dashboard-external-db
+```
+
+Worker builds an SSH-reachable Codex worker image for centralized mode with `worker.ssh_hosts`.
+Mount SSH authorized keys and Codex auth into the worker container:
+
+```bash
+docker build --target worker -t symphony-worker .
+
+docker run --rm -it \
+  -p 2222:22 \
+  -v "$HOME/.ssh/authorized_keys:/home/symphony/.ssh/authorized_keys:ro" \
+  -v "$HOME/.codex:/home/symphony/.codex" \
+  symphony-worker
+```
+
+All dashboard images start in dashboard-first `--port` mode, run `mix ecto.migrate` on startup,
+write logs under `/data/logs`, and expose the dashboard at `http://127.0.0.1:4000/`.
+
 For dashboard-first setup with SQLite, `WORKFLOW.md` is optional when you start with `--port` and
 do not pass an explicit workflow path:
 
@@ -103,13 +195,22 @@ If an active workflow version already exists in SQLite, Symphony loads it. If th
 open `/workflows` and create the first workflow from the raw editor. Traditional non-port CLI runs
 still require `WORKFLOW.md` unless database workflow loading is explicitly configured.
 
-Execution mode currently defaults to centralized in-process execution:
+Execution mode defaults to centralized in-process execution:
 
 ```bash
 export SYMPHONY_EXECUTION_MODE=centralized
 ```
 
-The Panel-side worker API can be enabled for protocol testing with:
+Centralized mode can run locally, or it can use SSH hosts listed in `worker.ssh_hosts` to launch
+workspace hooks and `codex app-server` remotely over SSH.
+
+Worker mode queues tasks for external workers:
+
+```bash
+export SYMPHONY_EXECUTION_MODE=worker
+```
+
+The worker API requires a registration token:
 
 ```bash
 export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
@@ -194,13 +295,18 @@ Notes:
   Symphony validation.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+- `agent.max_concurrent_agents_by_state` can override concurrency limits per normalized issue
+  state; state names are case-insensitive after normalization.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
   `git clone ... .` there, along with any other setup commands you need.
+- `hooks.before_run`, `hooks.after_run`, and `hooks.before_remove` are also supported. Hook timeout
+  is controlled by `hooks.timeout_ms` and defaults to `60000`.
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.assignee` reads from `LINEAR_ASSIGNEE` when unset or when value is `$LINEAR_ASSIGNEE`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
@@ -218,9 +324,13 @@ codex:
   command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
 ```
 
-- If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
+- In explicit file mode, a missing or invalid startup `WORKFLOW.md` prevents boot.
+- In dashboard-first `--port` mode without an explicit workflow path, Symphony starts from the
+  active SQLite workflow version. If no active version exists, it imports local `WORKFLOW.md` once
+  when present; otherwise the dashboard starts in setup-required mode so `/workflows` can create
+  the first workflow.
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
-  reload error until the file is fixed.
+  reload error until the source is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
 
@@ -229,8 +339,10 @@ codex:
 The observability and management UI runs on a Phoenix stack:
 
 - LiveView for the dashboard at `/`
-- LiveView management pages at `/projects`, `/runs`, `/workflows`, and `/settings`
+- LiveView management pages at `/projects`, `/runs`, `/workers`, `/workflows`, and `/settings`
+- Linear integration diagnostics at `/diagnostics/linear`
 - JSON API for operational debugging under `/api/v1/*`
+- Worker API under `/api/worker/v1/*`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
 

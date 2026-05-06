@@ -1,6 +1,7 @@
 # Persistence and Authentication
 
-Symphony now has a local SQLite-backed persistence foundation and optional username/password authentication for the Phoenix control plane.
+Symphony uses local SQLite-backed persistence for runtime/configuration state and supports optional
+username/password authentication for the Phoenix control plane.
 
 ## SQLite
 
@@ -47,11 +48,17 @@ export SYMPHONY_ADMIN_USERNAME=admin
 export SYMPHONY_ADMIN_PASSWORD_HASH='pbkdf2_sha256$...'
 ```
 
-When authentication is enabled:
+When browser/API authentication is enabled:
 
 - Browser routes redirect unauthenticated users to `/login`.
 - JSON API routes return `401`.
 - `/logout` clears the browser session.
+
+The worker API uses its own protocol authentication. Registration requires
+`SYMPHONY_WORKER_REGISTRATION_TOKEN` through either `Authorization: Bearer <token>` or
+`x-symphony-worker-token`. Subsequent worker calls identify the registered session with
+`x-symphony-worker-id`, `x-symphony-worker-session`, and optionally
+`x-symphony-worker-protocol`.
 
 ## Workflow Versions
 
@@ -77,12 +84,27 @@ non-port CLI runs and explicit workflow paths keep file-backed `WORKFLOW.md` sem
 
 ## Web UI
 
-The following authenticated pages are available when the Phoenix server is enabled:
+The following browser pages are available when the Phoenix server is enabled:
 
+- `/`
 - `/projects`
 - `/runs`
 - `/workers`
 - `/workflows`
 - `/settings`
+- `/diagnostics/linear`
 
 The workflow page supports raw `WORKFLOW.md` editing and version history. Structured field-by-field editing is intentionally left for the next UI refinement pass.
+
+## Worker State
+
+SQLite also stores Panel-side worker state:
+
+- workers and worker sessions
+- queued/running/completed/failed/cancelled tasks
+- active, expired, released, and cancelled task leases
+- worker task events
+
+`SYMPHONY_EXECUTION_MODE=worker` makes the orchestrator enqueue worker tasks. The default
+`centralized` mode continues to run Codex from the Panel process and can still use SSH hosts from
+`worker.ssh_hosts` for remote centralized execution.

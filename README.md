@@ -6,9 +6,9 @@ work instead of supervising coding agents.
 ## Fork Status
 
 This repository has diverged from the upstream OpenAI Symphony preview. The original upstream
-project is an experimental reference implementation. This fork is now evolving toward a persistent
-Phoenix Web service with SQLite-backed configuration, optional username/password authentication,
-workflow versioning, and a richer operations UI.
+project is an experimental reference implementation. This fork is now a persistent Phoenix Web
+service with SQLite-backed configuration, optional username/password authentication, workflow
+versioning, Linear diagnostics, worker/task management views, and an external worker HTTP API.
 
 When reading upstream documentation or comparing behavior with `openai/symphony`, assume this fork
 may intentionally differ in runtime configuration, dashboard behavior, persistence, and setup
@@ -55,6 +55,7 @@ You can also ask your favorite coding agent to help with the setup:
 - [elixir/docs/user_guide.zh-CN.md](elixir/docs/user_guide.zh-CN.md): installation and startup guide.
 - [elixir/docs/long_term_direction.zh-CN.md](elixir/docs/long_term_direction.zh-CN.md): long-term development direction.
 - [elixir/docs/persistence_and_auth.md](elixir/docs/persistence_and_auth.md): SQLite and authentication notes.
+- [elixir/docs/worker_panel_decoupling_design.zh-CN.md](elixir/docs/worker_panel_decoupling_design.zh-CN.md): worker API and Panel/worker split design.
 
 ---
 

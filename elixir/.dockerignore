@@ -1,0 +1,17 @@
+_build/
+deps/
+cover/
+log/
+.elixir_ls/
+.mix/
+.mise/
+bin/symphony
+symphony.db
+symphony.db-*
+*.ez
+*.beam
+*.dump
+*.log
+test/
+docs/
+WORKFLOW.md

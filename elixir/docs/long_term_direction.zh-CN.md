@@ -17,7 +17,9 @@ Elixir / Phoenix Web Service
 └── Worker Runtime / Sandbox Runtime
 ```
 
-短期内继续保留当前 `WORKFLOW.md` 配置模式，逐步引入 SQLite 和 Web UI。长期目标是让 Web UI 成为主要配置入口，同时保留 `WORKFLOW.md` 的导入、导出和版本化能力。
+当前实现已经保留 `WORKFLOW.md` 配置模式，同时引入 SQLite、workflow version、dashboard
+管理页面、Linear 诊断和 Panel 侧 worker API。长期目标仍是让 Web UI 成为主要配置入口，
+同时保留 `WORKFLOW.md` 的导入、导出和版本化能力。
 
 一个关键原则是：`WORKFLOW.md` 的全部内容都应该可配置。这里的“全部”不只包括 Markdown prompt，也包括 YAML front matter 中的 tracker、polling、workspace、hooks、agent、codex、server 等运行配置。Web UI 最终应该能够编辑、校验、版本化和审计整个 workflow contract，而不是只编辑其中一部分。
 
@@ -73,11 +75,14 @@ Ecto Forms / Changesets
 
 ## 5. SQLite 持久化方向
 
-当前实现主要依赖内存状态和 `WORKFLOW.md`。长期需要 SQLite 保存运行历史、配置版本和可观测事件。
+当前实现已经使用 Ecto + SQLite 保存项目、workflow versions、issues、runs、agent turns、
+workspaces、events、workers、worker sessions、tasks 和 leases。内存状态仍负责当前
+orchestrator loop 的即时调度视图，但 dashboard 和历史记录已经依赖 SQLite。
 
-建议优先引入 Ecto + SQLite，并采用可迁移的数据模型。未来如果需要多用户、多实例或更高并发，可以通过 Ecto 迁移到 Postgres。
+后续重点不再是“是否引入 SQLite”，而是继续完善 schema 边界、迁移策略、恢复语义和 UI
+编辑能力。未来如果需要多用户、多实例或更高并发，可以通过 Ecto 迁移到 Postgres。
 
-初期建议的核心表：
+当前或目标核心表包括：
 
 ```text
 projects
@@ -88,8 +93,11 @@ runs
 agent_turns
 workspaces
 events
-logs
-secrets_metadata
+workers
+worker_sessions
+tasks
+task_leases
+secrets_metadata（后续）
 ```
 
 ### 5.1 projects
@@ -178,9 +186,10 @@ events
 
 配置管理建议分阶段推进，不要一次性删除 `WORKFLOW.md`。
 
-### 阶段 1：保留 WORKFLOW.md，引入运行状态持久化
+### 阶段 1：保留 WORKFLOW.md，引入运行状态持久化（已基本完成）
 
-继续从 `WORKFLOW.md` 读取配置和 prompt，但将以下内容写入 SQLite：
+当前已经可以从 `WORKFLOW.md` 或 SQLite active workflow version 读取配置和 prompt，并将
+以下内容写入 SQLite：
 
 - issue 快照
 - run 状态
@@ -197,7 +206,8 @@ events
 
 ### 阶段 2：Web UI 管理配置
 
-将 `WORKFLOW.md` 拆分成可编辑的数据模型。拆分时必须覆盖整个文件，而不是只覆盖 prompt：
+当前 `/workflows` 支持 raw `WORKFLOW.md` 编辑、保存、激活和版本历史。下一步是将
+`WORKFLOW.md` 拆分成可编辑的数据模型。拆分时必须覆盖整个文件，而不是只覆盖 prompt：
 
 - project 配置
 - tracker 配置
@@ -209,7 +219,8 @@ events
 - server / dashboard 配置
 - prompt template
 
-此阶段仍应支持从 `WORKFLOW.md` 导入配置，并支持导出当前配置为 `WORKFLOW.md`。
+此阶段仍应支持从 `WORKFLOW.md` 导入配置，并支持导出当前配置为 `WORKFLOW.md`。当前 raw
+editor 已经覆盖导入和版本化的基础路径。
 
 Web UI 应提供两种编辑模式：
 
@@ -218,9 +229,10 @@ Web UI 应提供两种编辑模式：
 
 两种模式必须写入同一个 workflow version 模型，避免 UI 配置和原始 Markdown 配置分裂。
 
-### 阶段 3：配置版本化
+### 阶段 3：配置版本化（已落地基础模型）
 
-每次配置变更生成新的 `workflow_versions` 记录。每个 run 固定引用一个 workflow version。
+每次配置变更会生成新的 `workflow_versions` 记录。run/task 记录已经可以引用
+`workflow_version_id`，后续仍需要完善 UI diff、审计展示和多项目维度。
 
 这样可以回答：
 
@@ -232,7 +244,8 @@ Web UI 应提供两种编辑模式：
 
 ### 阶段 4：多项目和多 worker
 
-当单项目模型稳定后，再扩展到：
+当前已经有默认 project、projects 页面、Panel 侧 worker/session/task/lease 数据模型和
+worker HTTP API。后续需要把这些能力从默认项目模型扩展到完整多项目生产路径：
 
 - 多 project。
 - 每个 project 独立 tracker 配置。
@@ -391,53 +404,48 @@ lib/symphony_elixir_web/
 └── presenters/
 ```
 
-当前代码不需要一次性重构到这个结构，但新增 SQLite 和 Web UI 时应向这个方向靠拢。
+当前代码不需要一次性重构到这个结构；新增 persistence、Web UI、diagnostics 和 worker API 时
+继续向这个边界靠拢即可。
 
 ## 12. 推荐路线图
 
-### Milestone 1：持久化运行状态
+### Milestone 1：持久化运行状态（已落地基础版）
 
-- 引入 `ecto_sqlite3`。
-- 新增 Repo 和 migration。
-- 保存 runs、agent_turns、events。
-- Dashboard 从 DB 查询历史数据。
-- 保留现有 `WORKFLOW.md` 配置来源。
+- 已引入 `ecto_sqlite3`、Repo 和 migration。
+- 已保存 projects、workflow_versions、issues、runs、agent_turns、workspaces、events，以及 worker 相关 task/lease/session 状态。
+- Dashboard 已能读取 DB 中的 runs、workers、tasks、workflow versions 等历史/管理数据。
+- 继续保留 `WORKFLOW.md` 文件模式，同时支持 dashboard-first SQLite workflow source。
 
-### Milestone 2：Dashboard 升级
+### Milestone 2：Dashboard 升级（部分完成）
 
-- 增加 run detail 页面。
-- 增加 issue detail 页面。
-- 增加 events/logs 页面。
-- 支持分页、筛选和刷新。
-- 支持手动 retry / stop / refresh。
+- 已有 `/` dashboard、`/projects`、`/runs`、`/workers`、`/workflows`、`/settings` 和 `/diagnostics/linear`。
+- `/workers` 已提供 task cancel/requeue operator controls。
+- 仍可继续增加 run detail、issue detail、events/logs 页面，以及更完整的分页/筛选。
 
-### Milestone 3：配置 UI
+### Milestone 3：配置 UI（raw workflow 路径已完成）
 
-- 新增 projects。
-- 新增 tracker config UI。
-- 新增 workflow config UI。
-- 支持导入/导出 `WORKFLOW.md`。
-- 支持完整编辑 `WORKFLOW.md` 的 YAML front matter 和 Markdown prompt。
-- 支持表单模式和原文模式之间互相同步。
-- 保存前执行 schema 校验和 prompt 模板校验。
-- 每次保存生成 workflow version。
+- 已有 projects 页面。
+- 已有 `/workflows` raw editor，可保存完整 `WORKFLOW.md` YAML front matter 和 Markdown prompt。
+- 每次保存生成 workflow version，并可激活历史版本。
+- 仍需补齐结构化表单模式、diff 审计和更细的字段级配置 UI。
 
-### Milestone 4：安全和权限
+### Milestone 4：安全和权限（部分完成）
 
-- Dashboard/API 加认证。
+- Dashboard/API 已支持可选 username/password 认证。
+- Worker API 已使用独立 registration/session 协议认证。
 - secrets metadata 入库。
 - secrets 明文只通过受控注入路径使用。
 - 增加 hook 审计事件。
 - 收紧 Codex environment inheritance。
 
-### Milestone 5：Worker Runtime 分层
+### Milestone 5：Worker Runtime 分层（Panel 侧已落地）
 
-- 将 local run 逻辑抽象为 worker behavior。
-- 支持 Panel / Worker 解耦：Panel 负责调度、配置、持久化和 UI，Worker 主动连接 Panel、握手、心跳、领取任务并回传结果。
-- 当前 Elixir 仓库优先实现 Panel / 服务端能力；生产 worker 按前序技术选型方向使用 Rust 实现，并通过稳定 JSON/HTTP 协议接入 Panel。
+- 已支持 Panel / Worker 解耦的 Panel 侧路径：Panel 负责调度、配置、持久化和 UI，Worker 主动连接 Panel、握手、心跳、领取任务并回传结果。
+- `SYMPHONY_EXECUTION_MODE=worker` 已使 orchestrator 将 issue 入队为外部 worker task。
+- 生产 worker 按前序技术选型方向使用 Rust 或独立进程实现，并通过稳定 JSON/HTTP 协议接入 Panel。
 - 详细设计见 [Panel / Worker 解耦设计](worker_panel_decoupling_design.zh-CN.md)。
-- 增加 worker identity、worker session、task queue、task lease、heartbeat 和 capability matching。
-- 设计 worker API 协议版本、预共享注册 token、租约续期、任务取消、late completion 处理和 dashboard 可观测事件。
+- 已增加 worker identity、worker session、task queue、task lease、heartbeat、capability matching 和 dashboard worker 状态。
+- 已实现 worker API 协议版本、预共享注册 token、租约续期、任务取消/requeue、task event 上报。
 - 保留 local worker。
 - 稳定 SSH worker。
 - 增加 Docker worker。
@@ -462,9 +470,9 @@ Symphony 的长期主线应是：
 
 ```text
 保留 Elixir/Phoenix 主系统
-引入 Ecto + SQLite 持久化
-用 LiveView 构建 Dashboard 和配置 UI
-逐步从 WORKFLOW.md 迁移到完整可配置、可版本化的 workflow contract
+继续完善 Ecto + SQLite 持久化
+继续用 LiveView 构建 Dashboard 和配置 UI
+在 WORKFLOW.md 与 SQLite workflow versions 之间保持可导入、可编辑、可审计
 把安全隔离下沉到 worker runtime
 必要时用 Rust 实现局部 sandbox/worker 组件
 ```

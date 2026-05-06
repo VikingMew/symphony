@@ -25,7 +25,9 @@ the code.
     ├── mix.exs
     ├── mix.lock
     ├── config/
+    ├── docs/
     ├── lib/
+    ├── priv/
     └── test/
 ```
 
@@ -68,6 +70,8 @@ elixir/
 | `elixir/mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
 | `elixir/mix.exs` | Mix project definition, dependencies, aliases, and escript build config. |
 | `elixir/config/config.exs` | Phoenix/Bandit endpoint and JSON configuration. |
+| `elixir/priv/repo/migrations` | SQLite/Ecto migrations. |
+| `elixir/docs` | Operator, design, logging, token accounting, and completed plan docs. |
 
 ## 4. Application Startup
 
@@ -84,6 +88,7 @@ tree:
 
 ```text
 SymphonyElixir.Supervisor
+├── SymphonyElixir.Repo (skipped in MIX_ENV=test)
 ├── Phoenix.PubSub
 ├── Task.Supervisor
 ├── SymphonyElixir.WorkflowStore
@@ -107,7 +112,11 @@ elixir/lib/symphony_elixir/
 ├── log_file.ex
 ├── orchestrator.ex
 ├── path_safety.ex
+├── persistence.ex
+├── persistence/
+├── persistence_provider.ex
 ├── prompt_builder.ex
+├── repo.ex
 ├── specs_check.ex
 ├── ssh.ex
 ├── status_dashboard.ex
@@ -134,6 +143,9 @@ elixir/lib/symphony_elixir/
 | `SymphonyElixir.HttpServer` | `http_server.ex` | Starts optional Phoenix/Bandit observability HTTP server. |
 | `SymphonyElixir.StatusDashboard` | `status_dashboard.ex` | Terminal/operator status rendering. |
 | `SymphonyElixir.LogFile` | `log_file.ex` | Runtime log file configuration and writing. |
+| `SymphonyElixir.Persistence` | `persistence.ex` | SQLite-backed projects, workflows, runs, tasks, workers, leases, and events. |
+| `SymphonyElixir.PersistenceProvider` | `persistence_provider.ex` | Runtime indirection for persistence fakes in tests. |
+| `SymphonyElixir.Repo` | `repo.ex` | Ecto repository. |
 | `SymphonyElixir.SSH` | `ssh.ex` | SSH worker support. |
 | `SymphonyElixir.SpecsCheck` | `specs_check.ex` | Internal spec consistency checks. |
 
@@ -182,11 +194,16 @@ elixir/lib/symphony_elixir_web/
 ├── components/layouts.ex
 ├── controllers/
 │   ├── observability_api_controller.ex
-│   └── static_asset_controller.ex
+│   ├── session_controller.ex
+│   ├── static_asset_controller.ex
+│   └── worker_api_controller.ex
 ├── endpoint.ex
 ├── error_html.ex
 ├── error_json.ex
+├── auth_plug.ex
+├── live/admin_live.ex
 ├── live/dashboard_live.ex
+├── live/linear_diagnostics_live.ex
 ├── observability_pubsub.ex
 ├── presenter.ex
 ├── router.ex
@@ -197,8 +214,13 @@ elixir/lib/symphony_elixir_web/
 | --- | --- | --- |
 | `SymphonyElixirWeb.Endpoint` | `endpoint.ex` | Phoenix endpoint. |
 | `SymphonyElixirWeb.Router` | `router.ex` | Routes for dashboard, static assets, and JSON API. |
+| `SymphonyElixirWeb.AuthPlug` | `auth_plug.ex` | Optional browser/API authentication gates. |
+| `SymphonyElixirWeb.SessionController` | `controllers/session_controller.ex` | Login/logout controller. |
 | `SymphonyElixirWeb.DashboardLive` | `live/dashboard_live.ex` | LiveView dashboard UI. |
+| `SymphonyElixirWeb.AdminLive` | `live/admin_live.ex` | Management pages for projects, runs, workers, workflows, and settings. |
+| `SymphonyElixirWeb.LinearDiagnosticsLive` | `live/linear_diagnostics_live.ex` | Linear diagnostics page. |
 | `SymphonyElixirWeb.ObservabilityApiController` | `controllers/observability_api_controller.ex` | JSON API for runtime state and refresh. |
+| `SymphonyElixirWeb.WorkerApiController` | `controllers/worker_api_controller.ex` | External worker registration, claim, heartbeat, and event API. |
 | `SymphonyElixirWeb.StaticAssetController` | `controllers/static_asset_controller.ex` | Serves bundled static assets. |
 | `SymphonyElixirWeb.Presenter` | `presenter.ex` | Converts runtime state into UI/API presentation data. |
 | `SymphonyElixirWeb.ObservabilityPubSub` | `observability_pubsub.ex` | PubSub helper for dashboard state updates. |
@@ -210,10 +232,21 @@ Routes:
 
 ```text
 GET  /                         LiveView dashboard
+GET  /login                    Login page when auth is enabled
+GET  /projects                 Project management
+GET  /runs                     Run history
+GET  /workers                  Worker, task, and lease state
+GET  /workflows                Workflow raw editor and version history
+GET  /settings                 Runtime settings summary
+GET  /diagnostics/linear       Linear diagnostics
 GET  /dashboard.css             Dashboard stylesheet
 GET  /api/v1/state              Full runtime state JSON
 POST /api/v1/refresh            Trigger refresh
 GET  /api/v1/:issue_identifier  Issue-specific state JSON
+POST /api/worker/v1/register    Worker registration
+POST /api/worker/v1/tasks/claim Worker task claim
+POST /api/worker/v1/heartbeat   Worker heartbeat and lease renewal
+POST /api/worker/v1/tasks/:id/events Worker task event reporting
 ```
 
 ## 9. Mix Tasks
@@ -222,6 +255,7 @@ GET  /api/v1/:issue_identifier  Issue-specific state JSON
 elixir/lib/mix/tasks/
 ├── pr_body.check.ex
 ├── specs.check.ex
+├── symphony.build.ex
 └── workspace.before_remove.ex
 ```
 
@@ -229,6 +263,7 @@ elixir/lib/mix/tasks/
 | --- | --- |
 | `mix pr_body.check` | Checks PR body content expectations. |
 | `mix specs.check` | Checks implementation/spec consistency. |
+| `mix symphony.build` | Builds the escript executable used by `mix build`. |
 | `mix workspace.before_remove` | Hook task intended for workspace cleanup before removal. |
 
 ## 10. Tests
@@ -237,7 +272,6 @@ elixir/lib/mix/tasks/
 elixir/test/
 ├── mix/tasks/
 ├── support/
-├── fixtures/
 └── symphony_elixir/
 ```
 
@@ -249,14 +283,17 @@ elixir/test/
 | `test/symphony_elixir/dynamic_tool_test.exs` | Dynamic tool behavior. |
 | `test/symphony_elixir/cli_test.exs` | CLI argument and startup behavior. |
 | `test/symphony_elixir/orchestrator_status_test.exs` | Orchestrator status output. |
-| `test/symphony_elixir/status_dashboard_snapshot_test.exs` | Snapshot tests for status dashboard output. |
+| `test/symphony_elixir/status_dashboard_log_test.exs` | Status dashboard log rendering and legacy-format regression coverage. |
+| `test/symphony_elixir/auth_persistence_web_test.exs` | Authentication and persistence-backed Web UI behavior. |
 | `test/symphony_elixir/observability_pubsub_test.exs` | PubSub behavior for observability updates. |
 | `test/symphony_elixir/log_file_test.exs` | Log file behavior. |
+| `test/symphony_elixir/persistence_provider_test.exs` | Persistence provider boundary behavior. |
+| `test/symphony_elixir/web_fake_persistence_test.exs` | Web and worker API behavior through fake persistence. |
+| `test/symphony_elixir/linear_diagnostics_test.exs` | Linear diagnostics behavior and route protection. |
 | `test/symphony_elixir/ssh_test.exs` | SSH worker behavior. |
 | `test/symphony_elixir/live_e2e_test.exs` | Live external end-to-end test with Linear and Codex. |
 | `test/mix/tasks/*_test.exs` | Tests for custom Mix tasks. |
 | `test/support/*` | Shared test helpers. |
-| `test/fixtures/status_dashboard_snapshots/*` | Snapshot fixtures and evidence files. |
 
 ## 11. Main Call Chain
 
@@ -268,6 +305,7 @@ bin/symphony
     └── SymphonyElixir.CLI.evaluate/2
         └── Application.ensure_all_started(:symphony_elixir)
             └── SymphonyElixir.Application.start/2
+                ├── SymphonyElixir.Repo
                 ├── SymphonyElixir.WorkflowStore
                 ├── SymphonyElixir.Orchestrator
                 ├── SymphonyElixir.HttpServer
@@ -280,10 +318,11 @@ The usual issue execution path is:
 SymphonyElixir.Orchestrator
 ├── loads config from WorkflowStore / Config
 ├── fetches issues through Tracker / Linear.Adapter
-├── prepares workspace through Workspace
-├── renders prompt through PromptBuilder
-├── starts agent through AgentRunner
-└── communicates with Codex through Codex.AppServer
+├── centralized mode: prepares workspace through Workspace
+├── centralized mode: renders prompt through PromptBuilder
+├── centralized mode: starts agent through AgentRunner
+├── centralized mode: communicates with Codex through Codex.AppServer
+└── worker mode: persists run/task records for WorkerApiController claims
 ```
 
 ## 12. Where to Change Things
@@ -300,8 +339,11 @@ SymphonyElixir.Orchestrator
 | Add another tracker | `tracker.ex`, then implement a new adapter module |
 | Change Codex app-server protocol handling | `codex/app_server.ex` |
 | Change dynamic tools exposed to Codex | `codex/dynamic_tool.ex` |
-| Change dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `presenter.ex` |
+| Change dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `symphony_elixir_web/live/admin_live.ex`, `presenter.ex` |
 | Change JSON observability API | `symphony_elixir_web/controllers/observability_api_controller.ex` |
+| Change worker API behavior | `symphony_elixir_web/controllers/worker_api_controller.ex`, `persistence.ex` |
+| Change persistence schema | `persistence/*.ex`, `priv/repo/migrations/*` |
+| Change auth behavior | `symphony_elixir_web/auth_plug.ex`, `controllers/session_controller.ex` |
 | Change terminal status display | `status_dashboard.ex` |
 | Change tests for orchestration | `test/symphony_elixir/core_test.exs` |
 
@@ -322,4 +364,3 @@ Live external end-to-end test:
 export LINEAR_API_KEY=...
 mise exec -- make e2e
 ```
-

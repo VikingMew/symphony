@@ -11,8 +11,8 @@ defmodule SymphonyElixirWeb.AdminLive do
   ---
   tracker:
     kind: memory
-    active_states: ["Todo", "In Progress"]
-    terminal_states: ["Done", "Closed", "Cancelled"]
+    active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+    terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
   polling:
     interval_ms: 30000
   workspace:
