@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, RuntimeProxy, SSH}
 
   @initialize_id 1
   @thread_start_id 2
@@ -203,6 +203,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
+          |> maybe_put_proxy_env()
         )
 
       {:ok, port}
@@ -216,10 +217,19 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
+      RuntimeProxy.remote_exports(),
       "cd #{shell_escape(workspace)}",
       "exec #{Config.settings!().codex.command}"
     ]
+    |> List.flatten()
     |> Enum.join(" && ")
+  end
+
+  defp maybe_put_proxy_env(port_opts) do
+    case RuntimeProxy.port_env() do
+      [] -> port_opts
+      env -> Keyword.put(port_opts, :env, env)
+    end
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do

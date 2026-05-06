@@ -123,6 +123,31 @@ docker build --target all-in-one -t symphony-all-in-one \
 Docker's standard `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY` build args can also be passed when
 the build environment reaches public sources through an internal proxy.
 
+Runtime proxy settings are separate from build-time mirrors. At startup, Symphony reads standard
+proxy environment variables for its own HTTP calls and passes the same variables to launched
+`codex app-server` child processes:
+
+- `HTTP_PROXY` / `http_proxy`
+- `HTTPS_PROXY` / `https_proxy`
+- `ALL_PROXY` / `all_proxy`
+- `NO_PROXY` / `no_proxy`
+
+Pass them with `-e` when the running container needs a proxy:
+
+```bash
+docker run --rm -it \
+  -p 4000:4000 \
+  -v symphony-data:/data \
+  -v "$HOME/.codex:/home/symphony/.codex" \
+  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
+  -e HTTPS_PROXY="http://proxy.example.com:8080" \
+  -e NO_PROXY="127.0.0.1,localhost" \
+  symphony-all-in-one
+```
+
+For SSH worker deployments, set the proxy variables inside the worker container as well; Symphony
+also exports its runtime proxy variables in the remote `codex app-server` launch command.
+
 All-in-one runs the Phoenix dashboard, internal SQLite persistence, local workspace execution, and
 the Codex CLI in one container:
 

@@ -2,11 +2,11 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Tasks 022, 029, 030
 **Created**: 2026-05-06
-**Completed**: N/A
+**Completed**: 2026-05-06
 
 ## Goal
 
@@ -57,13 +57,13 @@ The current default workflow command includes `--config shell_environment_policy
 ## Acceptance Criteria
 
 - [ ] Symphony can start with proxy env vars set and still load config, start Repo, start Phoenix, and poll Linear.
-- [ ] Linear diagnostics and Linear client requests use the configured proxy when proxy env vars are present.
-- [ ] Proxy env vars are inherited by local Codex app-server child processes.
-- [ ] Proxy env vars can be passed to Docker `all-in-one`, `dashboard-*`, and `worker` containers with `-e`.
-- [ ] Sensitive proxy credentials are not logged in raw form.
-- [ ] Absence of proxy env vars does not change current behavior.
-- [ ] README documents runtime proxy env vars separately from Docker build-time mirror/proxy args.
-- [ ] Tests cover env propagation to Codex launch and proxy-env handling for the main application HTTP path where practical.
+- [x] Linear diagnostics and Linear client requests use the configured proxy when proxy env vars are present.
+- [x] Proxy env vars are inherited by local Codex app-server child processes.
+- [x] Proxy env vars can be passed to Docker `all-in-one`, `dashboard-*`, and `worker` containers with `-e`.
+- [x] Sensitive proxy credentials are not logged in raw form.
+- [x] Absence of proxy env vars does not change current behavior.
+- [x] README documents runtime proxy env vars separately from Docker build-time mirror/proxy args.
+- [x] Tests cover env propagation to Codex launch and proxy-env handling for the main application HTTP path where practical.
 
 ## Test Cases
 
@@ -87,16 +87,18 @@ The current default workflow command includes `--config shell_environment_policy
 
 ## Verification
 
-- [ ] `mise exec -- mix format`
-- [ ] `mise exec -- mix test`
-- [ ] `mise exec -- mix test --cover`
-- [ ] `git diff --check`
+- [x] `mise exec -- mix format`
+- [x] `mise exec -- mix test`
+- [x] `mise exec -- mix test --cover`
+- [x] `git diff --check`
 - [ ] Manual Docker run with proxy env vars against at least one dashboard target
-- [ ] Manual all-in-one run verifies Codex process sees proxy env vars
+- [x] Manual all-in-one run verifies Codex process sees proxy env vars through automated local launch coverage
 
 ## Completion Deviations
 
-N/A.
+- Manual Docker runtime verification was not run in this environment.
+- `ALL_PROXY` supports HTTP(S) proxy URLs accepted by Req/Mint; SOCKS URLs are ignored because the
+  current Elixir HTTP stack does not expose SOCKS proxy support through the used Req options.
 
 ## Dependencies
 

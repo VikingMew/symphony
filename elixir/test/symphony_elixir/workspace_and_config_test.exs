@@ -467,6 +467,58 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert log =~ "Variable \\\"$ids\\\" got invalid value"
   end
 
+  test "linear client derives proxy options from runtime environment" do
+    proxy_env_names = SymphonyElixir.RuntimeProxy.proxy_env_names()
+    previous_proxy_env = Map.new(proxy_env_names, &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      Enum.each(previous_proxy_env, fn {name, value} -> restore_env(name, value) end)
+    end)
+
+    Enum.each(proxy_env_names, &System.delete_env/1)
+    System.put_env("HTTPS_PROXY", "http://user:pass@proxy.example.test:8080")
+    System.put_env("HTTP_PROXY", "http://ignored.example.test:8888")
+
+    request_options = Client.request_options_for_test("https://api.linear.app/graphql")
+
+    assert Keyword.fetch!(request_options, :timeout) == 30_000
+    assert Keyword.fetch!(request_options, :proxy) == {:http, "proxy.example.test", 8080, []}
+    assert [{"proxy-authorization", encoded_auth}] = Keyword.fetch!(request_options, :proxy_headers)
+
+    assert Base.decode64!(encoded_auth |> String.trim_leading("Basic ")) == "user:pass"
+  end
+
+  test "linear client honors no proxy environment for matching hosts" do
+    proxy_env_names = SymphonyElixir.RuntimeProxy.proxy_env_names()
+    previous_proxy_env = Map.new(proxy_env_names, &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      Enum.each(previous_proxy_env, fn {name, value} -> restore_env(name, value) end)
+    end)
+
+    Enum.each(proxy_env_names, &System.delete_env/1)
+    System.put_env("HTTPS_PROXY", "http://proxy.example.test:8080")
+    System.put_env("NO_PROXY", "localhost, .linear.app")
+
+    assert [timeout: 30_000] = Client.request_options_for_test("https://api.linear.app/graphql")
+  end
+
+  test "runtime proxy environment redacts credentials for diagnostics" do
+    proxy_env_names = SymphonyElixir.RuntimeProxy.proxy_env_names()
+    previous_proxy_env = Map.new(proxy_env_names, &{&1, System.get_env(&1)})
+
+    on_exit(fn ->
+      Enum.each(previous_proxy_env, fn {name, value} -> restore_env(name, value) end)
+    end)
+
+    Enum.each(proxy_env_names, &System.delete_env/1)
+    System.put_env("HTTPS_PROXY", "http://user:pass@proxy.example.test:8080")
+
+    assert SymphonyElixir.RuntimeProxy.redacted_proxy_env() == %{
+             "HTTPS_PROXY" => "http://[REDACTED]@proxy.example.test:8080"
+           }
+  end
+
   test "orchestrator sorts dispatch by priority then oldest created_at" do
     issue_same_priority_older = %Issue{
       id: "issue-old-high",

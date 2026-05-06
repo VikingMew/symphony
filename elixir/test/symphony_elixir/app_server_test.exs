@@ -183,6 +183,93 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server passes runtime proxy environment to codex child process" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-proxy-env-#{System.unique_integer([:positive])}"
+      )
+
+    proxy_env_names = SymphonyElixir.RuntimeProxy.proxy_env_names()
+    previous_proxy_env = Map.new(proxy_env_names, &{&1, System.get_env(&1)})
+    previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+    on_exit(fn ->
+      Enum.each(previous_proxy_env, fn {name, value} -> restore_env(name, value) end)
+      restore_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+    end)
+
+    Enum.each(proxy_env_names, &System.delete_env/1)
+    System.put_env("HTTPS_PROXY", "http://user:pass@proxy.example.test:8080")
+    System.put_env("NO_PROXY", "127.0.0.1,localhost")
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-PROXY")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-proxy-env.trace")
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-proxy-env.trace}"
+      printf 'HTTPS_PROXY=%s\\n' "${HTTPS_PROXY:-}" >> "$trace_file"
+      printf 'NO_PROXY=%s\\n' "${NO_PROXY:-}" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-proxy"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-proxy"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-proxy-env",
+        identifier: "MT-PROXY",
+        title: "Validate runtime proxy env",
+        description: "Ensure Codex receives proxy environment variables",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-PROXY",
+        labels: ["backend"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Validate proxy env", issue)
+
+      trace = File.read!(trace_file)
+      assert trace =~ "HTTPS_PROXY=http://user:pass@proxy.example.test:8080"
+      assert trace =~ "NO_PROXY=127.0.0.1,localhost"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server marks request-for-input events as a hard failure" do
     test_root =
       Path.join(

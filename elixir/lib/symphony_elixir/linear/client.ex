@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, Linear.Issue}
+  alias SymphonyElixir.{Config, Linear.Issue, RuntimeProxy}
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
@@ -219,6 +219,10 @@ defmodule SymphonyElixir.Linear.Client do
     |> Enum.reduce([], &prepend_page_issues/2)
     |> finalize_paginated_issues()
   end
+
+  @doc false
+  @spec request_options_for_test(String.t()) :: keyword()
+  def request_options_for_test(url) when is_binary(url), do: request_options(url)
 
   @doc false
   @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
@@ -446,11 +450,17 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp post_graphql_request(payload, headers) do
-    Req.post(Config.settings!().tracker.endpoint,
+    endpoint = Config.settings!().tracker.endpoint
+
+    Req.post(endpoint,
       headers: headers,
       json: payload,
-      connect_options: [timeout: 30_000]
+      connect_options: request_options(endpoint)
     )
+  end
+
+  defp request_options(endpoint) when is_binary(endpoint) do
+    RuntimeProxy.connect_options(endpoint, timeout: 30_000)
   end
 
   defp decode_linear_response(%{"data" => %{"issues" => %{"nodes" => nodes}}}, assignee_filter) do
