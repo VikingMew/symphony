@@ -3,8 +3,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   Read-only Linear integration diagnostics for the Web UI.
   """
 
-  alias SymphonyElixir.{Linear.Client, Linear.Issue, WorkflowStore}
   alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.{Linear.Client, Linear.Issue, WorkflowStore}
   require Logger
 
   @viewer_query """

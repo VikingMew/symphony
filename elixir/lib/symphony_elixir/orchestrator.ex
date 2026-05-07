@@ -610,10 +610,18 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(id) and is_binary(identifier) and is_binary(title) and is_binary(state_name) do
     issue_routable_to_worker?(issue) and
       active_issue_state?(state_name, active_states) and
+      !Config.human_review_state?(state_name) and
+      codex_executor_state?(state_name) and
       !terminal_issue_state?(state_name, terminal_states)
   end
 
   defp candidate_issue?(_issue, _active_states, _terminal_states), do: false
+
+  defp codex_executor_state?(state_name) when is_binary(state_name) do
+    Config.workflow_executor_for_state(state_name) == "codex_agent"
+  end
+
+  defp codex_executor_state?(_state_name), do: false
 
   defp issue_routable_to_worker?(%Issue{assigned_to_worker: assigned_to_worker})
        when is_boolean(assigned_to_worker),
@@ -1788,6 +1796,7 @@ defmodule SymphonyElixir.Orchestrator do
         payload: %{
           "issue" => issue_snapshot(issue),
           "prompt" => Config.workflow_prompt(),
+          "workflow_profile" => Config.workflow_profile_for_state(issue.state),
           "execution_mode" => "worker"
         }
       })

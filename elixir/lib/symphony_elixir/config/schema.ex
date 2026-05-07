@@ -271,6 +271,8 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
+    field(:workflow, :map, default: %{})
+    field(:profiles, :map, default: %{})
   end
 
   @spec parse(map()) :: {:ok, %__MODULE__{}} | {:error, {:invalid_workflow_config, String.t()}}
@@ -323,6 +325,69 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   @doc false
+  @spec workflow_profile_for_state(%__MODULE__{}, String.t() | nil) :: String.t() | nil
+  def workflow_profile_for_state(%__MODULE__{workflow: workflow}, state_name) when is_binary(state_name) do
+    normalized_state = normalize_issue_state(String.trim(state_name))
+
+    workflow
+    |> Map.get("states", %{})
+    |> Enum.find_value(fn {configured_state, state_policy} ->
+      if normalize_issue_state(configured_state) == normalized_state do
+        Map.get(state_policy, "profile")
+      end
+    end)
+  end
+
+  def workflow_profile_for_state(_settings, _state_name), do: nil
+
+  @doc false
+  @spec workflow_profile(%__MODULE__{}, String.t() | nil) :: map()
+  def workflow_profile(%__MODULE__{profiles: profiles}, profile) when is_binary(profile) do
+    case Map.get(profiles, profile) do
+      %{} = policy -> policy
+      _ -> %{}
+    end
+  end
+
+  def workflow_profile(_settings, _profile), do: %{}
+
+  @doc false
+  @spec workflow_executor_for_state(%__MODULE__{}, String.t() | nil) :: String.t() | nil
+  def workflow_executor_for_state(settings, state_name) do
+    profile = workflow_profile_for_state(settings, state_name)
+
+    settings
+    |> workflow_profile(profile)
+    |> get_in(["executor", "type"])
+  end
+
+  @doc false
+  @spec human_review_state?(%__MODULE__{}, String.t() | nil) :: boolean()
+  def human_review_state?(%__MODULE__{workflow: workflow}, state_name) when is_binary(state_name) do
+    normalized_state = normalize_issue_state(String.trim(state_name))
+
+    workflow
+    |> Map.get("human_review_states", [])
+    |> Enum.map(&normalize_issue_state/1)
+    |> Enum.member?(normalized_state)
+  end
+
+  def human_review_state?(_settings, _state_name), do: false
+
+  @doc false
+  @spec workflow_allowed_updates(%__MODULE__{}, String.t() | nil) :: map()
+  def workflow_allowed_updates(%__MODULE__{profiles: profiles}, profile) when is_binary(profile) do
+    profiles
+    |> get_in([profile, "allowed_updates"])
+    |> case do
+      updates when is_map(updates) -> updates
+      _ -> %{}
+    end
+  end
+
+  def workflow_allowed_updates(_settings, _profile), do: %{}
+
+  @doc false
   @spec normalize_state_limits(nil | map()) :: map()
   def normalize_state_limits(nil), do: %{}
 
@@ -353,7 +418,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp changeset(attrs) do
     %__MODULE__{}
-    |> cast(attrs, [])
+    |> cast(attrs, [:workflow, :profiles])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
@@ -363,6 +428,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
+    |> validate_workflow_contract()
   end
 
   defp finalize_settings(settings) do
@@ -383,8 +449,284 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    workflow = normalize_workflow_policy(settings.workflow)
+    profiles = normalize_profiles(settings.profiles)
+
+    %{settings | tracker: tracker, workspace: workspace, codex: codex, workflow: workflow, profiles: profiles}
   end
+
+  defp default_workflow_policy do
+    %{
+      "states" => %{
+        "Refining" => %{"profile" => "refinement"},
+        "Ready" => %{"profile" => "implementation"},
+        "In Progress" => %{"profile" => "implementation"},
+        "Ready to Merge" => %{"profile" => "merge"},
+        "Merging" => %{"profile" => "merge"}
+      },
+      "human_review_states" => ["Needs Refinement Review", "Needs Implementation Review"],
+      "allowed_transitions" => [
+        %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
+        %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
+        %{"from" => "Needs Refinement Review", "to" => "Refining", "actor" => "human"},
+        %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
+        %{"from" => "In Progress", "to" => "Needs Implementation Review", "actor" => "codex", "profile" => "implementation"},
+        %{"from" => "Needs Implementation Review", "to" => "Ready to Merge", "actor" => "human"},
+        %{"from" => "Needs Implementation Review", "to" => "In Progress", "actor" => "human"},
+        %{"from" => "Ready to Merge", "to" => "Merging", "actor" => "codex", "profile" => "merge"},
+        %{"from" => "Merging", "to" => "Done", "actor" => "codex", "profile" => "merge"},
+        %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
+      ],
+      "tool_policy" => %{
+        "linear" => %{
+          "exposed_tools" => ["linear_task_read", "linear_task_update"],
+          "raw_graphql" => false
+        }
+      }
+    }
+  end
+
+  defp default_profiles do
+    %{
+      "refinement" => %{
+        "name" => "Refinement",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "extend",
+          "template" =>
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states."
+        },
+        "allowed_updates" => %{
+          "description" => true,
+          "comment" => true,
+          "result" => false,
+          "target_states" => ["Needs Refinement Review"]
+        }
+      },
+      "implementation" => %{
+        "name" => "Implementation",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "extend",
+          "template" =>
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, test, and verify the requested work in the workspace. When ready for review, add the result, relevant references, a concise comment, and request one of the allowed target states."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => true,
+          "result" => true,
+          "target_states" => ["In Progress", "Needs Implementation Review"]
+        }
+      },
+      "merge" => %{
+        "name" => "Merge",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "extend",
+          "template" =>
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before merging. Verify the branch is ready, perform the merge workflow when allowed, and add a concise result comment with an allowed target state."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => true,
+          "result" => true,
+          "target_states" => ["Merging", "Done"]
+        }
+      }
+    }
+  end
+
+  defp normalize_workflow_policy(policy) when is_map(policy) do
+    default = default_workflow_policy()
+    policy = normalize_keys(policy)
+
+    Map.merge(default, policy)
+  end
+
+  defp normalize_workflow_policy(_policy), do: default_workflow_policy()
+
+  defp normalize_profiles(profiles) when is_map(profiles) do
+    configured_profiles = normalize_keys(profiles)
+
+    default_profiles()
+    |> Map.merge(configured_profiles, fn _profile, default_profile, configured_profile ->
+      Map.merge(default_profile, configured_profile)
+    end)
+  end
+
+  defp normalize_profiles(_profiles), do: default_profiles()
+
+  defp validate_workflow_contract(changeset) do
+    workflow = get_field(changeset, :workflow) || %{}
+    profiles = get_field(changeset, :profiles) || %{}
+
+    workflow_errors =
+      workflow
+      |> normalize_keys()
+      |> workflow_policy_errors(normalize_keys(profiles))
+
+    profile_errors =
+      profiles
+      |> normalize_keys()
+      |> profile_policy_errors()
+
+    Enum.reduce(workflow_errors, changeset, &add_error(&2, :workflow, &1))
+    |> then(fn changeset -> Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1)) end)
+  end
+
+  defp workflow_policy_errors(workflow, profiles) when is_map(workflow) do
+    []
+    |> Kernel.++(validate_no_nested_profiles(workflow))
+    |> Kernel.++(validate_states(Map.get(workflow, "states", %{}), profiles))
+    |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
+    |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
+  end
+
+  defp workflow_policy_errors(_workflow, _profiles), do: ["must be a map"]
+
+  defp validate_no_nested_profiles(workflow) do
+    if Map.has_key?(workflow, "profiles") do
+      ["workflow.profiles is not supported; define profiles at top-level profiles"]
+    else
+      []
+    end
+  end
+
+  defp validate_states(states, profiles) when is_map(states) do
+    known_profiles =
+      default_profiles()
+      |> Map.merge(profiles)
+      |> Map.keys()
+      |> MapSet.new()
+
+    Enum.flat_map(states, fn {state, policy} ->
+      profile = if is_map(policy), do: Map.get(policy, "profile")
+
+      cond do
+        not is_binary(state) or String.trim(state) == "" ->
+          ["states must use non-empty state names"]
+
+        not is_map(policy) ->
+          ["states.#{state} must be a map"]
+
+        not is_binary(profile) or String.trim(profile) == "" ->
+          ["states.#{state}.profile must be a non-empty string"]
+
+        not MapSet.member?(known_profiles, profile) ->
+          ["states.#{state}.profile references unknown profile #{profile}"]
+
+        true ->
+          []
+      end
+    end)
+  end
+
+  defp validate_states(_states, _profiles), do: ["states must be a map"]
+
+  defp profile_policy_errors(profiles) when is_map(profiles) do
+    Enum.flat_map(profiles, fn {profile, policy} ->
+      cond do
+        not is_binary(profile) or String.trim(profile) == "" ->
+          ["profiles must use non-empty string names"]
+
+        not is_map(policy) ->
+          ["profiles.#{profile} must be a map"]
+
+        Map.has_key?(policy, "active_states") ->
+          ["profiles.#{profile}.active_states is not supported; use workflow.states"]
+
+        true ->
+          validate_profile_name(profile, Map.get(policy, "name")) ++
+            validate_executor(profile, Map.get(policy, "executor")) ++
+            validate_prompt_policy(profile, Map.get(policy, "prompt")) ++
+            validate_profile_executor_prompt(profile, policy) ++
+            validate_allowed_updates(profile, Map.get(policy, "allowed_updates", %{}))
+      end
+    end)
+  end
+
+  defp profile_policy_errors(_profiles), do: ["profiles must be a map"]
+
+  defp validate_profile_name(profile, name) do
+    if is_binary(name) and String.trim(name) != "" do
+      []
+    else
+      ["profiles.#{profile}.name must be a non-empty string"]
+    end
+  end
+
+  defp validate_executor(_profile, %{"type" => type}) when type in ["codex_agent", "manual", "backend_action", "external_worker"] do
+    []
+  end
+
+  defp validate_executor(profile, %{"type" => _type}), do: ["profiles.#{profile}.executor.type is invalid"]
+  defp validate_executor(profile, _executor), do: ["profiles.#{profile}.executor.type must be a non-empty string"]
+
+  defp validate_prompt_policy(_profile, %{"mode" => mode}) when mode in ["extend", "replace", "disabled"], do: []
+  defp validate_prompt_policy(profile, %{"mode" => _mode}), do: ["profiles.#{profile}.prompt.mode is invalid"]
+  defp validate_prompt_policy(profile, _prompt), do: ["profiles.#{profile}.prompt.mode must be a non-empty string"]
+
+  defp validate_profile_executor_prompt(profile, policy) do
+    executor_type = get_in(policy, ["executor", "type"])
+    prompt_mode = get_in(policy, ["prompt", "mode"])
+    prompt_template = get_in(policy, ["prompt", "template"])
+
+    cond do
+      executor_type == "codex_agent" and prompt_mode == "disabled" ->
+        ["profiles.#{profile}.prompt.mode cannot be disabled for codex_agent"]
+
+      executor_type == "codex_agent" and prompt_mode in ["extend", "replace"] and not non_empty_string?(prompt_template) ->
+        ["profiles.#{profile}.prompt.template must be a non-empty string for codex_agent #{prompt_mode} mode"]
+
+      true ->
+        []
+    end
+  end
+
+  defp validate_allowed_updates(profile, updates) when is_map(updates) do
+    validate_string_list(Map.get(updates, "target_states", []), "profiles.#{profile}.allowed_updates.target_states")
+  end
+
+  defp validate_allowed_updates(profile, _updates), do: ["profiles.#{profile}.allowed_updates must be a map"]
+
+  defp validate_transitions(transitions) when is_list(transitions) do
+    Enum.flat_map(transitions, fn
+      transition when is_map(transition) ->
+        from = Map.get(transition, "from")
+        to = Map.get(transition, "to")
+        actor = Map.get(transition, "actor")
+
+        []
+        |> maybe_required_string_error(from, "allowed_transitions.from")
+        |> maybe_required_string_error(to, "allowed_transitions.to")
+        |> maybe_actor_error(actor)
+
+      _transition ->
+        ["allowed_transitions entries must be maps"]
+    end)
+  end
+
+  defp validate_transitions(_transitions), do: ["allowed_transitions must be a list"]
+
+  defp maybe_required_string_error(errors, value, field) do
+    if is_binary(value) and String.trim(value) != "", do: errors, else: [field <> " must be a non-empty string" | errors]
+  end
+
+  defp maybe_actor_error(errors, actor) do
+    if actor in ["codex", "human"], do: errors, else: ["allowed_transitions.actor must be either codex or human" | errors]
+  end
+
+  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
+
+  defp validate_string_list(values, field) when is_list(values) do
+    if Enum.all?(values, &(is_binary(&1) and String.trim(&1) != "")) do
+      []
+    else
+      [field <> " must be a list of non-empty strings"]
+    end
+  end
+
+  defp validate_string_list(_values, field), do: [field <> " must be a list of non-empty strings"]
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

@@ -192,16 +192,19 @@ defmodule SymphonyElixir.AppServerTest do
 
     proxy_env_names = SymphonyElixir.RuntimeProxy.proxy_env_names()
     previous_proxy_env = Map.new(proxy_env_names, &{&1, System.get_env(&1)})
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
     previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
 
     on_exit(fn ->
       Enum.each(previous_proxy_env, fn {name, value} -> restore_env(name, value) end)
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
       restore_env("SYMP_TEST_CODEx_TRACE", previous_trace)
     end)
 
     Enum.each(proxy_env_names, &System.delete_env/1)
     System.put_env("HTTPS_PROXY", "http://user:pass@proxy.example.test:8080")
     System.put_env("NO_PROXY", "127.0.0.1,localhost")
+    System.put_env("LINEAR_API_KEY", "must-not-reach-codex")
 
     try do
       workspace_root = Path.join(test_root, "workspaces")
@@ -217,6 +220,7 @@ defmodule SymphonyElixir.AppServerTest do
       trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-proxy-env.trace}"
       printf 'HTTPS_PROXY=%s\\n' "${HTTPS_PROXY:-}" >> "$trace_file"
       printf 'NO_PROXY=%s\\n' "${NO_PROXY:-}" >> "$trace_file"
+      printf 'LINEAR_API_KEY=%s\\n' "${LINEAR_API_KEY:-}" >> "$trace_file"
       count=0
 
       while IFS= read -r line; do
@@ -265,6 +269,7 @@ defmodule SymphonyElixir.AppServerTest do
       trace = File.read!(trace_file)
       assert trace =~ "HTTPS_PROXY=http://user:pass@proxy.example.test:8080"
       assert trace =~ "NO_PROXY=127.0.0.1,localhost"
+      assert trace =~ "LINEAR_API_KEY=\n"
     after
       File.rm_rf(test_root)
     end
@@ -517,12 +522,19 @@ defmodule SymphonyElixir.AppServerTest do
                    case get_in(payload, ["params", "dynamicTools"]) do
                      [
                        %{
-                         "description" => description,
-                         "inputSchema" => %{"required" => ["query"]},
-                         "name" => "linear_graphql"
+                         "description" => read_description,
+                         "inputSchema" => %{"properties" => read_properties},
+                         "name" => "linear_task_read"
+                       },
+                       %{
+                         "description" => update_description,
+                         "inputSchema" => %{"properties" => update_properties},
+                         "name" => "linear_task_update"
                        }
                      ] ->
-                       description =~ "Linear"
+                       read_description =~ "Linear" and update_description =~ "Linear" and
+                         Map.has_key?(read_properties, "activity_limit") and
+                         Map.has_key?(update_properties, "target_state")
 
                      _ ->
                        false
@@ -969,7 +981,7 @@ defmodule SymphonyElixir.AppServerTest do
             ;;
           4)
             printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-90a\"}}}'
-            printf '%s\\n' '{\"id\":102,\"method\":\"item/tool/call\",\"params\":{\"name\":\"linear_graphql\",\"callId\":\"call-90a\",\"threadId\":\"thread-90a\",\"turnId\":\"turn-90a\",\"arguments\":{\"query\":\"query Viewer { viewer { id } }\",\"variables\":{\"includeTeams\":false}}}}'
+            printf '%s\\n' '{\"id\":102,\"method\":\"item/tool/call\",\"params\":{\"name\":\"linear_task_read\",\"callId\":\"call-90a\",\"threadId\":\"thread-90a\",\"turnId\":\"turn-90a\",\"arguments\":{\"include_activity\":true,\"activity_limit\":25}}}'
             ;;
           5)
             printf '%s\\n' '{\"method\":\"turn/completed\"}'
@@ -1018,10 +1030,10 @@ defmodule SymphonyElixir.AppServerTest do
       assert {:ok, _result} =
                AppServer.run(workspace, "Handle supported tool calls", issue, tool_executor: tool_executor)
 
-      assert_received {:tool_called, "linear_graphql",
+      assert_received {:tool_called, "linear_task_read",
                        %{
-                         "query" => "query Viewer { viewer { id } }",
-                         "variables" => %{"includeTeams" => false}
+                         "include_activity" => true,
+                         "activity_limit" => 25
                        }}
 
       trace = File.read!(trace_file)
@@ -1091,7 +1103,7 @@ defmodule SymphonyElixir.AppServerTest do
             ;;
           4)
             printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-90b\"}}}'
-            printf '%s\\n' '{\"id\":103,\"method\":\"item/tool/call\",\"params\":{\"tool\":\"linear_graphql\",\"callId\":\"call-90b\",\"threadId\":\"thread-90b\",\"turnId\":\"turn-90b\",\"arguments\":{\"query\":\"query Viewer { viewer { id } }\"}}}'
+            printf '%s\\n' '{\"id\":103,\"method\":\"item/tool/call\",\"params\":{\"tool\":\"linear_task_update\",\"callId\":\"call-90b\",\"threadId\":\"thread-90b\",\"turnId\":\"turn-90b\",\"arguments\":{\"comment\":\"boom\"}}}'
             ;;
           5)
             printf '%s\\n' '{\"method\":\"turn/completed\"}'
@@ -1145,9 +1157,9 @@ defmodule SymphonyElixir.AppServerTest do
                  tool_executor: tool_executor
                )
 
-      assert_received {:tool_called, "linear_graphql", %{"query" => "query Viewer { viewer { id } }"}}
+      assert_received {:tool_called, "linear_task_update", %{"comment" => "boom"}}
 
-      assert_received {:app_server_message, %{event: :tool_call_failed, payload: %{"params" => %{"tool" => "linear_graphql"}}}}
+      assert_received {:app_server_message, %{event: :tool_call_failed, payload: %{"params" => %{"tool" => "linear_task_update"}}}}
     after
       File.rm_rf(test_root)
     end

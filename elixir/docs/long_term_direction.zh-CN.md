@@ -207,7 +207,9 @@ events
 ### 阶段 2：Web UI 管理配置
 
 当前 `/workflows` 支持 raw `WORKFLOW.md` 编辑、保存、激活和版本历史。下一步是将
-`WORKFLOW.md` 拆分成可编辑的数据模型。拆分时必须覆盖整个文件，而不是只覆盖 prompt：
+`WORKFLOW.md` 拆分成可编辑的数据模型。目标页面不应该主要表现为一个巨大的纯文本框，而应该像普通
+配置页面一样，由多个表单区域、输入框、选择器、textarea、列表编辑器和校验结果组成。拆分时必须覆盖
+整个文件，而不是只覆盖 prompt：
 
 - project 配置
 - tracker 配置
@@ -218,16 +220,150 @@ events
 - codex 配置
 - server / dashboard 配置
 - prompt template
+- workflow states、review states、allowed transitions
+- execution profiles、profile prompt policy、allowed updates
 
-此阶段仍应支持从 `WORKFLOW.md` 导入配置，并支持导出当前配置为 `WORKFLOW.md`。当前 raw
-editor 已经覆盖导入和版本化的基础路径。
+此阶段仍应支持从 `WORKFLOW.md` 上传导入配置，并支持导出当前配置为 `WORKFLOW.md`。当前实现里的
+raw editor 只是早期基础路径；长期主入口应切换为结构化表单和文件上传导入。
 
-Web UI 应提供两种编辑模式：
+Workflow 页面长期应提供两个互相一致的入口：
 
-- 表单模式：按 tracker、workspace、hooks、agent、codex、prompt 等区域编辑，并提供字段级校验。
-- 原文模式：直接编辑完整 `WORKFLOW.md`，保存时解析、校验并生成新的 workflow version。
+- 结构化编辑：默认入口。按 tracker、project/bootstrap、workspace、hooks、agent、codex、
+  workflow、profiles、prompt 等区域编辑。
+- 文件上传导入：上传一个完整 `WORKFLOW.md`，解析后进入同一套结构化模型，显示 diff 和校验结果，
+  通过后才能保存为新的 workflow version。
 
-两种模式必须写入同一个 workflow version 模型，避免 UI 配置和原始 Markdown 配置分裂。
+这些入口必须写入同一个 workflow version 模型，避免 UI 配置、导入文件和导出的 Markdown 配置分裂。
+详细页面结构、verification 分层、上传导入流程和导出定位维护在
+[Workflow 页面设计目标](workflow_page_design.zh-CN.md)。
+
+### 阶段 2.0：三阶段执行 profile
+
+Workflow 不是一个单一 agent prompt。长期至少要区分三个执行环节：
+
+- `refinement`：从一句话想法和上下文细化任务，产出可人工确认的需求。
+- `implementation`：拉取代码、建 worktree、实现、测试、验证、推分支并交给人验收。
+- `merge`：合并或落地已验收结果；这个环节可以是 Codex agent，也可以是后端服务、GitHub
+  automation、人工操作或 future worker，不应默认等同于前两个 Codex agent。
+
+因此 workflow 应把“状态路由”和“执行 profile 定义”拆开：
+
+- `workflow.states.<Linear state>.profile` 负责指定某个状态使用哪个 profile。
+- `profiles.<profile_id>.name` 是 profile 的显示名称，也会进入 prompt、日志和诊断。
+- `profiles.<profile_id>.executor` 指定执行器类型，例如 `codex_agent`、`backend_action`、
+  `manual`、`external_worker`。
+- `profiles.<profile_id>.prompt` 指定阶段专属 prompt 或 prompt template。
+- `profiles.<profile_id>.tool_policy` 指定阶段专属 tool policy。
+- `profiles.<profile_id>.allowed_updates` 指定允许的 Linear update 字段和 target states。
+- `workflow.allowed_transitions` 和 review states 负责表达人工 review gate 以及被打回后的目标状态。
+
+`refinement`、`implementation` 和 `merge` 的 prompt 不应强行共用同一个模板。默认 workflow
+可以提供一个公共基础 prompt，但每个阶段必须能追加或替换阶段指令。尤其 merge 阶段要允许
+关闭 Codex agent，只由后端执行受控 merge 或等待人工完成。
+
+运行时以 database workflow version 为主。`WORKFLOW.md` 的导入单位不是单独的 `workflow:`
+节点，而是一个完整 workflow package：同一个 YAML front matter 中包含一个 `workflow` 对象和多个顶层
+`profiles`。一个被激活的 workflow version 必须自包含：`workflow` 里的状态路由和顶层
+`profiles` 里的执行定义都存放在同一个配置里，不依赖旁边的 profile 文件。推荐结构是：
+
+```yaml
+workflow:
+  states:
+    Refining:
+      profile: refinement
+    Ready:
+      profile: implementation
+    In Progress:
+      profile: implementation
+    Ready to Merge:
+      profile: merge
+    Merging:
+      profile: merge
+
+profiles:
+  refinement:
+    name: "Refinement"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Refine the task into clear requirements and acceptance criteria.
+    allowed_updates:
+      description: true
+      comment: true
+      result: false
+      target_states: ["Needs Refinement Review"]
+
+  implementation:
+    name: "Implementation"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Implement, test, verify, and prepare the work for human review.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["In Progress", "Needs Implementation Review"]
+
+  merge:
+    name: "Merge"
+    executor:
+      type: manual
+    prompt:
+      mode: disabled
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["Done"]
+```
+
+`profiles.<id>.active_states` 不再作为状态路由来源。路由只能从 `workflow.states` 读取。
+如果未来支持本地多文件导入，导入阶段也必须把多个文件解析成一个完整的数据库 workflow version
+后再保存和激活。
+
+阶段 prompt 的组合语义使用 `prompt.mode` 表达意图，不表达物理拼接方向。`extend` 表示保留
+`WORKFLOW.md` 正文里的公共 base prompt，并叠加 profile 专属 prompt；实际渲染顺序是先放阶段指令，
+再放 base prompt。
+
+- `extend`：使用 profile prompt 加 base prompt，渲染顺序是 profile template 在前、base prompt 在后。
+- `replace`：只使用 profile prompt。
+- `disabled`：只允许非 Codex executor 使用，不向 Codex 构造 prompt。
+
+这个契约由 [046 Profile Prompt Mode Clarity](exec-plans/completed/046-profile-prompt-mode-clarity.md) 落地。
+
+### 阶段 2.1：项目模板和 bootstrap 配置解耦
+
+`WORKFLOW.md` 样板不应该绑定 Symphony 自身仓库、Elixir 子目录、`mix` 命令或 `mise`。
+当前默认样板里出现的 `git clone https://github.com/openai/symphony .`、
+`cd elixir && mise exec -- mix deps.get`、`mix workspace.before_remove` 只适合 Symphony
+Elixir 自测，不适合作为任意项目的默认 workflow。
+
+长期方向是把“项目工作区如何创建、如何初始化、如何清理”建模为显式的 project bootstrap
+contract，而不是把它埋在不可校验的 shell hook 字符串里。最低可接受形态仍可以生成 hooks，
+但模板来源必须是项目配置，而不是 Symphony 代码写死。
+
+目标配置语义：
+
+- `workspace.root` 只表示 Symphony 创建 issue workspace 的根目录。
+- 项目代码来源应显式配置，例如 `project.repository_url`、`project.default_branch`、
+  `project.checkout_depth`。
+- bootstrap 命令应按项目类型生成或配置，例如 Rust 项目的 `cargo fetch`、Elixir 项目的
+  `mix deps.get`、Node 项目的 `npm ci`。
+- cleanup 命令必须可选；没有项目级清理需求时不要默认运行语言专属命令。
+- Web UI 和样板生成器应支持选择项目类型或直接填写 bootstrap commands。
+- 生成出的 `WORKFLOW.md` 必须让用户一眼看出需要替换 repo URL、workspace root 和项目命令。
+
+推荐演进路径：
+
+1. 先提供不绑定语言的通用样板，只保留 repo clone 和可选 bootstrap placeholders。
+2. 再新增 project bootstrap schema，把 repo URL、branch、setup commands、cleanup commands
+   结构化保存。
+3. 最后让 Web UI 根据 bootstrap schema 生成 hooks，并在保存前校验危险或缺失配置。
 
 ### 阶段 3：配置版本化（已落地基础模型）
 
@@ -430,12 +566,12 @@ lib/symphony_elixir_web/
 - `/workers` 已提供 task cancel/requeue operator controls。
 - 仍可继续增加 run detail、issue detail、events/logs 页面，以及更完整的分页/筛选。
 
-### Milestone 3：配置 UI（raw workflow 路径已完成）
+### Milestone 3：配置 UI（raw workflow 基础路径已完成）
 
 - 已有 projects 页面。
-- 已有 `/workflows` raw editor，可保存完整 `WORKFLOW.md` YAML front matter 和 Markdown prompt。
+- 已有 `/workflows` raw editor，可保存完整 `WORKFLOW.md` YAML front matter 和 Markdown prompt；这是早期基础路径，不是长期目标入口。
 - 每次保存生成 workflow version，并可激活历史版本。
-- 仍需补齐结构化表单模式、diff 审计和更细的字段级配置 UI。
+- 仍需补齐结构化表单模式、文件上传导入、导出、diff 审计和更细的字段级 verification。
 
 ### Milestone 4：安全和权限（部分完成）
 

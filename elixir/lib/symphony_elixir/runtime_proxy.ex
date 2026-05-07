@@ -9,16 +9,7 @@ defmodule SymphonyElixir.RuntimeProxy do
   @spec proxy_env() :: [{String.t(), String.t()}]
   def proxy_env do
     @proxy_env_names
-    |> Enum.flat_map(fn name ->
-      case System.get_env(name) do
-        value when is_binary(value) ->
-          trimmed = String.trim(value)
-          if trimmed == "", do: [], else: [{name, value}]
-
-        _ ->
-          []
-      end
-    end)
+    |> Enum.flat_map(&proxy_env_entry/1)
   end
 
   @spec port_env() :: [{charlist(), charlist()}]
@@ -80,16 +71,25 @@ defmodule SymphonyElixir.RuntimeProxy do
   end
 
   defp first_proxy_value(names) do
-    Enum.find_value(names, fn name ->
-      case System.get_env(name) do
-        value when is_binary(value) ->
-          trimmed = String.trim(value)
-          if trimmed == "", do: nil, else: trimmed
+    Enum.find_value(names, &non_empty_env_value/1)
+  end
 
-        _ ->
-          nil
-      end
-    end)
+  defp proxy_env_entry(name) do
+    case non_empty_env_value(name) do
+      nil -> []
+      value -> [{name, value}]
+    end
+  end
+
+  defp non_empty_env_value(name) do
+    case System.get_env(name) do
+      value when is_binary(value) ->
+        trimmed = String.trim(value)
+        if trimmed == "", do: nil, else: trimmed
+
+      _ ->
+        nil
+    end
   end
 
   defp proxy_options(nil), do: {:ok, nil}

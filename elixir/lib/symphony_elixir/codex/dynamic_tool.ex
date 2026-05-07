@@ -3,25 +3,133 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.{Config, Linear.Client, Linear.Issue}
 
-  @linear_graphql_tool "linear_graphql"
-  @linear_graphql_description """
-  Execute a raw GraphQL query or mutation against Linear using Symphony's configured auth.
+  @task_read_query """
+  query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
+    issue(id: $id) {
+      id
+      identifier
+      title
+      description
+      url
+      branchName
+      priority
+      state {
+        name
+      }
+      labels {
+        nodes {
+          name
+        }
+      }
+      comments(first: $commentFirst) {
+        nodes {
+          id
+          body
+          createdAt
+          updatedAt
+          user {
+            name
+          }
+        }
+      }
+    }
+  }
   """
-  @linear_graphql_input_schema %{
+
+  @issue_team_states_query """
+  query SymphonyLinearIssueTeamStates($id: String!) {
+    issue(id: $id) {
+      team {
+        states(first: 100) {
+          nodes {
+            id
+            name
+          }
+        }
+      }
+    }
+  }
+  """
+
+  @issue_update_mutation """
+  mutation SymphonyLinearTaskIssueUpdate($id: String!, $input: IssueUpdateInput!) {
+    issueUpdate(id: $id, input: $input) {
+      success
+      issue {
+        id
+        identifier
+        state {
+          name
+        }
+        updatedAt
+      }
+    }
+  }
+  """
+
+  @comment_create_mutation """
+  mutation SymphonyLinearTaskCommentCreate($issueId: String!, $body: String!) {
+    commentCreate(input: {issueId: $issueId, body: $body}) {
+      success
+      comment {
+        id
+        createdAt
+      }
+    }
+  }
+  """
+
+  @read_tool "linear_task_read"
+  @update_tool "linear_task_update"
+
+  @read_schema %{
     "type" => "object",
     "additionalProperties" => false,
-    "required" => ["query"],
     "properties" => %{
-      "query" => %{
-        "type" => "string",
-        "description" => "GraphQL query or mutation document to execute against Linear."
+      "include_activity" => %{
+        "type" => "boolean",
+        "description" => "Include recent comments and state-change activity needed to understand review feedback."
       },
-      "variables" => %{
+      "activity_limit" => %{
+        "type" => "integer",
+        "minimum" => 1,
+        "maximum" => 100,
+        "description" => "Maximum activity entries to include."
+      },
+      "since" => %{
+        "type" => ["string", "null"],
+        "description" => "Optional ISO-8601 lower bound for returned activity."
+      }
+    }
+  }
+
+  @update_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "properties" => %{
+      "description" => %{
+        "type" => ["string", "null"],
+        "description" => "Replacement task description. Only allowed by refinement profiles."
+      },
+      "comment" => %{
+        "type" => ["string", "null"],
+        "description" => "Comment to append to the task."
+      },
+      "target_state" => %{
+        "type" => ["string", "null"],
+        "description" => "Workflow state to request or transition to when allowed by the current profile."
+      },
+      "result" => %{
         "type" => ["object", "null"],
-        "description" => "Optional GraphQL variables object.",
-        "additionalProperties" => true
+        "additionalProperties" => true,
+        "description" => "Structured implementation or verification result for reviewer context."
+      },
+      "references" => %{
+        "type" => ["object", "null"],
+        "additionalProperties" => true,
+        "description" => "Optional branch, commit, PR, or artifact references."
       }
     }
   }
@@ -29,8 +137,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
-      @linear_graphql_tool ->
-        execute_linear_graphql(arguments, opts)
+      @read_tool ->
+        execute_task_read(arguments, opts)
+
+      @update_tool ->
+        execute_task_update(arguments, opts)
 
       other ->
         failure_response(%{
@@ -46,84 +157,288 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   def tool_specs do
     [
       %{
-        "name" => @linear_graphql_tool,
-        "description" => @linear_graphql_description,
-        "inputSchema" => @linear_graphql_input_schema
+        "name" => @read_tool,
+        "description" => "Read the current Linear task detail and review activity through Symphony's restricted task API.",
+        "inputSchema" => @read_schema
+      },
+      %{
+        "name" => @update_tool,
+        "description" => "Update the current Linear task through Symphony's restricted task API: description, comment, result, and allowed state transition.",
+        "inputSchema" => @update_schema
       }
     ]
   end
 
-  defp execute_linear_graphql(arguments, opts) do
-    linear_client = Keyword.get(opts, :linear_client, &Client.graphql/3)
+  defp execute_task_read(arguments, opts) do
+    reader = Keyword.get(opts, :task_reader, fn payload -> default_task_reader(payload, opts) end)
 
-    with {:ok, query, variables} <- normalize_linear_graphql_arguments(arguments),
-         {:ok, response} <- linear_client.(query, variables, []) do
-      graphql_response(response)
+    with {:ok, payload} <- normalize_read_arguments(arguments),
+         {:ok, result} <- reader.(payload) do
+      success_response(result)
     else
       {:error, reason} ->
-        failure_response(tool_error_payload(reason))
+        failure_response(tool_error_payload(@read_tool, reason))
     end
   end
 
-  defp normalize_linear_graphql_arguments(arguments) when is_binary(arguments) do
-    case String.trim(arguments) do
-      "" -> {:error, :missing_query}
-      query -> {:ok, query, %{}}
-    end
-  end
+  defp execute_task_update(arguments, opts) do
+    updater = Keyword.get(opts, :task_updater, fn payload -> default_task_updater(payload, opts) end)
 
-  defp normalize_linear_graphql_arguments(arguments) when is_map(arguments) do
-    case normalize_query(arguments) do
-      {:ok, query} ->
-        case normalize_variables(arguments) do
-          {:ok, variables} ->
-            {:ok, query, variables}
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
+    with {:ok, payload} <- normalize_update_arguments(arguments),
+         {:ok, result} <- updater.(payload) do
+      success_response(result)
+    else
       {:error, reason} ->
-        {:error, reason}
+        failure_response(tool_error_payload(@update_tool, reason))
     end
   end
 
-  defp normalize_linear_graphql_arguments(_arguments), do: {:error, :invalid_arguments}
+  defp normalize_read_arguments(nil), do: {:ok, %{"include_activity" => true, "activity_limit" => 50}}
 
-  defp normalize_query(arguments) do
-    case Map.get(arguments, "query") || Map.get(arguments, :query) do
-      query when is_binary(query) ->
-        case String.trim(query) do
-          "" -> {:error, :missing_query}
-          trimmed -> {:ok, trimmed}
+  defp normalize_read_arguments(arguments) when is_map(arguments) do
+    include_activity = Map.get(arguments, "include_activity", Map.get(arguments, :include_activity, true))
+    activity_limit = Map.get(arguments, "activity_limit", Map.get(arguments, :activity_limit, 50))
+    since = Map.get(arguments, "since", Map.get(arguments, :since))
+
+    cond do
+      not is_boolean(include_activity) ->
+        {:error, :invalid_include_activity}
+
+      not is_integer(activity_limit) or activity_limit < 1 or activity_limit > 100 ->
+        {:error, :invalid_activity_limit}
+
+      not (is_nil(since) or is_binary(since)) ->
+        {:error, :invalid_since}
+
+      true ->
+        {:ok,
+         %{
+           "include_activity" => include_activity,
+           "activity_limit" => activity_limit,
+           "since" => since
+         }}
+    end
+  end
+
+  defp normalize_read_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  defp normalize_update_arguments(arguments) when is_map(arguments) do
+    payload =
+      %{}
+      |> put_optional_string(arguments, "description")
+      |> put_optional_string(arguments, "comment")
+      |> put_optional_string(arguments, "target_state")
+      |> put_optional_map(arguments, "result")
+      |> put_optional_map(arguments, "references")
+
+    if map_size(payload) == 0 do
+      {:error, :empty_update}
+    else
+      {:ok, payload}
+    end
+  catch
+    {:invalid_field, field} -> {:error, {:invalid_field, field}}
+  end
+
+  defp normalize_update_arguments(_arguments), do: {:error, :invalid_arguments}
+
+  defp put_optional_string(payload, arguments, field) do
+    case Map.get(arguments, field, Map.get(arguments, String.to_atom(field))) do
+      nil ->
+        payload
+
+      value when is_binary(value) ->
+        Map.put(payload, field, value)
+
+      _ ->
+        throw({:invalid_field, field})
+    end
+  end
+
+  defp put_optional_map(payload, arguments, field) do
+    case Map.get(arguments, field, Map.get(arguments, String.to_atom(field))) do
+      nil ->
+        payload
+
+      value when is_map(value) ->
+        Map.put(payload, field, value)
+
+      _ ->
+        throw({:invalid_field, field})
+    end
+  end
+
+  defp default_task_reader(payload, opts) do
+    with {:ok, issue_id} <- issue_id_from_opts(opts),
+         {:ok, profile} <- profile_from_opts(opts),
+         {:ok, response} <-
+           Client.graphql(@task_read_query, %{
+             "id" => issue_id,
+             "commentFirst" => Map.get(payload, "activity_limit", 50)
+           }) do
+      {:ok, normalize_task_read_response(response, Map.get(payload, "include_activity", true), profile)}
+    end
+  end
+
+  defp default_task_updater(payload, opts) do
+    with {:ok, issue_id} <- issue_id_from_opts(opts),
+         {:ok, profile} <- profile_from_opts(opts),
+         :ok <- validate_update_policy(payload, profile),
+         {:ok, issue_update} <- maybe_update_issue(issue_id, payload),
+         {:ok, comment_update} <- maybe_create_comment(issue_id, payload) do
+      {:ok,
+       %{
+         "issue_update" => issue_update,
+         "comment_update" => comment_update,
+         "requested_state" => Map.get(payload, "target_state")
+       }}
+    end
+  catch
+    {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp issue_id_from_opts(opts) do
+    case Keyword.get(opts, :issue) do
+      %Issue{id: id} when is_binary(id) and id != "" -> {:ok, id}
+      %{"id" => id} when is_binary(id) and id != "" -> {:ok, id}
+      %{id: id} when is_binary(id) and id != "" -> {:ok, id}
+      _ -> {:error, :linear_task_context_unavailable}
+    end
+  end
+
+  defp profile_from_opts(opts) do
+    case Keyword.get(opts, :profile) do
+      profile when is_binary(profile) and profile != "" -> {:ok, profile}
+      _ -> {:error, :workflow_profile_unavailable}
+    end
+  end
+
+  defp validate_update_policy(payload, profile) do
+    policy = Config.workflow_allowed_updates(profile)
+
+    with :ok <- validate_required_allow_true(payload, policy, profile, "description"),
+         :ok <- validate_required_allow_true(payload, policy, profile, "result"),
+         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment") do
+      validate_target_state_allowed(payload, policy, profile)
+    end
+  end
+
+  defp validate_required_allow_true(payload, policy, profile, field) do
+    if Map.has_key?(payload, field) and Map.get(policy, field) != true do
+      {:error, {:update_not_allowed, field, profile}}
+    else
+      :ok
+    end
+  end
+
+  defp validate_not_explicitly_false(payload, policy, profile, field) do
+    if Map.has_key?(payload, field) and Map.get(policy, field) == false do
+      {:error, {:update_not_allowed, field, profile}}
+    else
+      :ok
+    end
+  end
+
+  defp validate_target_state_allowed(payload, policy, profile) do
+    case Map.get(payload, "target_state") do
+      nil ->
+        :ok
+
+      target_state ->
+        if target_state in Map.get(policy, "target_states", []) do
+          :ok
+        else
+          {:error, {:target_state_not_allowed, target_state, profile, Map.get(policy, "target_states", [])}}
+        end
+    end
+  end
+
+  defp maybe_update_issue(issue_id, payload) do
+    issue_input =
+      %{}
+      |> maybe_put_value("description", Map.get(payload, "description"))
+      |> maybe_put_state_id(issue_id, Map.get(payload, "target_state"))
+
+    if map_size(issue_input) == 0 do
+      {:ok, nil}
+    else
+      Client.graphql(@issue_update_mutation, %{"id" => issue_id, "input" => issue_input})
+    end
+  end
+
+  defp maybe_create_comment(issue_id, payload) do
+    body =
+      payload
+      |> Map.get("comment")
+      |> append_json_section("Result", Map.get(payload, "result"))
+      |> append_json_section("References", Map.get(payload, "references"))
+
+    case body do
+      body when is_binary(body) ->
+        if String.trim(body) == "" do
+          {:ok, nil}
+        else
+          Client.graphql(@comment_create_mutation, %{"issueId" => issue_id, "body" => body})
         end
 
       _ ->
-        {:error, :missing_query}
+        {:ok, nil}
     end
   end
 
-  defp normalize_variables(arguments) do
-    case Map.get(arguments, "variables") || Map.get(arguments, :variables) || %{} do
-      variables when is_map(variables) -> {:ok, variables}
-      _ -> {:error, :invalid_variables}
+  defp maybe_put_value(input, _key, nil), do: input
+  defp maybe_put_value(input, key, value), do: Map.put(input, key, value)
+
+  defp maybe_put_state_id(input, _issue_id, nil), do: input
+
+  defp maybe_put_state_id(input, issue_id, state_name) when is_binary(state_name) do
+    case lookup_state_id(issue_id, state_name) do
+      {:ok, state_id} -> Map.put(input, "stateId", state_id)
+      {:error, reason} -> throw({:linear_state_lookup_failed, reason})
     end
   end
 
-  defp graphql_response(response) do
-    success =
-      case response do
-        %{"errors" => errors} when is_list(errors) and errors != [] -> false
-        %{errors: errors} when is_list(errors) and errors != [] -> false
-        _ -> true
-      end
-
-    dynamic_tool_response(success, encode_payload(response))
+  defp lookup_state_id(issue_id, state_name) do
+    with {:ok, response} <- Client.graphql(@issue_team_states_query, %{"id" => issue_id}),
+         states when is_list(states) <- get_in(response, ["data", "issue", "team", "states", "nodes"]),
+         %{"id" => state_id} <-
+           Enum.find(states, fn state -> Map.get(state, "name") == state_name end) do
+      {:ok, state_id}
+    else
+      nil -> {:error, {:linear_state_not_found, state_name}}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, {:linear_state_not_found, state_name}}
+    end
   end
 
-  defp failure_response(payload) do
-    dynamic_tool_response(false, encode_payload(payload))
+  defp append_json_section(nil, _title, nil), do: nil
+
+  defp append_json_section(body, _title, nil), do: body
+
+  defp append_json_section(body, title, value) when is_map(value) do
+    base = if is_binary(body), do: String.trim(body), else: ""
+    section = "#{title}:\n```json\n#{Jason.encode!(value, pretty: true)}\n```"
+
+    if base == "", do: section, else: base <> "\n\n" <> section
   end
+
+  defp normalize_task_read_response(response, include_activity, profile) do
+    response
+    |> maybe_drop_activity(include_activity)
+    |> Map.put("workflow", %{
+      "profile" => profile,
+      "allowed_updates" => Config.workflow_allowed_updates(profile)
+    })
+  end
+
+  defp maybe_drop_activity(response, true), do: response
+
+  defp maybe_drop_activity(response, false) when is_map(response) do
+    pop_in(response, ["data", "issue", "comments"]) |> elem(1)
+  end
+
+  defp success_response(payload), do: dynamic_tool_response(true, encode_payload(payload))
+  defp failure_response(payload), do: dynamic_tool_response(false, encode_payload(payload))
 
   defp dynamic_tool_response(success, output) when is_boolean(success) and is_binary(output) do
     %{
@@ -144,70 +459,77 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp encode_payload(payload), do: inspect(payload)
 
-  defp tool_error_payload(:missing_query) do
+  defp tool_error_payload(tool, :invalid_arguments) do
+    %{"error" => %{"message" => "`#{tool}` expects a JSON object argument."}}
+  end
+
+  defp tool_error_payload(@read_tool, :invalid_include_activity) do
+    %{"error" => %{"message" => "`linear_task_read.include_activity` must be a boolean."}}
+  end
+
+  defp tool_error_payload(@read_tool, :invalid_activity_limit) do
+    %{"error" => %{"message" => "`linear_task_read.activity_limit` must be an integer from 1 to 100."}}
+  end
+
+  defp tool_error_payload(@read_tool, :invalid_since) do
+    %{"error" => %{"message" => "`linear_task_read.since` must be an ISO-8601 string or null."}}
+  end
+
+  defp tool_error_payload(@update_tool, :empty_update) do
+    %{"error" => %{"message" => "`linear_task_update` requires at least one update field."}}
+  end
+
+  defp tool_error_payload(@update_tool, {:invalid_field, field}) do
+    %{"error" => %{"message" => "`linear_task_update.#{field}` has an invalid type."}}
+  end
+
+  defp tool_error_payload(_tool, :linear_task_context_unavailable) do
     %{
       "error" => %{
-        "message" => "`linear_graphql` requires a non-empty `query` string."
+        "message" => "Linear task context is unavailable for this Codex session."
       }
     }
   end
 
-  defp tool_error_payload(:invalid_arguments) do
+  defp tool_error_payload(_tool, :workflow_profile_unavailable) do
     %{
       "error" => %{
-        "message" => "`linear_graphql` expects either a GraphQL query string or an object with `query` and optional `variables`."
+        "message" => "Workflow profile is unavailable for this Codex session."
       }
     }
   end
 
-  defp tool_error_payload(:invalid_variables) do
+  defp tool_error_payload(_tool, {:update_not_allowed, field, profile}) do
     %{
       "error" => %{
-        "message" => "`linear_graphql.variables` must be a JSON object when provided."
+        "message" => "`linear_task_update.#{field}` is not allowed in workflow profile `#{profile}`."
       }
     }
   end
 
-  defp tool_error_payload(:missing_linear_api_token) do
+  defp tool_error_payload(_tool, {:target_state_not_allowed, state, profile, allowed}) do
     %{
       "error" => %{
-        "message" => "Symphony is missing Linear auth. Set `linear.api_key` in `WORKFLOW.md` or export `LINEAR_API_KEY`."
+        "message" => "`linear_task_update.target_state` is not allowed in workflow profile `#{profile}`.",
+        "requestedState" => state,
+        "allowedStates" => allowed
       }
     }
   end
 
-  defp tool_error_payload({:linear_api_status, status}) do
+  defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do
     %{
       "error" => %{
-        "message" => "Linear GraphQL request failed with HTTP #{status}.",
-        "status" => status
-      }
-    }
-  end
-
-  defp tool_error_payload({:linear_api_status, status, body}) do
-    %{
-      "error" => %{
-        "message" => "Linear GraphQL request failed with HTTP #{status}.",
-        "status" => status,
-        "response" => body
-      }
-    }
-  end
-
-  defp tool_error_payload({:linear_api_request, reason}) do
-    %{
-      "error" => %{
-        "message" => "Linear GraphQL request failed before receiving a successful response.",
+        "message" => "Unable to resolve requested Linear workflow state.",
         "reason" => inspect(reason)
       }
     }
   end
 
-  defp tool_error_payload(reason) do
+  defp tool_error_payload(_tool, reason) do
     %{
       "error" => %{
-        "message" => "Linear GraphQL tool execution failed.",
+        "message" => "Restricted Linear task tool execution failed.",
         "reason" => inspect(reason)
       }
     }

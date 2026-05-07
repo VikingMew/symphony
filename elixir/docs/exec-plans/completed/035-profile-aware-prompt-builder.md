@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Tasks 032, 033
 **Created**: 2026-05-06
@@ -66,7 +66,7 @@ A single generic prompt cannot safely cover requirement refinement, code impleme
 
 ## Completion Deviations
 
-None yet.
+Implemented profile-aware prompt contracts as a generated prefix around the existing workflow prompt template. Existing custom prompt rendering stays intact when no profile is provided.
 
 ## Dependencies
 

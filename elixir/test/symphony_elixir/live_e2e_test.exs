@@ -323,68 +323,30 @@ defmodule SymphonyElixir.LiveE2ETest do
     project_slug=#{project_slug}
 
     Step 2:
-    You must use the `linear_graphql` tool to query the current issue by `{{ issue.id }}` and read:
+    You must use the `linear_task_read` tool to read the current issue and activity:
     - existing comments
-    - team workflow states
+    - current workflow state
 
     A turn that only creates the file is incomplete. Do not stop after Step 1.
 
-    If the exact comment body below is not already present, post exactly one comment on the current issue with this exact body:
+    If the exact comment body below is not already present, use `linear_task_update` to post exactly one comment on the current issue with this exact body:
     #{expected_comment("{{ issue.identifier }}", project_slug)}
 
-    Use these exact GraphQL operations:
-
-    ```graphql
-    query IssueContext($id: String!) {
-      issue(id: $id) {
-        comments(first: 20) {
-          nodes {
-            body
-          }
-        }
-        team {
-          states(first: 50) {
-            nodes {
-              id
-              name
-              type
-            }
-          }
-        }
-      }
-    }
-    ```
-
-    ```graphql
-    mutation AddComment($issueId: String!, $body: String!) {
-      commentCreate(input: {issueId: $issueId, body: $body}) {
-        success
-      }
-    }
-    ```
+    Use `linear_task_update` for task updates. Do not request or use raw GraphQL.
 
     Step 3:
-    Use the same issue-context query result to choose a workflow state whose `type` is `completed`.
-    Then move the current issue to that state with this exact mutation:
-
-    ```graphql
-    mutation CompleteIssue($id: String!, $stateId: String!) {
-      issueUpdate(id: $id, input: {stateId: $stateId}) {
-        success
-      }
-    }
-    ```
+    Move the current issue to `Done` with `linear_task_update` when the file and comment are complete.
 
     Step 4:
-    Verify all outcomes with one final `linear_graphql` query against `{{ issue.id }}`:
+    Verify all outcomes with one final `linear_task_read` call:
     - the exact comment body is present
-    - the issue state type is `completed`
+    - the issue state is `Done`
 
     Do not ask for approval.
     Stop only after all three conditions are true:
     1. the file exists with the exact contents above
     2. the Linear comment exists with the exact body above
-    3. the Linear issue is in a completed terminal state
+    3. the Linear issue is in `Done`
     """
   end
 

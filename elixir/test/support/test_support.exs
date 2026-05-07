@@ -131,6 +131,8 @@ defmodule SymphonyElixir.TestSupport do
           observability_render_interval_ms: 16,
           server_port: nil,
           server_host: nil,
+          workflow_policy: nil,
+          profiles_policy: nil,
           prompt: @workflow_prompt
         ],
         overrides
@@ -168,6 +170,8 @@ defmodule SymphonyElixir.TestSupport do
     observability_render_interval_ms = Keyword.get(config, :observability_render_interval_ms)
     server_port = Keyword.get(config, :server_port)
     server_host = Keyword.get(config, :server_host)
+    workflow_policy = Keyword.get(config, :workflow_policy)
+    profiles_policy = Keyword.get(config, :profiles_policy)
     prompt = Keyword.get(config, :prompt)
 
     sections =
@@ -202,6 +206,8 @@ defmodule SymphonyElixir.TestSupport do
         hooks_yaml(hook_after_create, hook_before_run, hook_after_run, hook_before_remove, hook_timeout_ms),
         observability_yaml(observability_enabled, observability_refresh_ms, observability_render_interval_ms),
         server_yaml(server_port, server_host),
+        workflow_yaml(workflow_policy),
+        profiles_yaml(profiles_policy),
         "---",
         prompt
       ]
@@ -209,6 +215,11 @@ defmodule SymphonyElixir.TestSupport do
 
     Enum.join(sections, "\n") <> "\n"
   end
+
+  defp workflow_yaml(nil), do: nil
+  defp workflow_yaml(policy), do: "workflow: #{yaml_value(policy)}"
+  defp profiles_yaml(nil), do: nil
+  defp profiles_yaml(policy), do: "profiles: #{yaml_value(policy)}"
 
   defp yaml_value(value) when is_binary(value) do
     "\"" <> String.replace(value, "\"", "\\\"") <> "\""

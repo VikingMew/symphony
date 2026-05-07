@@ -34,6 +34,114 @@ codex:
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
+workflow:
+  states:
+    Refining:
+      profile: refinement
+    Ready:
+      profile: implementation
+    In Progress:
+      profile: implementation
+    Ready to Merge:
+      profile: merge
+    Merging:
+      profile: merge
+  human_review_states:
+    - Needs Refinement Review
+    - Needs Implementation Review
+  allowed_transitions:
+    - from: Refining
+      to: Needs Refinement Review
+      actor: codex
+      profile: refinement
+    - from: Needs Refinement Review
+      to: Ready
+      actor: human
+    - from: Needs Refinement Review
+      to: Refining
+      actor: human
+    - from: Ready
+      to: In Progress
+      actor: codex
+      profile: implementation
+    - from: In Progress
+      to: Needs Implementation Review
+      actor: codex
+      profile: implementation
+    - from: Needs Implementation Review
+      to: Ready to Merge
+      actor: human
+    - from: Needs Implementation Review
+      to: In Progress
+      actor: human
+    - from: Ready to Merge
+      to: Merging
+      actor: codex
+      profile: merge
+    - from: Merging
+      to: Done
+      actor: codex
+      profile: merge
+    - from: Ready to Merge
+      to: In Progress
+      actor: human
+  tool_policy:
+    linear:
+      exposed_tools:
+        - linear_task_read
+        - linear_task_update
+      raw_graphql: false
+profiles:
+  refinement:
+    name: Refinement
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Workflow profile: {{ workflow.profile_name }}
+
+        Read the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states.
+    allowed_updates:
+      description: true
+      comment: true
+      result: false
+      target_states:
+        - Needs Refinement Review
+  implementation:
+    name: Implementation
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Workflow profile: {{ workflow.profile_name }}
+
+        Read the task and recent Linear comments before changing code. Implement, test, and verify the requested work in the workspace. When ready for review, add the result, relevant references, a concise comment, and request one of the allowed target states.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states:
+        - In Progress
+        - Needs Implementation Review
+  merge:
+    name: Merge
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Workflow profile: {{ workflow.profile_name }}
+
+        Read the task and recent Linear comments before merging. Verify the branch is ready, perform the merge workflow when allowed, and add a concise result comment with an allowed target state.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states:
+        - Merging
+        - Done
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -69,13 +177,14 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Prerequisite: Linear MCP or `linear_graphql` tool is available
+## Prerequisite: restricted Linear task tools are available
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+The agent should be able to talk to the current Linear task through Symphony's injected `linear_task_read` and `linear_task_update` tools. If they are unavailable, stop with a blocker; do not ask for or use raw Linear GraphQL.
 
 ## Default posture
 
 - Start by determining the ticket's current status, then follow the matching flow for that status.
+- Read task detail and recent comments before every workflow action; review comments can reject or alter the required work.
 - Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.

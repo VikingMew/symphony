@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Tasks 032, 035
 **Created**: 2026-05-06
@@ -72,7 +72,7 @@ State alone is not enough to decide what Codex should do. Human review states ca
 
 ## Completion Deviations
 
-None yet.
+Delivered state-to-profile dispatch, human review state exclusion, worker payload metadata, and prompt guidance that requires reading activity. A separate orchestrator-side activity classifier was not added; review/rejection interpretation happens through `linear_task_read` and profile-specific prompt/tool policy.
 
 ## Dependencies
 

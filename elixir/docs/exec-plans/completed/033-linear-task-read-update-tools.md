@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Task 032
 **Created**: 2026-05-06
@@ -78,7 +78,7 @@ The existing `linear_graphql` dynamic tool is too broad. It does not reveal the 
 
 ## Completion Deviations
 
-None yet.
+Delivered the restricted Codex-visible tool surface and policy checks. The underlying Linear implementation still uses Symphony's internal GraphQL client, but raw GraphQL is no longer exposed as a Codex dynamic tool.
 
 ## Dependencies
 

@@ -170,9 +170,64 @@ hooks:
     git clone git@github.com:your-org/your-repo.git .
 codex:
   command: codex app-server
+workflow:
+  states:
+    Refining:
+      profile: refinement
+    Ready:
+      profile: implementation
+    In Progress:
+      profile: implementation
+    Ready to Merge:
+      profile: merge
+    Merging:
+      profile: merge
+  human_review_states: ["Needs Refinement Review", "Needs Implementation Review"]
+  tool_policy:
+    linear:
+      exposed_tools: ["linear_task_read", "linear_task_update"]
+      raw_graphql: false
+profiles:
+  refinement:
+    name: "Refinement"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Refine the task into clear requirements and acceptance criteria.
+    allowed_updates:
+      description: true
+      comment: true
+      result: false
+      target_states: ["Needs Refinement Review"]
+  implementation:
+    name: "Implementation"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Implement, test, verify, and prepare the work for human review.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["In Progress", "Needs Implementation Review"]
+  merge:
+    name: "Merge"
+    executor:
+      type: manual
+    prompt:
+      mode: disabled
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["Done"]
 ```
 
-`WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
+`WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。导入时它是一个完整 workflow package：`workflow` 定义状态路由和流转规则，顶层 `profiles` 定义被引用的执行 profile。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
 
 当前默认 Linear 状态流是：
 
@@ -188,10 +243,15 @@ Backlog
   -> Done
 ```
 
-其中 `Refining`、`Ready`、`In Progress`、`Ready to Merge`、`Merging` 是 agent 可处理状态，
-会放进 `tracker.active_states`。`Needs Refinement Review` 和
-`Needs Implementation Review` 是人工确认状态，不应放进 active states。`Done`、`Canceled`
-和 `Duplicate` 是终态。
+其中 `Refining`、`Ready`、`In Progress`、`Ready to Merge`、`Merging` 是可调度状态，会放进
+`tracker.active_states`，并通过 `workflow.states.<state>.profile` 指定对应 profile。`Needs
+Refinement Review` 和 `Needs Implementation Review` 是人工确认状态，不应放进 active states。
+`Done`、`Canceled` 和 `Duplicate` 是终态。
+
+Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、
+也不应拿到 Linear API Key 或 raw GraphQL；Symphony 后端负责持有凭据，并按 workflow profile
+限制可更新字段和可流转状态。每次状态动作前都应先读取 task detail 和 comments，因为人工打回
+通常通过评论说明新的要求。
 
 ## 8. 启动 Symphony
 

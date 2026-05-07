@@ -130,7 +130,17 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
+  defp build_turn_prompt(issue, opts, 1, _max_turns) do
+    profile = Config.workflow_profile_for_state(issue.state)
+
+    prompt_opts =
+      opts
+      |> Keyword.put_new(:profile, profile)
+      |> Keyword.put_new(:profile_policy, Config.workflow_profile(profile))
+      |> Keyword.put_new(:allowed_updates, Config.workflow_allowed_updates(profile))
+
+    PromptBuilder.build_prompt(issue, prompt_opts)
+  end
 
   defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
     """

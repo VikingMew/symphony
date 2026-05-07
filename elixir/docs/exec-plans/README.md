@@ -37,6 +37,17 @@ Plans should focus on product and engineering intent rather than full implementa
 29. [029-linear-workflow-state-model.md](completed/029-linear-workflow-state-model.md)
 30. [030-docker-image-modes.md](completed/030-docker-image-modes.md)
 31. [031-runtime-proxy-env-support.md](completed/031-runtime-proxy-env-support.md)
+32. [032-workflow-profile-policy-schema.md](completed/032-workflow-profile-policy-schema.md)
+33. [033-linear-task-read-update-tools.md](completed/033-linear-task-read-update-tools.md)
+34. [034-codex-sensitive-env-scrub.md](completed/034-codex-sensitive-env-scrub.md)
+35. [035-profile-aware-prompt-builder.md](completed/035-profile-aware-prompt-builder.md)
+36. [036-orchestrator-profile-activity-dispatch.md](completed/036-orchestrator-profile-activity-dispatch.md)
+37. [037-refinement-workflow-execution.md](completed/037-refinement-workflow-execution.md)
+38. [038-implementation-workflow-execution.md](completed/038-implementation-workflow-execution.md)
+39. [039-linear-skill-and-docs-restricted-tools.md](completed/039-linear-skill-and-docs-restricted-tools.md)
+44. [044-stage-specific-execution-profiles.md](completed/044-stage-specific-execution-profiles.md)
+45. [045-database-inline-profile-normalization.md](completed/045-database-inline-profile-normalization.md)
+46. [046-profile-prompt-mode-clarity.md](completed/046-profile-prompt-mode-clarity.md)
 
 ## Plan Guidelines
 
@@ -61,11 +72,7 @@ When implementation starts, keep the plan current. If the implementation discove
 
 ## Active Plans
 
-32. [032-workflow-profile-policy-schema.md](032-workflow-profile-policy-schema.md)
-33. [033-linear-task-read-update-tools.md](033-linear-task-read-update-tools.md)
-34. [034-codex-sensitive-env-scrub.md](034-codex-sensitive-env-scrub.md)
-35. [035-profile-aware-prompt-builder.md](035-profile-aware-prompt-builder.md)
-36. [036-orchestrator-profile-activity-dispatch.md](036-orchestrator-profile-activity-dispatch.md)
-37. [037-refinement-workflow-execution.md](037-refinement-workflow-execution.md)
-38. [038-implementation-workflow-execution.md](038-implementation-workflow-execution.md)
-39. [039-linear-skill-and-docs-restricted-tools.md](039-linear-skill-and-docs-restricted-tools.md)
+40. [040-workflow-page-validate-after-edit.md](active/040-workflow-page-validate-after-edit.md)
+41. [041-project-agnostic-workflow-template.md](active/041-project-agnostic-workflow-template.md)
+42. [042-project-bootstrap-config-schema.md](active/042-project-bootstrap-config-schema.md)
+43. [043-workflow-ui-bootstrap-template-generator.md](active/043-workflow-ui-bootstrap-template-generator.md)

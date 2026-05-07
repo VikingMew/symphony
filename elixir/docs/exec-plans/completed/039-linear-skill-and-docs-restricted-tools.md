@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: MEDIUM
 **Dependencies**: Tasks 033, 037, 038
 **Created**: 2026-05-06
@@ -59,7 +59,7 @@ The repository currently includes a `linear` skill that instructs Codex to use `
 
 ## Completion Deviations
 
-None yet.
+Migrated current README, user guide, workflow prompt, live e2e prompt, and repo-local `linear` skill. Historical completed plans still mention earlier raw GraphQL behavior where needed for context.
 
 ## Dependencies
 

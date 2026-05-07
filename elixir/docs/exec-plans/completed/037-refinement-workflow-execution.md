@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Tasks 032, 033, 035, 036
 **Created**: 2026-05-06
@@ -67,7 +67,7 @@ The product workflow starts from a rough task or one-sentence idea. Codex should
 
 ## Completion Deviations
 
-None yet.
+Delivered refinement as a profile contract enforced by prompts and `linear_task_update` policy rather than a separate refinement executor. Codex must read task activity, may update description/comment, and can only request `Needs Refinement Review` from the refinement profile.
 
 ## Dependencies
 

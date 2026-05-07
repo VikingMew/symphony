@@ -12,6 +12,15 @@ defmodule SymphonyElixir.Codex.AppServer do
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
+  @sensitive_codex_env_names ~w(
+    LINEAR_API_KEY
+    LINEAR_TOKEN
+    GITHUB_TOKEN
+    GH_TOKEN
+    SLACK_BOT_TOKEN
+    ANTHROPIC_API_KEY
+    OPENAI_API_KEY
+  )
 
   @type session :: %{
           port: port(),
@@ -85,7 +94,10 @@ defmodule SymphonyElixir.Codex.AppServer do
 
     tool_executor =
       Keyword.get(opts, :tool_executor, fn tool, arguments ->
-        DynamicTool.execute(tool, arguments)
+        DynamicTool.execute(tool, arguments,
+          issue: issue,
+          profile: Config.workflow_profile_for_state(issue.state)
+        )
       end)
 
     case start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
@@ -218,6 +230,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
       RuntimeProxy.remote_exports(),
+      unset_sensitive_env_command(),
       "cd #{shell_escape(workspace)}",
       "exec #{Config.settings!().codex.command}"
     ]
@@ -226,10 +239,21 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_put_proxy_env(port_opts) do
-    case RuntimeProxy.port_env() do
+    case codex_port_env() do
       [] -> port_opts
       env -> Keyword.put(port_opts, :env, env)
     end
+  end
+
+  defp codex_port_env do
+    RuntimeProxy.port_env() ++
+      Enum.map(@sensitive_codex_env_names, fn name ->
+        {String.to_charlist(name), false}
+      end)
+  end
+
+  defp unset_sensitive_env_command do
+    "unset " <> Enum.join(@sensitive_codex_env_names, " ")
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do

@@ -61,6 +61,36 @@ defmodule SymphonyElixir.Config do
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
 
+  @spec workflow_policy() :: map()
+  def workflow_policy do
+    settings!().workflow
+  end
+
+  @spec workflow_profile_for_state(String.t() | nil) :: String.t() | nil
+  def workflow_profile_for_state(state_name) do
+    Schema.workflow_profile_for_state(settings!(), state_name)
+  end
+
+  @spec workflow_profile(String.t() | nil) :: map()
+  def workflow_profile(profile) do
+    Schema.workflow_profile(settings!(), profile)
+  end
+
+  @spec workflow_executor_for_state(String.t() | nil) :: String.t() | nil
+  def workflow_executor_for_state(state_name) do
+    Schema.workflow_executor_for_state(settings!(), state_name)
+  end
+
+  @spec human_review_state?(String.t() | nil) :: boolean()
+  def human_review_state?(state_name) do
+    Schema.human_review_state?(settings!(), state_name)
+  end
+
+  @spec workflow_allowed_updates(String.t() | nil) :: map()
+  def workflow_allowed_updates(profile) do
+    Schema.workflow_allowed_updates(settings!(), profile)
+  end
+
   @spec codex_turn_sandbox_policy(Path.t() | nil) :: map()
   def codex_turn_sandbox_policy(workspace \\ nil) do
     case Schema.resolve_runtime_turn_sandbox_policy(settings!(), workspace) do

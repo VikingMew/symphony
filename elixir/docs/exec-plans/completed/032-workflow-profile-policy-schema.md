@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Task 029
 **Created**: 2026-05-06
@@ -84,7 +84,7 @@ The new Codex/Linear design requires:
 
 ## Completion Deviations
 
-None yet.
+Implemented as a normalized `workflow` map on `Config.Schema` rather than a dedicated embedded schema module. This keeps config compatibility simple while still validating profiles, review states, transitions, and tool policy.
 
 ## Dependencies
 

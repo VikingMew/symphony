@@ -94,7 +94,7 @@ The following browser pages are available when the Phoenix server is enabled:
 - `/settings`
 - `/diagnostics/linear`
 
-The workflow page supports raw `WORKFLOW.md` editing and version history. Structured field-by-field editing is intentionally left for the next UI refinement pass.
+The workflow page currently supports raw `WORKFLOW.md` editing and version history. The long-term target is a structured workflow configuration page with per-section fields, field-level verification, full `WORKFLOW.md` upload import, and full `WORKFLOW.md` export. See [Workflow 页面设计目标](workflow_page_design.zh-CN.md).
 
 ## Worker State
 

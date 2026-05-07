@@ -2,7 +2,7 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
 **Priority**: HIGH
 **Dependencies**: Task 031
 **Created**: 2026-05-06
@@ -71,7 +71,7 @@ Codex should interact with Linear through restricted Symphony tools, not by read
 
 ## Completion Deviations
 
-None yet.
+Implemented local child-process scrubbing with explicit unset entries and remote launch scrubbing with `unset`. Proxy environment propagation remains allowed.
 
 ## Dependencies
 

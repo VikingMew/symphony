@@ -40,8 +40,9 @@ control-plane APIs. Centralized in-process execution remains the default. When
 `SYMPHONY_EXECUTION_MODE=worker`, the orchestrator queues tasks for external workers through the
 worker HTTP API instead of starting Codex locally.
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+During app-server sessions, Symphony serves restricted client-side Linear task tools:
+`linear_task_read` and `linear_task_update`. Codex can read the current task, comments, and request
+policy-checked task updates without receiving Linear API credentials or raw GraphQL access.
 
 If a claimed issue moves to a terminal state (`Done`, `Canceled`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -65,8 +66,8 @@ until a person moves the issue forward.
    set it as the `LINEAR_API_KEY` environment variable.
 3. Copy this directory's `WORKFLOW.md` to your repo.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
-     operations such as comment editing or upload flows.
+   - The `linear` skill expects Symphony's restricted `linear_task_read` and `linear_task_update`
+     app-server tools.
 5. Customize the copied `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
@@ -279,8 +280,14 @@ Authentication configuration:
 - `SYMPHONY_ADMIN_USERNAME` sets the admin username
 - `SYMPHONY_ADMIN_PASSWORD` or `SYMPHONY_ADMIN_PASSWORD_HASH` sets the password credential
 
-The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
-Codex session prompt.
+The `WORKFLOW.md` file is the import/export artifact for one workflow package. Its YAML front
+matter contains runtime configuration, a `workflow` object for state routing and transitions, and
+top-level `profiles` for execution definitions. The Markdown body is the base Codex session prompt.
+Each profile may add a profile prompt policy:
+
+- `extend` uses the profile prompt together with the base prompt, rendered as profile template first and base prompt second.
+- `replace` uses the profile prompt template instead of the base prompt.
+- `disabled` is valid for non-Codex executors and leaves no profile prompt for Codex.
 
 Minimal example:
 

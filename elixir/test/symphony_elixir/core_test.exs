@@ -88,6 +88,188 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:unsupported_tracker_kind, "123"}} = Config.validate!()
   end
 
+  test "workflow policy defaults and helpers classify task states" do
+    config = Config.settings!()
+
+    assert Config.workflow_profile_for_state("Refining") == "refinement"
+    assert Config.workflow_profile_for_state("In Progress") == "implementation"
+    assert Config.workflow_profile_for_state("Ready to Merge") == "merge"
+    assert Config.workflow_profile_for_state("Needs Implementation Review") == nil
+    assert Config.workflow_executor_for_state("Ready") == "codex_agent"
+    assert Config.human_review_state?("Needs Implementation Review")
+    refute Config.human_review_state?("In Progress")
+
+    assert Config.workflow_allowed_updates("implementation")["target_states"] == [
+             "In Progress",
+             "Needs Implementation Review"
+           ]
+
+    assert get_in(config.workflow, ["tool_policy", "linear", "exposed_tools"]) == [
+             "linear_task_read",
+             "linear_task_update"
+           ]
+
+    assert get_in(config.workflow, ["tool_policy", "linear", "raw_graphql"]) == false
+    assert get_in(config.profiles, ["implementation", "name"]) == "Implementation"
+  end
+
+  test "workflow policy supports state routing and validates transitions" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{
+        states: %{QA: %{profile: "qa"}},
+        human_review_states: ["Product Review"],
+        allowed_transitions: [%{from: "QA", to: "Done", actor: "codex", profile: "qa"}]
+      },
+      profiles_policy: %{
+        qa: %{
+          name: "QA",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "QA {{ issue.identifier }}"},
+          allowed_updates: %{comment: true, result: true, target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert Config.workflow_profile_for_state("QA") == "qa"
+    assert Config.human_review_state?("Product Review")
+    assert Config.workflow_allowed_updates("qa")["target_states"] == ["Done"]
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{
+        states: %{QA: %{profile: "qa"}},
+        allowed_transitions: [%{from: "QA", to: "Done", actor: "robot"}]
+      },
+      profiles_policy: %{
+        qa: %{
+          name: "QA",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "QA {{ issue.identifier }}"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "workflow"
+    assert message =~ "allowed_transitions.actor"
+  end
+
+  test "workflow rejects nested profiles and profile active state routing" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{
+        profiles: %{qa: %{name: "QA"}},
+        states: %{QA: %{profile: "qa"}}
+      },
+      profiles_policy: %{
+        qa: %{
+          name: "QA",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "QA {{ issue.identifier }}"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "workflow.profiles is not supported"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{QA: %{profile: "qa"}}},
+      profiles_policy: %{
+        qa: %{
+          name: "QA",
+          active_states: ["QA"],
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "QA {{ issue.identifier }}"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "profiles.qa.active_states is not supported"
+  end
+
+  test "workflow validates executor prompt policy" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{Ready: %{profile: "implementation"}}},
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "disabled"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "profiles.implementation.prompt.mode cannot be disabled"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{Ready: %{profile: "implementation"}}},
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "append", template: "Legacy append"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "profiles.implementation.prompt.mode is invalid"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{Ready: %{profile: "implementation"}}},
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "profiles.implementation.prompt.template must be a non-empty string for codex_agent extend mode"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{Ready: %{profile: "implementation"}}},
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "replace"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "profiles.implementation.prompt.template must be a non-empty string for codex_agent replace mode"
+  end
+
+  test "workflow supports manual profile executor" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workflow_policy: %{states: %{"Ready to Merge" => %{profile: "merge"}}},
+      profiles_policy: %{
+        merge: %{
+          name: "Merge",
+          executor: %{type: "manual"},
+          prompt: %{mode: "disabled"},
+          allowed_updates: %{target_states: ["Done"]}
+        }
+      }
+    )
+
+    assert :ok = Config.validate!()
+    assert Config.workflow_profile_for_state("Ready to Merge") == "merge"
+    assert Config.workflow_executor_for_state("Ready to Merge") == "manual"
+  end
+
   test "current WORKFLOW.md file is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
@@ -787,6 +969,70 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "Ticket S-1 Refactor backend request path"
     assert prompt =~ "labels=backend"
     assert prompt =~ "attempt=3"
+  end
+
+  test "prompt builder prepends profile-specific tool contract when profile is provided" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Ticket {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-2",
+      title: "Implement profile prompt",
+      description: "Prompt should include workflow tool guidance",
+      state: "In Progress",
+      url: "https://example.org/issues/S-2",
+      labels: ["backend"]
+    }
+
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+      )
+
+    assert prompt =~ "Workflow profile: implementation"
+    assert prompt =~ "`linear_task_read`"
+    assert prompt =~ "`linear_task_update`"
+    assert prompt =~ "Needs Implementation Review"
+    assert prompt =~ "Ticket S-2"
+  end
+
+  test "prompt builder applies profile prompt templates" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-3",
+      title: "Implement profile prompt template",
+      description: "Prompt should use the profile prompt policy",
+      state: "Ready",
+      url: "https://example.org/issues/S-3",
+      labels: ["backend"]
+    }
+
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: %{
+          "name" => "Implementation",
+          "prompt" => %{"mode" => "extend", "template" => "Stage {{ workflow.profile_name }} {{ issue.identifier }}"}
+        },
+        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+      )
+
+    assert prompt =~ "Stage Implementation S-3"
+    assert prompt =~ "Base S-3"
+    assert prompt == "Stage Implementation S-3\n\nBase S-3"
+
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: %{
+          "name" => "Implementation",
+          "prompt" => %{"mode" => "replace", "template" => "Replace {{ issue.identifier }}"}
+        },
+        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+      )
+
+    assert prompt == "Replace S-3"
   end
 
   test "prompt builder renders issue datetime fields without crashing" do

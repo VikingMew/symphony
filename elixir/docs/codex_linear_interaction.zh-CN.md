@@ -51,9 +51,12 @@ Codex 只能提交结构化意图，不能提交任意 Linear GraphQL 文档。
 
 ### `WORKFLOW.md`
 
-`WORKFLOW.md` 需要从简单的 active/terminal state 列表扩展为完整流程契约：
+`WORKFLOW.md` 需要从简单的 active/terminal state 列表扩展为完整流程契约。它的导入单位是一个
+workflow package，不是只包含 `workflow:` 节点的对象：`workflow` 定义流程路由和状态流转，顶层
+`profiles` 定义可被 workflow 引用的执行 profile。
 
-- 定义阶段或 Codex profile，例如 `refinement`、`implementation`、`merge`。
+- 定义 state 到 profile 的路由，例如 `workflow.states.Refining.profile: refinement`。
+- 在顶层 `profiles` 定义 profile 自身，例如 `refinement`、`implementation`、`merge`，每个 profile 必须有 `name`。
 - 定义 human review states，例如 `Needs Refinement Review`、`Needs Implementation Review`。
 - 定义 allowed transitions，包含 source state、target state、actor 和可选前置条件。
 - 定义每个 profile 可用的 Linear update 能力，例如是否允许改 description、是否允许提交 result、允许转到哪些目标状态。
@@ -62,22 +65,13 @@ Codex 只能提交结构化意图，不能提交任意 Linear GraphQL 文档。
 
 ```yaml
 workflow:
-  profiles:
-    refinement:
-      active_states: ["Refining"]
-      allowed_updates:
-        description: true
-        comment: true
-        result: false
-        target_states: ["Needs Refinement Review"]
-
-    implementation:
-      active_states: ["Ready", "In Progress"]
-      allowed_updates:
-        description: false
-        comment: true
-        result: true
-        target_states: ["In Progress", "Needs Implementation Review"]
+  states:
+    Refining:
+      profile: refinement
+    Ready:
+      profile: implementation
+    In Progress:
+      profile: implementation
 
   human_review_states:
     - "Needs Refinement Review"
@@ -108,17 +102,47 @@ workflow:
     - from: "Needs Implementation Review"
       to: "In Progress"
       actor: "human"
+
+profiles:
+  refinement:
+    name: "Refinement"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Refine the task into clear requirements and acceptance criteria.
+    allowed_updates:
+      description: true
+      comment: true
+      result: false
+      target_states: ["Needs Refinement Review"]
+
+  implementation:
+    name: "Implementation"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Implement, test, verify, and prepare the work for human review.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["In Progress", "Needs Implementation Review"]
 ```
 
 ### `Config.Schema`
 
 `Config.Schema` 需要解析并校验这些新字段：
 
-- profile 名称和 active states。
+- 顶层 profiles、profile `name` 和 executor/prompt/tool/update policy。
 - review states。
 - allowed transitions。
 - 每个 profile 的 allowed updates。
-- 默认值和旧配置兼容迁移。
+- workflow schema 校验必须拒绝缺失 `workflow.states`、缺失顶层 profile `name`、以及把状态路由写在
+  `profiles.<id>.active_states` 的配置。
 
 Schema 校验应拒绝明显不安全配置，例如 Codex profile 允许从 review state 自动进入确认状态、或 target state 不在已声明 workflow 中。
 
