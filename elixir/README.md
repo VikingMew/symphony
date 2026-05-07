@@ -289,20 +289,24 @@ Each profile may add a profile prompt policy:
 - `replace` uses the profile prompt template instead of the base prompt.
 - `disabled` is valid for non-Codex executors and leaves no profile prompt for Codex.
 
-Minimal example:
+Generic project example:
 
 ```md
 ---
 tracker:
   kind: linear
-  project_slug: "..."
+  api_key: $LINEAR_API_KEY
+  project_slug: "<your-linear-project-slug>"
 workspace:
-  root: ~/code/workspaces
-hooks:
-  after_create: |
-    git clone git@github.com:your-org/your-repo.git .
+  root: ~/code/symphony-workspaces
+project:
+  repository_url: "<your-repo-url>"
+  default_branch: "main"
+  checkout_depth: 1
+  setup_commands: []
+  cleanup_commands: []
 agent:
-  max_concurrent_agents: 10
+  max_concurrent_agents: 1
   max_turns: 20
 codex:
   command: codex app-server
@@ -312,6 +316,22 @@ You are working on a Linear issue {{ issue.identifier }}.
 
 Title: {{ issue.title }} Body: {{ issue.description }}
 ```
+
+Rust project setup can use the same shape with Rust-specific bootstrap commands:
+
+```yaml
+project:
+  repository_url: "git@github.com:your-org/your-rust-repo.git"
+  default_branch: "main"
+  checkout_depth: 1
+  setup_commands:
+    - cargo fetch
+  cleanup_commands: []
+```
+
+This repository's own `elixir/WORKFLOW.md` is a Symphony-specific workflow for developing
+Symphony itself. It intentionally clones `github.com/openai/symphony` and may run `mise`/`mix`
+commands under `elixir/`; do not copy those commands as a generic project template.
 
 Notes:
 
@@ -331,12 +351,14 @@ Notes:
   state; state names are case-insensitive after normalization.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
-- Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
-  `git clone ... .` there, along with any other setup commands you need.
+- `workspace.root` is the Symphony workspace root. Symphony creates one issue directory under it
+  and checks out the project repository inside that issue workspace.
+- Prefer `project.repository_url`, `project.setup_commands`, and `project.cleanup_commands` for
+  normal checkout/bootstrap. Explicit hooks are still supported and take precedence.
 - `hooks.before_run`, `hooks.after_run`, and `hooks.before_remove` are also supported. Hook timeout
   is controlled by `hooks.timeout_ms` and defaults to `60000`.
-- If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
-  the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
+- If a project hook or setup command needs `mise exec`, trust the repo config and fetch project
+  dependencies during setup before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
 - `tracker.assignee` reads from `LINEAR_ASSIGNEE` when unset or when value is `$LINEAR_ASSIGNEE`.
 - For path values, `~` is expanded to the home directory.

@@ -1,6 +1,12 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
 
+  defmodule EmptyIssueLinearClient do
+    def fetch_issue_states_by_ids(_issue_ids), do: {:ok, []}
+    def fetch_candidate_issues, do: {:ok, []}
+    def fetch_issues_by_states(_states), do: {:ok, []}
+  end
+
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -379,8 +385,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "SymphonyElixir.start_link delegates to the orchestrator" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
-    Application.put_env(:symphony_elixir, :memory_tracker_issues, [])
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear", poll_interval_ms: 30_000)
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
@@ -404,6 +409,22 @@ defmodule SymphonyElixir.CoreTest do
 
   test "linear issue state reconciliation fetch with no running issues is a no-op" do
     assert {:ok, []} = Client.fetch_issue_states_by_ids([])
+  end
+
+  test "orchestrator starts when linear tracker configuration is incomplete" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_endpoint: "",
+      tracker_api_token: nil,
+      tracker_project_slug: "",
+      poll_interval_ms: 30_000
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :IncompleteLinearConfigOrchestrator)
+
+    assert {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    assert Process.alive?(pid)
+    GenServer.stop(pid)
   end
 
   test "non-active issue state stops running agent without cleaning workspace" do
@@ -539,26 +560,26 @@ defmodule SymphonyElixir.CoreTest do
         "symphony-elixir-missing-running-reconcile-#{System.unique_integer([:positive])}"
       )
 
-    previous_memory_issues = Application.get_env(:symphony_elixir, :memory_tracker_issues)
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
     issue_id = "issue-missing"
     issue_identifier = "MT-557"
 
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
-        tracker_kind: "memory",
+        tracker_kind: "linear",
         workspace_root: test_root,
         tracker_active_states: ["Todo", "In Progress", "In Review"],
         tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"],
         poll_interval_ms: 30_000
       )
 
-      Application.put_env(:symphony_elixir, :memory_tracker_issues, [])
+      Application.put_env(:symphony_elixir, :linear_client_module, EmptyIssueLinearClient)
 
       orchestrator_name = Module.concat(__MODULE__, :MissingRunningIssueOrchestrator)
       {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
       on_exit(fn ->
-        restore_app_env(:memory_tracker_issues, previous_memory_issues)
+        restore_app_env(:linear_client_module, previous_linear_client)
 
         if Process.alive?(pid) do
           Process.exit(pid, :normal)
@@ -605,7 +626,7 @@ defmodule SymphonyElixir.CoreTest do
       refute Process.alive?(agent_pid)
       assert File.exists?(workspace)
     after
-      restore_app_env(:memory_tracker_issues, previous_memory_issues)
+      restore_app_env(:linear_client_module, previous_linear_client)
       File.rm_rf(test_root)
     end
   end

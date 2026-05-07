@@ -5,7 +5,6 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.LiveViewTest
 
   alias SymphonyElixir.Linear.Adapter
-  alias SymphonyElixir.Tracker.Memory
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -181,28 +180,18 @@ defmodule SymphonyElixir.ExtensionsTest do
     WorkflowStore.force_reload()
   end
 
-  test "tracker delegates to memory and linear adapters" do
-    issue = %Issue{id: "issue-1", identifier: "MT-1", state: "In Progress"}
-    Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue, %{id: "ignored"}])
-    Application.put_env(:symphony_elixir, :memory_tracker_recipient, self())
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
-
-    assert Config.settings!().tracker.kind == "memory"
-    assert SymphonyElixir.Tracker.adapter() == Memory
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
-    assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
-    assert_receive {:memory_tracker_comment, "issue-1", "comment"}
-    assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
-
-    Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
-    assert :ok = Memory.create_comment("issue-1", "quiet")
-    assert :ok = Memory.update_issue_state("issue-1", "Quiet")
-
+  test "tracker delegates to the linear adapter with fake Linear inputs" do
+    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
+
+    assert Config.settings!().tracker.kind == "linear"
     assert SymphonyElixir.Tracker.adapter() == Adapter
+    assert {:ok, [:candidate]} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert_receive :fetch_candidate_issues_called
+    assert {:ok, [" in progress ", 42]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
+    assert_receive {:fetch_issues_by_states_called, [" in progress ", 42]}
+    assert {:ok, ["issue-1"]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert_receive {:fetch_issue_states_by_ids_called, ["issue-1"]}
   end
 
   test "linear adapter delegates reads and validates mutation responses" do

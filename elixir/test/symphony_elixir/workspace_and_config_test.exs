@@ -40,6 +40,61 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "structured project bootstrap generates after_create hook when explicit hook is omitted" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-project-bootstrap-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "structured bootstrap\n")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: template_repo,
+        project_setup_commands: ["echo setup > setup.txt"]
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("S-PROJECT")
+      assert File.read!(Path.join(workspace, "README.md")) == "structured bootstrap\n"
+      assert File.read!(Path.join(workspace, "setup.txt")) == "setup\n"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "explicit after_create hook takes precedence over structured project bootstrap" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-project-bootstrap-precedence-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: "git@example.com:org/repo.git",
+        hook_after_create: "echo explicit > marker.txt"
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("S-PRECEDENCE")
+      assert File.read!(Path.join(workspace, "marker.txt")) == "explicit\n"
+      refute File.exists?(Path.join(workspace, ".git"))
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
   test "workspace path is deterministic per issue identifier" do
     workspace_root =
       Path.join(
@@ -923,6 +978,22 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.turn_sandbox_policy"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
+      project_checkout_depth: 0
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "project.checkout_depth"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
+      project_setup_commands: [""]
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "project.setup_commands commands must not be blank"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_approval_policy: "future-policy",

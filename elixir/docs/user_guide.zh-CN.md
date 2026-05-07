@@ -165,9 +165,12 @@ tracker:
   project_slug: "你的 Linear project slug"
 workspace:
   root: ~/code/symphony-workspaces
-hooks:
-  after_create: |
-    git clone git@github.com:your-org/your-repo.git .
+project:
+  repository_url: "git@github.com:your-org/your-repo.git"
+  default_branch: "main"
+  checkout_depth: 1
+  setup_commands: []
+  cleanup_commands: []
 codex:
   command: codex app-server
 workflow:
@@ -226,6 +229,37 @@ profiles:
       result: true
       target_states: ["Done"]
 ```
+
+`workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。Symphony
+会在这个目录下为每个 Linear issue 创建子目录，然后把 `project.repository_url` 指向的仓库
+clone 到该 issue workspace 中。
+
+Rust 项目可以这样写 bootstrap：
+
+```yaml
+project:
+  repository_url: "git@github.com:your-org/your-rust-repo.git"
+  default_branch: "main"
+  checkout_depth: 1
+  setup_commands:
+    - cargo fetch
+  cleanup_commands: []
+```
+
+Elixir 项目才应该使用 Elixir 专属命令，例如：
+
+```yaml
+project:
+  repository_url: "git@github.com:your-org/your-elixir-repo.git"
+  setup_commands:
+    - mise trust
+    - mise exec -- mix deps.get
+  cleanup_commands:
+    - mix workspace.before_remove || true
+```
+
+`hooks.after_create` / `hooks.before_remove` 仍然可用，并且显式 hooks 会优先于 `project`
+生成的 checkout/setup/cleanup 命令。hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
 `WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。导入时它是一个完整 workflow package：`workflow` 定义状态路由和流转规则，顶层 `profiles` 定义被引用的执行 profile。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
 

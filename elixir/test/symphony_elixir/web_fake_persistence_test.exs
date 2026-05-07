@@ -14,15 +14,18 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
     previous_worker_api = Application.get_env(:symphony_elixir, :worker_api)
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     Application.put_env(:symphony_elixir, :worker_api, registration_token: @worker_token)
+    System.put_env("LINEAR_API_KEY", "fake-linear-token")
     FakePersistence.reset!()
 
     on_exit(fn ->
       restore_app_env(:persistence_module, previous_persistence)
       Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, previous_endpoint)
       restore_app_env(:worker_api, previous_worker_api)
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
     :ok
@@ -38,24 +41,182 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "fake"
   end
 
-  test "workflow page saves through fake persistence without Repo" do
+  test "workflow page saves structured draft through fake persistence without Repo" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
     {:ok, view, html} = live(build_conn(), "/workflows")
-    assert html =~ "Raw WORKFLOW.md"
+    assert html =~ "Draft Configuration"
+    assert html =~ "Project slug"
+    assert html =~ ~s(phx-disable-with="Saving...")
+    refute html =~ "Raw WORKFLOW.md"
+    refute html =~ "workflow[tracker_kind]"
+    refute html =~ "workflow[tracker_endpoint]"
+    refute html =~ "workflow[tracker_api_key]"
+    refute html =~ "API key"
 
-    raw = File.read!(Workflow.workflow_file_path())
+    params =
+      workflow_form_params()
+      |> Map.put("workspace_root", "/tmp/structured-workspaces")
 
     html =
       view
-      |> form("form", workflow: %{raw: raw})
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
       |> render_submit()
 
     assert html =~ "Runtime workflow refreshed"
+    assert html =~ "workflow-save-toast-success"
+    assert html =~ "Workflow saved"
+    assert html =~ "Version 1 is active"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_form"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_form"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "/tmp/structured-workspaces"
+    assert raw =~ "api_key"
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
+    assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
+    assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
+  end
+
+  test "workflow form saves legacy memory tracker drafts as linear" do
+    draft =
+      SymphonyElixir.WorkflowForm.from_loaded(%{
+        config: %{
+          "tracker" => %{
+            "kind" => "memory",
+            "project_slug" => "legacy",
+            "active_states" => ["Todo"],
+            "terminal_states" => ["Done"]
+          },
+          "polling" => %{"interval_ms" => 30_000}
+        },
+        prompt: "Legacy prompt"
+      })
+
+    assert SymphonyElixir.WorkflowForm.summary(draft).tracker == "linear"
+    assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(draft)
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
+    assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
+    assert get_in(loaded_workflow.config, ["tracker", "api_key"]) == "$LINEAR_API_KEY"
+  end
+
+  test "workflow page rejects invalid structured draft before import" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/workflows")
+
+    params =
+      workflow_form_params()
+      |> Map.put("polling_interval_ms", "bad")
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
+      |> render_submit()
+
+    assert html =~ "Validation failed"
+    assert html =~ "workflow-save-toast-error"
+    assert html =~ "Workflow save failed"
+    assert html =~ "Polling interval must be a positive integer"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+  end
+
+  test "workflow page shows popup feedback when save persistence fails" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    FakePersistence.fail_next_import_workflow!(:database_unavailable)
+
+    {:ok, view, _html} = live(build_conn(), "/workflows")
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_form_params())
+      |> render_submit()
+
+    assert html =~ "workflow-save-toast-error"
+    assert html =~ "Workflow save failed"
+    assert html =~ "database_unavailable"
+    refute html =~ "workflow-save-toast-success"
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, %{id: "fake-project-id"}, ^raw, "web"} -> true
+             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_form"} -> true
+             _ -> false
+           end)
+  end
+
+  test "workflow page imports workflow file into structured draft without saving" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/workflows")
+    raw = workflow_import_raw("git@github.com:org/imported.git")
+
+    upload =
+      file_input(view, ".workflow-import-form", :workflow_import, [
+        %{
+          last_modified: 1_700_000_000_000,
+          name: "WORKFLOW.md",
+          content: raw,
+          size: byte_size(raw),
+          type: "text/markdown"
+        }
+      ])
+
+    render_upload(upload, "WORKFLOW.md")
+
+    html =
+      view
+      |> form(".workflow-import-form", %{})
+      |> render_submit()
+
+    assert html =~ "git@github.com:org/imported.git"
+    assert html =~ "Profiles"
+    assert html =~ "implementation"
+    assert html =~ "Workflow Phases / State Routing"
+    assert html =~ "Ready"
+    refute html =~ "$LINEAR_API_KEY"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+  end
+
+  test "workflow page refuses to activate an invalid historical workflow version" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    invalid = %{
+      id: "invalid-version",
+      project_id: "fake-project-id",
+      version: 2,
+      source: "web",
+      active: false,
+      inserted_at: DateTime.utc_now(),
+      raw_workflow_md: "---\nworkflow:\n  allowed_transitions:\n    - {from: Ready, to: Done, actor: robot}\n---\nPrompt\n"
+    }
+
+    FakePersistence.put_workflow_versions([invalid])
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/workflows")
+    html = render_click(view, "activate_workflow", %{"id" => "invalid-version"})
+
+    assert html =~ "Validation failed"
+    assert html =~ "allowed_transitions.actor"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:activate_workflow_version, ^invalid} -> true
              _ -> false
            end)
   end
@@ -128,6 +289,97 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     |> put_req_header("x-symphony-worker-protocol", "worker-api-v1")
     |> put_req_header("x-symphony-worker-id", worker_id)
     |> put_req_header("x-symphony-worker-session", session_id)
+  end
+
+  defp workflow_form_params do
+    %{
+      "tracker_project_slug" => "project",
+      "tracker_assignee" => "",
+      "active_states" => "Refining\nReady\nIn Progress\nReady to Merge\nMerging",
+      "terminal_states" => "Canceled\nCancelled\nDuplicate\nDone",
+      "polling_interval_ms" => "30000",
+      "project_repository_url" => "git@github.com:org/repo.git",
+      "project_default_branch" => "main",
+      "project_checkout_depth" => "1",
+      "project_setup_commands" => "mix deps.get",
+      "project_cleanup_commands" => "",
+      "workspace_root" => "/tmp/symphony-workspaces",
+      "agent_max_concurrent_agents" => "1",
+      "agent_max_turns" => "20",
+      "codex_command" => "codex app-server",
+      "codex_thread_sandbox" => "workspace-write",
+      "prompt_body" => "You are an agent for this repository."
+    }
+  end
+
+  defp workflow_import_raw(repository_url) do
+    """
+    ---
+    tracker:
+      kind: linear
+      endpoint: "https://api.linear.app/graphql"
+      api_key: "$LINEAR_API_KEY"
+      project_slug: "project"
+      active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+      terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
+    polling:
+      interval_ms: 30000
+    project:
+      repository_url: "#{repository_url}"
+      default_branch: "main"
+      checkout_depth: 1
+      setup_commands: ["mix deps.get"]
+      cleanup_commands: []
+    workspace:
+      root: "/tmp/imported-workspaces"
+    agent:
+      max_concurrent_agents: 1
+      max_turns: 20
+    codex:
+      command: "codex app-server"
+      thread_sandbox: "workspace-write"
+    server:
+      host: "127.0.0.1"
+      port: 4000
+    workflow:
+      states:
+        Refining:
+          profile: refinement
+        Ready:
+          profile: implementation
+        In Progress:
+          profile: implementation
+        Ready to Merge:
+          profile: merge
+        Merging:
+          profile: merge
+      human_review_states: ["Needs Refinement Review", "Needs Implementation Review"]
+      allowed_transitions:
+        - {from: Ready, to: In Progress, actor: codex, profile: implementation}
+      tool_policy:
+        linear:
+          exposed_tools: ["linear_task_read", "linear_task_update"]
+          raw_graphql: false
+    profiles:
+      refinement:
+        name: "Refinement"
+        executor: {type: codex_agent}
+        prompt: {mode: extend, template: "Refine the task."}
+        allowed_updates: {description: true, comment: true, result: false, target_states: ["Needs Refinement Review"]}
+      implementation:
+        name: "Implementation"
+        executor: {type: codex_agent}
+        prompt: {mode: extend, template: "Implement the task."}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "Needs Implementation Review"]}
+      merge:
+        name: "Merge"
+        executor: {type: codex_agent}
+        prompt: {mode: extend, template: "Merge the task."}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["Merging", "Done"]}
+    ---
+
+    Imported workflow prompt.
+    """
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

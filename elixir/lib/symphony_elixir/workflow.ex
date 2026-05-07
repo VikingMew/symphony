@@ -70,7 +70,10 @@ defmodule SymphonyElixir.Workflow do
     %{
       config: %{
         "tracker" => %{
-          "kind" => "memory",
+          "kind" => "linear",
+          "endpoint" => "https://api.linear.app/graphql",
+          "api_key" => "$LINEAR_API_KEY",
+          "project_slug" => "",
           "active_states" => ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
           "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
         },
@@ -148,6 +151,16 @@ defmodule SymphonyElixir.Workflow do
     }
   end
 
+  @spec normalize_legacy_tracker_config(map()) :: map()
+  def normalize_legacy_tracker_config(config) when is_map(config) do
+    tracker =
+      config
+      |> Map.get("tracker", %{})
+      |> normalize_legacy_tracker()
+
+    Map.put(config, "tracker", tracker)
+  end
+
   @spec parse_content(String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
   def parse_content(content) when is_binary(content) do
     {front_matter_lines, prompt_lines} = split_front_matter(content)
@@ -168,6 +181,31 @@ defmodule SymphonyElixir.Workflow do
 
       {:error, reason} ->
         {:error, {:workflow_parse_error, reason}}
+    end
+  end
+
+  defp normalize_legacy_tracker(tracker) when is_map(tracker) do
+    tracker
+    |> Map.put("kind", "linear")
+    |> put_default_if_blank("endpoint", "https://api.linear.app/graphql")
+    |> put_default_if_blank("api_key", "$LINEAR_API_KEY")
+  end
+
+  defp normalize_legacy_tracker(_tracker) do
+    %{
+      "kind" => "linear",
+      "endpoint" => "https://api.linear.app/graphql",
+      "api_key" => "$LINEAR_API_KEY"
+    }
+  end
+
+  defp put_default_if_blank(map, key, default) do
+    case Map.get(map, key) do
+      value when is_binary(value) ->
+        if String.trim(value) == "", do: Map.put(map, key, default), else: map
+
+      _ ->
+        Map.put(map, key, default)
     end
   end
 

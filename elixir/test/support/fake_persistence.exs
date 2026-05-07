@@ -27,6 +27,21 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :events, events))
   end
 
+  def put_workflow_versions(versions, active_version \\ nil) when is_list(versions) do
+    ensure_started()
+
+    Agent.update(@name, fn state ->
+      state
+      |> Map.put(:workflow_versions, versions)
+      |> Map.put(:active_workflow_version, active_version)
+    end)
+  end
+
+  def fail_next_import_workflow!(reason) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :next_import_workflow_error, reason))
+  end
+
   def default_project do
     ensure_started()
     {:ok, %{id: "fake-project-id", name: "Fake Project", slug: "fake"}}
@@ -45,14 +60,22 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       raw_workflow_md: raw_workflow_md
     }
 
-    Agent.update(@name, fn state ->
-      state
-      |> record_call({:import_workflow, project, raw_workflow_md, source})
-      |> Map.put(:active_workflow_version, version)
-      |> Map.put(:workflow_versions, [version])
-    end)
+    Agent.get_and_update(@name, fn state ->
+      state = record_call(state, {:import_workflow, project, raw_workflow_md, source})
 
-    {:ok, version}
+      case Map.get(state, :next_import_workflow_error) do
+        nil ->
+          next_state =
+            state
+            |> Map.put(:active_workflow_version, version)
+            |> Map.put(:workflow_versions, [version])
+
+          {{:ok, version}, next_state}
+
+        reason ->
+          {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
+      end
+    end)
   end
 
   def active_workflow_version do
@@ -225,6 +248,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       task_leases: [],
       workflow_versions: [],
       active_workflow_version: nil,
+      next_import_workflow_error: nil,
       users: %{}
     }
   end

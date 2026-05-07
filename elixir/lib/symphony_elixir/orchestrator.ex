@@ -39,7 +39,8 @@ defmodule SymphonyElixir.Orchestrator do
       claimed: MapSet.new(),
       retry_attempts: %{},
       codex_totals: nil,
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      last_config_error: nil
     ]
   end
 
@@ -233,50 +234,68 @@ defmodule SymphonyElixir.Orchestrator do
     with :ok <- Config.validate!(),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
+      state = %{state | last_config_error: nil}
       persist_polled_issues(issues)
       choose_issues(issues, state)
     else
-      {:error, :missing_linear_api_token} ->
-        Logger.error("Linear API token missing in WORKFLOW.md")
-        state
-
-      {:error, :missing_linear_project_slug} ->
-        Logger.error("Linear project slug missing in WORKFLOW.md")
-        state
-
-      {:error, :missing_tracker_kind} ->
-        Logger.error("Tracker kind missing in WORKFLOW.md")
-
-        state
-
-      {:error, {:unsupported_tracker_kind, kind}} ->
-        Logger.error("Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}")
-
-        state
-
-      {:error, {:invalid_workflow_config, message}} ->
-        Logger.error("Invalid WORKFLOW.md config: #{message}")
-        state
-
-      {:error, {:missing_workflow_file, path, reason}} ->
-        Logger.error("Missing WORKFLOW.md at #{path}: #{inspect(reason)}")
-        state
-
-      {:error, :workflow_front_matter_not_a_map} ->
-        Logger.error("Failed to parse WORKFLOW.md: workflow front matter must decode to a map")
-        state
-
-      {:error, {:workflow_parse_error, reason}} ->
-        Logger.error("Failed to parse WORKFLOW.md: #{inspect(reason)}")
-        state
-
       {:error, reason} ->
-        Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
-        state
+        handle_dispatch_error(state, reason)
 
       false ->
-        state
+        %{state | last_config_error: nil}
     end
+  end
+
+  defp handle_dispatch_error(%State{} = state, reason) do
+    if config_validation_error?(reason) do
+      log_config_error_once(state, reason)
+    else
+      Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+      %{state | last_config_error: nil}
+    end
+  end
+
+  defp log_config_error_once(%State{last_config_error: reason} = state, reason), do: state
+
+  defp log_config_error_once(%State{} = state, reason) do
+    Logger.error(config_validation_error_message(reason))
+    %{state | last_config_error: reason}
+  end
+
+  defp config_validation_error?(:missing_linear_api_token), do: true
+  defp config_validation_error?(:missing_linear_endpoint), do: true
+  defp config_validation_error?(:missing_linear_project_slug), do: true
+  defp config_validation_error?(:missing_tracker_kind), do: true
+  defp config_validation_error?(:workflow_front_matter_not_a_map), do: true
+  defp config_validation_error?({:unsupported_tracker_kind, _kind}), do: true
+  defp config_validation_error?({:invalid_workflow_config, _message}), do: true
+  defp config_validation_error?({:missing_workflow_file, _path, _reason}), do: true
+  defp config_validation_error?({:workflow_parse_error, _reason}), do: true
+  defp config_validation_error?(_reason), do: false
+
+  defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in WORKFLOW.md"
+  defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in WORKFLOW.md"
+  defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in WORKFLOW.md"
+  defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in WORKFLOW.md"
+
+  defp config_validation_error_message(:workflow_front_matter_not_a_map) do
+    "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+  end
+
+  defp config_validation_error_message({:unsupported_tracker_kind, kind}) do
+    "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
+  end
+
+  defp config_validation_error_message({:invalid_workflow_config, message}) do
+    "Invalid WORKFLOW.md config: #{message}"
+  end
+
+  defp config_validation_error_message({:missing_workflow_file, path, reason}) do
+    "Missing WORKFLOW.md at #{path}: #{inspect(reason)}"
+  end
+
+  defp config_validation_error_message({:workflow_parse_error, reason}) do
+    "Failed to parse WORKFLOW.md: #{inspect(reason)}"
   end
 
   defp reconcile_running_issues(%State{} = state) do
@@ -926,18 +945,21 @@ defmodule SymphonyElixir.Orchestrator do
   defp cleanup_issue_workspace(_identifier, _worker_host), do: :ok
 
   defp run_terminal_workspace_cleanup do
-    case Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
-      {:ok, issues} ->
-        issues
-        |> Enum.each(fn
-          %Issue{identifier: identifier} when is_binary(identifier) ->
-            cleanup_issue_workspace(identifier)
+    with :ok <- Config.validate!(),
+         {:ok, issues} <- Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
+      issues
+      |> Enum.each(fn
+        %Issue{identifier: identifier} when is_binary(identifier) ->
+          cleanup_issue_workspace(identifier)
 
-          _ ->
-            :ok
-        end)
-
+        _ ->
+          :ok
+      end)
+    else
       {:error, reason} ->
+        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
+
+      reason ->
         Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
     end
   end

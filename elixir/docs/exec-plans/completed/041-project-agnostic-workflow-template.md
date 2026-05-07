@@ -2,7 +2,8 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
+**Completed**: 2026-05-07
 
 ## Goal
 
@@ -38,12 +39,12 @@ The immediate need came from configuring a project such as `Claude Code Router R
 
 ## Acceptance Criteria
 
-- [ ] README and user guide no longer present `openai/symphony` clone as the generic default.
-- [ ] Generic sample uses `<your-repo-url>` or equivalent explicit placeholder.
-- [ ] Generic sample does not run `cd elixir`, `mix`, or `mise` unless in an Elixir-specific example.
-- [ ] Rust sample shows a safe setup path such as `cargo fetch`.
-- [ ] Docs explain that `workspace.root` is the Symphony workspace root, not the project repo path.
-- [ ] The self-repo `elixir/WORKFLOW.md` remains valid and still works for Symphony development.
+- [x] README and user guide no longer present `openai/symphony` clone as the generic default.
+- [x] Generic sample uses `<your-repo-url>` or equivalent explicit placeholder.
+- [x] Generic sample does not run `cd elixir`, `mix`, or `mise` unless in an Elixir-specific example.
+- [x] Rust sample shows a safe setup path such as `cargo fetch`.
+- [x] Docs explain that `workspace.root` is the Symphony workspace root, not the project repo path.
+- [x] The self-repo `elixir/WORKFLOW.md` remains valid and still works for Symphony development.
 
 ## Test Cases
 
@@ -63,15 +64,15 @@ The immediate need came from configuring a project such as `Claude Code Router R
 
 ## Verification
 
-- [ ] `mise exec -- mix format`
-- [ ] `mise exec -- mix test test/symphony_elixir/core_test.exs`
-- [ ] `rg "github.com/openai/symphony" elixir/README.md elixir/docs/user_guide.zh-CN.md`
-- [ ] `rg "linear_task_read" elixir/README.md elixir/docs/user_guide.zh-CN.md`
-- [ ] `git diff --check`
+- [x] `mise exec -- mix format`
+- [x] `mise exec -- mix test test/symphony_elixir/core_test.exs`
+- [x] `rg "github.com/openai/symphony" elixir/README.md elixir/docs/user_guide.zh-CN.md`
+- [x] `rg "linear_task_read" elixir/README.md elixir/docs/user_guide.zh-CN.md`
+- [x] `git diff --check`
 
 ## Completion Deviations
 
-None yet.
+The generic docs now prefer the structured `project` section added by Task 042 instead of documenting raw `hooks.after_create` as the main bootstrap path. Explicit hooks remain documented as an advanced override.
 
 ## Dependencies
 

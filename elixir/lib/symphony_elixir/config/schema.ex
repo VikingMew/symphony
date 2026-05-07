@@ -100,6 +100,54 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule Project do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:repository_url, :string)
+      field(:default_branch, :string, default: "main")
+      field(:checkout_depth, :integer, default: 1)
+      field(:setup_commands, {:array, :string}, default: [])
+      field(:cleanup_commands, {:array, :string}, default: [])
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(
+        attrs,
+        [:repository_url, :default_branch, :checkout_depth, :setup_commands, :cleanup_commands],
+        empty_values: []
+      )
+      |> validate_optional_non_blank(:repository_url)
+      |> validate_optional_non_blank(:default_branch)
+      |> validate_number(:checkout_depth, greater_than: 0)
+      |> validate_command_list(:setup_commands)
+      |> validate_command_list(:cleanup_commands)
+    end
+
+    defp validate_optional_non_blank(changeset, field) do
+      validate_change(changeset, field, fn ^field, value ->
+        if is_binary(value) and String.trim(value) == "", do: [{field, "must not be blank"}], else: []
+      end)
+    end
+
+    defp validate_command_list(changeset, field) do
+      validate_change(changeset, field, fn ^field, commands ->
+        Enum.flat_map(commands || [], &command_error(field, &1))
+      end)
+    end
+
+    defp command_error(field, command) when is_binary(command) do
+      if String.trim(command) == "", do: [{field, "commands must not be blank"}], else: []
+    end
+
+    defp command_error(field, _command), do: [{field, "commands must be strings"}]
+  end
+
   defmodule Worker do
     @moduledoc false
     use Ecto.Schema
@@ -265,6 +313,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:project, Project, on_replace: :update, defaults_to_struct: true)
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
@@ -388,6 +437,35 @@ defmodule SymphonyElixir.Config.Schema do
   def workflow_allowed_updates(_settings, _profile), do: %{}
 
   @doc false
+  @spec generated_after_create_hook(%__MODULE__{}) :: String.t() | nil
+  def generated_after_create_hook(%__MODULE__{project: %Project{} = project}) do
+    commands =
+      []
+      |> maybe_append_clone_command(project)
+      |> Kernel.++(project.setup_commands || [])
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    if commands == [], do: nil, else: Enum.join(commands, "\n")
+  end
+
+  def generated_after_create_hook(_settings), do: nil
+
+  @doc false
+  @spec generated_before_remove_hook(%__MODULE__{}) :: String.t() | nil
+  def generated_before_remove_hook(%__MODULE__{project: %Project{} = project}) do
+    commands =
+      project.cleanup_commands
+      |> List.wrap()
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    if commands == [], do: nil, else: Enum.join(commands, "\n")
+  end
+
+  def generated_before_remove_hook(_settings), do: nil
+
+  @doc false
   @spec normalize_state_limits(nil | map()) :: map()
   def normalize_state_limits(nil), do: %{}
 
@@ -416,12 +494,44 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
+  defp maybe_append_clone_command(commands, %Project{repository_url: repository_url})
+       when not is_binary(repository_url) or repository_url == "" do
+    commands
+  end
+
+  defp maybe_append_clone_command(commands, %Project{} = project) do
+    clone_parts =
+      ["git clone"]
+      |> maybe_append_clone_depth(project.checkout_depth)
+      |> maybe_append_clone_branch(project.default_branch)
+      |> Kernel.++([shell_escape(project.repository_url), "."])
+
+    commands ++ [Enum.join(clone_parts, " ")]
+  end
+
+  defp maybe_append_clone_depth(parts, depth) when is_integer(depth) and depth > 0 do
+    parts ++ ["--depth", Integer.to_string(depth)]
+  end
+
+  defp maybe_append_clone_depth(parts, _depth), do: parts
+
+  defp maybe_append_clone_branch(parts, branch) when is_binary(branch) and branch != "" do
+    parts ++ ["--branch", shell_escape(branch)]
+  end
+
+  defp maybe_append_clone_branch(parts, _branch), do: parts
+
+  defp shell_escape(value) when is_binary(value) do
+    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
+  end
+
   defp changeset(attrs) do
     %__MODULE__{}
     |> cast(attrs, [:workflow, :profiles])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
+    |> cast_embed(:project, with: &Project.changeset/2)
     |> cast_embed(:worker, with: &Worker.changeset/2)
     |> cast_embed(:agent, with: &Agent.changeset/2)
     |> cast_embed(:codex, with: &Codex.changeset/2)

@@ -91,6 +91,16 @@ defmodule SymphonyElixir.Config do
     Schema.workflow_allowed_updates(settings!(), profile)
   end
 
+  @spec generated_after_create_hook() :: String.t() | nil
+  def generated_after_create_hook do
+    Schema.generated_after_create_hook(settings!())
+  end
+
+  @spec generated_before_remove_hook() :: String.t() | nil
+  def generated_before_remove_hook do
+    Schema.generated_before_remove_hook(settings!())
+  end
+
   @spec codex_turn_sandbox_policy(Path.t() | nil) :: map()
   def codex_turn_sandbox_policy(workspace \\ nil) do
     case Schema.resolve_runtime_turn_sandbox_policy(settings!(), workspace) do
@@ -133,9 +143,12 @@ defmodule SymphonyElixir.Config do
   @spec validate!() :: :ok | {:error, term()}
   def validate! do
     with {:ok, settings} <- settings() do
-      validate_semantics(settings)
+      validate_settings(settings)
     end
   end
+
+  @spec validate_settings(Schema.t()) :: :ok | {:error, term()}
+  def validate_settings(%Schema{} = settings), do: validate_semantics(settings)
 
   @spec codex_runtime_settings(Path.t() | nil, keyword()) ::
           {:ok, codex_runtime_settings()} | {:error, term()}
@@ -154,23 +167,36 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_semantics(settings) do
+    validate_tracker(settings.tracker)
+  end
+
+  defp validate_tracker(%{kind: nil}), do: {:error, :missing_tracker_kind}
+
+  defp validate_tracker(%{kind: kind}) when kind != "linear" do
+    {:error, {:unsupported_tracker_kind, kind}}
+  end
+
+  defp validate_tracker(%{api_key: api_key}) when not is_binary(api_key) do
+    {:error, :missing_linear_api_token}
+  end
+
+  defp validate_tracker(%{endpoint: endpoint}) when not is_binary(endpoint) do
+    {:error, :missing_linear_endpoint}
+  end
+
+  defp validate_tracker(%{project_slug: project_slug}) when not is_binary(project_slug) do
+    {:error, :missing_linear_project_slug}
+  end
+
+  defp validate_tracker(tracker) do
     cond do
-      is_nil(settings.tracker.kind) ->
-        {:error, :missing_tracker_kind}
-
-      settings.tracker.kind not in ["linear", "memory"] ->
-        {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
-
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
-        {:error, :missing_linear_api_token}
-
-      settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
-        {:error, :missing_linear_project_slug}
-
-      true ->
-        :ok
+      blank?(tracker.endpoint) -> {:error, :missing_linear_endpoint}
+      blank?(tracker.project_slug) -> {:error, :missing_linear_project_slug}
+      true -> :ok
     end
   end
+
+  defp blank?(value), do: not is_binary(value) or String.trim(value) == ""
 
   defp format_config_error(reason) do
     case reason do

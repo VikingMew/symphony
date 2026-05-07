@@ -47,6 +47,31 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     assert FakePersistence.active_workflow_version()
   end
 
+  test "database source normalizes legacy memory tracker workflow to linear" do
+    legacy_config = %{
+      "tracker" => %{
+        "kind" => "memory",
+        "project_slug" => "legacy-project",
+        "active_states" => ["Todo"],
+        "terminal_states" => ["Done"]
+      },
+      "polling" => %{"interval_ms" => 30_000}
+    }
+
+    {:ok, project} = FakePersistence.default_project()
+    raw = Workflow.to_markdown(legacy_config, "Legacy workflow")
+    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+
+    assert :ok = WorkflowStore.force_reload()
+    assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
+
+    assert source.type == :database
+    assert get_in(workflow.config, ["tracker", "kind"]) == "linear"
+    assert get_in(workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
+    assert get_in(workflow.config, ["tracker", "api_key"]) == "$LINEAR_API_KEY"
+    assert get_in(workflow.config, ["tracker", "project_slug"]) == "legacy-project"
+  end
+
   test "database source provides setup workflow when file and active workflow are missing" do
     missing_path = Path.join(System.tmp_dir!(), "missing-workflow-#{System.unique_integer([:positive])}.md")
     Workflow.set_workflow_file_path(missing_path)
@@ -55,7 +80,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
     assert workflow.setup_required
     assert source.type == :setup_required
-    assert get_in(workflow.config, ["tracker", "kind"]) == "memory"
+    assert get_in(workflow.config, ["tracker", "kind"]) == "linear"
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

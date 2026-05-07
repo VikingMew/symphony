@@ -38,9 +38,7 @@ defmodule SymphonyElixir.Tracker do
 
   @spec adapter() :: module()
   def adapter do
-    case Config.settings!().tracker.kind do
-      "memory" -> SymphonyElixir.Tracker.Memory
-      _ -> SymphonyElixir.Linear.Adapter
-    end
+    _settings = Config.settings!()
+    SymphonyElixir.Linear.Adapter
   end
 end

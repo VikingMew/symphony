@@ -42,8 +42,6 @@ defmodule SymphonyElixir.TestSupport do
           Application.delete_env(:symphony_elixir, :workflow_file_path)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :workflow_source)
-          Application.delete_env(:symphony_elixir, :memory_tracker_issues)
-          Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
           File.rm_rf(workflow_root)
         end)
 
@@ -108,6 +106,11 @@ defmodule SymphonyElixir.TestSupport do
           tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
+          project_repository_url: nil,
+          project_default_branch: "main",
+          project_checkout_depth: 1,
+          project_setup_commands: [],
+          project_cleanup_commands: [],
           worker_ssh_hosts: [],
           worker_max_concurrent_agents_per_host: nil,
           max_concurrent_agents: 10,
@@ -147,6 +150,11 @@ defmodule SymphonyElixir.TestSupport do
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
+    project_repository_url = Keyword.get(config, :project_repository_url)
+    project_default_branch = Keyword.get(config, :project_default_branch)
+    project_checkout_depth = Keyword.get(config, :project_checkout_depth)
+    project_setup_commands = Keyword.get(config, :project_setup_commands)
+    project_cleanup_commands = Keyword.get(config, :project_cleanup_commands)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -189,6 +197,13 @@ defmodule SymphonyElixir.TestSupport do
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
+        project_yaml(
+          project_repository_url,
+          project_default_branch,
+          project_checkout_depth,
+          project_setup_commands,
+          project_cleanup_commands
+        ),
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
@@ -220,6 +235,20 @@ defmodule SymphonyElixir.TestSupport do
   defp workflow_yaml(policy), do: "workflow: #{yaml_value(policy)}"
   defp profiles_yaml(nil), do: nil
   defp profiles_yaml(policy), do: "profiles: #{yaml_value(policy)}"
+
+  defp project_yaml(nil, _default_branch, _checkout_depth, [], []), do: nil
+
+  defp project_yaml(repository_url, default_branch, checkout_depth, setup_commands, cleanup_commands) do
+    [
+      "project:",
+      "  repository_url: #{yaml_value(repository_url)}",
+      "  default_branch: #{yaml_value(default_branch)}",
+      "  checkout_depth: #{yaml_value(checkout_depth)}",
+      "  setup_commands: #{yaml_value(setup_commands)}",
+      "  cleanup_commands: #{yaml_value(cleanup_commands)}"
+    ]
+    |> Enum.join("\n")
+  end
 
   defp yaml_value(value) when is_binary(value) do
     "\"" <> String.replace(value, "\"", "\\\"") <> "\""

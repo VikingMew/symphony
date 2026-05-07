@@ -185,7 +185,7 @@ defmodule SymphonyElixir.WorkflowStore do
   defp load_database_version_or_seed(path) do
     case persistence().active_workflow_version() do
       nil -> seed_database_workflow_or_setup(path)
-      workflow_version -> {:ok, persistence().workflow_to_loaded(workflow_version)}
+      workflow_version -> {:ok, workflow_version |> workflow_to_loaded() |> normalize_database_workflow()}
     end
   end
 
@@ -208,6 +208,14 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp persistence, do: PersistenceProvider.module()
+
+  defp workflow_to_loaded(workflow_version), do: persistence().workflow_to_loaded(workflow_version)
+
+  defp normalize_database_workflow(%{config: config} = workflow) when is_map(config) do
+    %{workflow | config: Workflow.normalize_legacy_tracker_config(config)}
+  end
+
+  defp normalize_database_workflow(workflow), do: workflow
 
   defp maybe_setup_required_state(path) do
     if database_workflow_enabled?() do

@@ -93,7 +93,13 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp workflow_context, do: WorkflowStore.current_with_source()
 
   defp settings_from_workflow_context({:ok, %{workflow: %{config: config}}}) when is_map(config) do
-    Schema.parse(config)
+    with {:ok, settings} <- Schema.parse(config) do
+      if settings.tracker.kind == "linear" do
+        {:ok, settings}
+      else
+        {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
+      end
+    end
   end
 
   defp settings_from_workflow_context({:error, reason}), do: {:error, reason}

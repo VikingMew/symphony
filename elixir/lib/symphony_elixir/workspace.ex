@@ -212,7 +212,7 @@ defmodule SymphonyElixir.Workspace do
 
     case created? do
       true ->
-        case hooks.after_create do
+        case hooks.after_create || Config.generated_after_create_hook() do
           nil ->
             :ok
 
@@ -230,7 +230,7 @@ defmodule SymphonyElixir.Workspace do
 
     case File.dir?(workspace) do
       true ->
-        case hooks.before_remove do
+        case hooks.before_remove || Config.generated_before_remove_hook() do
           nil ->
             :ok
 
@@ -253,7 +253,7 @@ defmodule SymphonyElixir.Workspace do
   defp maybe_run_before_remove_hook(workspace, worker_host) when is_binary(worker_host) do
     hooks = Config.settings!().hooks
 
-    case hooks.before_remove do
+    case hooks.before_remove || Config.generated_before_remove_hook() do
       nil ->
         :ok
 

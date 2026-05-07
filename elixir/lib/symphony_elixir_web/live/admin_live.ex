@@ -5,57 +5,109 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, PersistenceProvider, Workflow, WorkflowStore}
-
-  @starter_workflow """
-  ---
-  tracker:
-    kind: memory
-    active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
-    terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
-  polling:
-    interval_ms: 30000
-  workspace:
-    root: "/tmp/symphony-workspaces"
-  agent:
-    max_concurrent_agents: 1
-    max_turns: 20
-  codex:
-    command: "codex app-server"
-    thread_sandbox: "workspace-write"
-  server:
-    host: "127.0.0.1"
-    port: 4000
-  ---
-
-  You are an agent for this repository.
-  """
+  alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, socket |> assign(:workflow_diagnostics_notice, nil) |> refresh()}
+    {:ok,
+     socket
+     |> assign(:workflow_diagnostics_notice, nil)
+     |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_validation_error, nil)
+     |> assign(:workflow_form_valid?, false)
+     |> assign(:workflow_form_summary, %{})
+     |> allow_upload(:workflow_import, accept: ~w(.md .markdown), max_entries: 1)
+     |> refresh()}
   end
 
   @impl true
-  def handle_event("save_raw_workflow", %{"workflow" => %{"raw" => raw}}, socket) do
+  def handle_event("validate_workflow_form", %{"workflow" => params}, socket) do
+    draft = workflow_draft(socket, params)
+
+    {:noreply,
+     socket
+     |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_form, draft)
+     |> assign_workflow_validation(draft)}
+  end
+
+  @impl true
+  def handle_event("save_workflow_form", %{"workflow" => params}, socket) do
+    draft = workflow_draft(socket, params)
+
     socket =
-      case persistence().default_project() do
-        {:ok, project} ->
-          case persistence().import_workflow(project, raw, "web") do
-            {:ok, _version} ->
-              _ = WorkflowStore.force_reload()
+      with {:ok, raw} <- WorkflowForm.to_raw(draft),
+           {:ok, _validation} <- WorkflowValidator.validate_raw(raw),
+           {:ok, project} <- persistence().default_project(),
+           {:ok, version} <- safe_import_workflow(project, raw, "web_form") do
+        _ = WorkflowStore.force_reload()
 
-              socket
-              |> put_flash(:info, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-              |> assign(:workflow_diagnostics_notice, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-              |> refresh()
+        socket
+        |> put_flash(:info, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign_save_notice(:success, "Workflow saved", "Version #{version.version} is active. Runtime workflow refreshed.")
+        |> assign(:workflow_diagnostics_notice, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign(:workflow_validation_error, nil)
+        |> refresh()
+      else
+        {:error, message} when is_binary(message) ->
+          socket
+          |> put_flash(:error, "Workflow rejected: #{message}")
+          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_form, draft)
+          |> assign(:workflow_validation_error, message)
+          |> assign(:workflow_form_valid?, false)
 
-            {:error, reason} ->
-              put_flash(socket, :error, "Workflow rejected: #{inspect(reason)}")
-          end
+        {:error, {:workflow_validation_failed, message}} ->
+          socket
+          |> put_flash(:error, "Workflow rejected: #{message}")
+          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_validation_error, message)
+          |> assign(:workflow_form, draft)
+          |> assign(:workflow_form_valid?, false)
 
         {:error, reason} ->
-          put_flash(socket, :error, "Project unavailable: #{inspect(reason)}")
+          message = inspect(reason)
+
+          socket
+          |> put_flash(:error, "Workflow rejected: #{message}")
+          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_form, draft)
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("import_workflow_file", _params, socket) do
+    imported =
+      consume_uploaded_entries(socket, :workflow_import, fn %{path: path}, _entry ->
+        result =
+          case File.read(path) do
+            {:ok, raw} -> WorkflowForm.from_raw(raw)
+            {:error, reason} -> {:error, reason}
+          end
+
+        {:ok, result}
+      end)
+
+    socket =
+      case imported do
+        [{:ok, draft} | _] ->
+          socket
+          |> put_flash(:info, "Workflow import loaded into the draft form. Review and save it to create a version.")
+          |> assign(:workflow_save_notice, nil)
+          |> assign(:workflow_form, draft)
+          |> assign_workflow_validation(draft)
+
+        [] ->
+          socket
+          |> assign(:workflow_save_notice, nil)
+          |> put_flash(:error, "Choose a WORKFLOW.md file to import.")
+
+        [{:error, reason} | _] ->
+          socket
+          |> assign(:workflow_save_notice, nil)
+          |> put_flash(:error, "Workflow import failed: #{inspect(reason)}")
       end
 
     {:noreply, socket}
@@ -68,14 +120,27 @@ defmodule SymphonyElixirWeb.AdminLive do
       |> Enum.find(&(&1.id == id))
 
     socket =
-      case version && persistence().activate_workflow_version(version) do
-        {:ok, _version} ->
-          _ = WorkflowStore.force_reload()
+      with %{} = version <- version,
+           {:ok, _validation} <-
+             WorkflowValidator.validate_version(version, fn version ->
+               persistence().export_workflow(version)
+             end),
+           {:ok, _version} <- persistence().activate_workflow_version(version) do
+        _ = WorkflowStore.force_reload()
 
+        socket
+        |> put_flash(:info, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign(:workflow_diagnostics_notice, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign(:workflow_validation_error, nil)
+        |> refresh()
+      else
+        {:error, {:workflow_validation_failed, message}} ->
           socket
-          |> put_flash(:info, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> assign(:workflow_diagnostics_notice, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> refresh()
+          |> put_flash(:error, "Workflow activation rejected: #{message}")
+          |> assign(:workflow_validation_error, message)
+
+        nil ->
+          put_flash(socket, :error, "Workflow version not found")
 
         _ ->
           put_flash(socket, :error, "Workflow version not found")
@@ -88,8 +153,11 @@ defmodule SymphonyElixirWeb.AdminLive do
   def handle_event("cancel_task", %{"id" => id}, socket) do
     socket =
       case persistence().cancel_task(id) do
-        {:ok, _task} -> socket |> put_flash(:info, "Task cancelled") |> refresh()
-        {:error, reason} -> put_flash(socket, :error, "Task cancellation failed: #{inspect(reason)}")
+        {:ok, _task} ->
+          socket |> put_flash(:info, "Task cancelled") |> refresh()
+
+        {:error, reason} ->
+          put_flash(socket, :error, "Task cancellation failed: #{inspect(reason)}")
       end
 
     {:noreply, socket}
@@ -208,7 +276,7 @@ defmodule SymphonyElixirWeb.AdminLive do
               <p class="empty-state">A database workflow is active, but runtime is currently using a different source.</p>
             <% end %>
             <%= if @workflow_setup_required do %>
-              <p class="empty-state">No active workflow is configured yet. Paste or edit a workflow below to create the first database-backed version.</p>
+              <p class="empty-state">No active workflow is configured yet. Fill the structured draft below or import a WORKFLOW.md package.</p>
             <% end %>
             <%= if @workflow_diagnostics_notice do %>
               <p class="empty-state">
@@ -216,10 +284,139 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <a class="issue-link" href="/diagnostics/linear">Open Linear diagnostics</a>
               </p>
             <% end %>
-            <form phx-submit="save_raw_workflow">
-              <label class="metric-label" for="workflow_raw">Raw WORKFLOW.md</label>
-              <textarea id="workflow_raw" class="workflow-editor" name="workflow[raw]" rows="18"><%= @active_workflow_raw %></textarea>
-              <button class="subtle-button" type="submit">Save workflow version</button>
+            <%= if @workflow_validation_error do %>
+              <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
+            <% end %>
+            <%= if @workflow_save_notice do %>
+              <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
+                <strong><%= @workflow_save_notice.title %></strong>
+                <span><%= @workflow_save_notice.message %></span>
+              </aside>
+            <% end %>
+
+            <form class="workflow-import-form" phx-submit="import_workflow_file">
+              <label class="metric-label">Import WORKFLOW.md package</label>
+              <.live_file_input upload={@uploads.workflow_import} />
+              <button class="subtle-button" type="submit">Load import into draft</button>
+            </form>
+
+            <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form">
+              <div class="workflow-form-header">
+                <div>
+                  <h2 class="section-title">Draft Configuration</h2>
+                  <p class="metric-label">Edit fields, review validation, then save a database workflow version.</p>
+                </div>
+                <button class="subtle-button" type="submit" disabled={!@workflow_form_valid?} phx-disable-with="Saving...">Save workflow version</button>
+              </div>
+
+              <div class="workflow-summary-grid">
+                <p><span class="metric-label">Tracker</span><strong><%= @workflow_form_summary.tracker %></strong></p>
+                <p><span class="metric-label">Project</span><strong><%= @workflow_form_summary.project %></strong></p>
+                <p><span class="metric-label">Repository</span><strong><%= @workflow_form_summary.repository %></strong></p>
+                <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
+                <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
+                <p><span class="metric-label">Prompt</span><strong><%= @workflow_form_summary.prompt_chars %> chars</strong></p>
+              </div>
+
+              <div class="workflow-form-grid">
+                <section class="workflow-form-section">
+                  <h3>Tracker</h3>
+                  <p class="metric-label">Linear tracker is managed by runtime configuration. Credentials are not shown here.</p>
+                  <label><span class="metric-label">Project slug</span><input name="workflow[tracker_project_slug]" value={@workflow_form["tracker_project_slug"]} /></label>
+                  <label><span class="metric-label">Assignee</span><input name="workflow[tracker_assignee]" value={@workflow_form["tracker_assignee"]} /></label>
+                  <label><span class="metric-label">Active states</span><textarea name="workflow[active_states]" rows="5"><%= @workflow_form["active_states"] %></textarea></label>
+                  <label><span class="metric-label">Terminal states</span><textarea name="workflow[terminal_states]" rows="4"><%= @workflow_form["terminal_states"] %></textarea></label>
+                </section>
+
+                <section class="workflow-form-section">
+                  <h3>Project / Bootstrap</h3>
+                  <label><span class="metric-label">Repository URL</span><input name="workflow[project_repository_url]" value={@workflow_form["project_repository_url"]} /></label>
+                  <label><span class="metric-label">Default branch</span><input name="workflow[project_default_branch]" value={@workflow_form["project_default_branch"]} /></label>
+                  <label><span class="metric-label">Checkout depth</span><input type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} /></label>
+                  <label><span class="metric-label">Setup commands</span><textarea name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
+                  <label><span class="metric-label">Cleanup commands</span><textarea name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
+                </section>
+
+                <section class="workflow-form-section">
+                  <h3>Runtime</h3>
+                  <label><span class="metric-label">Workspace root</span><input name="workflow[workspace_root]" value={@workflow_form["workspace_root"]} /></label>
+                  <label><span class="metric-label">Polling interval ms</span><input type="number" min="1" name="workflow[polling_interval_ms]" value={@workflow_form["polling_interval_ms"]} /></label>
+                  <label><span class="metric-label">Max agents</span><input type="number" min="1" name="workflow[agent_max_concurrent_agents]" value={@workflow_form["agent_max_concurrent_agents"]} /></label>
+                  <label><span class="metric-label">Max turns</span><input type="number" min="1" name="workflow[agent_max_turns]" value={@workflow_form["agent_max_turns"]} /></label>
+                </section>
+
+                <section class="workflow-form-section">
+                  <h3>Codex</h3>
+                  <label><span class="metric-label">Command</span><input name="workflow[codex_command]" value={@workflow_form["codex_command"]} /></label>
+                  <label><span class="metric-label">Thread sandbox</span><input name="workflow[codex_thread_sandbox]" value={@workflow_form["codex_thread_sandbox"]} /></label>
+                </section>
+              </div>
+
+              <section class="workflow-form-section">
+                <h3>Profiles</h3>
+                <p class="workflow-help-copy">
+                  Base prompt is the shared task template. A profile prompt is stage-specific: extend prepends it to the base prompt, replace uses it instead of the base prompt, and state routing decides which profile applies.
+                </p>
+                <div class="workflow-profile-grid">
+                  <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class="workflow-profile-panel">
+                    <h4><%= profile_id %></h4>
+                    <label><span class="metric-label">Name</span><input name={"workflow[profiles][#{profile_id}][name]"} value={profile["name"]} /></label>
+                    <label>
+                      <span class="metric-label">Executor</span>
+                      <select name={"workflow[profiles][#{profile_id}][executor_type]"}>
+                        <option value="codex_agent" selected={profile["executor_type"] == "codex_agent"}>codex_agent</option>
+                        <option value="manual" selected={profile["executor_type"] == "manual"}>manual</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span class="metric-label">Prompt mode</span>
+                      <select name={"workflow[profiles][#{profile_id}][prompt_mode]"}>
+                        <option value="extend" selected={profile["prompt_mode"] == "extend"}>extend</option>
+                        <option value="replace" selected={profile["prompt_mode"] == "replace"}>replace</option>
+                        <option value="disabled" selected={profile["prompt_mode"] == "disabled"}>disabled</option>
+                      </select>
+                    </label>
+                    <label><span class="metric-label">Profile prompt template</span><textarea name={"workflow[profiles][#{profile_id}][prompt_template]"} rows="5"><%= profile["prompt_template"] %></textarea></label>
+                    <div class="workflow-checkbox-row">
+                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_description]"} value="false" />
+                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_description]"} value="true" checked={profile["allow_description"] == "true"} /> Description</label>
+                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="false" />
+                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="true" checked={profile["allow_comment"] == "true"} /> Comment</label>
+                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_result]"} value="false" />
+                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_result]"} value="true" checked={profile["allow_result"] == "true"} /> Result</label>
+                    </div>
+                    <label><span class="metric-label">Allowed target states</span><textarea name={"workflow[profiles][#{profile_id}][target_states]"} rows="4"><%= profile["target_states"] %></textarea></label>
+                  </article>
+                </div>
+              </section>
+
+              <section class="workflow-form-section">
+                <h3>Workflow Phases / State Routing</h3>
+                <div class="workflow-routing-grid">
+                  <label :for={{state, attrs} <- workflow_state_entries(@workflow_form)}>
+                    <span class="metric-label"><%= state %></span>
+                    <select name={"workflow[workflow_states][#{state}][profile]"}>
+                      <option value="">No profile</option>
+                      <option :for={profile <- WorkflowForm.profile_options(@workflow_form)} value={profile} selected={attrs["profile"] == profile}><%= profile %></option>
+                    </select>
+                  </label>
+                </div>
+                <label><span class="metric-label">Human review states</span><textarea name="workflow[human_review_states]" rows="4"><%= @workflow_form["human_review_states"] %></textarea></label>
+                <%= if transition_entries(@workflow_form) != [] do %>
+                  <div>
+                    <span class="metric-label">Allowed transitions</span>
+                    <pre class="inline-code-panel"><%= inspect(transition_entries(@workflow_form), pretty: true) %></pre>
+                  </div>
+                <% end %>
+              </section>
+
+              <section class="workflow-form-section workflow-prompt-section">
+                <h3>Prompt</h3>
+                <p class="workflow-help-copy">
+                  This base prompt is rendered for all first-turn agent runs unless the selected profile uses replace mode.
+                </p>
+                <label><span class="metric-label">Base prompt</span><textarea name="workflow[prompt_body]" rows="12"><%= @workflow_form["prompt_body"] %></textarea></label>
+              </section>
             </form>
           </section>
           <section class="section-card">
@@ -258,7 +455,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp refresh(socket) do
     active = persistence().active_workflow_version()
     runtime = runtime_workflow()
-    {active_workflow_raw, workflow_setup_required} = active_workflow_raw(active, runtime)
+    {workflow_form, workflow_setup_required} = workflow_form(active, runtime)
 
     socket
     |> assign(:projects, persistence().list_projects())
@@ -271,25 +468,90 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:execution_mode, Config.execution_mode())
     |> assign(:workflow_versions, persistence().list_workflow_versions())
     |> assign(:tracker_configs, persistence().list_tracker_configs())
-    |> assign(:active_workflow_raw, active_workflow_raw)
+    |> assign(:workflow_form, workflow_form)
+    |> assign_workflow_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
   end
 
-  defp active_workflow_raw(nil, {:ok, %{workflow: workflow}}) do
+  defp workflow_form(nil, {:ok, %{workflow: workflow}}) do
     if Map.get(workflow, :setup_required, false) do
-      {@starter_workflow, true}
+      {WorkflowForm.empty(), true}
     else
-      {Workflow.to_markdown(workflow.config, workflow.prompt), false}
+      {WorkflowForm.from_loaded(workflow), false}
     end
   end
 
-  defp active_workflow_raw(nil, {:error, _reason}), do: {@starter_workflow, true}
+  defp workflow_form(nil, {:error, _reason}), do: {WorkflowForm.empty(), true}
 
-  defp active_workflow_raw(version, _runtime), do: {persistence().export_workflow(version), false}
+  defp workflow_form(version, _runtime) do
+    version
+    |> persistence().export_workflow()
+    |> WorkflowForm.from_raw()
+    |> case do
+      {:ok, draft} -> {draft, false}
+      {:error, _reason} -> {WorkflowForm.empty(), false}
+    end
+  end
+
+  defp workflow_draft(socket, params) do
+    current = Map.get(socket.assigns, :workflow_form, %{})
+    base_config = Map.get(current, "_base_config", %{})
+
+    current
+    |> deep_merge(params)
+    |> Map.put("_base_config", base_config)
+  end
+
+  defp deep_merge(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _key, left_value, right_value ->
+      if is_map(left_value) and is_map(right_value), do: deep_merge(left_value, right_value), else: right_value
+    end)
+  end
+
+  defp assign_workflow_validation(socket, draft) do
+    case WorkflowForm.to_raw(draft) do
+      {:ok, raw} ->
+        case WorkflowValidator.validate_raw(raw) do
+          {:ok, _validation} ->
+            socket
+            |> assign(:workflow_validation_error, nil)
+            |> assign(:workflow_form_valid?, true)
+            |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+
+          {:error, {:workflow_validation_failed, message}} ->
+            socket
+            |> assign(:workflow_validation_error, message)
+            |> assign(:workflow_form_valid?, false)
+            |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+        end
+
+      {:error, message} ->
+        socket
+        |> assign(:workflow_validation_error, message)
+        |> assign(:workflow_form_valid?, false)
+        |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+    end
+  end
 
   defp persistence, do: PersistenceProvider.module()
+
+  defp safe_import_workflow(project, raw, source) do
+    persistence().import_workflow(project, raw, source)
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp assign_save_notice(socket, level, title, message) do
+    assign(socket, :workflow_save_notice, %{
+      level: level,
+      title: title,
+      message: message
+    })
+  end
 
   defp runtime_workflow do
     WorkflowStore.current_with_source()
@@ -305,6 +567,20 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp source_detail(%{type: :database, workflow_version_id: id}), do: id || "n/a"
   defp source_detail(%{type: :setup_required}), do: "setup required"
   defp source_detail(_source), do: "n/a"
+
+  defp profile_entries(form) do
+    form
+    |> Map.get("profiles", %{})
+    |> Enum.sort_by(fn {profile_id, _profile} -> profile_id end)
+  end
+
+  defp workflow_state_entries(form) do
+    form
+    |> Map.get("workflow_states", %{})
+    |> Enum.sort_by(fn {state, _attrs} -> state end)
+  end
+
+  defp transition_entries(form), do: Map.get(form, "allowed_transitions", [])
 
   defp db_runtime_mismatch?(nil, _runtime), do: false
 

@@ -2,7 +2,8 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
+**Completed**: 2026-05-07
 
 ## Goal
 
@@ -50,13 +51,13 @@ project:
 
 ## Acceptance Criteria
 
-- [ ] Existing workflows without `project` or `bootstrap` still parse.
-- [ ] A workflow with structured project bootstrap parses and validates.
-- [ ] Invalid setup command list is rejected with clear config error.
-- [ ] Invalid checkout depth is rejected.
-- [ ] When structured bootstrap is present and hooks are omitted, workspace creation can still clone/setup using generated commands.
-- [ ] Explicit hooks continue to take precedence over generated bootstrap commands.
-- [ ] Tests cover schema parsing and generated hook behavior.
+- [x] Existing workflows without `project` or `bootstrap` still parse.
+- [x] A workflow with structured project bootstrap parses and validates.
+- [x] Invalid setup command list is rejected with clear config error.
+- [x] Invalid checkout depth is rejected.
+- [x] When structured bootstrap is present and hooks are omitted, workspace creation can still clone/setup using generated commands.
+- [x] Explicit hooks continue to take precedence over generated bootstrap commands.
+- [x] Tests cover schema parsing and generated hook behavior.
 
 ## Test Cases
 
@@ -78,16 +79,16 @@ project:
 
 ## Verification
 
-- [ ] `mise exec -- mix format`
-- [ ] `mise exec -- mix lint`
-- [ ] `mise exec -- mix test test/symphony_elixir/workspace_and_config_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/core_test.exs`
-- [ ] `mise exec -- mix test`
-- [ ] `git diff --check`
+- [x] `mise exec -- mix format`
+- [x] `mise exec -- mix lint`
+- [x] `mise exec -- mix test test/symphony_elixir/workspace_and_config_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/core_test.exs`
+- [x] `mise exec -- mix test`
+- [x] `git diff --check`
 
 ## Completion Deviations
 
-None yet.
+The delivered schema uses the top-level `project` section. Generated hook commands are used only when explicit `hooks.after_create` or `hooks.before_remove` are absent.
 
 ## Dependencies
 

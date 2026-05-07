@@ -240,15 +240,17 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert Enum.any?(diagnostics.log, &(&1.step == "states" and &1.status == :error))
   end
 
-  test "diagnostics skips linear probes for non-linear tracker" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory", tracker_api_token: nil)
+  test "diagnostics rejects unsupported tracker kinds" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "not-linear", tracker_api_token: nil)
 
     diagnostics = Diagnostics.run()
 
-    assert diagnostics.config.tracker_kind == "memory"
-    assert diagnostics.probes.api.status == :skipped
+    assert diagnostics.config.tracker_kind == "unavailable"
+    assert diagnostics.probes.api.status == :error
+    assert diagnostics.probes.api.detail =~ "unsupported_tracker_kind"
     assert diagnostics.probes.teams.status == :skipped
     assert diagnostics.probes.project.status == :skipped
+    assert diagnostics.probes.states.status == :skipped
     assert diagnostics.probes.candidates.status == :skipped
   end
 

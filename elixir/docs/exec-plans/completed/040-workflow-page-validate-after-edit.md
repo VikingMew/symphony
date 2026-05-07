@@ -2,7 +2,8 @@
 
 ## Status
 
-**Status**: Planned
+**Status**: Completed
+**Completed**: 2026-05-07
 
 ## Goal
 
@@ -39,15 +40,15 @@ This is more important now that workflow policy includes profiles, review states
 
 ## Acceptance Criteria
 
-- [ ] Saving a valid workflow from `/workflows` succeeds and shows a success message.
-- [ ] Saving malformed YAML fails with a visible error and does not import a new workflow version.
-- [ ] Saving schema-invalid config fails with the same class of error `Config.settings!/0` would raise.
-- [ ] Saving semantically invalid config fails before activation.
-- [ ] Saving malformed top-level `profiles`, `workflow.states`, `human_review_states`, or `allowed_transitions` fails with a visible error.
-- [ ] Saving malformed execution profile config fails with a visible error, including unsupported executor type or missing prompt config where required.
-- [ ] Activating an existing invalid workflow version fails and leaves the previous active version unchanged.
-- [ ] The page preserves the submitted raw text after a failed save so the operator can fix it.
-- [ ] Existing file-based runtime behavior remains unchanged.
+- [x] Saving a valid workflow from `/workflows` succeeds and shows a success message.
+- [x] Saving malformed YAML fails with a visible error and does not import a new workflow version.
+- [x] Saving schema-invalid config fails with the same class of error `Config.settings!/0` would raise.
+- [x] Saving semantically invalid config fails before activation.
+- [x] Saving malformed top-level `profiles`, `workflow.states`, `human_review_states`, or `allowed_transitions` fails with a visible error.
+- [x] Saving malformed execution profile config fails with a visible error, including unsupported executor type or missing prompt config where required.
+- [x] Activating an existing invalid workflow version fails and leaves the previous active version unchanged.
+- [x] The page preserves the submitted raw text after a failed save so the operator can fix it.
+- [x] Existing file-based runtime behavior remains unchanged.
 
 ## Test Cases
 
@@ -96,17 +97,17 @@ This is more important now that workflow policy includes profiles, review states
 
 ## Verification
 
-- [ ] `mise exec -- mix format`
-- [ ] `mise exec -- mix lint`
-- [ ] `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/workflow_store_fake_persistence_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/workspace_and_config_test.exs`
-- [ ] `mise exec -- mix test`
-- [ ] `git diff --check`
+- [x] `mise exec -- mix format`
+- [x] `mise exec -- mix lint`
+- [x] `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/workflow_store_fake_persistence_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/workspace_and_config_test.exs`
+- [x] `mise exec -- mix test`
+- [x] `git diff --check`
 
 ## Completion Deviations
 
-None yet.
+The first UI surface validates on save/activation and displays a page-level error rather than field-level YAML lint markers. More granular inline validation remains part of the longer-term structured workflow page direction.
 
 ## Dependencies
 

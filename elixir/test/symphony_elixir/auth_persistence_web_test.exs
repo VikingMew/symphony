@@ -104,7 +104,9 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert workflow_html =~ ~s(class="top-banner")
     assert workflow_html =~ ~s(href="/")
     assert workflow_html =~ ~s(aria-current="page")
-    assert workflow_html =~ "Raw WORKFLOW.md"
+    assert workflow_html =~ "Draft Configuration"
+    assert workflow_html =~ "Project slug"
+    refute workflow_html =~ "Raw WORKFLOW.md"
   end
 
   defp start_test_endpoint do
