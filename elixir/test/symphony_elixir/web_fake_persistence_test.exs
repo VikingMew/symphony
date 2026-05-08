@@ -83,12 +83,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
 
-  test "workflow form saves legacy memory tracker drafts as linear" do
+  test "workflow form saves legacy tracker drafts as linear" do
     draft =
       SymphonyElixir.WorkflowForm.from_loaded(%{
         config: %{
           "tracker" => %{
-            "kind" => "memory",
+            "kind" => "legacy-local",
             "project_slug" => "legacy",
             "active_states" => ["Todo"],
             "terminal_states" => ["Done"]

@@ -47,10 +47,10 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     assert FakePersistence.active_workflow_version()
   end
 
-  test "database source normalizes legacy memory tracker workflow to linear" do
+  test "database source normalizes legacy tracker workflow to linear" do
     legacy_config = %{
       "tracker" => %{
-        "kind" => "memory",
+        "kind" => "legacy-local",
         "project_slug" => "legacy-project",
         "active_states" => ["Todo"],
         "terminal_states" => ["Done"]

@@ -51,6 +51,8 @@ Plans should focus on product and engineering intent rather than full implementa
 44. [044-stage-specific-execution-profiles.md](completed/044-stage-specific-execution-profiles.md)
 45. [045-database-inline-profile-normalization.md](completed/045-database-inline-profile-normalization.md)
 46. [046-profile-prompt-mode-clarity.md](completed/046-profile-prompt-mode-clarity.md)
+48. [048-workflow-tracker-fixed-fields-cleanup.md](completed/048-workflow-tracker-fixed-fields-cleanup.md)
+52. [052-remove-memory-tracker-path.md](completed/052-remove-memory-tracker-path.md)
 
 ## Plan Guidelines
 
@@ -76,8 +78,6 @@ When implementation starts, keep the plan current. If the implementation discove
 ## Active Plans
 
 47. [047-workflow-import-first-configuration-page.md](active/047-workflow-import-first-configuration-page.md)
-48. [048-workflow-tracker-fixed-fields-cleanup.md](active/048-workflow-tracker-fixed-fields-cleanup.md)
 49. [049-workflow-profile-editor-slice.md](active/049-workflow-profile-editor-slice.md)
 50. [050-workflow-phase-state-routing-editor.md](active/050-workflow-phase-state-routing-editor.md)
 51. [051-workflow-save-feedback-state.md](active/051-workflow-save-feedback-state.md)
-52. [052-remove-memory-tracker-path.md](active/052-remove-memory-tracker-path.md)
