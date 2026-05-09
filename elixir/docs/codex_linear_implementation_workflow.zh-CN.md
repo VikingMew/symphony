@@ -119,7 +119,8 @@ Codex 通过 `linear_task_read` 读取当前 task detail、最近评论和状态
 1. 最新明确人工评论，尤其是打回原因。
 2. 最近状态变更，例如 `Needs Implementation Review -> In Progress`。
 3. 当前 issue description。
-4. PR review 或 branch/commit 信息，如果已经记录在评论中。
+4. PR review 或 branch/commit 信息，如果已经记录在评论或 Linear issue
+   attachment 中。
 5. Codex 上一次 `[codex]` 评论。
 6. 当前 worktree diff 和测试结果。
 
@@ -205,7 +206,9 @@ mise exec -- mix test --cover
 - 不直接推 `main`。
 - 不强推，除非明确配置且 run 拥有该权限。
 - 如果 remote moved，先按项目策略 pull/merge/revalidate。
-- push 后记录 branch name、commit sha、remote URL 或 PR URL。
+- push 后记录 branch name、commit sha、remote URL 或 PR URL。`linear_task_update`
+  中的具体 HTTP(S) URL 会由 Symphony 后端绑定到当前 Linear issue；没有 URL 的
+  branch name 或 commit sha 仍只作为结果元数据记录。
 
 如果项目使用 PR：
 

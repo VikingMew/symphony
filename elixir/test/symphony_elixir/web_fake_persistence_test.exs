@@ -41,6 +41,19 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "fake"
   end
 
+  test "runs page does not render runtime listening controls" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/runs")
+
+    assert html =~ "Runs"
+    refute html =~ "Listening:"
+    refute html =~ "Start listening"
+    refute html =~ "Stop listening"
+    refute html =~ "Force stop all agents"
+  end
+
   test "run detail, issue detail, and events pages render persisted observability data" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
@@ -153,6 +166,25 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
 
+  test "workflow page uses an explicit add button for allowed transitions" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    write_workflow_file!(Workflow.workflow_file_path(), workflow_policy: workflow_policy_without_transitions())
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/workflows")
+
+    assert html =~ ~s(aria-label="Add transition")
+    refute html =~ ~s(name="workflow[allowed_transitions][0][from]")
+
+    html =
+      view
+      |> element("button[phx-click='add_workflow_transition']")
+      |> render_click()
+
+    assert html =~ ~s(name="workflow[allowed_transitions][0][from]")
+    assert html =~ ~s(name="workflow[allowed_transitions][0][to]")
+  end
+
   test "workflow form saves and clears lifecycle hooks" do
     draft =
       SymphonyElixir.WorkflowForm.from_loaded(%{
@@ -196,6 +228,66 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert hooks["after_run"] == "echo after"
     assert hooks["before_remove"] == "echo remove"
     assert hooks["timeout_ms"] == 45_000
+  end
+
+  test "workflow form saves editable allowed transitions" do
+    draft =
+      SymphonyElixir.WorkflowForm.from_loaded(%{
+        config: %{
+          "tracker" => %{
+            "kind" => "linear",
+            "endpoint" => "https://api.linear.app/graphql",
+            "api_key" => "$LINEAR_API_KEY",
+            "project_slug" => "project",
+            "active_states" => ["Ready", "In Progress", "Ready to Merge"],
+            "terminal_states" => ["Done"]
+          },
+          "project" => %{"repository_url" => "git@github.com:org/repo.git"},
+          "workflow" => %{
+            "states" => %{
+              "Ready" => %{"profile" => "implementation"},
+              "In Progress" => %{"profile" => "implementation"},
+              "Ready to Merge" => %{"profile" => "merge"}
+            },
+            "human_review_states" => ["Needs Refinement Review", "In Review"],
+            "allowed_transitions" => [
+              %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"}
+            ]
+          },
+          "profiles" => %{
+            "implementation" => %{
+              "name" => "Implementation",
+              "executor" => %{"type" => "codex_agent"},
+              "prompt" => %{"mode" => "extend", "template" => "Implement it"},
+              "allowed_updates" => %{"comment" => true, "result" => true, "target_states" => ["In Progress", "In Review"]}
+            },
+            "merge" => %{
+              "name" => "Merge",
+              "executor" => %{"type" => "codex_agent"},
+              "prompt" => %{"mode" => "extend", "template" => "Merge it"},
+              "allowed_updates" => %{"comment" => true, "result" => true, "target_states" => ["Done"]}
+            }
+          }
+        },
+        prompt: "Transition prompt"
+      })
+
+    edited =
+      put_in(draft, ["allowed_transitions"], %{
+        "0" => %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
+        "1" => %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
+        "2" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
+      })
+
+    assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(edited)
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+
+    assert get_in(loaded_workflow.config, ["workflow", "allowed_transitions"]) == [
+             %{"actor" => "codex", "from" => "Ready", "profile" => "implementation", "to" => "In Progress"},
+             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "In Review"}
+           ]
+
+    assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
 
   test "workflow form rejects invalid lifecycle hook timeout" do
@@ -439,6 +531,17 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "hook_before_remove" => "",
       "hook_timeout_ms" => "60000",
       "prompt_body" => "You are an agent for this repository."
+    }
+  end
+
+  defp workflow_policy_without_transitions do
+    %{
+      "states" => %{
+        "Ready" => %{"profile" => "implementation"},
+        "In Progress" => %{"profile" => "implementation"}
+      },
+      "human_review_states" => ["In Review"],
+      "allowed_transitions" => []
     }
   end
 

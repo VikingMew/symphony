@@ -119,6 +119,23 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def record_event(attrs) when is_map(attrs) do
+    ensure_started()
+
+    event =
+      attrs
+      |> Map.put_new(:id, "event-#{System.unique_integer([:positive])}")
+      |> Map.put_new(:occurred_at, DateTime.utc_now())
+
+    Agent.update(@name, fn state ->
+      state
+      |> record_call({:record_event, event})
+      |> update_in([:events], &[event | &1])
+    end)
+
+    {:ok, event}
+  end
+
   def list_workers(_opts \\ []) do
     ensure_started()
     Agent.get(@name, & &1.workers)

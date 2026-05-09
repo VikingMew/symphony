@@ -55,21 +55,41 @@ defmodule SymphonyElixir.Orchestrator do
   @impl true
   def init(_opts) do
     now_ms = System.monotonic_time(:millisecond)
-    config = Config.settings!()
 
-    state = %State{
-      poll_interval_ms: config.polling.interval_ms,
-      max_concurrent_agents: config.agent.max_concurrent_agents,
-      next_poll_due_at_ms: now_ms,
-      poll_check_in_progress: false,
-      tick_timer_ref: nil,
-      tick_token: nil,
-      codex_totals: @empty_codex_totals,
-      codex_rate_limits: nil
-    }
+    state =
+      case Config.settings() do
+        {:ok, config} ->
+          run_terminal_workspace_cleanup()
 
-    run_terminal_workspace_cleanup()
-    state = schedule_tick(state, config.polling.interval_ms)
+          %State{
+            poll_interval_ms: config.polling.interval_ms,
+            max_concurrent_agents: config.agent.max_concurrent_agents,
+            next_poll_due_at_ms: now_ms,
+            poll_check_in_progress: false,
+            tick_timer_ref: nil,
+            tick_token: nil,
+            codex_totals: @empty_codex_totals,
+            codex_rate_limits: nil
+          }
+          |> schedule_tick(config.polling.interval_ms)
+
+        {:error, reason} ->
+          Logger.error("Orchestrator started with invalid workflow config; listening is disabled: #{inspect(reason)}")
+
+          %State{
+            poll_interval_ms: 30_000,
+            max_concurrent_agents: 0,
+            next_poll_due_at_ms: now_ms,
+            poll_check_in_progress: false,
+            tick_timer_ref: nil,
+            tick_token: nil,
+            codex_totals: @empty_codex_totals,
+            codex_rate_limits: nil,
+            last_config_error: reason,
+            listening?: false
+          }
+          |> schedule_tick(30_000)
+      end
 
     {:ok, state}
   end
@@ -824,7 +844,8 @@ defmodule SymphonyElixir.Orchestrator do
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
             started_at: DateTime.utc_now(),
-            session_history: initial_session_history(issue, attempt, worker_host)
+            session_history: initial_session_history(issue, attempt, worker_host),
+            session_history_total_count: 1
           })
 
         %{
@@ -1256,7 +1277,8 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
           runtime_seconds: running_seconds(metadata.started_at, now),
-          session_history: Map.get(metadata, :session_history, [])
+          session_history: Map.get(metadata, :session_history, []),
+          session_history_total_count: Map.get(metadata, :session_history_total_count, length(Map.get(metadata, :session_history, [])))
         }
       end)
 
@@ -1280,6 +1302,7 @@ defmodule SymphonyElixir.Orchestrator do
        retrying: retrying,
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
+       config_error: config_error_payload(state.last_config_error),
        polling: %{
          listening?: state.listening? == true,
          checking?: state.poll_check_in_progress == true,
@@ -1305,11 +1328,19 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:start_listening, _from, state) do
-    state = %{state | listening?: true}
-    state = schedule_tick(state, 0)
-    persist_event("orchestrator.listening_started", nil, %{})
-    notify_dashboard()
-    {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+    case Config.settings() do
+      {:ok, _config} ->
+        state = %{state | listening?: true, last_config_error: nil}
+        state = schedule_tick(state, 0)
+        persist_event("orchestrator.listening_started", nil, %{})
+        notify_dashboard()
+        {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+
+      {:error, reason} ->
+        state = log_config_error_once(%{state | listening?: false, poll_check_in_progress: false}, reason)
+        notify_dashboard()
+        {:reply, %{listening?: false, error: inspect(reason), changed_at: DateTime.utc_now()}, state}
+    end
   end
 
   def handle_call(:stop_listening, _from, state) do
@@ -1527,11 +1558,222 @@ defmodule SymphonyElixir.Orchestrator do
     ]
   end
 
+  defp append_codex_history(running_entry, %{event: :notification} = update) when is_map(running_entry) do
+    metadata = codex_history_metadata(update)
+
+    case streaming_agent_message_fragment(update) do
+      {:ok, fragment, key} ->
+        append_streaming_agent_message_history(running_entry, fragment, key, metadata)
+
+      :error ->
+        append_session_history(running_entry, :notification, codex_history_label(:notification), metadata)
+    end
+  end
+
   defp append_codex_history(running_entry, %{event: event} = update) when is_map(running_entry) do
-    append_session_history(running_entry, event, codex_history_label(event), %{
+    append_session_history(running_entry, event, codex_history_label(event), codex_history_metadata(update))
+  end
+
+  defp codex_history_metadata(update) do
+    %{
       session_id: Map.get(update, :session_id),
       message: summarize_codex_update(update)
-    })
+    }
+  end
+
+  defp append_streaming_agent_message_history(running_entry, fragment, coalescing_key, metadata) do
+    history = Map.get(running_entry, :session_history, [])
+    total_count = Map.get(running_entry, :session_history_total_count, length(history)) + 1
+
+    case history do
+      [] ->
+        running_entry
+        |> Map.put(:session_history, [streaming_agent_message_event(fragment, coalescing_key, metadata)])
+        |> Map.put(:session_history_total_count, total_count)
+
+      _ ->
+        {last, rest_reversed} = pop_last_history_event(history)
+
+        if coalescible_streaming_agent_message?(last, coalescing_key) do
+          updated_last = coalesce_streaming_agent_message(last, fragment, metadata)
+
+          running_entry
+          |> Map.put(:session_history, Enum.take(Enum.reverse(rest_reversed) ++ [updated_last], -@session_history_limit))
+          |> Map.put(:session_history_total_count, total_count)
+        else
+          next_history = history ++ [streaming_agent_message_event(fragment, coalescing_key, metadata)]
+
+          running_entry
+          |> Map.put(:session_history, Enum.take(next_history, -@session_history_limit))
+          |> Map.put(:session_history_total_count, total_count)
+        end
+    end
+  end
+
+  defp pop_last_history_event(history) do
+    [last | rest_reversed] = Enum.reverse(history)
+    {last, rest_reversed}
+  end
+
+  defp streaming_agent_message_event(fragment, coalescing_key, metadata) do
+    metadata =
+      metadata
+      |> Map.put(:coalescing_key, coalescing_key)
+      |> Map.put(:coalesced_event_count, 1)
+      |> Map.put(:coalesced_text, fragment)
+      |> Map.put(:coalesced_last_at, DateTime.utc_now())
+
+    session_history_event(:notification, codex_history_label(:notification), metadata)
+    |> Map.put(:detail, streaming_agent_message_detail(fragment, 1))
+  end
+
+  defp coalescible_streaming_agent_message?(%{event: :notification, metadata: metadata}, coalescing_key)
+       when is_map(metadata) do
+    Map.get(metadata, :coalescing_key) == coalescing_key
+  end
+
+  defp coalescible_streaming_agent_message?(_event, _coalescing_key), do: false
+
+  defp coalesce_streaming_agent_message(last, fragment, metadata) do
+    existing_metadata = Map.get(last, :metadata, %{})
+    text = smart_join_streaming_fragment(Map.get(existing_metadata, :coalesced_text, ""), fragment)
+    count = Map.get(existing_metadata, :coalesced_event_count, 1) + 1
+
+    merged_metadata =
+      existing_metadata
+      |> Map.merge(metadata)
+      |> Map.put(:coalesced_event_count, count)
+      |> Map.put(:coalesced_text, text)
+      |> Map.put(:coalesced_last_at, DateTime.utc_now())
+
+    last
+    |> Map.put(:detail, streaming_agent_message_detail(text, count))
+    |> Map.put(:metadata, sanitize_history_metadata(merged_metadata))
+  end
+
+  defp streaming_agent_message_detail(text, 1), do: "agent message streaming: #{text}"
+  defp streaming_agent_message_detail(text, count), do: "agent message streaming: #{text} (#{count} fragments)"
+
+  defp streaming_agent_message_fragment(%{payload: payload} = update) when is_map(payload) do
+    method = map_value(payload, ["method", :method])
+
+    if agent_message_streaming_method?(method) do
+      case extract_streaming_delta(payload) do
+        fragment when is_binary(fragment) and fragment != "" ->
+          {:ok, fragment, streaming_agent_message_key(update, payload, method)}
+
+        _ ->
+          :error
+      end
+    else
+      :error
+    end
+  end
+
+  defp streaming_agent_message_fragment(_update), do: :error
+
+  defp agent_message_streaming_method?(method)
+       when method in [
+              "item/agentMessage/delta",
+              "codex/event/agent_message_delta",
+              "codex/event/agent_message_content_delta"
+            ],
+       do: true
+
+  defp agent_message_streaming_method?(_method), do: false
+
+  defp streaming_agent_message_key(update, payload, method) do
+    item_id =
+      map_path(payload, ["params", "id"]) ||
+        map_path(payload, [:params, :id]) ||
+        map_path(payload, ["params", "itemId"]) ||
+        map_path(payload, [:params, :itemId]) ||
+        map_path(payload, ["params", "msg", "id"]) ||
+        map_path(payload, [:params, :msg, :id])
+
+    [Map.get(update, :session_id), method, item_id]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(":")
+  end
+
+  defp extract_streaming_delta(payload) do
+    [
+      ["params", "delta"],
+      [:params, :delta],
+      ["params", "msg", "delta"],
+      [:params, :msg, :delta],
+      ["params", "msg", "payload", "delta"],
+      [:params, :msg, :payload, :delta],
+      ["params", "msg", "payload", "text"],
+      [:params, :msg, :payload, :text],
+      ["params", "msg", "payload", "content"],
+      [:params, :msg, :payload, :content]
+    ]
+    |> Enum.find_value(fn path ->
+      payload
+      |> map_path(path)
+      |> normalize_streaming_delta()
+    end)
+  end
+
+  defp normalize_streaming_delta(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: value
+  end
+
+  defp normalize_streaming_delta(_value), do: nil
+
+  defp smart_join_streaming_fragment("", fragment), do: fragment
+
+  defp smart_join_streaming_fragment(text, fragment) when is_binary(text) and is_binary(fragment) do
+    cond do
+      String.starts_with?(fragment, [" ", "\n", "\t"]) ->
+        text <> fragment
+
+      String.starts_with?(fragment, [".", ",", ":", ";", "?", "!", ")", "]", "}", "'", "\"", "’"]) ->
+        text <> fragment
+
+      String.ends_with?(text, ["(", "[", "{", "\"", "'", "“"]) ->
+        text <> fragment
+
+      true ->
+        text <> " " <> fragment
+    end
+  end
+
+  defp map_value(map, keys) when is_map(map) and is_list(keys) do
+    Enum.find_value(keys, fn key -> Map.get(map, key) end)
+  end
+
+  defp map_value(_map, _keys), do: nil
+
+  defp map_path(data, [key | rest]) when is_map(data) do
+    case fetch_map_key(data, key) do
+      {:ok, value} when rest == [] -> value
+      {:ok, value} -> map_path(value, rest)
+      :error -> nil
+    end
+  end
+
+  defp map_path(_data, _path), do: nil
+
+  defp fetch_map_key(map, key) when is_map(map) do
+    case Map.fetch(map, key) do
+      {:ok, value} ->
+        {:ok, value}
+
+      :error when is_atom(key) ->
+        Map.fetch(map, Atom.to_string(key))
+
+      :error when is_binary(key) ->
+        fetch_existing_atom_key(map, key)
+    end
+  end
+
+  defp fetch_existing_atom_key(map, key) do
+    Map.fetch(map, String.to_existing_atom(key))
+  rescue
+    ArgumentError -> :error
   end
 
   defp codex_history_label(event) do
@@ -1544,7 +1786,10 @@ defmodule SymphonyElixir.Orchestrator do
   defp append_session_history(running_entry, event, label, metadata) when is_map(running_entry) do
     history = Map.get(running_entry, :session_history, [])
     next = session_history_event(event, label, metadata)
-    Map.put(running_entry, :session_history, Enum.take(history ++ [next], -@session_history_limit))
+
+    running_entry
+    |> Map.put(:session_history, Enum.take(history ++ [next], -@session_history_limit))
+    |> Map.put(:session_history_total_count, Map.get(running_entry, :session_history_total_count, length(history)) + 1)
   end
 
   defp session_history_event(event, label, metadata) do
@@ -1560,6 +1805,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp history_detail(:workspace_ready, %{workspace_path: path}) when is_binary(path), do: path
   defp history_detail(:run_started, %{state: state}) when is_binary(state), do: "Started from #{state}"
+  defp history_detail(_event, %{message: message}), do: StatusDashboard.humanize_codex_message(message)
   defp history_detail(event, _metadata), do: to_string(event)
 
   defp history_severity(event) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
@@ -1634,12 +1880,28 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_session_completion_totals(state, _running_entry), do: state
 
   defp refresh_runtime_config(%State{} = state) do
-    config = Config.settings!()
+    case Config.settings() do
+      {:ok, config} ->
+        %{
+          state
+          | poll_interval_ms: config.polling.interval_ms,
+            max_concurrent_agents: config.agent.max_concurrent_agents,
+            last_config_error: nil
+        }
 
+      {:error, reason} ->
+        state
+        |> log_config_error_once(reason)
+        |> Map.merge(%{listening?: false, poll_check_in_progress: false, max_concurrent_agents: 0})
+    end
+  end
+
+  defp config_error_payload(nil), do: nil
+
+  defp config_error_payload(reason) do
     %{
-      state
-      | poll_interval_ms: config.polling.interval_ms,
-        max_concurrent_agents: config.agent.max_concurrent_agents
+      reason: inspect(reason),
+      message: config_validation_error_message(reason)
     }
   end
 

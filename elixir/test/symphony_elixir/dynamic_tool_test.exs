@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Codex.DynamicTool
+  alias SymphonyElixir.Linear.Issue
 
   test "tool_specs advertises restricted Linear task tools" do
     assert [
@@ -118,5 +119,126 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{"message" => "Linear task context is unavailable for this Codex session."}
            }
+  end
+
+  test "linear_task_update links concrete reference URLs to the current issue" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{
+          "references" => %{
+            "latest_human_comment_id" => "comment-1",
+            "pr_url" => "https://github.com/acme/app/pull/12",
+            "urls" => [
+              "https://github.com/acme/app/pull/12",
+              "https://github.com/acme/app/tree/codex/MT-1"
+            ]
+          },
+          "result" => %{
+            "commit_url" => "https://github.com/acme/app/commit/abc123",
+            "commit" => "abc123"
+          }
+        },
+        issue: %Issue{id: "issue-1"},
+        profile: "implementation",
+        graphql: fn query, variables ->
+          cond do
+            query =~ "attachmentCreate" ->
+              send(test_pid, {:attachment_linked, variables["input"]})
+
+              {:ok,
+               %{
+                 "data" => %{
+                   "attachmentCreate" => %{
+                     "success" => true,
+                     "attachment" => %{
+                       "id" => "attachment-#{System.unique_integer([:positive])}",
+                       "title" => variables["input"]["title"]
+                     }
+                   }
+                 }
+               }}
+
+            query =~ "commentCreate" ->
+              {:ok, %{"data" => %{"commentCreate" => %{"success" => true, "comment" => %{"id" => "comment-2"}}}}}
+
+            true ->
+              flunk("unexpected graphql call")
+          end
+        end
+      )
+
+    assert response["success"] == true
+
+    assert_received {:attachment_linked,
+                     %{
+                       "issueId" => "issue-1",
+                       "title" => "Pull Request",
+                       "url" => "https://github.com/acme/app/pull/12"
+                     }}
+
+    assert_received {:attachment_linked,
+                     %{
+                       "issueId" => "issue-1",
+                       "title" => "Reference",
+                       "url" => "https://github.com/acme/app/tree/codex/MT-1"
+                     }}
+
+    assert_received {:attachment_linked,
+                     %{
+                       "issueId" => "issue-1",
+                       "title" => "Commit",
+                       "url" => "https://github.com/acme/app/commit/abc123"
+                     }}
+
+    refute_received {:attachment_linked, %{"url" => "abc123"}}
+
+    output = Jason.decode!(response["output"])
+    assert length(output["reference_links"]) == 3
+    assert output["issue_update"] == nil
+  end
+
+  test "linear_task_update keeps non-url references as metadata without linking" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"references" => %{"latest_human_comment_id" => "comment-1", "branch" => "codex/MT-1"}},
+        issue: %Issue{id: "issue-1"},
+        profile: "implementation",
+        graphql: fn query, _variables ->
+          if query =~ "attachmentCreate" do
+            send(test_pid, :attachment_linked)
+            flunk("attachment should not be linked")
+          else
+            {:ok, %{"data" => %{"commentCreate" => %{"success" => true, "comment" => %{"id" => "comment-2"}}}}}
+          end
+        end
+      )
+
+    assert response["success"] == true
+    assert Jason.decode!(response["output"])["reference_links"] == []
+    refute_received :attachment_linked
+  end
+
+  test "linear_task_update reports attachment link failures" do
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"references" => %{"pr_url" => "https://github.com/acme/app/pull/12"}},
+        issue: %Issue{id: "issue-1"},
+        profile: "implementation",
+        graphql: fn _query, _variables ->
+          {:ok, %{"errors" => [%{"message" => "attachment failed"}]}}
+        end
+      )
+
+    assert response["success"] == false
+    error = Jason.decode!(response["output"])["error"]
+    assert error["message"] == "Restricted Linear task tool execution failed."
+    assert error["reason"] =~ "linear_attachment_link_failed"
   end
 end

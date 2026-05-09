@@ -74,6 +74,27 @@ defmodule SymphonyElixir.ExtensionsTest do
     def handle_call(:request_refresh, _from, state) do
       {:reply, Keyword.get(state, :refresh, :unavailable), state}
     end
+
+    def handle_call(:start_listening, _from, state) do
+      state = update_snapshot_listening(state, true)
+      {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+    end
+
+    def handle_call(:stop_listening, _from, state) do
+      state = update_snapshot_listening(state, false)
+      {:reply, %{listening?: false, changed_at: DateTime.utc_now()}, state}
+    end
+
+    def handle_call(:force_stop_all, _from, state) do
+      state = update_snapshot_listening(state, false)
+      {:reply, %{listening?: false, stopped_count: 0, rollback_results: []}, state}
+    end
+
+    defp update_snapshot_listening(state, listening?) do
+      Keyword.update!(state, :snapshot, fn snapshot ->
+        Map.put(snapshot, :polling, %{listening?: listening?})
+      end)
+    end
   end
 
   setup do
@@ -346,6 +367,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
                  "session_history" => [],
+                 "session_history_total_count" => 0,
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
@@ -537,6 +559,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Runtime"
     assert html =~ "Live"
     assert html =~ "Offline"
+    assert html =~ "Listening:"
+    assert html =~ "disabled"
+    assert html =~ "Start listening"
+    assert html =~ "Stop listening"
+    assert html =~ "Force stop all agents"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "Event log"
@@ -586,6 +613,114 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert_eventually(fn ->
       render(view) =~ "agent message content streaming: structured update"
+    end)
+  end
+
+  test "dashboard controls listening status" do
+    orchestrator_name = Module.concat(__MODULE__, :DashboardListeningOrchestrator)
+
+    {:ok, _orchestrator_pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: static_snapshot(),
+        refresh: %{queued: false, coalesced: false, requested_at: DateTime.utc_now(), operations: []}
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, view, html} = live(build_conn(), "/")
+    assert html =~ "Listening:"
+    assert html =~ "disabled"
+
+    start_html =
+      view
+      |> element("button[phx-click='start_listening']")
+      |> render_click()
+
+    assert start_html =~ "Listening:"
+    assert start_html =~ "enabled"
+
+    stop_html =
+      view
+      |> element("button[phx-click='stop_listening']")
+      |> render_click()
+
+    assert stop_html =~ "Listening:"
+    assert stop_html =~ "disabled"
+  end
+
+  test "dashboard keeps session history expanded across live updates" do
+    orchestrator_name = Module.concat(__MODULE__, :SessionHistoryOrchestrator)
+
+    snapshot =
+      update_in(static_snapshot().running, fn [entry] ->
+        [
+          entry
+          |> Map.put(:session_history, [
+            %{
+              event: :run_started,
+              label: "Run started",
+              detail: "Started from In Progress",
+              severity: :info,
+              at: DateTime.utc_now(),
+              metadata: %{}
+            }
+          ])
+          |> Map.put(:session_history_total_count, 125)
+        ]
+      end)
+
+    {:ok, orchestrator_pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: snapshot,
+        refresh: %{queued: false, coalesced: false, requested_at: DateTime.utc_now(), operations: []}
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, view, html} = live(build_conn(), "/")
+    assert html =~ "Session history (1 rows from 125 events)"
+    refute html =~ "<details open"
+
+    view
+    |> element(~s(summary[phx-value-key="issue-http"]))
+    |> render_click()
+
+    assert render(view) =~ "<details open"
+
+    updated_snapshot =
+      update_in(snapshot.running, fn [entry] ->
+        [
+          %{
+            entry
+            | last_codex_message: "updated while expanded",
+              session_history:
+                entry.session_history ++
+                  [
+                    %{
+                      event: :notification,
+                      label: "Codex update",
+                      detail: "updated while expanded",
+                      severity: :info,
+                      at: DateTime.utc_now(),
+                      metadata: %{}
+                    }
+                  ],
+              session_history_total_count: 126
+          }
+        ]
+      end)
+
+    :sys.replace_state(orchestrator_pid, fn state ->
+      Keyword.put(state, :snapshot, updated_snapshot)
+    end)
+
+    StatusDashboard.notify_update()
+
+    assert_eventually(fn ->
+      html = render(view)
+      html =~ "<details open" and html =~ "Session history (2 rows from 126 events)"
     end)
   end
 
@@ -665,6 +800,62 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:error, _reason} = HttpServer.start_link(host: "bad host", port: 0)
   end
 
+  test "http server starts from raw server config when workflow policy is invalid" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      server_host: "127.0.0.1",
+      workflow_policy: %{
+        "states" => %{
+          "Ready" => %{"profile" => "implementation"}
+        },
+        "human_review_states" => ["In Review"],
+        "allowed_transitions" => [
+          %{"from" => "Needs Implementation Review", "to" => "Ready", "actor" => "human"}
+        ]
+      }
+    )
+
+    snapshot = static_snapshot()
+    orchestrator_name = Module.concat(__MODULE__, :InvalidWorkflowHttpServerOrchestrator)
+
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot})
+    start_supervised!({HttpServer, port: 0, orchestrator: orchestrator_name, snapshot_timeout_ms: 50})
+
+    assert is_integer(wait_for_bound_port())
+  end
+
+  test "application support processes tolerate invalid workflow policy during boot" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      server_host: "127.0.0.1",
+      observability_enabled: true,
+      workflow_policy: %{
+        "states" => %{
+          "Ready" => %{"profile" => "implementation"}
+        },
+        "human_review_states" => ["In Review"],
+        "allowed_transitions" => [
+          %{"from" => "Needs Implementation Review", "to" => "Ready", "actor" => "human"}
+        ]
+      }
+    )
+
+    orchestrator_name = Module.concat(__MODULE__, :InvalidWorkflowPolicyBootOrchestrator)
+    dashboard_name = Module.concat(__MODULE__, :InvalidWorkflowPolicyBootDashboard)
+
+    {:ok, orchestrator_pid} = Orchestrator.start_link(name: orchestrator_name)
+    {:ok, dashboard_pid} = StatusDashboard.start_link(name: dashboard_name, enabled: true, refresh_ms: 60_000)
+
+    on_exit(fn ->
+      if Process.alive?(orchestrator_pid), do: Process.exit(orchestrator_pid, :normal)
+      if Process.alive?(dashboard_pid), do: Process.exit(dashboard_pid, :normal)
+    end)
+
+    assert %{polling: %{listening?: false}, config_error: %{message: message}} =
+             GenServer.call(orchestrator_pid, :snapshot)
+
+    assert message =~ "Needs Implementation Review"
+    assert Process.alive?(dashboard_pid)
+  end
+
   defp start_test_endpoint(overrides) do
     endpoint_config =
       :symphony_elixir
@@ -705,7 +896,8 @@ defmodule SymphonyElixir.ExtensionsTest do
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
-      rate_limits: %{"primary" => %{"remaining" => 11}}
+      rate_limits: %{"primary" => %{"remaining" => 11}},
+      polling: %{listening?: false}
     }
   end
 

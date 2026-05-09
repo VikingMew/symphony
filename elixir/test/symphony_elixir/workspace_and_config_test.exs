@@ -4,6 +4,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
   alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.TestSupport.FakePersistence
 
   test "workspace bootstrap can be implemented in after_create hook" do
     test_root =
@@ -71,6 +72,40 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  test "structured project bootstrap clone commands are noninteractive" do
+    assert {:ok, ssh_settings} =
+             Schema.parse(%{
+               project: %{
+                 repository_url: "git@example.com:org/repo.git",
+                 default_branch: "master",
+                 checkout_depth: 1
+               }
+             })
+
+    ssh_hook = Schema.generated_after_create_hook(ssh_settings)
+    assert ssh_hook =~ "GIT_TERMINAL_PROMPT=0"
+    assert ssh_hook =~ "GIT_ASKPASS="
+    assert ssh_hook =~ "SSH_ASKPASS="
+    assert ssh_hook =~ "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new'"
+    assert ssh_hook =~ "git -c credential.helper= -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'master' 'git@example.com:org/repo.git' ."
+
+    assert {:ok, https_settings} =
+             Schema.parse(%{
+               project: %{
+                 repository_url: "https://example.com/org/repo.git",
+                 default_branch: "main",
+                 checkout_depth: 1
+               }
+             })
+
+    https_hook = Schema.generated_after_create_hook(https_settings)
+    assert https_hook =~ "GIT_TERMINAL_PROMPT=0"
+    assert https_hook =~ "GIT_ASKPASS="
+    assert https_hook =~ "SSH_ASKPASS="
+    refute https_hook =~ "GIT_SSH_COMMAND"
+    assert https_hook =~ "git -c credential.helper= -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'main' 'https://example.com/org/repo.git' ."
   end
 
   test "explicit after_create hook runs after structured project bootstrap" do
@@ -309,12 +344,78 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        hook_timeout_ms: 10,
-        hook_after_create: "sleep 1"
+        hook_timeout_ms: 50,
+        hook_after_create: "echo before-timeout; sleep 1"
       )
 
-      assert {:error, {:workspace_hook_timeout, "after_create", 10}} =
+      assert {:error, {:workspace_hook_timeout, "after_create", 50, details}} =
                Workspace.create_for_issue("MT-TIMEOUT")
+
+      assert details.elapsed_ms >= 50
+      assert details.recent_output =~ "before-timeout"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace hook output is persisted while local hook is still running" do
+    previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
+    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+    FakePersistence.reset!()
+
+    on_exit(fn ->
+      if is_nil(previous_persistence) do
+        Application.delete_env(:symphony_elixir, :persistence_module)
+      else
+        Application.put_env(:symphony_elixir, :persistence_module, previous_persistence)
+      end
+    end)
+
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-hook-stream-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf 'stream-start\\n'; sleep 1; echo done > done.txt"
+      )
+
+      task = Task.async(fn -> Workspace.create_for_issue("MT-STREAM") end)
+      workspace = Path.join(workspace_root, "MT-STREAM")
+      done_path = Path.join(workspace, "done.txt")
+
+      assert wait_until(fn ->
+               output_event? =
+                 FakePersistence.list_events(event_type: "workspace.hook_output")
+                 |> Enum.any?(fn event -> to_string(get_in(event, [:payload, :output])) =~ "stream-start" end)
+
+               output_event? and not File.exists?(done_path)
+             end)
+
+      assert {:ok, ^workspace} = Task.await(task, 2_000)
+
+      event_types =
+        FakePersistence.list_events()
+        |> Enum.map(&Map.fetch!(&1, :event_type))
+
+      assert "workspace.hook_started" in event_types
+      assert "workspace.hook_output" in event_types
+      assert "workspace.hook_completed" in event_types
+
+      phase_events = FakePersistence.list_events(event_type: "run.phase")
+
+      assert Enum.any?(phase_events, fn event ->
+               get_in(event, [:payload, :phase]) == "workspace_after_create" and
+                 get_in(event, [:payload, :status]) == "started"
+             end)
+
+      assert Enum.any?(phase_events, fn event ->
+               get_in(event, [:payload, :phase]) == "workspace_after_create" and
+                 get_in(event, [:payload, :status]) == "completed"
+             end)
     after
       File.rm_rf(workspace_root)
     end
@@ -1479,6 +1580,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert trace =~ workspace_path
     after
       File.rm_rf(test_root)
+    end
+  end
+
+  defp wait_until(fun, attempts \\ 50)
+
+  defp wait_until(_fun, 0), do: false
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
     end
   end
 end

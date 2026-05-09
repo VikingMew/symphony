@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Workflow do
   top-level objects such as `profiles`.
   """
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.WorkflowStore
 
   @workflow_file_name "WORKFLOW.md"
@@ -81,69 +82,8 @@ defmodule SymphonyElixir.Workflow do
         "server" => %{"host" => "127.0.0.1", "port" => port},
         "agent" => %{"max_concurrent_agents" => 1, "max_turns" => 20},
         "codex" => %{"command" => "codex app-server", "thread_sandbox" => "workspace-write"},
-        "workflow" => %{
-          "states" => %{
-            "Refining" => %{"profile" => "refinement"},
-            "Ready" => %{"profile" => "implementation"},
-            "In Progress" => %{"profile" => "implementation"},
-            "Ready to Merge" => %{"profile" => "merge"},
-            "Merging" => %{"profile" => "merge"}
-          },
-          "human_review_states" => ["Needs Refinement Review", "Needs Implementation Review"],
-          "tool_policy" => %{
-            "linear" => %{
-              "exposed_tools" => ["linear_task_read", "linear_task_update"],
-              "raw_graphql" => false
-            }
-          }
-        },
-        "profiles" => %{
-          "refinement" => %{
-            "name" => "Refinement",
-            "executor" => %{"type" => "codex_agent"},
-            "prompt" => %{
-              "mode" => "extend",
-              "template" =>
-                "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states."
-            },
-            "allowed_updates" => %{
-              "description" => true,
-              "comment" => true,
-              "result" => false,
-              "target_states" => ["Needs Refinement Review"]
-            }
-          },
-          "implementation" => %{
-            "name" => "Implementation",
-            "executor" => %{"type" => "codex_agent"},
-            "prompt" => %{
-              "mode" => "extend",
-              "template" =>
-                "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, test, and verify the requested work in the workspace. When ready for review, add the result, relevant references, a concise comment, and request one of the allowed target states."
-            },
-            "allowed_updates" => %{
-              "description" => false,
-              "comment" => true,
-              "result" => true,
-              "target_states" => ["In Progress", "Needs Implementation Review"]
-            }
-          },
-          "merge" => %{
-            "name" => "Merge",
-            "executor" => %{"type" => "codex_agent"},
-            "prompt" => %{
-              "mode" => "extend",
-              "template" =>
-                "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before merging. Verify the branch is ready, perform the merge workflow when allowed, and add a concise result comment with an allowed target state."
-            },
-            "allowed_updates" => %{
-              "description" => false,
-              "comment" => true,
-              "result" => true,
-              "target_states" => ["Merging", "Done"]
-            }
-          }
-        }
+        "workflow" => Schema.default_workflow_policy(),
+        "profiles" => Schema.default_profiles()
       },
       prompt: @setup_prompt,
       prompt_template: @setup_prompt,

@@ -9,8 +9,8 @@ defmodule SymphonyElixir.StatusDashboard do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.Config
   alias SymphonyElixir.Orchestrator
+  alias SymphonyElixir.Workflow
   alias SymphonyElixirWeb.ObservabilityPubSub
 
   defstruct [
@@ -58,7 +58,7 @@ defmodule SymphonyElixir.StatusDashboard do
     refresh_ms_override = keyword_override(opts, :refresh_ms)
     enabled_override = keyword_override(opts, :enabled)
     render_interval_ms_override = keyword_override(opts, :render_interval_ms)
-    observability = Config.settings!().observability
+    observability = configured_observability()
     refresh_ms = refresh_ms_override || observability.refresh_ms
     render_interval_ms = render_interval_ms_override || observability.render_interval_ms
     enabled = resolve_override(enabled_override, observability.dashboard_enabled and dashboard_enabled?())
@@ -96,7 +96,7 @@ defmodule SymphonyElixir.StatusDashboard do
   def handle_info(:tick, state), do: {:noreply, state}
 
   defp refresh_runtime_config(%__MODULE__{} = state) do
-    observability = Config.settings!().observability
+    observability = configured_observability()
 
     %{
       state
@@ -104,6 +104,44 @@ defmodule SymphonyElixir.StatusDashboard do
         refresh_ms: state.refresh_ms_override || observability.refresh_ms,
         render_interval_ms: state.render_interval_ms_override || observability.render_interval_ms
     }
+  end
+
+  defp configured_observability do
+    raw_observability = raw_observability_config()
+
+    %{
+      dashboard_enabled: raw_boolean(raw_observability, "dashboard_enabled", true),
+      refresh_ms: raw_positive_integer(raw_observability, "refresh_ms", 1_000),
+      render_interval_ms: raw_positive_integer(raw_observability, "render_interval_ms", 16)
+    }
+  end
+
+  defp raw_observability_config do
+    with {:ok, %{config: config}} <- Workflow.current(),
+         observability when is_map(observability) <-
+           Map.get(config, "observability") || Map.get(config, :observability) do
+      observability
+    else
+      _ -> %{}
+    end
+  end
+
+  defp raw_boolean(map, key, default) do
+    case raw_value(map, key) do
+      value when is_boolean(value) -> value
+      _ -> default
+    end
+  end
+
+  defp raw_positive_integer(map, key, default) do
+    case raw_value(map, key) do
+      value when is_integer(value) and value > 0 -> value
+      _ -> default
+    end
+  end
+
+  defp raw_value(map, key) do
+    Map.get(map, key) || Map.get(map, String.to_atom(key))
   end
 
   defp schedule_tick(refresh_ms, true), do: Process.send_after(self(), :tick, refresh_ms)
@@ -295,7 +333,15 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp humanize_codex_event(:turn_input_required, _message, _payload), do: "turn blocked: waiting for user input"
+  defp humanize_codex_event(:turn_input_required, _message, payload) do
+    case map_value(payload, ["method", :method]) do
+      method when method in ["mcpServer/elicitation/request", "mcp/elicitation/request"] ->
+        humanize_mcp_elicitation(payload)
+
+      _ ->
+        "turn blocked: waiting for user input"
+    end
+  end
 
   defp humanize_codex_event(:approval_auto_approved, message, payload) do
     method =
@@ -555,6 +601,9 @@ defmodule SymphonyElixir.StatusDashboard do
   defp humanize_codex_method("tool/requestUserInput", payload),
     do: humanize_codex_method("item/tool/requestUserInput", payload)
 
+  defp humanize_codex_method("mcpServer/elicitation/request", payload), do: humanize_mcp_elicitation(payload)
+  defp humanize_codex_method("mcp/elicitation/request", payload), do: humanize_mcp_elicitation(payload)
+
   defp humanize_codex_method("account/updated", payload) do
     auth_mode =
       map_path(payload, ["params", "authMode"]) ||
@@ -599,6 +648,100 @@ defmodule SymphonyElixir.StatusDashboard do
       method
     end
   end
+
+  defp humanize_mcp_elicitation(payload) do
+    details =
+      [
+        {"server", extract_mcp_server_name(payload)},
+        {"tool", extract_mcp_tool_name(payload)},
+        {"prompt", extract_mcp_elicitation_prompt(payload)}
+      ]
+      |> Enum.flat_map(fn
+        {_label, nil} -> []
+        {label, value} -> ["#{label}: #{inline_text(value)}"]
+      end)
+
+    case details do
+      [] -> "MCP elicitation requested"
+      _ -> "MCP elicitation requested (#{Enum.join(details, ", ")})"
+    end
+  end
+
+  defp extract_mcp_server_name(payload) do
+    first_binary_path(payload, [
+      ["params", "server"],
+      [:params, :server],
+      ["params", "serverName"],
+      [:params, :serverName],
+      ["params", "server_name"],
+      [:params, :server_name],
+      ["params", "mcpServer"],
+      [:params, :mcpServer],
+      ["params", "mcp_server"],
+      [:params, :mcp_server],
+      ["params", "server", "name"],
+      [:params, :server, :name],
+      ["params", "request", "server"],
+      [:params, :request, :server],
+      ["params", "request", "serverName"],
+      [:params, :request, :serverName]
+    ])
+  end
+
+  defp extract_mcp_tool_name(payload) do
+    first_binary_path(payload, [
+      ["params", "tool"],
+      [:params, :tool],
+      ["params", "toolName"],
+      [:params, :toolName],
+      ["params", "tool_name"],
+      [:params, :tool_name],
+      ["params", "name"],
+      [:params, :name],
+      ["params", "request", "tool"],
+      [:params, :request, :tool],
+      ["params", "request", "toolName"],
+      [:params, :request, :toolName],
+      ["params", "item", "tool"],
+      [:params, :item, :tool],
+      ["params", "item", "name"],
+      [:params, :item, :name]
+    ])
+  end
+
+  defp extract_mcp_elicitation_prompt(payload) do
+    first_binary_path(payload, [
+      ["params", "prompt"],
+      [:params, :prompt],
+      ["params", "message"],
+      [:params, :message],
+      ["params", "question"],
+      [:params, :question],
+      ["params", "request", "prompt"],
+      [:params, :request, :prompt],
+      ["params", "request", "message"],
+      [:params, :request, :message],
+      ["params", "elicitation", "prompt"],
+      [:params, :elicitation, :prompt],
+      ["params", "elicitation", "message"],
+      [:params, :elicitation, :message]
+    ])
+  end
+
+  defp first_binary_path(payload, paths) do
+    Enum.find_value(paths, fn path ->
+      payload
+      |> map_path(path)
+      |> non_blank_binary()
+    end)
+  end
+
+  defp non_blank_binary(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: value
+  end
+
+  defp non_blank_binary(_value), do: nil
 
   defp humanize_dynamic_tool_event(base, payload) do
     case dynamic_tool_name(payload) do

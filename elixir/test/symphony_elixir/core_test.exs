@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  alias SymphonyElixir.TestSupport.FakePersistence
 
   defmodule EmptyIssueLinearClient do
     def fetch_issue_states_by_ids(_issue_ids), do: {:ok, []}
@@ -195,6 +196,74 @@ defmodule SymphonyElixir.CoreTest do
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "workflow"
     assert message =~ "allowed_transitions.actor"
+  end
+
+  test "workflow policy rejects target states and transitions outside configured state model" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_active_states: ["Ready", "In Progress"],
+      tracker_terminal_states: ["Done"],
+      workflow_policy: %{
+        states: %{Ready: %{profile: "implementation"}, "In Progress": %{profile: "implementation"}},
+        human_review_states: ["In Review"],
+        allowed_transitions: [%{from: "In Progress", to: "Unknown Review", actor: "codex", profile: "implementation"}]
+      },
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "Implement {{ issue.identifier }}"},
+          allowed_updates: %{comment: true, result: true, target_states: ["Unknown Review"]}
+        }
+      }
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "allowed_transitions.to references unknown workflow state"
+    assert message =~ "profiles.implementation.allowed_updates.target_states references unknown workflow state"
+  end
+
+  test "workflow policy accepts editable implementation review state from config" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
+      tracker_active_states: ["Ready", "In Progress", "Ready to Merge", "Merging"],
+      tracker_terminal_states: ["Done"],
+      workflow_policy: %{
+        states: %{
+          Ready: %{profile: "implementation"},
+          "In Progress": %{profile: "implementation"},
+          "Ready to Merge": %{profile: "merge"},
+          Merging: %{profile: "merge"}
+        },
+        human_review_states: ["In Review"],
+        allowed_transitions: [
+          %{from: "Ready", to: "In Progress", actor: "codex", profile: "implementation"},
+          %{from: "In Progress", to: "In Review", actor: "codex", profile: "implementation"},
+          %{from: "In Review", to: "Ready to Merge", actor: "human"},
+          %{from: "In Review", to: "In Progress", actor: "human"},
+          %{from: "Ready to Merge", to: "Merging", actor: "codex", profile: "merge"},
+          %{from: "Merging", to: "Done", actor: "codex", profile: "merge"}
+        ]
+      },
+      profiles_policy: %{
+        implementation: %{
+          name: "Implementation",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "Implement {{ issue.identifier }}"},
+          allowed_updates: %{comment: true, result: true, target_states: ["In Progress", "In Review"]}
+        },
+        merge: %{
+          name: "Merge",
+          executor: %{type: "codex_agent"},
+          prompt: %{mode: "extend", template: "Merge {{ issue.identifier }}"},
+          allowed_updates: %{comment: true, result: true, target_states: ["Merging", "Done"]}
+        }
+      }
+    )
+
+    assert :ok = Config.validate!()
+    assert Config.human_review_state?("In Review")
+    refute Config.human_review_state?("Needs Implementation Review")
+    assert Config.workflow_allowed_updates("implementation")["target_states"] == ["In Progress", "In Review"]
   end
 
   test "workflow rejects nested profiles and profile active state routing" do
@@ -1544,6 +1613,18 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "agent runner forwards timestamped codex updates to recipient" do
+    previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
+    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+    FakePersistence.reset!()
+
+    on_exit(fn ->
+      if is_nil(previous_persistence) do
+        Application.delete_env(:symphony_elixir, :persistence_module)
+      else
+        Application.put_env(:symphony_elixir, :persistence_module, previous_persistence)
+      end
+    end)
+
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -1626,6 +1707,17 @@ defmodule SymphonyElixir.CoreTest do
                      500
 
       assert session_id == "thread-live-turn-live"
+
+      phase_pairs =
+        FakePersistence.list_events(event_type: "run.phase")
+        |> Enum.map(fn event -> {get_in(event, [:payload, :phase]), get_in(event, [:payload, :status])} end)
+
+      assert {"workspace_preparing", "started"} in phase_pairs
+      assert {"workspace_preparing", "completed"} in phase_pairs
+      assert {"codex_starting", "started"} in phase_pairs
+      assert {"codex_starting", "completed"} in phase_pairs
+      assert {"codex_running", "started"} in phase_pairs
+      assert {"codex_running", "completed"} in phase_pairs
     after
       File.rm_rf(test_root)
     end

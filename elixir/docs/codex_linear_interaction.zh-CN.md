@@ -339,7 +339,11 @@ repo-local `linear` skill 需要从 raw GraphQL 操作迁移到受限 tools：
     ]
   },
   "references": {
-    "latest_human_comment_id": "optional comment id used as instruction"
+    "latest_human_comment_id": "optional comment id used as instruction",
+    "pr_url": "optional pull request URL to bind to the issue",
+    "commit_url": "optional commit URL to bind to the issue",
+    "branch_url": "optional branch URL to bind to the issue",
+    "urls": ["optional additional HTTP(S) URLs to bind to the issue"]
   }
 }
 ```
@@ -355,6 +359,9 @@ repo-local `linear` skill 需要从 raw GraphQL 操作迁移到受限 tools：
 - 如果包含 `target_state`，后端应同时校验必要前置条件，例如已 comment、已更新 detail、已推送 branch 或已记录验证结果。
 - 如果 task 是打回返工，必须引用或总结最近人工 comment。
 - description、comment 和 result 中不得包含 token、Authorization header 或本地 secret。
+- `references` 或 `result` 中的具体 HTTP(S) URL 会由 Symphony 后端绑定到当前 Linear
+  issue；纯 branch 名、commit sha、comment id 等非 URL 元数据只保留在 comment/result
+  里，不会被猜测成远端链接。
 
 默认状态流转建议：
 

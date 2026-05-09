@@ -709,6 +709,53 @@ a:focus-visible {
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
+.workflow-subsection-heading {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.workflow-add-button {
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #0f172a;
+  border-radius: 6px;
+  color: #ffffff;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 1rem;
+  font-weight: 700;
+  height: 2rem;
+  justify-content: center;
+  line-height: 1;
+  width: 2rem;
+}
+
+.workflow-add-button:hover {
+  background: #1f2937;
+  border-color: #1f2937;
+}
+
+.workflow-transition-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+}
+
+.workflow-transition-row {
+  display: contents;
+}
+
+.workflow-transition-header {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
 .workflow-profile-grid {
   display: grid;
   gap: 1rem;

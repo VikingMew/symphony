@@ -102,6 +102,20 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("add_workflow_transition", _params, socket) do
+    draft =
+      socket.assigns
+      |> Map.get(:workflow_form, %{})
+      |> append_empty_transition()
+
+    {:noreply,
+     socket
+     |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_form, draft)
+     |> assign_workflow_validation(draft)}
+  end
+
+  @impl true
   def handle_event("import_workflow_file", _params, socket) do
     imported =
       consume_uploaded_entries(socket, :workflow_import, fn %{path: path}, _entry ->
@@ -257,17 +271,6 @@ defmodule SymphonyElixirWeb.AdminLive do
         <% :runs -> %>
           <section class="section-card">
             <h1 class="section-title">Runs</h1>
-            <p class="metric-label">
-              Listening:
-              <span class={status_class(if @runtime_snapshot[:listening?], do: "healthy", else: "offline")}>
-                <%= if @runtime_snapshot[:listening?], do: "enabled", else: "disabled" %>
-              </span>
-            </p>
-            <div class="button-row">
-              <button class="subtle-button" phx-click="start_listening">Start listening</button>
-              <button class="subtle-button" phx-click="stop_listening">Stop listening</button>
-              <button class="subtle-button" phx-click="force_stop_all" data-confirm="Force stop all active agents and roll back Symphony-owned Linear state transitions when safe?">Force stop all agents</button>
-            </div>
             <%= if @runs == [] do %>
               <p class="empty-state">No persisted runs yet.</p>
             <% else %>
@@ -575,12 +578,37 @@ defmodule SymphonyElixirWeb.AdminLive do
                   </label>
                 </div>
                 <label><span class="metric-label">Human review states</span><textarea name="workflow[human_review_states]" rows="4"><%= @workflow_form["human_review_states"] %></textarea></label>
-                <%= if transition_entries(@workflow_form) != [] do %>
-                  <div>
+                <div>
+                  <div class="workflow-subsection-heading">
                     <span class="metric-label">Allowed transitions</span>
-                    <pre class="inline-code-panel"><%= inspect(transition_entries(@workflow_form), pretty: true) %></pre>
+                    <button
+                      class="workflow-add-button"
+                      type="button"
+                      phx-click="add_workflow_transition"
+                      title="Add transition"
+                      aria-label="Add transition"
+                    >+</button>
                   </div>
-                <% end %>
+                  <div class="workflow-transition-grid">
+                    <div class="workflow-transition-header">From</div>
+                    <div class="workflow-transition-header">To</div>
+                    <div class="workflow-transition-header">Actor</div>
+                    <div class="workflow-transition-header">Profile</div>
+                    <div :for={{transition, index} <- transition_entries(@workflow_form)} class="workflow-transition-row">
+                      <input name={"workflow[allowed_transitions][#{index}][from]"} value={transition["from"]} />
+                      <input name={"workflow[allowed_transitions][#{index}][to]"} value={transition["to"]} />
+                      <select name={"workflow[allowed_transitions][#{index}][actor]"}>
+                        <option value="">Select</option>
+                        <option value="codex" selected={transition["actor"] == "codex"}>codex</option>
+                        <option value="human" selected={transition["actor"] == "human"}>human</option>
+                      </select>
+                      <select name={"workflow[allowed_transitions][#{index}][profile]"}>
+                        <option value="">No profile</option>
+                        <option :for={profile <- WorkflowForm.profile_options(@workflow_form)} value={profile} selected={transition["profile"] == profile}><%= profile %></option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
               </section>
 
               <section class="workflow-form-section workflow-prompt-section">
@@ -647,7 +675,6 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_setup_required, workflow_setup_required)
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
-    |> assign(:runtime_snapshot, runtime_snapshot())
     |> assign_detail_data()
   end
 
@@ -743,6 +770,16 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Map.put("_base_config", base_config)
   end
 
+  defp append_empty_transition(draft) do
+    transitions =
+      draft
+      |> Map.get("allowed_transitions", [])
+      |> normalize_transition_entries()
+      |> Kernel.++([%{"from" => "", "to" => "", "actor" => "", "profile" => ""}])
+
+    Map.put(draft, "allowed_transitions", transitions)
+  end
+
   defp deep_merge(left, right) when is_map(left) and is_map(right) do
     Map.merge(left, right, fn _key, left_value, right_value ->
       if is_map(left_value) and is_map(right_value), do: deep_merge(left_value, right_value), else: right_value
@@ -778,13 +815,6 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp orchestrator do
     SymphonyElixirWeb.Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
-  end
-
-  defp runtime_snapshot do
-    case SymphonyElixir.Orchestrator.snapshot(orchestrator(), 1_000) do
-      %{polling: polling} -> %{listening?: Map.get(polling, :listening?, false)}
-      _ -> %{listening?: false}
-    end
   end
 
   defp safe_import_workflow(project, raw, source) do
@@ -830,7 +860,27 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Enum.sort_by(fn {state, _attrs} -> state end)
   end
 
-  defp transition_entries(form), do: Map.get(form, "allowed_transitions", [])
+  defp transition_entries(form) do
+    form
+    |> Map.get("allowed_transitions", [])
+    |> normalize_transition_entries()
+    |> Enum.with_index()
+  end
+
+  defp normalize_transition_entries(entries) when is_list(entries), do: entries
+
+  defp normalize_transition_entries(entries) when is_map(entries) do
+    entries
+    |> Enum.sort_by(fn {index, _entry} ->
+      case Integer.parse(to_string(index)) do
+        {integer, ""} -> integer
+        _ -> 0
+      end
+    end)
+    |> Enum.map(fn {_index, entry} -> entry end)
+  end
+
+  defp normalize_transition_entries(_entries), do: []
 
   defp db_runtime_mismatch?(nil, _runtime), do: false
 

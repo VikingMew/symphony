@@ -1231,10 +1231,18 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp needs_input?(method, payload)
        when is_binary(method) and is_map(payload) do
-    String.starts_with?(method, "turn/") && input_required_method?(method, payload)
+    mcp_elicitation_request?(method) ||
+      (String.starts_with?(method, "turn/") && input_required_method?(method, payload))
   end
 
   defp needs_input?(_method, _payload), do: false
+
+  defp mcp_elicitation_request?(method) when is_binary(method) do
+    method in [
+      "mcpServer/elicitation/request",
+      "mcp/elicitation/request"
+    ]
+  end
 
   defp input_required_method?(method, payload) when is_binary(method) do
     method in [

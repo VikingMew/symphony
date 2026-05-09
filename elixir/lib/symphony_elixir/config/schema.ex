@@ -501,12 +501,43 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp maybe_append_clone_command(commands, %Project{} = project) do
     clone_parts =
-      ["git clone"]
+      ["GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "SSH_ASKPASS="]
+      |> maybe_append_git_ssh_command(project.repository_url)
+      |> Kernel.++([
+        "git",
+        "-c",
+        "credential.helper=",
+        "-c",
+        "core.askPass=",
+        "-c",
+        "http.lowSpeedLimit=1",
+        "-c",
+        "http.lowSpeedTime=30",
+        "clone",
+        "--progress"
+      ])
       |> maybe_append_clone_depth(project.checkout_depth)
       |> maybe_append_clone_branch(project.default_branch)
       |> Kernel.++([shell_escape(project.repository_url), "."])
 
     commands ++ [Enum.join(clone_parts, " ")]
+  end
+
+  defp maybe_append_git_ssh_command(parts, repository_url) when is_binary(repository_url) do
+    if ssh_repository_url?(repository_url) do
+      parts ++
+        [
+          "GIT_SSH_COMMAND=#{shell_escape("ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new")}"
+        ]
+    else
+      parts
+    end
+  end
+
+  defp maybe_append_git_ssh_command(parts, _repository_url), do: parts
+
+  defp ssh_repository_url?(repository_url) do
+    String.starts_with?(repository_url, "git@") or String.starts_with?(repository_url, "ssh://")
   end
 
   defp maybe_append_clone_depth(parts, depth) when is_integer(depth) and depth > 0 do
@@ -565,7 +596,9 @@ defmodule SymphonyElixir.Config.Schema do
     %{settings | tracker: tracker, workspace: workspace, codex: codex, workflow: workflow, profiles: profiles}
   end
 
-  defp default_workflow_policy do
+  @doc false
+  @spec default_workflow_policy() :: map()
+  def default_workflow_policy do
     %{
       "states" => %{
         "Refining" => %{"profile" => "refinement"},
@@ -596,7 +629,9 @@ defmodule SymphonyElixir.Config.Schema do
     }
   end
 
-  defp default_profiles do
+  @doc false
+  @spec default_profiles() :: map()
+  def default_profiles do
     %{
       "refinement" => %{
         "name" => "Refinement",
@@ -669,11 +704,12 @@ defmodule SymphonyElixir.Config.Schema do
   defp validate_workflow_contract(changeset) do
     workflow = get_field(changeset, :workflow) || %{}
     profiles = get_field(changeset, :profiles) || %{}
+    tracker = get_field(changeset, :tracker)
 
     workflow_errors =
       workflow
       |> normalize_keys()
-      |> workflow_policy_errors(normalize_keys(profiles))
+      |> workflow_policy_errors(normalize_keys(profiles), tracker)
 
     profile_errors =
       profiles
@@ -684,15 +720,16 @@ defmodule SymphonyElixir.Config.Schema do
     |> then(fn changeset -> Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1)) end)
   end
 
-  defp workflow_policy_errors(workflow, profiles) when is_map(workflow) do
+  defp workflow_policy_errors(workflow, profiles, tracker) when is_map(workflow) do
     []
     |> Kernel.++(validate_no_nested_profiles(workflow))
     |> Kernel.++(validate_states(Map.get(workflow, "states", %{}), profiles))
     |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
+    |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
   end
 
-  defp workflow_policy_errors(_workflow, _profiles), do: ["must be a map"]
+  defp workflow_policy_errors(_workflow, _profiles, _tracker), do: ["must be a map"]
 
   defp validate_no_nested_profiles(workflow) do
     if Map.has_key?(workflow, "profiles") do
@@ -817,6 +854,100 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp validate_transitions(_transitions), do: ["allowed_transitions must be a list"]
+
+  defp validate_workflow_state_references(workflow, profiles, tracker) do
+    used_profiles = workflow_used_profiles(workflow, profiles)
+
+    profiles =
+      default_profiles()
+      |> Map.take(used_profiles)
+      |> Map.merge(profiles, fn _profile, default_profile, configured_profile ->
+        Map.merge(default_profile, configured_profile)
+      end)
+
+    known_states = workflow_known_states(workflow, tracker)
+
+    validate_transition_state_references(Map.get(workflow, "allowed_transitions", []), known_states) ++
+      validate_profile_target_state_references(profiles, known_states)
+  end
+
+  defp workflow_used_profiles(workflow, _profiles) do
+    state_profiles =
+      workflow
+      |> Map.get("states", %{})
+      |> Enum.map(fn {_state, policy} -> if is_map(policy), do: Map.get(policy, "profile") end)
+
+    transition_profiles =
+      workflow
+      |> Map.get("allowed_transitions", [])
+      |> Enum.map(fn transition -> if is_map(transition), do: Map.get(transition, "profile") end)
+
+    state_profiles
+    |> Kernel.++(transition_profiles)
+    |> Enum.filter(&is_binary/1)
+    |> Enum.reject(&(String.trim(&1) == ""))
+  end
+
+  defp workflow_known_states(workflow, tracker) do
+    []
+    |> Kernel.++(tracker_states(tracker, :active_states))
+    |> Kernel.++(tracker_states(tracker, :terminal_states))
+    |> Kernel.++(Map.keys(Map.get(workflow, "states", %{})))
+    |> Kernel.++(Map.get(workflow, "human_review_states", []))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> MapSet.new(&normalize_issue_state/1)
+  end
+
+  defp tracker_states(%Tracker{} = tracker, field), do: Map.get(tracker, field) || []
+  defp tracker_states(_tracker, _field), do: []
+
+  defp validate_transition_state_references(transitions, known_states) when is_list(transitions) do
+    Enum.flat_map(transitions, fn
+      transition when is_map(transition) ->
+        Enum.flat_map(["from", "to"], &transition_state_reference_errors(transition, known_states, &1))
+
+      _transition ->
+        []
+    end)
+  end
+
+  defp validate_transition_state_references(_transitions, _known_states), do: []
+
+  defp transition_state_reference_errors(transition, known_states, field) do
+    state = Map.get(transition, field)
+
+    if known_state?(known_states, state) do
+      []
+    else
+      ["allowed_transitions.#{field} references unknown workflow state #{inspect(state)}"]
+    end
+  end
+
+  defp validate_profile_target_state_references(profiles, known_states) when is_map(profiles) do
+    Enum.flat_map(profiles, fn {profile, policy} ->
+      policy
+      |> get_in(["allowed_updates", "target_states"])
+      |> case do
+        states when is_list(states) ->
+          states
+          |> Enum.reject(&known_state?(known_states, &1))
+          |> Enum.map(&"profiles.#{profile}.allowed_updates.target_states references unknown workflow state #{inspect(&1)}")
+
+        _states ->
+          []
+      end
+    end)
+  end
+
+  defp validate_profile_target_state_references(_profiles, _known_states), do: []
+
+  defp known_state?(known_states, state) when is_binary(state) do
+    MapSet.member?(known_states, normalize_issue_state(String.trim(state)))
+  end
+
+  defp known_state?(_known_states, _state), do: true
 
   defp maybe_required_string_error(errors, value, field) do
     if is_binary(value) and String.trim(value) != "", do: errors, else: [field <> " must be a non-empty string" | errors]

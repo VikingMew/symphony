@@ -14,6 +14,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
       socket
       |> assign(:payload, load_payload())
       |> assign(:now, DateTime.utc_now())
+      |> assign(:expanded_session_histories, MapSet.new())
 
     if connected?(socket) do
       :ok = ObservabilityPubSub.subscribe()
@@ -35,6 +36,45 @@ defmodule SymphonyElixirWeb.DashboardLive do
      socket
      |> assign(:payload, load_payload())
      |> assign(:now, DateTime.utc_now())}
+  end
+
+  @impl true
+  def handle_event("toggle_session_history", %{"key" => key}, socket) when is_binary(key) do
+    expanded_session_histories =
+      socket.assigns.expanded_session_histories
+      |> toggle_session_history_key(key)
+
+    {:noreply, assign(socket, :expanded_session_histories, expanded_session_histories)}
+  end
+
+  @impl true
+  def handle_event("start_listening", _params, socket) do
+    result = SymphonyElixir.Orchestrator.start_listening(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Listening started: #{inspect(result)}")
+     |> refresh_payload()}
+  end
+
+  @impl true
+  def handle_event("stop_listening", _params, socket) do
+    result = SymphonyElixir.Orchestrator.stop_listening(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Listening stopped: #{inspect(result)}")
+     |> refresh_payload()}
+  end
+
+  @impl true
+  def handle_event("force_stop_all", _params, socket) do
+    result = SymphonyElixir.Orchestrator.force_stop_all(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Force stop requested: #{inspect(result)}")
+     |> refresh_payload()}
   end
 
   @impl true
@@ -80,6 +120,29 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </p>
         </section>
       <% else %>
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Runtime controls</h2>
+              <p class="metric-label">
+                Listening:
+                <span class={listening_badge_class(@payload)}>
+                  <%= if listening_enabled?(@payload), do: "enabled", else: "disabled" %>
+                </span>
+              </p>
+            </div>
+            <div class="button-row">
+              <button class="subtle-button" phx-click="start_listening">Start listening</button>
+              <button class="subtle-button" phx-click="stop_listening">Stop listening</button>
+              <button
+                class="subtle-button"
+                phx-click="force_stop_all"
+                data-confirm="Force stop all active agents and roll back Symphony-owned Linear state transitions when safe?"
+              >Force stop all agents</button>
+            </div>
+          </div>
+        </section>
+
         <section class="metric-grid">
           <article class="metric-card">
             <p class="metric-label">Running</p>
@@ -204,8 +267,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   </tr>
                   <tr class="session-history-row">
                     <td colspan="6">
-                      <details>
-                        <summary>Session history (<%= length(entry.session_history || []) %>)</summary>
+                      <details open={session_history_expanded?(@expanded_session_histories, entry)}>
+                        <summary
+                          phx-click="toggle_session_history"
+                          phx-value-key={session_history_key(entry)}
+                        ><%= session_history_summary(entry) %></summary>
                         <%= if (entry.session_history || []) == [] do %>
                           <p class="empty-state">No session history recorded.</p>
                         <% else %>
@@ -271,6 +337,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
+  end
+
+  defp refresh_payload(socket) do
+    socket
+    |> assign(:payload, load_payload())
+    |> assign(:now, DateTime.utc_now())
   end
 
   defp orchestrator do
@@ -341,9 +413,50 @@ defmodule SymphonyElixirWeb.DashboardLive do
     end
   end
 
+  defp listening_enabled?(payload) do
+    payload
+    |> Map.get(:polling, %{})
+    |> Map.get(:listening?, false)
+  end
+
+  defp listening_badge_class(payload) do
+    if listening_enabled?(payload), do: "status-badge status-success", else: "status-badge status-danger"
+  end
+
   defp history_badge_class(:error), do: "status-badge status-danger"
   defp history_badge_class(:warning), do: "status-badge status-warning"
   defp history_badge_class(_severity), do: "status-badge status-info"
+
+  defp session_history_key(entry) do
+    cond do
+      Map.get(entry, :issue_id) not in [nil, ""] -> Map.get(entry, :issue_id)
+      Map.get(entry, :issue_identifier) not in [nil, ""] -> Map.get(entry, :issue_identifier)
+      true -> Map.get(entry, :session_id) || "unknown"
+    end
+  end
+
+  defp session_history_expanded?(expanded_session_histories, entry) do
+    MapSet.member?(expanded_session_histories, session_history_key(entry))
+  end
+
+  defp session_history_summary(entry) do
+    visible_count = length(Map.get(entry, :session_history, []) || [])
+    total_count = Map.get(entry, :session_history_total_count) || visible_count
+
+    if total_count > visible_count do
+      "Session history (#{visible_count} rows from #{total_count} events)"
+    else
+      "Session history (#{visible_count})"
+    end
+  end
+
+  defp toggle_session_history_key(expanded_session_histories, key) do
+    if MapSet.member?(expanded_session_histories, key) do
+      MapSet.delete(expanded_session_histories, key)
+    else
+      MapSet.put(expanded_session_histories, key)
+    end
+  end
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)

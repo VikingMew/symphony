@@ -3,7 +3,7 @@ defmodule SymphonyElixir.HttpServer do
   Compatibility facade that starts the Phoenix observability endpoint when enabled.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator}
+  alias SymphonyElixir.{Orchestrator, Workflow}
   alias SymphonyElixirWeb.Endpoint
 
   @secret_key_bytes 48
@@ -18,9 +18,9 @@ defmodule SymphonyElixir.HttpServer do
 
   @spec start_link(keyword()) :: GenServer.on_start() | :ignore
   def start_link(opts \\ []) do
-    case Keyword.get(opts, :port, Config.server_port()) do
+    case Keyword.get(opts, :port, configured_server_port()) do
       port when is_integer(port) and port >= 0 ->
-        host = Keyword.get(opts, :host, Config.settings!().server.host)
+        host = Keyword.get(opts, :host, configured_server_host())
         orchestrator = Keyword.get(opts, :orchestrator, Orchestrator)
         snapshot_timeout_ms = Keyword.get(opts, :snapshot_timeout_ms, 15_000)
 
@@ -45,6 +45,32 @@ defmodule SymphonyElixir.HttpServer do
 
       _ ->
         :ignore
+    end
+  end
+
+  defp configured_server_port do
+    case Application.get_env(:symphony_elixir, :server_port_override) do
+      port when is_integer(port) and port >= 0 ->
+        port
+
+      _ ->
+        raw_server_value("port")
+    end
+  end
+
+  defp configured_server_host do
+    case raw_server_value("host") do
+      host when is_binary(host) and host != "" -> host
+      _ -> "127.0.0.1"
+    end
+  end
+
+  defp raw_server_value(key) do
+    with {:ok, %{config: config}} <- Workflow.current(),
+         server when is_map(server) <- Map.get(config, "server") || Map.get(config, :server) do
+      Map.get(server, key) || Map.get(server, String.to_atom(key))
+    else
+      _ -> nil
     end
   end
 

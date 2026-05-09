@@ -5,7 +5,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   require Logger
   alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
+  alias SymphonyElixir.{Config, Linear.Issue, PersistenceProvider, PromptBuilder, Tracker, Workspace}
 
   @implementation_profile "implementation"
   @implementation_start_state "Ready"
@@ -32,9 +32,11 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
+    emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
 
     case Workspace.create_for_issue(issue, worker_host) do
       {:ok, workspace} ->
+        emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{workspace: workspace})
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
 
         try do
@@ -46,6 +48,7 @@ defmodule SymphonyElixir.AgentRunner do
         end
 
       {:error, reason} ->
+        emit_phase(issue, :workspace_preparing, :failed, worker_host, opts, %{reason: inspect(reason)})
         {:error, reason}
     end
   end
@@ -86,23 +89,47 @@ defmodule SymphonyElixir.AgentRunner do
 
     opts = Keyword.put_new(opts, :codex_update_recipient, codex_update_recipient)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
-      try do
-        with {:ok, started_issue} <- maybe_mark_implementation_started(issue, opts) do
-          do_run_codex_turns(
-            session,
-            workspace,
-            started_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            1,
-            max_turns
-          )
+    emit_phase(issue, :codex_starting, :started, worker_host, opts, %{workspace: workspace})
+
+    case AppServer.start_session(workspace, worker_host: worker_host) do
+      {:ok, session} ->
+        emit_phase(issue, :codex_starting, :completed, worker_host, opts, %{workspace: workspace})
+        emit_phase(issue, :codex_running, :started, worker_host, opts, %{workspace: workspace})
+
+        result =
+          try do
+            with {:ok, started_issue} <- maybe_mark_implementation_started(issue, opts) do
+              do_run_codex_turns(
+                session,
+                workspace,
+                started_issue,
+                codex_update_recipient,
+                opts,
+                issue_state_fetcher,
+                1,
+                max_turns
+              )
+            end
+          after
+            AppServer.stop_session(session)
+          end
+
+        case result do
+          :ok ->
+            emit_phase(issue, :codex_running, :completed, worker_host, opts, %{workspace: workspace})
+
+          {:error, reason} ->
+            emit_phase(issue, :codex_running, :failed, worker_host, opts, %{
+              workspace: workspace,
+              reason: inspect(reason)
+            })
         end
-      after
-        AppServer.stop_session(session)
-      end
+
+        result
+
+      {:error, reason} ->
+        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
+        {:error, reason}
     end
   end
 
@@ -324,4 +351,36 @@ defmodule SymphonyElixir.AgentRunner do
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"
   end
+
+  defp emit_phase(issue, phase, status, worker_host, opts, extra_payload \\ %{}) do
+    payload =
+      %{
+        phase: to_string(phase),
+        status: to_string(status),
+        worker_host: worker_host_for_log(worker_host),
+        attempt: Keyword.get(opts, :attempt)
+      }
+      |> Map.merge(issue_phase_payload(issue))
+      |> Map.merge(extra_payload)
+
+    Logger.info(
+      "Run phase phase=#{payload.phase} status=#{payload.status} issue_id=#{Map.get(payload, :issue_id)} issue_identifier=#{Map.get(payload, :issue_identifier)} worker_host=#{payload.worker_host} attempt=#{inspect(payload.attempt)}"
+    )
+
+    PersistenceProvider.module().record_event(%{
+      issue_identifier: Map.get(payload, :issue_identifier),
+      event_type: "run.phase",
+      payload: payload
+    })
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp issue_phase_payload(%Issue{id: issue_id, identifier: identifier}) do
+    %{issue_id: issue_id, issue_identifier: identifier}
+  end
+
+  defp issue_phase_payload(_issue), do: %{}
 end

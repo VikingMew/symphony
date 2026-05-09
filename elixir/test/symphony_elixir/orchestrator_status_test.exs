@@ -112,6 +112,19 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
        }}
     )
 
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "item/tool/call",
+           "params" => %{"tool" => "linear_task_read"}
+         },
+         timestamp: now
+       }}
+    )
+
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.issue_id == issue_id
@@ -121,9 +134,161 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert snapshot_entry.last_codex_message == %{
              event: :notification,
-             message: %{method: "some-event"},
+             message: %{
+               "method" => "item/tool/call",
+               "params" => %{"tool" => "linear_task_read"}
+             },
              timestamp: now
            }
+
+    assert Enum.any?(snapshot_entry.session_history, fn history_event ->
+             history_event.event == :notification and history_event.detail == "some-event"
+           end)
+
+    assert Enum.any?(snapshot_entry.session_history, fn history_event ->
+             history_event.event == :notification and
+               history_event.detail == "dynamic tool call requested (linear_task_read)"
+           end)
+
+    assert snapshot_entry.session_history_total_count == 3
+  end
+
+  test "orchestrator coalesces adjacent streaming agent message notifications" do
+    issue_id = "issue-streaming-history"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-STREAM",
+      title: "Streaming history test",
+      description: "Collapse streaming fragments",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-STREAM"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :StreamingHistoryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    first_at = DateTime.add(started_at, 1, :second)
+    second_at = DateTime.add(started_at, 2, :second)
+    third_at = DateTime.add(started_at, 3, :second)
+
+    send(pid, {:codex_worker_update, issue_id, streaming_delta("I", first_at)})
+    send(pid, {:codex_worker_update, issue_id, streaming_delta("’m", second_at)})
+    send(pid, {:codex_worker_update, issue_id, streaming_delta("checking", third_at)})
+
+    assert %{running: [snapshot_entry]} = GenServer.call(pid, :snapshot)
+    assert snapshot_entry.last_codex_timestamp == third_at
+    assert snapshot_entry.session_history_total_count == 3
+    assert length(snapshot_entry.session_history) == 1
+
+    assert [history_event] = snapshot_entry.session_history
+    assert history_event.event == :notification
+    assert history_event.detail == "agent message streaming: I’m checking (3 fragments)"
+    assert history_event.metadata.coalesced_event_count == 3
+    assert history_event.metadata.coalesced_text == "I’m checking"
+  end
+
+  test "orchestrator does not coalesce streaming notifications across lifecycle events" do
+    issue_id = "issue-streaming-history-boundary"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-BOUNDARY",
+      title: "Streaming history boundary test",
+      description: "Keep lifecycle boundaries",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-BOUNDARY"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :StreamingHistoryBoundaryOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    first_at = DateTime.add(started_at, 1, :second)
+    boundary_at = DateTime.add(started_at, 2, :second)
+    second_at = DateTime.add(started_at, 3, :second)
+
+    send(pid, {:codex_worker_update, issue_id, streaming_delta("first", first_at)})
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :tool_call_completed,
+         payload: %{
+           "method" => "item/tool/call",
+           "params" => %{"tool" => "linear_task_read"}
+         },
+         timestamp: boundary_at
+       }}
+    )
+
+    send(pid, {:codex_worker_update, issue_id, streaming_delta("second", second_at)})
+
+    assert %{running: [snapshot_entry]} = GenServer.call(pid, :snapshot)
+    assert snapshot_entry.last_codex_timestamp == second_at
+    assert snapshot_entry.session_history_total_count == 3
+
+    assert Enum.map(snapshot_entry.session_history, & &1.detail) == [
+             "agent message streaming: first",
+             "dynamic tool call completed (linear_task_read)",
+             "agent message streaming: second"
+           ]
   end
 
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
@@ -1334,7 +1499,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {"item/commandExecution/requestApproval", %{"params" => %{"parsedCmd" => "git status"}}, "command approval requested (git status)"},
       {"item/fileChange/requestApproval", %{"params" => %{"fileChangeCount" => 2}}, "file change approval requested (2 files)"},
       {"item/tool/call", %{"params" => %{"tool" => "linear_graphql"}}, "dynamic tool call requested (linear_graphql)"},
-      {"item/tool/requestUserInput", %{"params" => %{"question" => "Continue?"}}, "tool requires user input: Continue?"}
+      {"item/tool/requestUserInput", %{"params" => %{"question" => "Continue?"}}, "tool requires user input: Continue?"},
+      {"mcpServer/elicitation/request", %{"params" => %{"serverName" => "linear", "toolName" => "task_update", "prompt" => "Approve state change?"}},
+       "MCP elicitation requested (server: linear, tool: task_update, prompt: Approve state change?)"}
     ]
 
     Enum.each(event_cases, fn {method, payload, expected_fragment} ->
@@ -1345,6 +1512,25 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
       assert humanized =~ expected_fragment
     end)
+  end
+
+  test "status dashboard humanizes mcp elicitation turn blockers with server and tool" do
+    message = %{
+      event: :turn_input_required,
+      message: %{
+        payload: %{
+          "method" => "mcpServer/elicitation/request",
+          "params" => %{
+            "serverName" => "linear",
+            "request" => %{"toolName" => "task_comment"},
+            "message" => "Confirm comment update?"
+          }
+        }
+      }
+    }
+
+    assert StatusDashboard.humanize_codex_message(message) ==
+             "MCP elicitation requested (server: linear, tool: task_comment, prompt: Confirm comment update?)"
   end
 
   test "status dashboard humanizes dynamic tool wrapper events" do
@@ -1499,6 +1685,21 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_snapshot(pid, predicate, deadline_ms)
+  end
+
+  defp streaming_delta(fragment, timestamp) do
+    %{
+      event: :notification,
+      payload: %{
+        "method" => "codex/event/agent_message_delta",
+        "params" => %{
+          "msg" => %{
+            "payload" => %{"delta" => fragment}
+          }
+        }
+      },
+      timestamp: timestamp
+    }
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

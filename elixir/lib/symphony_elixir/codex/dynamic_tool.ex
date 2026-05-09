@@ -81,6 +81,18 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   }
   """
 
+  @attachment_create_mutation """
+  mutation SymphonyLinearTaskAttachmentCreate($input: AttachmentCreateInput!) {
+    attachmentCreate(input: $input) {
+      success
+      attachment {
+        id
+        title
+      }
+    }
+  }
+  """
+
   @read_tool "linear_task_read"
   @update_tool "linear_task_update"
 
@@ -284,12 +296,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     with {:ok, issue_id} <- issue_id_from_opts(opts),
          {:ok, profile} <- profile_from_opts(opts),
          :ok <- validate_update_policy(payload, profile),
-         {:ok, issue_update} <- maybe_update_issue(issue_id, payload),
-         {:ok, comment_update} <- maybe_create_comment(issue_id, payload) do
+         {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
+         {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
+         {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts) do
       {:ok,
        %{
          "issue_update" => issue_update,
          "comment_update" => comment_update,
+         "reference_links" => reference_links,
          "requested_state" => Map.get(payload, "target_state")
        }}
     end
@@ -353,20 +367,49 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp maybe_update_issue(issue_id, payload) do
+  defp maybe_update_issue(issue_id, payload, opts) do
     issue_input =
       %{}
       |> maybe_put_value("description", Map.get(payload, "description"))
-      |> maybe_put_state_id(issue_id, Map.get(payload, "target_state"))
+      |> maybe_put_state_id(issue_id, Map.get(payload, "target_state"), opts)
 
     if map_size(issue_input) == 0 do
       {:ok, nil}
     else
-      Client.graphql(@issue_update_mutation, %{"id" => issue_id, "input" => issue_input})
+      graphql(opts, @issue_update_mutation, %{"id" => issue_id, "input" => issue_input})
     end
   end
 
-  defp maybe_create_comment(issue_id, payload) do
+  defp maybe_link_references(issue_id, payload, opts) do
+    links =
+      payload
+      |> reference_link_candidates()
+      |> dedupe_reference_links()
+
+    Enum.reduce_while(links, {:ok, []}, fn link, {:ok, results} ->
+      variables = %{"input" => %{"issueId" => issue_id, "url" => link.url, "title" => link.title}}
+
+      case graphql(opts, @attachment_create_mutation, variables) do
+        {:ok, %{"data" => %{"attachmentCreate" => %{"success" => true} = result}}} ->
+          {:cont, {:ok, [Map.put(result, "url", link.url) | results]}}
+
+        {:ok, %{"errors" => errors}} ->
+          {:halt, {:error, {:linear_attachment_link_failed, errors}}}
+
+        {:ok, result} ->
+          {:halt, {:error, {:linear_attachment_link_failed, result}}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:linear_attachment_link_failed, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, results} -> {:ok, Enum.reverse(results)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_create_comment(issue_id, payload, opts) do
     body =
       payload
       |> Map.get("comment")
@@ -378,7 +421,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         if String.trim(body) == "" do
           {:ok, nil}
         else
-          Client.graphql(@comment_create_mutation, %{"issueId" => issue_id, "body" => body})
+          graphql(opts, @comment_create_mutation, %{"issueId" => issue_id, "body" => body})
         end
 
       _ ->
@@ -389,17 +432,17 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp maybe_put_value(input, _key, nil), do: input
   defp maybe_put_value(input, key, value), do: Map.put(input, key, value)
 
-  defp maybe_put_state_id(input, _issue_id, nil), do: input
+  defp maybe_put_state_id(input, _issue_id, nil, _opts), do: input
 
-  defp maybe_put_state_id(input, issue_id, state_name) when is_binary(state_name) do
-    case lookup_state_id(issue_id, state_name) do
+  defp maybe_put_state_id(input, issue_id, state_name, opts) when is_binary(state_name) do
+    case lookup_state_id(issue_id, state_name, opts) do
       {:ok, state_id} -> Map.put(input, "stateId", state_id)
       {:error, reason} -> throw({:linear_state_lookup_failed, reason})
     end
   end
 
-  defp lookup_state_id(issue_id, state_name) do
-    with {:ok, response} <- Client.graphql(@issue_team_states_query, %{"id" => issue_id}),
+  defp lookup_state_id(issue_id, state_name, opts) do
+    with {:ok, response} <- graphql(opts, @issue_team_states_query, %{"id" => issue_id}),
          states when is_list(states) <- get_in(response, ["data", "issue", "team", "states", "nodes"]),
          %{"id" => state_id} <-
            Enum.find(states, fn state -> Map.get(state, "name") == state_name end) do
@@ -410,6 +453,56 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       _ -> {:error, {:linear_state_not_found, state_name}}
     end
   end
+
+  defp graphql(opts, query, variables) do
+    case Keyword.get(opts, :graphql) do
+      fun when is_function(fun, 2) -> fun.(query, variables)
+      _ -> Client.graphql(query, variables)
+    end
+  end
+
+  defp reference_link_candidates(payload) do
+    []
+    |> collect_reference_links(Map.get(payload, "references"))
+    |> collect_reference_links(Map.get(payload, "result"))
+  end
+
+  defp collect_reference_links(links, value) when is_map(value) do
+    Enum.reduce(value, links, fn
+      {key, urls}, acc when key in ["urls", :urls] and is_list(urls) ->
+        Enum.reduce(urls, acc, &maybe_add_reference_link(&2, "Reference", &1))
+
+      {key, url}, acc ->
+        maybe_add_reference_link(acc, reference_title(key), url)
+    end)
+  end
+
+  defp collect_reference_links(links, _value), do: links
+
+  defp maybe_add_reference_link(links, title, url) when is_binary(url) do
+    if http_url?(url) do
+      [%{title: title, url: url} | links]
+    else
+      links
+    end
+  end
+
+  defp maybe_add_reference_link(links, _title, _url), do: links
+
+  defp dedupe_reference_links(links) do
+    links
+    |> Enum.reverse()
+    |> Enum.uniq_by(& &1.url)
+  end
+
+  defp http_url?(url) when is_binary(url) do
+    String.starts_with?(url, "https://") or String.starts_with?(url, "http://")
+  end
+
+  defp reference_title(key) when key in ["pr_url", :pr_url, "pull_request_url", :pull_request_url], do: "Pull Request"
+  defp reference_title(key) when key in ["commit_url", :commit_url], do: "Commit"
+  defp reference_title(key) when key in ["branch_url", :branch_url], do: "Branch"
+  defp reference_title(_key), do: "Reference"
 
   defp append_json_section(nil, _title, nil), do: nil
 

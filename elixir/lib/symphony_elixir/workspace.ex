@@ -4,9 +4,12 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, SSH}
+  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
+  @hook_recent_output_bytes 4_096
+  @hook_event_output_bytes 2_048
+  @hook_command_preview_bytes 512
 
   @type worker_host :: String.t() | nil
 
@@ -285,58 +288,203 @@ defmodule SymphonyElixir.Workspace do
 
   defp run_hook(command, workspace, issue_context, hook_name, nil) do
     timeout_ms = Config.settings!().hooks.timeout_ms
+    started_at = System.monotonic_time(:millisecond)
+    phase = phase_for_hook(hook_name)
 
     Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local")
+    log_phase(phase, :started, issue_context, workspace, nil)
+    persist_phase_event(phase, :started, issue_context, workspace, nil, started_at, %{})
+    persist_hook_event("workspace.hook_started", issue_context, hook_name, workspace, nil, command, started_at, %{})
 
-    task =
-      Task.async(fn ->
-        System.cmd("sh", ["-lc", command], cd: workspace, stderr_to_stdout: true)
-      end)
-
-    case Task.yield(task, timeout_ms) do
-      {:ok, cmd_result} ->
-        handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
-
-        Logger.warning("Workspace hook timed out hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local timeout_ms=#{timeout_ms}")
-
-        {:error, {:workspace_hook_timeout, hook_name, timeout_ms}}
-    end
+    command
+    |> run_local_hook_command(workspace, timeout_ms, fn chunk, recent_output ->
+      persist_hook_output(issue_context, hook_name, workspace, nil, command, started_at, chunk, recent_output)
+    end)
+    |> handle_local_hook_result(workspace, issue_context, hook_name, nil, command, started_at, timeout_ms)
   end
 
   defp run_hook(command, workspace, issue_context, hook_name, worker_host) when is_binary(worker_host) do
     timeout_ms = Config.settings!().hooks.timeout_ms
+    started_at = System.monotonic_time(:millisecond)
+    phase = phase_for_hook(hook_name)
 
     Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
+    log_phase(phase, :started, issue_context, workspace, worker_host)
+    persist_phase_event(phase, :started, issue_context, workspace, worker_host, started_at, %{})
 
     case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
-      {:ok, cmd_result} ->
-        handle_hook_command_result(cmd_result, workspace, issue_context, hook_name)
+      {:ok, {output, status}} ->
+        handle_hook_command_result(
+          {output, status},
+          workspace,
+          issue_context,
+          hook_name,
+          worker_host,
+          command,
+          started_at
+        )
 
       {:error, {:workspace_hook_timeout, ^hook_name, _timeout_ms} = reason} ->
+        persist_phase_event(phase, :failed, issue_context, workspace, worker_host, started_at, %{
+          reason: inspect(reason)
+        })
+
         {:error, reason}
 
       {:error, reason} ->
+        persist_phase_event(phase, :failed, issue_context, workspace, worker_host, started_at, %{
+          reason: inspect(reason)
+        })
+
         {:error, reason}
     end
   end
 
-  defp handle_hook_command_result({_output, 0}, _workspace, _issue_id, _hook_name) do
-    :ok
+  defp handle_local_hook_result({:ok, {output, status}}, workspace, issue_context, hook_name, worker_host, command, started_at, _timeout_ms) do
+    handle_hook_command_result({output, status}, workspace, issue_context, hook_name, worker_host, command, started_at)
+  end
+
+  defp handle_local_hook_result({:error, {:workspace_hook_timeout, _command_name, timeout_ms, details}}, workspace, issue_context, hook_name, worker_host, command, started_at, _timeout_ms) do
+    Logger.warning(
+      "Workspace hook timed out hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host_for_log(worker_host)} timeout_ms=#{timeout_ms} elapsed_ms=#{Map.get(details, :elapsed_ms)} output=#{inspect(Map.get(details, :recent_output, ""))}"
+    )
+
+    persist_hook_event("workspace.hook_timeout", issue_context, hook_name, workspace, worker_host, command, started_at, %{
+      timeout_ms: timeout_ms,
+      elapsed_ms: Map.get(details, :elapsed_ms),
+      recent_output: Map.get(details, :recent_output, "")
+    })
+
+    persist_phase_event(phase_for_hook(hook_name), :failed, issue_context, workspace, worker_host, started_at, %{
+      reason: "timeout",
+      timeout_ms: timeout_ms,
+      elapsed_ms: Map.get(details, :elapsed_ms),
+      recent_output: Map.get(details, :recent_output, "")
+    })
+
+    {:error, {:workspace_hook_timeout, hook_name, timeout_ms, details}}
   end
 
   defp handle_hook_command_result({output, status}, workspace, issue_context, hook_name) do
+    handle_hook_command_result(
+      {output, status},
+      workspace,
+      issue_context,
+      hook_name,
+      nil,
+      nil,
+      System.monotonic_time(:millisecond)
+    )
+  end
+
+  defp handle_hook_command_result({_output, 0}, workspace, issue_context, hook_name, worker_host, command, started_at) do
+    persist_hook_event(
+      "workspace.hook_completed",
+      issue_context,
+      hook_name,
+      workspace,
+      worker_host,
+      command,
+      started_at,
+      %{status: 0}
+    )
+
+    persist_phase_event(
+      phase_for_hook(hook_name),
+      :completed,
+      issue_context,
+      workspace,
+      worker_host,
+      started_at,
+      %{exit_status: 0}
+    )
+
+    :ok
+  end
+
+  defp handle_hook_command_result({output, status}, workspace, issue_context, hook_name, worker_host, command, started_at) do
     sanitized_output = sanitize_hook_output_for_log(output)
 
     Logger.warning("Workspace hook failed hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} status=#{status} output=#{inspect(sanitized_output)}")
 
-    {:error, {:workspace_hook_failed, hook_name, status, output}}
+    persist_hook_event("workspace.hook_failed", issue_context, hook_name, workspace, worker_host, command, started_at, %{
+      status: status,
+      output: sanitized_output
+    })
+
+    persist_phase_event(phase_for_hook(hook_name), :failed, issue_context, workspace, worker_host, started_at, %{
+      exit_status: status,
+      output: sanitized_output
+    })
+
+    {:error, {:workspace_hook_failed, hook_name, status, sanitized_output}}
+  end
+
+  defp run_local_hook_command(command, workspace, timeout_ms, on_output) do
+    started_at = System.monotonic_time(:millisecond)
+    port = open_hook_port(command, workspace)
+
+    receive_hook_port(port, timeout_ms, started_at, "", on_output)
+  end
+
+  defp open_hook_port(command, workspace) do
+    sh = System.find_executable("sh") || "/bin/sh"
+
+    Port.open({:spawn_executable, sh}, [
+      :binary,
+      :exit_status,
+      :stderr_to_stdout,
+      {:args, ["-lc", command]},
+      {:cd, workspace},
+      {:env, [{~c"GIT_TERMINAL_PROMPT", ~c"0"}]}
+    ])
+  end
+
+  defp receive_hook_port(port, timeout_ms, started_at, recent_output, on_output) do
+    elapsed_ms = System.monotonic_time(:millisecond) - started_at
+    remaining_ms = max(timeout_ms - elapsed_ms, 0)
+
+    receive do
+      {^port, {:data, chunk}} ->
+        sanitized_chunk = sanitize_hook_output_for_log(chunk, @hook_recent_output_bytes)
+        recent_output = append_recent_output(recent_output, sanitized_chunk)
+        on_output.(chunk, recent_output)
+        receive_hook_port(port, timeout_ms, started_at, recent_output, on_output)
+
+      {^port, {:exit_status, status}} ->
+        {:ok, {recent_output, status}}
+    after
+      remaining_ms ->
+        close_hook_port(port)
+
+        details = %{
+          elapsed_ms: System.monotonic_time(:millisecond) - started_at,
+          recent_output: recent_output
+        }
+
+        {:error, {:workspace_hook_timeout, "local_command", timeout_ms, details}}
+    end
+  end
+
+  defp close_hook_port(port) do
+    Port.close(port)
+    :ok
+  catch
+    :error, _reason -> :ok
+  end
+
+  defp append_recent_output(current, chunk) do
+    output = current <> IO.iodata_to_binary(chunk)
+
+    case byte_size(output) <= @hook_recent_output_bytes do
+      true -> output
+      false -> binary_part(output, byte_size(output) - @hook_recent_output_bytes, @hook_recent_output_bytes)
+    end
   end
 
   defp sanitize_hook_output_for_log(output, max_bytes \\ 2_048) do
     binary_output = IO.iodata_to_binary(output)
+    binary_output = scrub_sensitive_output(binary_output)
 
     case byte_size(binary_output) <= max_bytes do
       true ->
@@ -345,6 +493,84 @@ defmodule SymphonyElixir.Workspace do
       false ->
         binary_part(binary_output, 0, max_bytes) <> "... (truncated)"
     end
+  end
+
+  defp scrub_sensitive_output(output) do
+    output
+    |> String.replace(~r/(?i)(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s,;]+/, "\\1[REDACTED]")
+    |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+/, "\\1[REDACTED]")
+  end
+
+  defp persist_hook_output(issue_context, hook_name, workspace, worker_host, command, started_at, chunk, recent_output) do
+    sanitized_chunk = sanitize_hook_output_for_log(chunk, @hook_event_output_bytes)
+
+    persist_hook_event("workspace.hook_output", issue_context, hook_name, workspace, worker_host, command, started_at, %{
+      output: sanitized_chunk,
+      recent_output: sanitize_hook_output_for_log(recent_output, @hook_recent_output_bytes)
+    })
+  end
+
+  defp persist_hook_event(event_type, issue_context, hook_name, workspace, worker_host, command, started_at, payload) do
+    payload =
+      Map.merge(
+        %{
+          hook: hook_name,
+          workspace: workspace,
+          worker_host: worker_host_for_log(worker_host),
+          command: command_preview(command),
+          elapsed_ms: System.monotonic_time(:millisecond) - started_at
+        },
+        payload
+      )
+
+    PersistenceProvider.module().record_event(%{
+      issue_identifier: Map.get(issue_context, :issue_identifier),
+      event_type: event_type,
+      payload: payload
+    })
+
+    :ok
+  end
+
+  defp phase_for_hook("project_bootstrap"), do: "workspace_bootstrap"
+  defp phase_for_hook("after_create"), do: "workspace_after_create"
+  defp phase_for_hook("before_run"), do: "before_run"
+  defp phase_for_hook("after_run"), do: "after_run"
+  defp phase_for_hook("before_remove"), do: "workspace_cleanup"
+  defp phase_for_hook(hook_name), do: "workspace_hook:#{hook_name}"
+
+  defp log_phase(phase, status, issue_context, workspace, worker_host) do
+    Logger.info("Run phase phase=#{phase} status=#{status} #{issue_log_context(issue_context)} worker_host=#{worker_host_for_log(worker_host)} workspace=#{workspace}")
+  end
+
+  defp persist_phase_event(phase, status, issue_context, workspace, worker_host, started_at, payload) do
+    payload =
+      Map.merge(
+        %{
+          phase: phase,
+          status: to_string(status),
+          workspace: workspace,
+          worker_host: worker_host_for_log(worker_host),
+          elapsed_ms: System.monotonic_time(:millisecond) - started_at
+        },
+        payload
+      )
+
+    PersistenceProvider.module().record_event(%{
+      issue_identifier: Map.get(issue_context, :issue_identifier),
+      event_type: "run.phase",
+      payload: payload
+    })
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp command_preview(nil), do: nil
+
+  defp command_preview(command) when is_binary(command) do
+    sanitize_hook_output_for_log(command, @hook_command_preview_bytes)
   end
 
   defp validate_workspace_path(workspace, nil) when is_binary(workspace) do

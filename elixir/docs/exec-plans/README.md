@@ -68,6 +68,15 @@ Plans should focus on product and engineering intent rather than full implementa
 61. [061-ready-to-in-progress-on-codex-start.md](completed/061-ready-to-in-progress-on-codex-start.md)
 62. [062-run-detail-observability-pages.md](completed/062-run-detail-observability-pages.md)
 63. [063-listening-control-and-force-stop-agents.md](completed/063-listening-control-and-force-stop-agents.md)
+64. [064-bootstrap-noninteractive-streaming-diagnostics.md](completed/064-bootstrap-noninteractive-streaming-diagnostics.md)
+65. [065-linear-reference-attachment-linking.md](completed/065-linear-reference-attachment-linking.md)
+66. [066-session-history-observable-details.md](completed/066-session-history-observable-details.md)
+67. [067-session-history-notification-coalescing.md](completed/067-session-history-notification-coalescing.md)
+68. [068-generated-git-clone-timeout-diagnostics.md](completed/068-generated-git-clone-timeout-diagnostics.md)
+69. [069-run-phase-boundary-logs.md](completed/069-run-phase-boundary-logs.md)
+70. [070-dashboard-listening-controls.md](completed/070-dashboard-listening-controls.md)
+71. [071-codex-mcp-elicitation-hard-stop.md](completed/071-codex-mcp-elicitation-hard-stop.md)
+72. [072-expose-workflow-state-parameters.md](completed/072-expose-workflow-state-parameters.md)
 
 ## Plan Guidelines
 

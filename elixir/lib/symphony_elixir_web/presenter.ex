@@ -110,6 +110,7 @@ defmodule SymphonyElixirWeb.Presenter do
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
       session_history: session_history_payload(Map.get(entry, :session_history, [])),
+      session_history_total_count: session_history_total_count(entry),
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -163,6 +164,10 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp session_history_payload(_events), do: []
+
+  defp session_history_total_count(entry) when is_map(entry) do
+    Map.get(entry, :session_history_total_count) || length(Map.get(entry, :session_history, []))
+  end
 
   defp retry_issue_payload(retry) do
     %{
