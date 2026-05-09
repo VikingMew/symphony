@@ -77,6 +77,7 @@ Plans should focus on product and engineering intent rather than full implementa
 70. [070-dashboard-listening-controls.md](completed/070-dashboard-listening-controls.md)
 71. [071-codex-mcp-elicitation-hard-stop.md](completed/071-codex-mcp-elicitation-hard-stop.md)
 72. [072-expose-workflow-state-parameters.md](completed/072-expose-workflow-state-parameters.md)
+73. [073-merge-branch-from-linear-branchname.md](completed/073-merge-branch-from-linear-branchname.md)
 
 ## Plan Guidelines
 

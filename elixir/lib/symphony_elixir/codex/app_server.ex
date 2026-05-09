@@ -99,7 +99,8 @@ defmodule SymphonyElixir.Codex.AppServer do
       Keyword.get(opts, :tool_executor, fn tool, arguments ->
         DynamicTool.execute(tool, arguments,
           issue: issue,
-          profile: Config.workflow_profile_for_state(issue.state)
+          profile: Config.workflow_profile_for_state(issue.state),
+          workspace: Keyword.get(opts, :workspace, workspace)
         )
       end)
 

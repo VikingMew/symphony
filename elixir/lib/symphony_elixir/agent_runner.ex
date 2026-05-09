@@ -4,10 +4,22 @@ defmodule SymphonyElixir.AgentRunner do
   """
 
   require Logger
-  alias SymphonyElixir.Codex.AppServer
-  alias SymphonyElixir.{Config, Linear.Issue, PersistenceProvider, PromptBuilder, Tracker, Workspace}
+
+  alias SymphonyElixir.{
+    BranchName,
+    Codex.AppServer,
+    Config,
+    Git,
+    Linear.Issue,
+    MergeExecutor,
+    PersistenceProvider,
+    PromptBuilder,
+    Tracker,
+    Workspace
+  }
 
   @implementation_profile "implementation"
+  @merge_profile "merge"
   @implementation_start_state "Ready"
   @implementation_started_state "In Progress"
 
@@ -41,7 +53,7 @@ defmodule SymphonyElixir.AgentRunner do
 
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
-            run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
+            run_profile(workspace, issue, codex_update_recipient, opts, worker_host)
           end
         after
           Workspace.run_after_run_hook(workspace, issue, worker_host)
@@ -82,6 +94,71 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace), do: :ok
+
+  defp run_profile(workspace, issue, codex_update_recipient, opts, worker_host) do
+    case Config.workflow_profile_for_state(issue.state) do
+      @merge_profile ->
+        run_merge(workspace, issue, codex_update_recipient, opts, worker_host)
+
+      @implementation_profile ->
+        with :ok <- prepare_implementation_branch(workspace, issue, opts) do
+          run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
+        end
+
+      _profile ->
+        run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
+    end
+  end
+
+  defp run_merge(workspace, issue, codex_update_recipient, opts, worker_host) do
+    emit_phase(issue, :merge_backend, :started, worker_host, opts, %{workspace: workspace})
+
+    merge_opts =
+      opts
+      |> Keyword.put_new(:codex_update_recipient, codex_update_recipient)
+      |> Keyword.put_new(:git_opts, Keyword.get(opts, :git_opts, []))
+
+    merge_executor = Keyword.get(opts, :merge_executor, &MergeExecutor.run/3)
+
+    case merge_executor.(workspace, issue, merge_opts) do
+      :ok ->
+        emit_phase(issue, :merge_backend, :completed, worker_host, opts, %{workspace: workspace})
+        :ok
+
+      {:error, reason} ->
+        emit_phase(issue, :merge_backend, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
+        {:error, reason}
+    end
+  end
+
+  defp prepare_implementation_branch(workspace, %Issue{} = issue, opts) do
+    if project_repository_configured?() do
+      with {:ok, branch} <- BranchName.validate(issue.branch_name),
+           :ok <- emit_branch_event(issue, :implementation_branch_validation, :completed, %{branch: branch}),
+           {:ok, _output} <- checkout_implementation_branch(workspace, branch, opts) do
+        emit_branch_event(issue, :implementation_branch_checkout, :completed, %{branch: branch})
+      else
+        {:error, reason} ->
+          emit_branch_event(issue, :implementation_branch_checkout, :failed, %{reason: inspect(reason)})
+          {:error, reason}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp project_repository_configured? do
+    case Config.settings!().project.repository_url do
+      repository_url when is_binary(repository_url) and repository_url != "" -> true
+      _ -> false
+    end
+  end
+
+  defp checkout_implementation_branch(workspace, branch, opts) do
+    git_opts = Keyword.get(opts, :git_opts, [])
+    checkout = Keyword.get(opts, :implementation_branch_checkout, &Git.checkout_work_branch/3)
+    checkout.(workspace, branch, git_opts)
+  end
 
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
@@ -238,7 +315,8 @@ defmodule SymphonyElixir.AgentRunner do
              app_session,
              prompt,
              issue,
-             on_message: codex_message_handler(codex_update_recipient, issue)
+             on_message: codex_message_handler(codex_update_recipient, issue),
+             workspace: workspace
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
@@ -383,4 +461,25 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp issue_phase_payload(_issue), do: %{}
+
+  defp emit_branch_event(%Issue{} = issue, phase, status, payload) do
+    PersistenceProvider.module().record_event(%{
+      issue_identifier: issue.identifier,
+      event_type: "run.phase",
+      payload:
+        Map.merge(
+          %{
+            phase: to_string(phase),
+            status: to_string(status),
+            issue_id: issue.id,
+            issue_identifier: issue.identifier
+          },
+          payload
+        )
+    })
+
+    :ok
+  rescue
+    _ -> :ok
+  end
 end

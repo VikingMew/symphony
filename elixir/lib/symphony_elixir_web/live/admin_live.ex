@@ -541,7 +541,9 @@ defmodule SymphonyElixirWeb.AdminLive do
                       <span class="metric-label">Executor</span>
                       <select name={"workflow[profiles][#{profile_id}][executor_type]"}>
                         <option value="codex_agent" selected={profile["executor_type"] == "codex_agent"}>codex_agent</option>
+                        <option value="backend_action" selected={profile["executor_type"] == "backend_action"}>backend_action</option>
                         <option value="manual" selected={profile["executor_type"] == "manual"}>manual</option>
+                        <option value="external_worker" selected={profile["executor_type"] == "external_worker"}>external_worker</option>
                       </select>
                     </label>
                     <label>

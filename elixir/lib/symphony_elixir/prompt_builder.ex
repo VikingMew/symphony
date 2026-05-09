@@ -67,10 +67,15 @@ defmodule SymphonyElixir.PromptBuilder do
 
     case Map.get(prompt_policy, "template") do
       template when is_binary(template) and template != "" ->
-        render_stage_template!(template, assigns)
+        template
+        |> render_stage_template!(assigns)
+        |> append_branch_contract(Keyword.get(opts, :profile), assigns)
 
       _ ->
-        profile_contract(Keyword.get(opts, :profile), Keyword.get(opts, :allowed_updates, %{}))
+        opts
+        |> Keyword.get(:profile)
+        |> profile_contract(Keyword.get(opts, :allowed_updates, %{}))
+        |> append_branch_contract(Keyword.get(opts, :profile), assigns)
     end
   end
 
@@ -119,6 +124,19 @@ defmodule SymphonyElixir.PromptBuilder do
   end
 
   defp profile_contract(_profile, _allowed_updates), do: ""
+
+  defp append_branch_contract(prompt, "implementation", assigns) do
+    branch_name = get_in(assigns, ["issue", "branch_name"])
+
+    if is_binary(branch_name) and String.trim(branch_name) != "" do
+      prompt <>
+        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting a review or merge-ready state. Do not create or switch to a different task branch."
+    else
+      prompt
+    end
+  end
+
+  defp append_branch_contract(prompt, _profile, _assigns), do: prompt
 
   defp target_states_text(%{"target_states" => states}) when is_list(states) and states != [] do
     Enum.join(states, ", ")

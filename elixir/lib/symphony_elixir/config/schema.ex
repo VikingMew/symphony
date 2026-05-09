@@ -665,11 +665,9 @@ defmodule SymphonyElixir.Config.Schema do
       },
       "merge" => %{
         "name" => "Merge",
-        "executor" => %{"type" => "codex_agent"},
+        "executor" => %{"type" => "backend_action"},
         "prompt" => %{
-          "mode" => "extend",
-          "template" =>
-            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before merging. Verify the branch is ready, perform the merge workflow when allowed, and add a concise result comment with an allowed target state."
+          "mode" => "disabled"
         },
         "allowed_updates" => %{
           "description" => false,

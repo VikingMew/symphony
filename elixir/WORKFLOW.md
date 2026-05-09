@@ -128,13 +128,13 @@ profiles:
   merge:
     name: Merge
     executor:
-      type: codex_agent
+      type: backend_action
     prompt:
-      mode: extend
-      template: |
-        Workflow profile: {{ workflow.profile_name }}
-
-        Read the task and recent Linear comments before merging. Verify the branch is ready, perform the merge workflow when allowed, and add a concise result comment with an allowed target state.
+      mode: disabled
+    merge:
+      remote: origin
+      push: false
+      success_state: Done
     allowed_updates:
       description: false
       comment: true
@@ -208,7 +208,7 @@ The agent should be able to talk to the current Linear task through Symphony's i
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- `land`: when ticket reaches `Merging`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
+- `land`: optional manual fallback for merge incidents; the default merge path is Symphony's backend merge executor using Linear `branchName`.
 
 ## Status map
 
@@ -219,7 +219,7 @@ The agent should be able to talk to the current Linear task through Symphony's i
 - `In Progress` -> implementation actively underway.
 - `Needs Implementation Review` -> implementation is complete; do not merge. Human must move it to `Ready`, `In Progress`, or `Ready to Merge`.
 - `Ready to Merge` -> human-approved merge queue. Agent may move it to `Merging`.
-- `Merging` -> execute the `land` skill flow. Do not call `gh pr merge` directly.
+- `Merging` -> Symphony backend is merging the Linear `branchName` branch into the configured base branch.
 - `Done` -> terminal state; no further action required.
 - `Canceled`, `Cancelled`, `Duplicate` -> terminal states; no further action required.
 
@@ -233,7 +233,7 @@ The agent should be able to talk to the current Linear task through Symphony's i
 - Agent moves `In Progress` -> `Needs Implementation Review` only after implementation, validation, and PR handoff are complete.
 - Human moves `Needs Implementation Review` -> `Ready` or `In Progress` when changes are requested.
 - Human moves `Needs Implementation Review` -> `Ready to Merge` when implementation is accepted.
-- Agent may move `Ready to Merge` -> `Merging` when starting the land flow.
+- Symphony may move `Ready to Merge` -> `Merging` when starting the backend merge flow.
 - Agent moves `Merging` -> `Done` only after merge is complete.
 - Human owns all transitions to `Canceled`, `Cancelled`, or `Duplicate`.
 
@@ -248,8 +248,8 @@ The agent should be able to talk to the current Linear task through Symphony's i
    - `Ready` -> move to `In Progress`, then run the implementation flow.
    - `In Progress` -> continue execution flow from current scratchpad comment.
    - `Needs Implementation Review` -> do not modify; stop and wait for human review.
-   - `Ready to Merge` -> move to `Merging`, then run the merge flow.
-   - `Merging` -> on entry, open and follow `.codex/skills/land/SKILL.md`; do not call `gh pr merge` directly.
+   - `Ready to Merge` -> run the backend merge flow, which moves to `Merging` when policy allows.
+   - `Merging` -> continue the backend merge flow for the Linear `branchName` branch.
    - `Done`, `Canceled`, `Cancelled`, `Duplicate` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
    - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
@@ -393,11 +393,13 @@ Use this only when completion is blocked by missing required tools or missing au
 
 ## Step 5: Merge handling
 
-1. If current issue state is `Ready to Merge`, move it to `Merging`.
-2. Open and follow `.codex/skills/land/SKILL.md`.
-3. Run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-4. If merge requires code or conflict fixes, keep the issue in `Merging`, update the workpad, resolve, rerun required checks, and continue the land loop.
-5. After merge is complete, move the issue to `Done`.
+1. Read Linear `branchName`; it is the only branch source of truth for merge.
+2. Validate that `branchName` is present, ASCII-safe, and safe to pass to git.
+3. Verify the branch exists on the configured remote before merging.
+4. If current issue state is `Ready to Merge`, Symphony moves it to `Merging` when workflow policy allows.
+5. Fetch `branchName`, check out the configured base branch, and merge `origin/<branchName>` using the backend merge executor.
+6. Push only when the merge profile explicitly enables push.
+7. After merge is complete and any configured push succeeds, move the issue to `Done` or the configured success state.
 
 ## Completion bar before Needs Implementation Review
 
@@ -405,7 +407,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
 - PR feedback sweep is complete and no actionable comments remain.
-- PR checks are green, branch is pushed, and PR is linked on the issue.
+- PR checks are green, Linear `branchName` is the branch used for implementation, that exact branch is pushed to the remote, and PR/branch references are linked on the issue.
 - Required PR metadata is present (`symphony` label).
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 

@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.{Config, Linear.Client, Linear.Issue}
+  alias SymphonyElixir.{BranchName, Config, Git, Linear.Client, Linear.Issue}
 
   @task_read_query """
   query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
@@ -295,7 +295,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp default_task_updater(payload, opts) do
     with {:ok, issue_id} <- issue_id_from_opts(opts),
          {:ok, profile} <- profile_from_opts(opts),
-         :ok <- validate_update_policy(payload, profile),
+         :ok <- validate_update_policy(payload, profile, opts),
          {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
          {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
          {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts) do
@@ -327,13 +327,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp validate_update_policy(payload, profile) do
+  defp validate_update_policy(payload, profile, opts) do
     policy = Config.workflow_allowed_updates(profile)
 
     with :ok <- validate_required_allow_true(payload, policy, profile, "description"),
          :ok <- validate_required_allow_true(payload, policy, profile, "result"),
-         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment") do
-      validate_target_state_allowed(payload, policy, profile)
+         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment"),
+         :ok <- validate_target_state_allowed(payload, policy, profile) do
+      validate_implementation_branch_pushed(payload, profile, opts)
     end
   end
 
@@ -366,6 +367,69 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         end
     end
   end
+
+  defp validate_implementation_branch_pushed(%{"target_state" => target_state}, "implementation", opts)
+       when is_binary(target_state) do
+    if implementation_completion_target?(target_state) and project_repository_configured?() do
+      with {:ok, %Issue{branch_name: branch_name}} <- issue_from_opts(opts),
+           {:ok, branch} <- BranchName.validate(branch_name),
+           {:ok, workspace} <- workspace_from_opts(opts),
+           {:ok, true} <- remote_branch_exists?(workspace, branch, opts) do
+        :ok
+      else
+        {:ok, false} -> {:error, {:linear_branch_not_pushed, branch_name_from_opts(opts)}}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp validate_implementation_branch_pushed(_payload, _profile, _opts), do: :ok
+
+  defp implementation_completion_target?(target_state) do
+    normalize_state(target_state) != normalize_state("In Progress")
+  end
+
+  defp project_repository_configured? do
+    case Config.settings!().project.repository_url do
+      repository_url when is_binary(repository_url) and repository_url != "" -> true
+      _ -> false
+    end
+  end
+
+  defp issue_from_opts(opts) do
+    case Keyword.get(opts, :issue) do
+      %Issue{} = issue -> {:ok, issue}
+      _ -> {:error, :linear_task_context_unavailable}
+    end
+  end
+
+  defp branch_name_from_opts(opts) do
+    case Keyword.get(opts, :issue) do
+      %Issue{branch_name: branch_name} -> branch_name
+      _ -> nil
+    end
+  end
+
+  defp workspace_from_opts(opts) do
+    case Keyword.get(opts, :workspace) do
+      workspace when is_binary(workspace) and workspace != "" -> {:ok, workspace}
+      _ -> {:error, :workspace_context_unavailable}
+    end
+  end
+
+  defp remote_branch_exists?(workspace, branch, opts) do
+    checker = Keyword.get(opts, :branch_remote_checker)
+
+    if is_function(checker, 2) do
+      checker.(workspace, branch)
+    else
+      Git.remote_branch_exists?(workspace, branch)
+    end
+  end
+
+  defp normalize_state(state), do: state |> to_string() |> String.trim() |> String.downcase()
 
   defp maybe_update_issue(issue_id, payload, opts) do
     issue_input =

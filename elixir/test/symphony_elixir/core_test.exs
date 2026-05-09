@@ -1504,8 +1504,8 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "This is an unattended orchestration session."
     assert prompt =~ "Only stop early for a true blocker"
     assert prompt =~ "Do not include \"next steps for user\""
-    assert prompt =~ "open and follow `.codex/skills/land/SKILL.md`"
-    assert prompt =~ "Do not call `gh pr merge` directly"
+    assert prompt =~ "default merge path is Symphony's backend merge executor"
+    assert prompt =~ "Read Linear `branchName`; it is the only branch source of truth for merge"
     assert prompt =~ "Continuation context:"
     assert prompt =~ "retry attempt #2"
   end
