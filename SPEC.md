@@ -1956,11 +1956,12 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 - Deterministic workspace path per issue identifier
 - Missing workspace directory is created
-- Existing workspace directory is reused
+- Existing workspace directory is removed and recreated before each new agent start
 - Existing non-directory path at workspace location is handled safely (replace or fail per
   implementation policy)
 - OPTIONAL workspace population/synchronization errors are surfaced
-- `after_create` hook runs only on new workspace creation
+- Structured project checkout/setup runs before `after_create`
+- `after_create` hook runs on every fresh workspace creation
 - `before_run` hook runs before each attempt and failure/timeouts abort the current attempt
 - `after_run` hook runs after each attempt and failure/timeouts are logged and ignored
 - `before_remove` hook runs on cleanup and failures/timeouts are ignored

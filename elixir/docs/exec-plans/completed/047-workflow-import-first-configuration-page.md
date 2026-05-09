@@ -17,7 +17,7 @@ The Web workflow page should become a database-first configuration workbench:
 
 ## Status
 
-In progress.
+Completed.
 
 ## Background
 
@@ -116,7 +116,7 @@ Existing validator work can still be reused, but it must be attached to the stru
 
 - [x] `mise exec -- mix format`
 - [x] `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/workflow_store_fake_persistence_test.exs test/symphony_elixir/core_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/workflow_store_fake_persistence_test.exs test/symphony_elixir/core_test.exs`
 - [x] `mise exec -- mix test`
 - [x] `mise exec -- mix lint`
 - [x] `git diff --check`

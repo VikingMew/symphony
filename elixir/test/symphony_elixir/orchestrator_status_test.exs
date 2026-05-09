@@ -1,6 +1,31 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  defmodule RollbackLinearClient do
+    alias SymphonyElixir.Linear.Issue
+
+    def fetch_issues_by_states(_states), do: {:ok, []}
+    def fetch_candidate_issues, do: {:ok, []}
+
+    def fetch_issue_states_by_ids(issue_ids) do
+      send(test_pid(), {:fetch_issue_states_by_ids, issue_ids})
+      state = Application.get_env(:symphony_elixir, :rollback_linear_state, "In Progress")
+      {:ok, Enum.map(issue_ids, &%Issue{id: &1, identifier: "MT-ROLLBACK", state: state, title: "Rollback"})}
+    end
+
+    def graphql(_query, %{issueId: issue_id, stateName: state_name}) do
+      send(test_pid(), {:resolve_state, issue_id, state_name})
+      {:ok, %{"data" => %{"issue" => %{"team" => %{"states" => %{"nodes" => [%{"id" => "state-ready"}]}}}}}}
+    end
+
+    def graphql(_query, %{issueId: issue_id, stateId: state_id}) do
+      send(test_pid(), {:update_issue_state_id, issue_id, state_id})
+      {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+    end
+
+    defp test_pid, do: Application.fetch_env!(:symphony_elixir, :rollback_linear_test_pid)
+  end
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -796,7 +821,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{polling: %{checking?: true, next_poll_in_ms: nil}} = snapshot
   end
 
-  test "orchestrator triggers an immediate poll cycle shortly after startup" do
+  test "orchestrator starts with listening disabled" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       poll_interval_ms: 5_000
@@ -811,41 +836,30 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end
     end)
 
-    assert %{polling: %{checking?: true}} =
-             wait_for_snapshot(
-               pid,
-               fn
-                 %{polling: %{checking?: true}} ->
-                   true
-
-                 _ ->
-                   false
-               end,
-               500
-             )
-
     assert %{
              polling: %{
+               listening?: false,
                checking?: false,
                next_poll_in_ms: next_poll_in_ms,
                poll_interval_ms: 5_000
              }
-           } =
-             wait_for_snapshot(
-               pid,
-               fn
-                 %{polling: %{checking?: false, next_poll_in_ms: due_in_ms}}
-                 when is_integer(due_in_ms) and due_in_ms <= 5_000 ->
-                   true
-
-                 _ ->
-                   false
-               end,
-               500
-             )
+           } = GenServer.call(pid, :snapshot)
 
     assert is_integer(next_poll_in_ms)
     assert next_poll_in_ms >= 0
+    assert next_poll_in_ms <= 5_000
+
+    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+
+    assert %{polling: %{listening?: true, checking?: true}} =
+             wait_for_snapshot(
+               pid,
+               fn
+                 %{polling: %{listening?: true, checking?: true}} -> true
+                 _ -> false
+               end,
+               500
+             )
   end
 
   test "orchestrator poll cycle resets next refresh countdown after a check" do
@@ -939,6 +953,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       initial_state
       |> Map.put(:running, %{issue_id => running_entry})
       |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:listening?, true)
     end)
 
     send(pid, :tick)
@@ -959,6 +974,123 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
     assert remaining_ms <= 10_500
+  end
+
+  test "force stop all agents disables listening and rolls back symphony-owned state when unchanged" do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :rollback_linear_test_pid)
+    previous_linear_state = Application.get_env(:symphony_elixir, :rollback_linear_state)
+
+    Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
+    Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
+    Application.put_env(:symphony_elixir, :rollback_linear_state, "In Progress")
+
+    orchestrator_name = Module.concat(__MODULE__, :ForceStopRollbackOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:rollback_linear_test_pid, previous_test_pid)
+      restore_app_env(:rollback_linear_state, previous_linear_state)
+
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    issue_id = "issue-rollback"
+    issue = %Issue{id: issue_id, identifier: "MT-ROLLBACK", state: "In Progress", title: "Rollback"}
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      started_at: DateTime.utc_now(),
+      linear_state_transitions: [
+        %{
+          from_state: "Ready",
+          to_state: "In Progress",
+          rollback_to_state: "Ready",
+          source: :symphony_backend
+        }
+      ]
+    }
+
+    :sys.replace_state(pid, fn state ->
+      state
+      |> Map.put(:listening?, true)
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(state.claimed, issue_id))
+    end)
+
+    assert %{listening?: false, rollback_results: [%{status: "rolled_back"}]} =
+             Orchestrator.force_stop_all(orchestrator_name)
+
+    assert_receive {:fetch_issue_states_by_ids, [^issue_id]}
+    assert_receive {:resolve_state, ^issue_id, "Ready"}
+    assert_receive {:update_issue_state_id, ^issue_id, "state-ready"}
+    refute Process.alive?(worker_pid)
+    assert %{polling: %{listening?: false}, running: []} = GenServer.call(pid, :snapshot)
+  end
+
+  test "force stop skips rollback when Linear state changed externally" do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :rollback_linear_test_pid)
+    previous_linear_state = Application.get_env(:symphony_elixir, :rollback_linear_state)
+
+    Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
+    Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
+    Application.put_env(:symphony_elixir, :rollback_linear_state, "Needs Implementation Review")
+
+    orchestrator_name = Module.concat(__MODULE__, :ForceStopSkipRollbackOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:rollback_linear_test_pid, previous_test_pid)
+      restore_app_env(:rollback_linear_state, previous_linear_state)
+
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    issue_id = "issue-skip-rollback"
+    issue = %Issue{id: issue_id, identifier: "MT-SKIP", state: "In Progress", title: "Skip rollback"}
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    :sys.replace_state(pid, fn state ->
+      Map.put(state, :running, %{
+        issue_id => %{
+          pid: worker_pid,
+          ref: make_ref(),
+          identifier: issue.identifier,
+          issue: issue,
+          started_at: DateTime.utc_now(),
+          linear_state_transitions: [%{from_state: "Ready", to_state: "In Progress", rollback_to_state: "Ready"}]
+        }
+      })
+    end)
+
+    assert %{rollback_results: [%{status: "skipped", reason: "linear_state_changed"}]} =
+             Orchestrator.force_stop_all(orchestrator_name)
+
+    assert_receive {:fetch_issue_states_by_ids, [^issue_id]}
+    refute_receive {:update_issue_state_id, ^issue_id, _state_id}, 100
   end
 
   test "status dashboard logs offline status through Logger" do
@@ -1368,6 +1500,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_snapshot(pid, predicate, deadline_ms)
   end
+
+  defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
+  defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
 
   defp do_wait_for_snapshot(pid, predicate, deadline_ms) do
     snapshot = GenServer.call(pid, :snapshot)

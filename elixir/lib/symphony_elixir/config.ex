@@ -167,8 +167,16 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_semantics(settings) do
-    validate_tracker(settings.tracker)
+    with :ok <- validate_tracker(settings.tracker) do
+      validate_project(settings.project)
+    end
   end
+
+  defp validate_project(%{repository_url: repository_url}) do
+    if blank?(repository_url), do: {:error, :missing_project_repository_url}, else: :ok
+  end
+
+  defp validate_project(_project), do: {:error, :missing_project_repository_url}
 
   defp validate_tracker(%{kind: nil}), do: {:error, :missing_tracker_kind}
 
@@ -214,6 +222,9 @@ defmodule SymphonyElixir.Config do
 
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+
+      :missing_project_repository_url ->
+        "Project repository URL missing in WORKFLOW.md"
 
       other ->
         "Invalid WORKFLOW.md config: #{inspect(other)}"

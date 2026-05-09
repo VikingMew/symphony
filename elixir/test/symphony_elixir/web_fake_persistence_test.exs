@@ -41,6 +41,74 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "fake"
   end
 
+  test "run detail, issue detail, and events pages render persisted observability data" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    now = DateTime.utc_now()
+
+    run = %{
+      id: "run-1",
+      workflow_version_id: "workflow-1",
+      issue_identifier: "MT-1",
+      workspace_path: "/tmp/workspaces/MT-1",
+      status: "failed",
+      attempt: 2,
+      failure_reason: "boom",
+      started_at: now,
+      finished_at: now
+    }
+
+    workflow_version = %{
+      id: "workflow-1",
+      project_id: "fake-project-id",
+      version: 7,
+      source: "web_form",
+      active: true,
+      inserted_at: now,
+      raw_workflow_md: workflow_import_raw("git@github.com:org/repo.git")
+    }
+
+    FakePersistence.put_runs([run])
+    FakePersistence.put_issues([%{identifier: "MT-1", state: "In Progress", title: "Issue detail"}])
+    FakePersistence.put_workflow_versions([workflow_version], workflow_version)
+
+    FakePersistence.put_agent_turns([
+      %{run_id: "run-1", turn_index: 1, status: "failed", summary: "Turn failed", started_at: now, finished_at: now}
+    ])
+
+    FakePersistence.put_events([
+      %{
+        run_id: "run-1",
+        issue_identifier: "MT-1",
+        event_type: "run.failed",
+        payload: %{"api_token" => "secret", "message" => "boom"},
+        occurred_at: now
+      }
+    ])
+
+    {:ok, _view, run_html} = live(build_conn(), "/runs/run-1")
+    assert run_html =~ "Run Detail"
+    assert run_html =~ "MT-1"
+    assert run_html =~ "Workflow Version"
+    assert run_html =~ "Turn failed"
+    assert run_html =~ "[REDACTED]"
+    refute run_html =~ "secret"
+
+    {:ok, _view, issue_html} = live(build_conn(), "/issues/MT-1")
+    assert issue_html =~ "Issue Detail"
+    assert issue_html =~ "Issue detail"
+    assert issue_html =~ "run-1"
+
+    {:ok, _view, events_html} = live(build_conn(), "/events")
+    assert events_html =~ "Events"
+    assert events_html =~ "run.failed"
+
+    {:ok, _view, filtered_events_html} = live(build_conn(), "/events?issue_identifier=MT-MISSING")
+    assert filtered_events_html =~ "No events recorded"
+    refute filtered_events_html =~ "run.failed"
+  end
+
   test "workflow page saves structured draft through fake persistence without Repo" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
@@ -48,6 +116,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, view, html} = live(build_conn(), "/workflows")
     assert html =~ "Draft Configuration"
     assert html =~ "Project slug"
+    assert html =~ "Lifecycle Hooks"
+    assert html =~ "Hook timeout ms"
     assert html =~ ~s(phx-disable-with="Saving...")
     refute html =~ "Raw WORKFLOW.md"
     refute html =~ "workflow[tracker_kind]"
@@ -81,6 +151,61 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
     assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
+  end
+
+  test "workflow form saves and clears lifecycle hooks" do
+    draft =
+      SymphonyElixir.WorkflowForm.from_loaded(%{
+        config: %{
+          "tracker" => %{
+            "kind" => "linear",
+            "endpoint" => "https://api.linear.app/graphql",
+            "api_key" => "$LINEAR_API_KEY",
+            "project_slug" => "project",
+            "active_states" => ["Ready"],
+            "terminal_states" => ["Done"]
+          },
+          "polling" => %{"interval_ms" => 30_000},
+          "project" => %{"repository_url" => "git@github.com:org/repo.git"},
+          "hooks" => %{
+            "timeout_ms" => 60_000,
+            "after_create" => "echo stale",
+            "before_run" => "echo before"
+          }
+        },
+        prompt: "Hook prompt"
+      })
+
+    assert draft["hook_after_create"] == "echo stale"
+    assert draft["hook_before_run"] == "echo before"
+
+    edited =
+      draft
+      |> Map.put("hook_after_create", "")
+      |> Map.put("hook_before_run", "echo edited")
+      |> Map.put("hook_after_run", "echo after")
+      |> Map.put("hook_before_remove", "echo remove")
+      |> Map.put("hook_timeout_ms", "45000")
+
+    assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(edited)
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+
+    hooks = get_in(loaded_workflow.config, ["hooks"])
+    refute Map.has_key?(hooks, "after_create")
+    assert hooks["before_run"] == "echo edited"
+    assert hooks["after_run"] == "echo after"
+    assert hooks["before_remove"] == "echo remove"
+    assert hooks["timeout_ms"] == 45_000
+  end
+
+  test "workflow form rejects invalid lifecycle hook timeout" do
+    draft =
+      workflow_form_params()
+      |> Map.put("_base_config", %{})
+      |> Map.put("hook_timeout_ms", "0")
+
+    assert {:error, "Hook timeout must be a positive integer"} =
+             SymphonyElixir.WorkflowForm.to_raw(draft)
   end
 
   test "workflow form saves legacy tracker drafts as linear" do
@@ -308,6 +433,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "agent_max_turns" => "20",
       "codex_command" => "codex app-server",
       "codex_thread_sandbox" => "workspace-write",
+      "hook_after_create" => "",
+      "hook_before_run" => "",
+      "hook_after_run" => "",
+      "hook_before_remove" => "",
+      "hook_timeout_ms" => "60000",
       "prompt_body" => "You are an agent for this repository."
     }
   end

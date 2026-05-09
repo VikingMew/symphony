@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @turn_start_id 3
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
+  @startup_output_max_bytes 4_096
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
   @sensitive_codex_env_names ~w(
     LINEAR_API_KEY
@@ -53,8 +54,10 @@ defmodule SymphonyElixir.Codex.AppServer do
          {:ok, port} <- start_port(expanded_workspace, worker_host) do
       metadata = port_metadata(port, worker_host)
 
+      startup_context = startup_context(expanded_workspace, worker_host)
+
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies) do
+           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, startup_context) do
         {:ok,
          %{
            port: port,
@@ -272,7 +275,15 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp send_initialize(port) do
+  defp startup_context(workspace, worker_host) do
+    %{
+      command: Config.settings!().codex.command,
+      workspace: workspace,
+      worker_host: worker_host
+    }
+  end
+
+  defp send_initialize(port, startup_context) do
     payload = %{
       "method" => "initialize",
       "id" => @initialize_id,
@@ -290,7 +301,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
     send_message(port, payload)
 
-    with {:ok, _} <- await_response(port, @initialize_id) do
+    with {:ok, _} <- await_startup_response(port, @initialize_id, :initialize, startup_context) do
       send_message(port, %{"method" => "initialized", "params" => %{}})
       :ok
     end
@@ -304,14 +315,14 @@ defmodule SymphonyElixir.Codex.AppServer do
     Config.codex_runtime_settings(workspace, remote: true)
   end
 
-  defp do_start_session(port, workspace, session_policies) do
-    case send_initialize(port) do
-      :ok -> start_thread(port, workspace, session_policies)
+  defp do_start_session(port, workspace, session_policies, startup_context) do
+    case send_initialize(port, startup_context) do
+      :ok -> start_thread(port, workspace, session_policies, startup_context)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}) do
+  defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}, startup_context) do
     send_message(port, %{
       "method" => "thread/start",
       "id" => @thread_start_id,
@@ -323,7 +334,7 @@ defmodule SymphonyElixir.Codex.AppServer do
       }
     })
 
-    case await_response(port, @thread_start_id) do
+    case await_startup_response(port, @thread_start_id, :thread_start, startup_context) do
       {:ok, %{"thread" => thread_payload}} ->
         case thread_payload do
           %{"id" => thread_id} -> {:ok, thread_id}
@@ -369,6 +380,131 @@ defmodule SymphonyElixir.Codex.AppServer do
       tool_executor,
       auto_approve_requests
     )
+  end
+
+  defp await_startup_response(port, request_id, stage, context) do
+    with_timeout_startup_response(port, request_id, Config.settings!().codex.read_timeout_ms, "", "", stage, context)
+  end
+
+  defp with_timeout_startup_response(port, request_id, timeout_ms, pending_line, output, stage, context) do
+    receive do
+      {^port, {:data, {:eol, chunk}}} ->
+        complete_line = pending_line <> to_string(chunk)
+        handle_startup_response(port, request_id, complete_line, timeout_ms, output, stage, context)
+
+      {^port, {:data, {:noeol, chunk}}} ->
+        with_timeout_startup_response(
+          port,
+          request_id,
+          timeout_ms,
+          pending_line <> to_string(chunk),
+          output,
+          stage,
+          context
+        )
+
+      {^port, {:exit_status, status}} ->
+        {:error, startup_failure({:port_exit, status}, stage, context, output, timeout_ms)}
+    after
+      timeout_ms ->
+        output = append_startup_output(output, pending_line)
+        {:error, startup_failure(:response_timeout, stage, context, output, timeout_ms)}
+    end
+  end
+
+  defp handle_startup_response(port, request_id, data, timeout_ms, output, stage, context) do
+    payload_string = to_string(data)
+
+    case Jason.decode(payload_string) do
+      {:ok, %{"id" => ^request_id, "result" => result}} ->
+        {:ok, result}
+
+      {:ok, %{"id" => ^request_id, "error" => error}} ->
+        {:error, startup_failure({:response_error, error}, stage, context, output, timeout_ms)}
+
+      {:ok, %{"id" => ^request_id} = payload} ->
+        {:error, startup_failure({:response_error, payload}, stage, context, output, timeout_ms)}
+
+      {:ok, _payload} ->
+        with_timeout_startup_response(port, request_id, timeout_ms, "", output, stage, context)
+
+      {:error, _reason} ->
+        log_non_json_stream_line(payload_string, "startup response stream")
+
+        with_timeout_startup_response(
+          port,
+          request_id,
+          timeout_ms,
+          "",
+          append_startup_output(output, payload_string),
+          stage,
+          context
+        )
+    end
+  end
+
+  defp startup_failure(reason, stage, context, output, timeout_ms) do
+    base = %{
+      reason: startup_reason(reason),
+      stage: stage,
+      command: Map.get(context, :command),
+      workspace: Map.get(context, :workspace),
+      worker_host: Map.get(context, :worker_host) || "local",
+      output: sanitize_startup_output(output),
+      hint: startup_hint(reason),
+      timeout_ms: timeout_ms
+    }
+
+    details =
+      case reason do
+        {:port_exit, status} -> Map.put(base, :exit_status, status)
+        {:response_error, error} -> Map.put(base, :response_error, error)
+        _ -> base
+      end
+
+    {:codex_startup_failed, details}
+  end
+
+  defp startup_reason({:port_exit, _status}), do: :port_exit
+  defp startup_reason({:response_error, _error}), do: :response_error
+  defp startup_reason(reason), do: reason
+
+  defp startup_hint({:port_exit, 127}), do: "Command not found or shell initialization failed before codex app-server became ready."
+  defp startup_hint(:response_timeout), do: "Codex app-server did not respond before codex.read_timeout_ms; increase read_timeout_ms or reduce shell startup work."
+  defp startup_hint(_reason), do: "Codex app-server startup failed before the session handshake completed."
+
+  defp append_startup_output(output, chunk) do
+    text = chunk |> to_string() |> String.trim()
+
+    cond do
+      text == "" ->
+        output
+
+      output == "" ->
+        truncate_startup_output(text)
+
+      true ->
+        truncate_startup_output(output <> "\n" <> text)
+    end
+  end
+
+  defp truncate_startup_output(output) do
+    if String.length(output) > @startup_output_max_bytes do
+      String.slice(output, 0, @startup_output_max_bytes) <> "... (truncated)"
+    else
+      output
+    end
+  end
+
+  defp sanitize_startup_output(output) do
+    @sensitive_codex_env_names
+    |> Enum.reduce(output || "", fn name, acc ->
+      case System.get_env(name) do
+        value when is_binary(value) and value != "" -> String.replace(acc, value, "[REDACTED #{name}]")
+        _ -> acc
+      end
+    end)
+    |> String.replace(~r/(Authorization|api[_-]?key|token)(["':=>,\s]+)[^,\]\}\s]+/i, "\\1\\2[REDACTED]")
   end
 
   defp receive_loop(port, on_message, timeout_ms, pending_line, tool_executor, auto_approve_requests) do

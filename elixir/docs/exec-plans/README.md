@@ -51,8 +51,23 @@ Plans should focus on product and engineering intent rather than full implementa
 44. [044-stage-specific-execution-profiles.md](completed/044-stage-specific-execution-profiles.md)
 45. [045-database-inline-profile-normalization.md](completed/045-database-inline-profile-normalization.md)
 46. [046-profile-prompt-mode-clarity.md](completed/046-profile-prompt-mode-clarity.md)
+47. [047-workflow-import-first-configuration-page.md](completed/047-workflow-import-first-configuration-page.md)
 48. [048-workflow-tracker-fixed-fields-cleanup.md](completed/048-workflow-tracker-fixed-fields-cleanup.md)
+49. [049-workflow-profile-editor-slice.md](completed/049-workflow-profile-editor-slice.md)
+50. [050-workflow-phase-state-routing-editor.md](completed/050-workflow-phase-state-routing-editor.md)
+51. [051-workflow-save-feedback-state.md](completed/051-workflow-save-feedback-state.md)
 52. [052-remove-memory-tracker-path.md](completed/052-remove-memory-tracker-path.md)
+53. [053-codex-app-server-startup-error-context.md](completed/053-codex-app-server-startup-error-context.md)
+54. [054-running-session-state-history.md](completed/054-running-session-state-history.md)
+55. [055-linear-workflow-state-preflight-validation.md](completed/055-linear-workflow-state-preflight-validation.md)
+56. [056-linear-status-bootstrap-button.md](completed/056-linear-status-bootstrap-button.md)
+57. [057-require-project-repository-url.md](completed/057-require-project-repository-url.md)
+58. [058-clean-workspace-on-start.md](completed/058-clean-workspace-on-start.md)
+59. [059-project-bootstrap-before-hooks.md](completed/059-project-bootstrap-before-hooks.md)
+60. [060-workflow-hooks-config-ui.md](completed/060-workflow-hooks-config-ui.md)
+61. [061-ready-to-in-progress-on-codex-start.md](completed/061-ready-to-in-progress-on-codex-start.md)
+62. [062-run-detail-observability-pages.md](completed/062-run-detail-observability-pages.md)
+63. [063-listening-control-and-force-stop-agents.md](completed/063-listening-control-and-force-stop-agents.md)
 
 ## Plan Guidelines
 
@@ -77,7 +92,4 @@ When implementation starts, keep the plan current. If the implementation discove
 
 ## Active Plans
 
-47. [047-workflow-import-first-configuration-page.md](active/047-workflow-import-first-configuration-page.md)
-49. [049-workflow-profile-editor-slice.md](active/049-workflow-profile-editor-slice.md)
-50. [050-workflow-phase-state-routing-editor.md](active/050-workflow-phase-state-routing-editor.md)
-51. [051-workflow-save-feedback-state.md](active/051-workflow-save-feedback-state.md)
+None.

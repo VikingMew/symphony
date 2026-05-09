@@ -20,7 +20,8 @@ defmodule SymphonyElixirWeb.Presenter do
           running: Enum.map(snapshot.running, &running_entry_payload/1),
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
           codex_totals: snapshot.codex_totals,
-          rate_limits: snapshot.rate_limits
+          rate_limits: snapshot.rate_limits,
+          polling: Map.get(snapshot, :polling, %{listening?: false})
         }
 
       :timeout ->
@@ -108,6 +109,7 @@ defmodule SymphonyElixirWeb.Presenter do
       last_message: summarize_message(entry.last_codex_message),
       started_at: iso8601(entry.started_at),
       last_event_at: iso8601(entry.last_codex_timestamp),
+      session_history: session_history_payload(Map.get(entry, :session_history, [])),
       tokens: %{
         input_tokens: entry.codex_input_tokens,
         output_tokens: entry.codex_output_tokens,
@@ -146,6 +148,21 @@ defmodule SymphonyElixirWeb.Presenter do
       }
     }
   end
+
+  defp session_history_payload(events) when is_list(events) do
+    Enum.map(events, fn event ->
+      %{
+        at: iso8601(Map.get(event, :at)),
+        event: Map.get(event, :event),
+        label: Map.get(event, :label) || to_string(Map.get(event, :event) || ""),
+        detail: Map.get(event, :detail),
+        severity: Map.get(event, :severity) || :info,
+        metadata: Map.get(event, :metadata, %{})
+      }
+    end)
+  end
+
+  defp session_history_payload(_events), do: []
 
   defp retry_issue_payload(retry) do
     %{

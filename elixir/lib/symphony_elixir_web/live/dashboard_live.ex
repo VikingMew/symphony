@@ -150,8 +150,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <th>Tokens</th>
                   </tr>
                 </thead>
-                <tbody>
-                  <tr :for={entry <- @payload.running}>
+                <tbody :for={entry <- @payload.running}>
+                  <tr>
                     <td>
                       <div class="issue-stack">
                         <span class="issue-id"><%= entry.issue_identifier %></span>
@@ -200,6 +200,24 @@ defmodule SymphonyElixirWeb.DashboardLive do
                         <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
                         <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
                       </div>
+                    </td>
+                  </tr>
+                  <tr class="session-history-row">
+                    <td colspan="6">
+                      <details>
+                        <summary>Session history (<%= length(entry.session_history || []) %>)</summary>
+                        <%= if (entry.session_history || []) == [] do %>
+                          <p class="empty-state">No session history recorded.</p>
+                        <% else %>
+                          <ol class="session-history-list">
+                            <li :for={event <- entry.session_history}>
+                              <span class={history_badge_class(event.severity)}><%= event.label %></span>
+                              <span class="mono numeric"><%= event.at || "n/a" %></span>
+                              <span class="muted"><%= event.detail || to_string(event.event || "") %></span>
+                            </li>
+                          </ol>
+                        <% end %>
+                      </details>
                     </td>
                   </tr>
                 </tbody>
@@ -322,6 +340,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
       true -> base
     end
   end
+
+  defp history_badge_class(:error), do: "status-badge status-danger"
+  defp history_badge_class(:warning), do: "status-badge status-warning"
+  defp history_badge_class(_severity), do: "status-badge status-info"
 
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)

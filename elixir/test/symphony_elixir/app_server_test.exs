@@ -1,6 +1,58 @@
 defmodule SymphonyElixir.AppServerTest do
   use SymphonyElixir.TestSupport
 
+  test "app server startup failure includes command workspace status and output" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-elixir-app-server-startup-context-#{System.unique_integer([:positive])}")
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-STARTUP")
+      File.mkdir_p!(workspace)
+
+      command = "printf 'codex: command not found\\n' >&2; sleep 0.05; exit 127"
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: command
+      )
+
+      assert {:error, {:codex_startup_failed, details}} = AppServer.start_session(workspace)
+      assert details.reason == :port_exit
+      assert details.exit_status == 127
+      assert details.command =~ "exit 127"
+      assert details.workspace == workspace
+      assert details.worker_host == "local"
+      assert details.output =~ "codex: command not found"
+      assert details.hint =~ "Command not found"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server startup timeout includes bounded output" do
+    test_root = Path.join(System.tmp_dir!(), "symphony-elixir-app-server-startup-timeout-#{System.unique_integer([:positive])}")
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-TIMEOUT")
+      File.mkdir_p!(workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "printf 'booting nvs\\n' >&2; sleep 1",
+        codex_read_timeout_ms: 20
+      )
+
+      assert {:error, {:codex_startup_failed, details}} = AppServer.start_session(workspace)
+      assert details.reason == :response_timeout
+      assert details.timeout_ms == 20
+      assert details.output =~ "booting nvs"
+      assert details.hint =~ "read_timeout_ms"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(

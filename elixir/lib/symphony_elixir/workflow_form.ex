@@ -35,6 +35,11 @@ defmodule SymphonyElixir.WorkflowForm do
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
       "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
       "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"], "workspace-write"),
+      "hook_after_create" => get_string(display_config, ["hooks", "after_create"], ""),
+      "hook_before_run" => get_string(display_config, ["hooks", "before_run"], ""),
+      "hook_after_run" => get_string(display_config, ["hooks", "after_run"], ""),
+      "hook_before_remove" => get_string(display_config, ["hooks", "before_remove"], ""),
+      "hook_timeout_ms" => get_integer_string(display_config, ["hooks", "timeout_ms"], 60_000),
       "profiles" => profiles_form(display_config),
       "workflow_states" => workflow_states_form(display_config),
       "human_review_states" => get_list_text(display_config, ["workflow", "human_review_states"]),
@@ -61,7 +66,8 @@ defmodule SymphonyElixir.WorkflowForm do
     with {:ok, polling_interval_ms} <- parse_positive_integer(draft, "polling_interval_ms", "Polling interval"),
          {:ok, checkout_depth} <- parse_positive_integer(draft, "project_checkout_depth", "Checkout depth"),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
-         {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns") do
+         {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
+         {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout") do
       config =
         draft
         |> Map.get("_base_config", %{})
@@ -79,6 +85,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
         |> put_path(["codex", "thread_sandbox"], Map.get(draft, "codex_thread_sandbox", ""))
+        |> put_path(["hooks"], hooks_config(draft, hook_timeout_ms))
         |> put_path(["profiles"], profiles_config(draft))
         |> put_path(["workflow", "states"], workflow_states_config(draft))
         |> put_path(["workflow", "human_review_states"], lines(Map.get(draft, "human_review_states", "")))
@@ -97,6 +104,7 @@ defmodule SymphonyElixir.WorkflowForm do
       active_states: lines(Map.get(draft, "active_states", "")) |> length(),
       terminal_states: lines(Map.get(draft, "terminal_states", "")) |> length(),
       setup_commands: lines(Map.get(draft, "project_setup_commands", "")) |> length(),
+      hooks: hook_count(draft),
       profiles: map_size(Map.get(draft, "profiles", %{})),
       routed_states: map_size(Map.get(draft, "workflow_states", %{})),
       prompt_chars: String.length(Map.get(draft, "prompt_body", ""))
@@ -182,6 +190,25 @@ defmodule SymphonyElixir.WorkflowForm do
       base = Map.get(attrs, "_base", %{})
       {state, put_path(base, ["profile"], Map.get(attrs, "profile", ""))}
     end)
+  end
+
+  defp hooks_config(draft, timeout_ms) do
+    %{"timeout_ms" => timeout_ms}
+    |> put_optional_path(["after_create"], Map.get(draft, "hook_after_create", ""))
+    |> put_optional_path(["before_run"], Map.get(draft, "hook_before_run", ""))
+    |> put_optional_path(["after_run"], Map.get(draft, "hook_after_run", ""))
+    |> put_optional_path(["before_remove"], Map.get(draft, "hook_before_remove", ""))
+  end
+
+  defp hook_count(draft) do
+    [
+      Map.get(draft, "hook_after_create", ""),
+      Map.get(draft, "hook_before_run", ""),
+      Map.get(draft, "hook_after_run", ""),
+      Map.get(draft, "hook_before_remove", "")
+    ]
+    |> Enum.reject(&(String.trim(to_string(&1 || "")) == ""))
+    |> length()
   end
 
   defp tracker_kind(_draft), do: "linear"

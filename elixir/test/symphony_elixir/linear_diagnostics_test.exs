@@ -67,8 +67,10 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                       "states" => %{
                         "nodes" => [
                           %{"name" => "Refining"},
+                          %{"name" => "Needs Refinement Review"},
                           %{"name" => "Ready"},
                           %{"name" => "In Progress"},
+                          %{"name" => "Needs Implementation Review"},
                           %{"name" => "Ready to Merge"},
                           %{"name" => "Merging"},
                           %{"name" => "Done"},

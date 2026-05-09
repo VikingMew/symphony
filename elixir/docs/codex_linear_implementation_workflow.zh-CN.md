@@ -72,7 +72,9 @@ Ready to Merge -> In Progress
 
 - 人把 task 从 `Needs Refinement Review` 移到 `Ready`。
 - Symphony 发现 `Ready` 后，可以将 task 派给 Codex。
-- Codex 开始前先请求 `Ready -> In Progress`，或由 Orchestrator 在 run 启动时完成该流转。
+- Symphony 完成 workspace/bootstrap 并成功启动 Codex session 后，由 Symphony 后端执行
+  `Ready -> In Progress`；该流转成功后才发送第一轮 Codex task prompt。
+- workspace/bootstrap 失败或 Codex session 启动失败时，不应把 task 移到 `In Progress`。
 
 如果 task 已经是 `In Progress`，Symphony 可以恢复或继续已有 run，但必须避免并发重复实现。
 
@@ -249,11 +251,8 @@ Notes:
 In Progress -> Needs Implementation Review
 ```
 
-如果 Orchestrator 在 run 启动时没有自动执行 `Ready -> In Progress`，Codex 开始实现前也可通过 `linear_task_update` 请求：
-
-```text
-Ready -> In Progress
-```
+`Ready -> In Progress` 是 Symphony 后端在 Codex session 启动成功后执行的入口流转，
+不应由 Codex 自己通过 `linear_task_update` 请求。
 
 后端校验：
 

@@ -15,6 +15,7 @@ defmodule SymphonyElixir.Orchestrator do
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
+  @session_history_limit 100
   @empty_codex_totals %{
     input_tokens: 0,
     output_tokens: 0,
@@ -40,7 +41,8 @@ defmodule SymphonyElixir.Orchestrator do
       retry_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil,
-      last_config_error: nil
+      last_config_error: nil,
+      listening?: false
     ]
   end
 
@@ -67,7 +69,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     run_terminal_workspace_cleanup()
-    state = schedule_tick(state, 0)
+    state = schedule_tick(state, config.polling.interval_ms)
 
     {:ok, state}
   end
@@ -110,7 +112,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
-    state = maybe_dispatch(state)
+    state = if state.listening?, do: maybe_dispatch(state), else: state
     state = schedule_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
 
@@ -151,6 +153,10 @@ defmodule SymphonyElixir.Orchestrator do
           running_entry
           |> maybe_put_runtime_value(:worker_host, runtime_info[:worker_host])
           |> maybe_put_runtime_value(:workspace_path, runtime_info[:workspace_path])
+          |> append_session_history(:workspace_ready, "Workspace ready", %{
+            workspace_path: runtime_info[:workspace_path],
+            worker_host: runtime_info[:worker_host]
+          })
 
         persist_workspace_update(updated_running_entry)
         notify_dashboard()
@@ -181,6 +187,37 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_info({:codex_worker_update, _issue_id, _update}, state), do: {:noreply, state}
+
+  def handle_info({:linear_state_transition, issue_id, transition}, %{running: running} = state)
+      when is_binary(issue_id) and is_map(transition) do
+    case Map.get(running, issue_id) do
+      nil ->
+        {:noreply, state}
+
+      running_entry ->
+        transitions = [transition | Map.get(running_entry, :linear_state_transitions, [])]
+
+        updated_entry =
+          running_entry
+          |> Map.put(:linear_state_transitions, transitions)
+          |> put_in([:issue, Access.key(:state)], Map.get(transition, :to_state))
+          |> append_session_history(:linear_state_transition, "Linear state moved", %{
+            from_state: Map.get(transition, :from_state),
+            to_state: Map.get(transition, :to_state),
+            source: Map.get(transition, :source)
+          })
+
+        persist_event("linear.state_transition", running_entry.identifier, %{
+          issue_id: issue_id,
+          from_state: Map.get(transition, :from_state),
+          to_state: Map.get(transition, :to_state),
+          source: inspect(Map.get(transition, :source))
+        })
+
+        notify_dashboard()
+        {:noreply, %{state | running: Map.put(running, issue_id, updated_entry)}}
+    end
+  end
 
   def handle_info({:retry_issue, issue_id, retry_token}, state) do
     result =
@@ -265,6 +302,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error?(:missing_linear_api_token), do: true
   defp config_validation_error?(:missing_linear_endpoint), do: true
   defp config_validation_error?(:missing_linear_project_slug), do: true
+  defp config_validation_error?(:missing_project_repository_url), do: true
   defp config_validation_error?(:missing_tracker_kind), do: true
   defp config_validation_error?(:workflow_front_matter_not_a_map), do: true
   defp config_validation_error?({:unsupported_tracker_kind, _kind}), do: true
@@ -276,6 +314,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in WORKFLOW.md"
   defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in WORKFLOW.md"
   defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in WORKFLOW.md"
+  defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in WORKFLOW.md"
   defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in WORKFLOW.md"
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
@@ -784,7 +823,8 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: normalize_retry_attempt(attempt),
-            started_at: DateTime.utc_now()
+            started_at: DateTime.utc_now(),
+            session_history: initial_session_history(issue, attempt, worker_host)
           })
 
         %{
@@ -857,6 +897,7 @@ defmodule SymphonyElixir.Orchestrator do
     error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
     Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+    persist_event("run.retry_scheduled", identifier, %{issue_id: issue_id, attempt: next_attempt, delay_ms: delay_ms, error: error})
 
     %{
       state
@@ -1148,6 +1189,30 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  @spec start_listening() :: map() | :unavailable
+  def start_listening, do: start_listening(__MODULE__)
+
+  @spec start_listening(GenServer.server()) :: map() | :unavailable
+  def start_listening(server) do
+    if Process.whereis(server), do: GenServer.call(server, :start_listening), else: :unavailable
+  end
+
+  @spec stop_listening() :: map() | :unavailable
+  def stop_listening, do: stop_listening(__MODULE__)
+
+  @spec stop_listening(GenServer.server()) :: map() | :unavailable
+  def stop_listening(server) do
+    if Process.whereis(server), do: GenServer.call(server, :stop_listening), else: :unavailable
+  end
+
+  @spec force_stop_all() :: map() | :unavailable
+  def force_stop_all, do: force_stop_all(__MODULE__)
+
+  @spec force_stop_all(GenServer.server()) :: map() | :unavailable
+  def force_stop_all(server) do
+    if Process.whereis(server), do: GenServer.call(server, :force_stop_all, 30_000), else: :unavailable
+  end
+
   @spec snapshot() :: map() | :timeout | :unavailable
   def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -1190,7 +1255,8 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
-          runtime_seconds: running_seconds(metadata.started_at, now)
+          runtime_seconds: running_seconds(metadata.started_at, now),
+          session_history: Map.get(metadata, :session_history, [])
         }
       end)
 
@@ -1215,6 +1281,7 @@ defmodule SymphonyElixir.Orchestrator do
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        polling: %{
+         listening?: state.listening? == true,
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
          poll_interval_ms: state.poll_interval_ms
@@ -1223,6 +1290,57 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:request_refresh, _from, state) do
+    if state.listening? != true do
+      {:reply,
+       %{
+         queued: false,
+         coalesced: true,
+         requested_at: DateTime.utc_now(),
+         operations: [],
+         listening?: false
+       }, state}
+    else
+      do_handle_request_refresh(state)
+    end
+  end
+
+  def handle_call(:start_listening, _from, state) do
+    state = %{state | listening?: true}
+    state = schedule_tick(state, 0)
+    persist_event("orchestrator.listening_started", nil, %{})
+    notify_dashboard()
+    {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+  end
+
+  def handle_call(:stop_listening, _from, state) do
+    state = %{state | listening?: false, poll_check_in_progress: false}
+    persist_event("orchestrator.listening_stopped", nil, %{})
+    notify_dashboard()
+    {:reply, %{listening?: false, changed_at: DateTime.utc_now()}, state}
+  end
+
+  def handle_call(:force_stop_all, _from, state) do
+    {state, rollback_results} =
+      state
+      |> Map.put(:listening?, false)
+      |> cancel_retry_timers()
+      |> force_stop_running_entries()
+
+    cancelled_tasks = cancel_active_worker_tasks()
+    persist_event("orchestrator.force_stop_all", nil, %{rollback_results: rollback_results, cancelled_tasks: cancelled_tasks})
+    notify_dashboard()
+
+    {:reply,
+     %{
+       listening?: false,
+       stopped_agents: length(rollback_results),
+       cancelled_tasks: cancelled_tasks,
+       rollback_results: rollback_results,
+       changed_at: DateTime.utc_now()
+     }, state}
+  end
+
+  defp do_handle_request_refresh(state) do
     now_ms = System.monotonic_time(:millisecond)
     already_due? = is_integer(state.next_poll_due_at_ms) and state.next_poll_due_at_ms <= now_ms
     coalesced = state.poll_check_in_progress == true or already_due?
@@ -1237,6 +1355,88 @@ defmodule SymphonyElixir.Orchestrator do
      }, state}
   end
 
+  defp cancel_retry_timers(%State{retry_attempts: retry_attempts} = state) do
+    Enum.each(retry_attempts, fn
+      {_issue_id, %{timer_ref: timer_ref}} when is_reference(timer_ref) -> Process.cancel_timer(timer_ref)
+      _ -> :ok
+    end)
+
+    %{state | retry_attempts: %{}}
+  end
+
+  defp force_stop_running_entries(%State{running: running} = state) do
+    {state, results} =
+      Enum.reduce(running, {state, []}, fn {issue_id, running_entry}, {state_acc, results_acc} ->
+        result = rollback_running_entry(issue_id, running_entry)
+        state_acc = terminate_running_issue(state_acc, issue_id, false)
+        {state_acc, [result | results_acc]}
+      end)
+
+    {%{state | running: %{}, claimed: MapSet.new()}, Enum.reverse(results)}
+  end
+
+  defp rollback_running_entry(issue_id, running_entry) do
+    transitions = Map.get(running_entry, :linear_state_transitions, [])
+
+    result =
+      transitions
+      |> Enum.find(&Map.get(&1, :rollback_to_state))
+      |> rollback_transition(issue_id, running_entry)
+
+    persist_event("run.force_stopped", Map.get(running_entry, :identifier), %{issue_id: issue_id, rollback: result})
+    result
+  end
+
+  defp rollback_transition(nil, issue_id, running_entry) do
+    %{issue_id: issue_id, issue_identifier: Map.get(running_entry, :identifier), status: "skipped", reason: "no_symphony_owned_transition"}
+  end
+
+  defp rollback_transition(transition, issue_id, running_entry) do
+    expected_state = Map.get(transition, :to_state)
+    rollback_to_state = Map.get(transition, :rollback_to_state)
+    identifier = Map.get(running_entry, :identifier)
+
+    with {:ok, [%Issue{state: current_state} | _]} <- Tracker.fetch_issue_states_by_ids([issue_id]),
+         true <- normalize_issue_state(current_state) == normalize_issue_state(expected_state),
+         :ok <- Tracker.update_issue_state(issue_id, rollback_to_state) do
+      %{
+        issue_id: issue_id,
+        issue_identifier: identifier,
+        status: "rolled_back",
+        from_state: expected_state,
+        to_state: rollback_to_state
+      }
+    else
+      false ->
+        %{
+          issue_id: issue_id,
+          issue_identifier: identifier,
+          status: "skipped",
+          reason: "linear_state_changed",
+          expected_state: expected_state
+        }
+
+      {:ok, []} ->
+        %{issue_id: issue_id, issue_identifier: identifier, status: "skipped", reason: "issue_not_found"}
+
+      {:error, reason} ->
+        %{issue_id: issue_id, issue_identifier: identifier, status: "failed", reason: inspect(reason)}
+    end
+  end
+
+  defp cancel_active_worker_tasks do
+    PersistenceProvider.module().list_tasks(limit: 1_000)
+    |> Enum.filter(&(Map.get(&1, :status) in ["queued", "leased", "running"]))
+    |> Enum.reduce(0, fn task, count ->
+      case PersistenceProvider.module().cancel_task(task.id, "force_stop_all") do
+        {:ok, _task} -> count + 1
+        _ -> count
+      end
+    end)
+  rescue
+    _ -> 0
+  end
+
   defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)
     codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
@@ -1248,7 +1448,7 @@ defmodule SymphonyElixir.Orchestrator do
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
 
-    {
+    updated_entry =
       Map.merge(running_entry, %{
         last_codex_timestamp: timestamp,
         last_codex_message: summarize_codex_update(update),
@@ -1262,7 +1462,11 @@ defmodule SymphonyElixir.Orchestrator do
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
-      }),
+      })
+      |> append_codex_history(update)
+
+    {
+      updated_entry,
       token_delta
     }
   end
@@ -1310,6 +1514,74 @@ defmodule SymphonyElixir.Orchestrator do
       timestamp: update[:timestamp]
     }
   end
+
+  defp initial_session_history(%Issue{} = issue, attempt, worker_host) do
+    [
+      session_history_event(:run_started, "Run started", %{
+        issue_id: issue.id,
+        issue_identifier: issue.identifier,
+        state: issue.state,
+        attempt: normalize_retry_attempt(attempt),
+        worker_host: worker_host
+      })
+    ]
+  end
+
+  defp append_codex_history(running_entry, %{event: event} = update) when is_map(running_entry) do
+    append_session_history(running_entry, event, codex_history_label(event), %{
+      session_id: Map.get(update, :session_id),
+      message: summarize_codex_update(update)
+    })
+  end
+
+  defp codex_history_label(event) do
+    event
+    |> to_string()
+    |> String.replace("_", " ")
+    |> String.capitalize()
+  end
+
+  defp append_session_history(running_entry, event, label, metadata) when is_map(running_entry) do
+    history = Map.get(running_entry, :session_history, [])
+    next = session_history_event(event, label, metadata)
+    Map.put(running_entry, :session_history, Enum.take(history ++ [next], -@session_history_limit))
+  end
+
+  defp session_history_event(event, label, metadata) do
+    %{
+      at: DateTime.utc_now(),
+      event: event,
+      label: label,
+      detail: history_detail(event, metadata),
+      severity: history_severity(event),
+      metadata: sanitize_history_metadata(metadata)
+    }
+  end
+
+  defp history_detail(:workspace_ready, %{workspace_path: path}) when is_binary(path), do: path
+  defp history_detail(:run_started, %{state: state}) when is_binary(state), do: "Started from #{state}"
+  defp history_detail(event, _metadata), do: to_string(event)
+
+  defp history_severity(event) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
+  defp history_severity(event) when event in [:approval_required, :turn_input_required], do: :warning
+  defp history_severity(_event), do: :info
+
+  defp sanitize_history_metadata(metadata) when is_map(metadata) do
+    metadata
+    |> Enum.map(fn {key, value} -> {key, sanitize_history_value(value)} end)
+    |> Map.new()
+  end
+
+  defp sanitize_history_metadata(_metadata), do: %{}
+
+  defp sanitize_history_value(value) when is_binary(value) do
+    if String.length(value) > 500, do: String.slice(value, 0, 500) <> "...", else: value
+  end
+
+  defp sanitize_history_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp sanitize_history_value(value) when is_map(value), do: sanitize_history_metadata(value)
+  defp sanitize_history_value(value) when is_list(value), do: Enum.map(value, &sanitize_history_value/1)
+  defp sanitize_history_value(value), do: value
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do
     if is_reference(state.tick_timer_ref) do

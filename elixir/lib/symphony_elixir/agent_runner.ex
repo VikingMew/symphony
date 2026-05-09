@@ -7,6 +7,10 @@ defmodule SymphonyElixir.AgentRunner do
   alias SymphonyElixir.Codex.AppServer
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
+  @implementation_profile "implementation"
+  @implementation_start_state "Ready"
+  @implementation_started_state "In Progress"
+
   @type worker_host :: String.t() | nil
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
@@ -80,14 +84,124 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
+    opts = Keyword.put_new(opts, :codex_update_recipient, codex_update_recipient)
+
     with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
       try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
+        with {:ok, started_issue} <- maybe_mark_implementation_started(issue, opts) do
+          do_run_codex_turns(
+            session,
+            workspace,
+            started_issue,
+            codex_update_recipient,
+            opts,
+            issue_state_fetcher,
+            1,
+            max_turns
+          )
+        end
       after
         AppServer.stop_session(session)
       end
     end
   end
+
+  defp maybe_mark_implementation_started(%Issue{} = issue, opts) do
+    profile = Config.workflow_profile_for_state(issue.state)
+
+    if implementation_start_transition_required?(issue, profile) do
+      transition_implementation_start(issue, profile, opts)
+    else
+      {:ok, issue}
+    end
+  end
+
+  defp implementation_start_transition_required?(%Issue{state: state}, @implementation_profile) do
+    normalize_issue_state(state) == normalize_issue_state(@implementation_start_state)
+  end
+
+  defp implementation_start_transition_required?(_issue, _profile), do: false
+
+  defp transition_implementation_start(%Issue{id: issue_id} = issue, profile, opts)
+       when is_binary(issue_id) and issue_id != "" do
+    with :ok <- validate_implementation_start_transition(issue.state, @implementation_started_state, profile),
+         :ok <- call_implementation_start_transitioner(issue, @implementation_started_state, opts) do
+      Logger.info("Moved issue to implementation start state for #{issue_context(issue)} state=#{@implementation_started_state}")
+      notify_backend_transition(issue, @implementation_start_state, @implementation_started_state, opts)
+      {:ok, %{issue | state: @implementation_started_state}}
+    else
+      {:error, reason} -> {:error, {:implementation_start_transition_failed, reason}}
+    end
+  end
+
+  defp transition_implementation_start(%Issue{} = issue, _profile, _opts) do
+    {:error, {:implementation_start_transition_failed, {:missing_issue_id, issue.identifier}}}
+  end
+
+  defp validate_implementation_start_transition(from_state, to_state, profile) do
+    if workflow_transition_allowed?(from_state, to_state, profile) do
+      :ok
+    else
+      {:error, {:transition_not_allowed, from_state, to_state, profile}}
+    end
+  end
+
+  defp workflow_transition_allowed?(from_state, to_state, profile) do
+    Config.settings!().workflow
+    |> Map.get("allowed_transitions", [])
+    |> Enum.any?(&matching_transition?(&1, from_state, to_state, profile))
+  end
+
+  defp matching_transition?(%{} = transition, from_state, to_state, profile) do
+    transition_profile = Map.get(transition, "profile")
+    actor = Map.get(transition, "actor")
+
+    normalize_issue_state(Map.get(transition, "from", "")) == normalize_issue_state(from_state) &&
+      normalize_issue_state(Map.get(transition, "to", "")) == normalize_issue_state(to_state) &&
+      transition_profile in [nil, profile] &&
+      actor in [nil, "codex", "symphony"]
+  end
+
+  defp matching_transition?(_transition, _from_state, _to_state, _profile), do: false
+
+  defp call_implementation_start_transitioner(issue, target_state, opts) do
+    transitioner = Keyword.get(opts, :implementation_start_transitioner, &default_implementation_start_transitioner/2)
+
+    case transitioner.(issue, target_state) do
+      :ok -> :ok
+      {:ok, %Issue{}} -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_transition_result, other}}
+    end
+  end
+
+  defp default_implementation_start_transitioner(%Issue{id: issue_id}, target_state) do
+    Tracker.update_issue_state(issue_id, target_state)
+  end
+
+  defp notify_backend_transition(%Issue{id: issue_id}, from_state, to_state, opts)
+       when is_binary(issue_id) do
+    case Keyword.get(opts, :codex_update_recipient) do
+      recipient when is_pid(recipient) ->
+        send(
+          recipient,
+          {:linear_state_transition, issue_id,
+           %{
+             from_state: from_state,
+             to_state: to_state,
+             rollback_to_state: from_state,
+             source: :symphony_backend,
+             reason: :implementation_started,
+             occurred_at: DateTime.utc_now()
+           }}
+        )
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp notify_backend_transition(_issue, _from_state, _to_state, _opts), do: :ok
 
   defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)

@@ -232,7 +232,8 @@ profiles:
 
 `workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。Symphony
 会在这个目录下为每个 Linear issue 创建子目录，然后把 `project.repository_url` 指向的仓库
-clone 到该 issue workspace 中。
+clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
+workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动 agent。
 
 Rust 项目可以这样写 bootstrap：
 
@@ -258,8 +259,12 @@ project:
     - mix workspace.before_remove || true
 ```
 
-`hooks.after_create` / `hooks.before_remove` 仍然可用，并且显式 hooks 会优先于 `project`
-生成的 checkout/setup/cleanup 命令。hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
+每次 agent start 都会重新创建该 issue workspace；如果同名目录已经存在，Symphony 会先删除它，再重新 clone/setup。
+因此未提交或未推送的本地进度不应只保存在 issue workspace 中。
+
+`hooks.after_create` / `hooks.before_remove` 仍然可用。`project.repository_url` 和
+`project.setup_commands` 会先完成 checkout/setup，随后 `hooks.after_create` 作为附加自定义命令执行。
+hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
 `WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。导入时它是一个完整 workflow package：`workflow` 定义状态路由和流转规则，顶层 `profiles` 定义被引用的执行 profile。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
 

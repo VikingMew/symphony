@@ -8,7 +8,7 @@ Profiles are central to Symphony's workflow model. A page that edits workflow co
 
 ## Status
 
-In progress.
+Completed.
 
 ## Background
 
@@ -77,7 +77,7 @@ That means operators cannot see why refinement, implementation, and merge behavi
 
 - [x] `mise exec -- mix format`
 - [x] `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/core_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/core_test.exs`
 - [x] `mise exec -- mix test`
 - [x] `mise exec -- mix lint`
 - [x] `git diff --check`

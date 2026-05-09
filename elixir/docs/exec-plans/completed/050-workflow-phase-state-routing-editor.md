@@ -8,7 +8,7 @@ The current structured page shows active and terminal state lists, but it does n
 
 ## Status
 
-In progress.
+Completed.
 
 ## Background
 
@@ -76,7 +76,7 @@ The user called this out as the page not reflecting profile and "phrase" concern
 
 - [x] `mise exec -- mix format`
 - [x] `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
-- [ ] `mise exec -- mix test test/symphony_elixir/core_test.exs`
+- [x] `mise exec -- mix test test/symphony_elixir/core_test.exs`
 - [x] `mise exec -- mix test`
 - [x] `mise exec -- mix lint`
 - [x] `git diff --check`

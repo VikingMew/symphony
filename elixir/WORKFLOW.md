@@ -17,14 +17,14 @@ polling:
   interval_ms: 5000
 workspace:
   root: ~/code/symphony-workspaces
-hooks:
-  after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
-    fi
-  before_remove: |
-    cd elixir && mise exec -- mix workspace.before_remove
+project:
+  repository_url: https://github.com/openai/symphony
+  default_branch: main
+  checkout_depth: 1
+  setup_commands:
+    - if command -v mise >/dev/null 2>&1; then cd elixir && mise trust && mise exec -- mix deps.get; fi
+  cleanup_commands:
+    - cd elixir && mise exec -- mix workspace.before_remove
 agent:
   max_concurrent_agents: 10
   max_turns: 20
@@ -150,7 +150,7 @@ You are working on a Linear ticket `{{ issue.identifier }}`
 Continuation context:
 
 - This is retry attempt #{{ attempt }} because the ticket is still in an active state.
-- Resume from the current workspace state instead of restarting from scratch.
+- This attempt starts from a freshly recreated issue workspace; use Linear comments, task detail, and pushed branch state as the source of continuation context.
 - Do not repeat already-completed investigation or validation unless needed for new code changes.
 - Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
   {% endif %}

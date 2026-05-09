@@ -103,6 +103,19 @@ defmodule SymphonyElixir.Linear.Client do
   }
   """
 
+  @workflow_state_create_mutation """
+  mutation SymphonyLinearWorkflowStateCreate($input: WorkflowStateCreateInput!) {
+    workflowStateCreate(input: $input) {
+      success
+      workflowState {
+        id
+        name
+        type
+      }
+    }
+  }
+  """
+
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     tracker = Config.settings!().tracker
@@ -181,6 +194,32 @@ defmodule SymphonyElixir.Linear.Client do
       {:error, reason} ->
         Logger.error("Linear GraphQL request failed: #{inspect(reason)}")
         {:error, {:linear_api_request, reason}}
+    end
+  end
+
+  @spec create_workflow_state(String.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def create_workflow_state(team_id, name, opts \\ []) when is_binary(team_id) and is_binary(name) and is_list(opts) do
+    input =
+      %{
+        "teamId" => team_id,
+        "name" => name,
+        "type" => Keyword.get(opts, :type, "started")
+      }
+      |> maybe_put_optional("description", Keyword.get(opts, :description))
+      |> maybe_put_optional("color", Keyword.get(opts, :color))
+
+    case graphql(@workflow_state_create_mutation, %{"input" => input}, operation_name: "SymphonyLinearWorkflowStateCreate") do
+      {:ok, %{"data" => %{"workflowStateCreate" => %{"success" => true} = payload}}} ->
+        {:ok, payload}
+
+      {:ok, %{"errors" => errors}} ->
+        {:error, {:linear_graphql_errors, errors}}
+
+      {:ok, payload} ->
+        {:error, {:unexpected_workflow_state_create_payload, payload}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -598,6 +637,10 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp normalize_assignee_match_value(_value), do: nil
+
+  defp maybe_put_optional(map, _key, nil), do: map
+  defp maybe_put_optional(map, _key, ""), do: map
+  defp maybe_put_optional(map, key, value), do: Map.put(map, key, value)
 
   defp extract_labels(%{"labels" => %{"nodes" => labels}}) when is_list(labels) do
     labels

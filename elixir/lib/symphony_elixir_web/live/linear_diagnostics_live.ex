@@ -5,11 +5,11 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.Linear.Diagnostics
+  alias SymphonyElixir.{Config, Linear.Diagnostics, Linear.WorkflowBootstrap}
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, socket |> assign(:refresh_message, nil) |> assign(:diagnostics, Diagnostics.run())}
+    {:ok, socket |> assign(:refresh_message, nil) |> assign(:bootstrap_result, nil) |> assign(:diagnostics, Diagnostics.run())}
   end
 
   @impl true
@@ -19,7 +19,40 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
     {:noreply,
      socket
      |> assign(:diagnostics, diagnostics)
+     |> assign(:bootstrap_result, nil)
      |> assign(:refresh_message, "Diagnostics refreshed at #{fmt_dt(diagnostics.ran_at)}")}
+  end
+
+  @impl true
+  def handle_event("bootstrap_linear_statuses", _params, socket) do
+    diagnostics = socket.assigns.diagnostics
+
+    result =
+      WorkflowBootstrap.create_missing_statuses(
+        Config.settings!(),
+        get_in(diagnostics, [:probes, :states, :data, :available]) || [],
+        get_in(diagnostics, [:probes, :project, :data]) || %{}
+      )
+
+    refreshed = Diagnostics.run()
+
+    message =
+      case result do
+        {:ok, %{created: created, skipped: skipped, failed: []}} ->
+          "Linear statuses updated. Created: #{list_text(created)}. Skipped: #{list_text(skipped)}."
+
+        {:ok, %{created: created, skipped: skipped, failed: failed}} ->
+          "Linear status bootstrap partially failed. Created: #{list_text(created)}. Skipped: #{list_text(skipped)}. Failed: #{failed_text(failed)}."
+
+        {:error, reason} ->
+          "Linear status bootstrap failed: #{inspect(reason)}"
+      end
+
+    {:noreply,
+     socket
+     |> assign(:diagnostics, refreshed)
+     |> assign(:bootstrap_result, result)
+     |> assign(:refresh_message, message)}
   end
 
   @impl true
@@ -44,6 +77,31 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
       </header>
 
       <p :if={@refresh_message} class="empty-state">{@refresh_message}</p>
+
+      <section :if={bootstrap_missing_states(@diagnostics) != []} class="section-card">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Linear Status Bootstrap</h2>
+            <p class="section-copy">Create the missing Linear workflow statuses required by the active Symphony workflow.</p>
+          </div>
+          <button
+            type="button"
+            class="subtle-button"
+            phx-click="bootstrap_linear_statuses"
+            data-confirm="This will create missing workflow statuses in the configured Linear team. Continue?"
+            disabled={not bootstrap_available?(@diagnostics)}
+          >
+            Create missing Linear statuses
+          </button>
+        </div>
+
+        <p class="metric-detail">
+          Missing statuses: <span class="mono">{Enum.join(bootstrap_missing_states(@diagnostics), ", ")}</span>
+        </p>
+        <p :if={not bootstrap_available?(@diagnostics)} class="empty-state">
+          Bootstrap is unavailable until Linear API access and project team resolution succeed.
+        </p>
+      </section>
 
       <section class="metric-grid">
         <article class="metric-card">
@@ -269,6 +327,24 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
 
   defp states_data(diagnostics) do
     get_in(diagnostics, [:probes, :states, :data]) || %{}
+  end
+
+  defp bootstrap_missing_states(diagnostics) do
+    get_in(diagnostics, [:probes, :states, :data, :missing_states]) || []
+  end
+
+  defp bootstrap_available?(diagnostics) do
+    bootstrap_missing_states(diagnostics) != [] and
+      get_in(diagnostics, [:probes, :api, :status]) == :ok and
+      get_in(diagnostics, [:probes, :project, :status]) == :ok and
+      get_in(diagnostics, [:probes, :project, :data, :project, :teams]) not in [nil, []]
+  end
+
+  defp list_text([]), do: "none"
+  defp list_text(values) when is_list(values), do: Enum.join(values, ", ")
+
+  defp failed_text(failed) when is_list(failed) do
+    Enum.map_join(failed, ", ", fn %{state: state, reason: reason} -> "#{state} (#{reason})" end)
   end
 
   defp pretty_value(value), do: inspect(value, pretty: true, limit: :infinity)

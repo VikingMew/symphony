@@ -330,12 +330,15 @@ project:
 ```
 
 This repository's own `elixir/WORKFLOW.md` is a Symphony-specific workflow for developing
-Symphony itself. It intentionally clones `github.com/openai/symphony` and may run `mise`/`mix`
-commands under `elixir/`; do not copy those commands as a generic project template.
+Symphony itself. It declares `project.repository_url: https://github.com/openai/symphony` and
+may run `mise`/`mix` commands under `elixir/`; do not copy those values as a generic project
+template.
 
 Notes:
 
-- If a value is missing, defaults are used.
+- `project.repository_url` is required before runtime work can start. A missing or blank value is
+  a configuration error, so Symphony will not poll Linear or start agent work.
+- If an optional value is missing, defaults are used.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`

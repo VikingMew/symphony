@@ -244,6 +244,36 @@ defmodule SymphonyElixir.Persistence do
     if repo_available?(), do: Repo.get(RunRecord, id)
   end
 
+  @spec get_workflow_version(String.t()) :: WorkflowVersion.t() | nil
+  def get_workflow_version(id) when is_binary(id) do
+    if repo_available?(), do: Repo.get(WorkflowVersion, id)
+  end
+
+  @spec get_issue_by_identifier(String.t()) :: IssueRecord.t() | nil
+  def get_issue_by_identifier(identifier) when is_binary(identifier) do
+    if repo_available?(), do: Repo.get_by(IssueRecord, identifier: identifier)
+  end
+
+  @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()]
+  def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do
+    limit = Keyword.get(opts, :limit, 100)
+
+    if repo_available?() do
+      Repo.all(from(r in RunRecord, where: r.issue_identifier == ^identifier, order_by: [desc: r.started_at], limit: ^limit))
+    else
+      []
+    end
+  end
+
+  @spec list_agent_turns_for_run(String.t()) :: [AgentTurn.t()]
+  def list_agent_turns_for_run(run_id) when is_binary(run_id) do
+    if repo_available?() do
+      Repo.all(from(t in AgentTurn, where: t.run_id == ^run_id, order_by: [asc: t.turn_index]))
+    else
+      []
+    end
+  end
+
   @spec record_event(map()) :: {:ok, EventRecord.t()} | {:error, term()}
   def record_event(attrs) do
     if repo_available?() do
@@ -285,11 +315,35 @@ defmodule SymphonyElixir.Persistence do
     limit = Keyword.get(opts, :limit, 100)
 
     if repo_available?() do
-      Repo.all(from(e in EventRecord, order_by: [desc: e.occurred_at], limit: ^limit))
+      EventRecord
+      |> maybe_filter_event_issue(Keyword.get(opts, :issue_identifier))
+      |> maybe_filter_event_run(Keyword.get(opts, :run_id))
+      |> maybe_filter_event_type(Keyword.get(opts, :event_type))
+      |> order_by([e], desc: e.occurred_at)
+      |> limit(^limit)
+      |> Repo.all()
     else
       []
     end
   end
+
+  defp maybe_filter_event_issue(query, issue_identifier) when is_binary(issue_identifier) and issue_identifier != "" do
+    where(query, [e], e.issue_identifier == ^issue_identifier)
+  end
+
+  defp maybe_filter_event_issue(query, _issue_identifier), do: query
+
+  defp maybe_filter_event_run(query, run_id) when is_binary(run_id) and run_id != "" do
+    where(query, [e], e.run_id == ^run_id)
+  end
+
+  defp maybe_filter_event_run(query, _run_id), do: query
+
+  defp maybe_filter_event_type(query, event_type) when is_binary(event_type) and event_type != "" do
+    where(query, [e], e.event_type == ^event_type)
+  end
+
+  defp maybe_filter_event_type(query, _event_type), do: query
 
   @spec get_user(String.t()) :: User.t() | nil
   def get_user(username) when is_binary(username) do

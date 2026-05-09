@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   """
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.{Linear.Client, Linear.Issue, WorkflowStore}
+  alias SymphonyElixir.{Linear.Client, Linear.Issue, Linear.WorkflowStateValidator, WorkflowStore}
   require Logger
 
   @viewer_query """
@@ -120,15 +120,16 @@ defmodule SymphonyElixir.Linear.Diagnostics do
         missing_project_slug_result(config, runtime_source, client)
 
       true ->
-        run_linear_probes(config, tracker, runtime_source, client)
+        run_linear_probes(config, settings, runtime_source, client)
     end
   end
 
-  defp run_linear_probes(config, tracker, runtime_source, client) do
+  defp run_linear_probes(config, settings, runtime_source, client) do
+    tracker = settings.tracker
     api_probe = api_probe(client)
     teams_probe = teams_probe(client)
     project_probe = project_probe(client, tracker.project_slug)
-    states_probe = states_probe(project_probe, tracker)
+    states_probe = states_probe(project_probe, settings)
     {candidate_probe, issues} = candidate_probe(client)
 
     %{
@@ -302,33 +303,29 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     end
   end
 
-  defp states_probe(%{status: :ok, data: %{state_names: state_names}}, tracker) do
-    active = tracker.active_states || []
-    terminal = tracker.terminal_states || []
-    available = state_name_set(state_names)
-    missing_active = missing_states(active, available)
-    missing_terminal = missing_states(terminal, available)
+  defp states_probe(%{status: :ok, data: %{state_names: state_names}}, settings) do
+    validation = WorkflowStateValidator.validate(settings, state_names)
+    tracker = settings.tracker
+    workflow = settings.workflow || %{}
 
-    if missing_active == [] and missing_terminal == [] do
-      probe(:ok, "Workflow states", "Configured active and terminal states exist.", %{
-        available: state_names,
-        active: active,
-        terminal: terminal,
-        missing_active: [],
-        missing_terminal: []
+    data =
+      validation
+      |> Map.merge(%{
+        active: tracker.active_states || [],
+        terminal: tracker.terminal_states || [],
+        human_review_states: Map.get(workflow, "human_review_states", []),
+        missing_active: validation.missing.active_states,
+        missing_terminal: validation.missing.terminal_states
       })
+
+    if validation.status == :ok do
+      probe(:ok, "Workflow states", "All configured workflow states exist in Linear.", data)
     else
-      probe(:error, "Workflow states", "Some configured workflow states were not found in Linear.", %{
-        available: state_names,
-        active: active,
-        terminal: terminal,
-        missing_active: missing_active,
-        missing_terminal: missing_terminal
-      })
+      probe(:error, "Workflow states", "Some configured workflow states were not found in Linear.", data)
     end
   end
 
-  defp states_probe(_project_probe, _tracker) do
+  defp states_probe(_project_probe, _settings) do
     probe(:skipped, "Workflow states", "Skipped because project slug did not resolve.")
   end
 
@@ -621,18 +618,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp state_nodes_to_names(_nodes), do: []
-
-  defp state_name_set(names) when is_list(names) do
-    names
-    |> Enum.map(&normalize_state_name/1)
-    |> MapSet.new()
-  end
-
-  defp missing_states(configured, available) do
-    Enum.reject(configured, fn state -> MapSet.member?(available, normalize_state_name(state)) end)
-  end
-
-  defp normalize_state_name(state), do: state |> to_string() |> String.trim() |> String.downcase()
 
   defp probe(status, title, detail, data \\ %{}) when status in [:ok, :warning, :error, :skipped] do
     %{status: status, title: title, detail: detail, data: data}

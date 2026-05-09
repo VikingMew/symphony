@@ -7,10 +7,34 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
 
+  attr(:events, :list, required: true)
+
+  @spec event_table(map()) :: Phoenix.LiveView.Rendered.t()
+  def event_table(assigns) do
+    ~H"""
+    <%= if @events == [] do %>
+      <p class="empty-state">No events recorded.</p>
+    <% else %>
+      <table class="data-table">
+        <thead><tr><th>Time</th><th>Issue</th><th>Type</th><th>Payload</th></tr></thead>
+        <tbody>
+          <tr :for={event <- @events}>
+            <td class="mono"><%= fmt_dt(event.occurred_at) %></td>
+            <td><%= event.issue_identifier || "n/a" %></td>
+            <td><span class="status-badge status-info"><%= event.event_type %></span></td>
+            <td><pre class="inline-code-panel"><%= safe_event_payload(event.payload) %></pre></td>
+          </tr>
+        </tbody>
+      </table>
+    <% end %>
+    """
+  end
+
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     {:ok,
      socket
+     |> assign(:route_params, params)
      |> assign(:workflow_diagnostics_notice, nil)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_validation_error, nil)
@@ -175,6 +199,36 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("start_listening", _params, socket) do
+    result = SymphonyElixir.Orchestrator.start_listening(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Listening started: #{inspect(result)}")
+     |> refresh()}
+  end
+
+  @impl true
+  def handle_event("stop_listening", _params, socket) do
+    result = SymphonyElixir.Orchestrator.stop_listening(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Listening stopped: #{inspect(result)}")
+     |> refresh()}
+  end
+
+  @impl true
+  def handle_event("force_stop_all", _params, socket) do
+    result = SymphonyElixir.Orchestrator.force_stop_all(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Force stop requested: #{inspect(result)}")
+     |> refresh()}
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
@@ -203,6 +257,17 @@ defmodule SymphonyElixirWeb.AdminLive do
         <% :runs -> %>
           <section class="section-card">
             <h1 class="section-title">Runs</h1>
+            <p class="metric-label">
+              Listening:
+              <span class={status_class(if @runtime_snapshot[:listening?], do: "healthy", else: "offline")}>
+                <%= if @runtime_snapshot[:listening?], do: "enabled", else: "disabled" %>
+              </span>
+            </p>
+            <div class="button-row">
+              <button class="subtle-button" phx-click="start_listening">Start listening</button>
+              <button class="subtle-button" phx-click="stop_listening">Stop listening</button>
+              <button class="subtle-button" phx-click="force_stop_all" data-confirm="Force stop all active agents and roll back Symphony-owned Linear state transitions when safe?">Force stop all agents</button>
+            </div>
             <%= if @runs == [] do %>
               <p class="empty-state">No persisted runs yet.</p>
             <% else %>
@@ -210,7 +275,10 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <thead><tr><th>Issue</th><th>Status</th><th>Attempt</th><th>Started</th><th>Finished</th></tr></thead>
                 <tbody>
                   <tr :for={run <- @runs}>
-                    <td class="issue-id"><%= run.issue_identifier %></td>
+                    <td class="issue-id">
+                      <a class="issue-link" href={"/runs/#{run.id}"}><%= run.issue_identifier %></a>
+                      <a class="issue-link" href={"/issues/#{run.issue_identifier}"}>Issue</a>
+                    </td>
                     <td><%= run.status %></td>
                     <td><%= run.attempt %></td>
                     <td class="mono"><%= fmt_dt(run.started_at) %></td>
@@ -219,6 +287,98 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </tbody>
               </table>
             <% end %>
+          </section>
+
+        <% :run_detail -> %>
+          <section class="section-card">
+            <h1 class="section-title">Run Detail</h1>
+            <%= if @run_detail.run do %>
+              <table class="data-table">
+                <tbody>
+                  <tr><th>Issue</th><td><a class="issue-link" href={"/issues/#{@run_detail.run.issue_identifier}"}><%= @run_detail.run.issue_identifier %></a></td></tr>
+                  <tr><th>Status</th><td><%= @run_detail.run.status %></td></tr>
+                  <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
+                  <tr><th>Workspace</th><td class="mono"><%= @run_detail.run.workspace_path || "n/a" %></td></tr>
+                  <tr><th>Started</th><td class="mono"><%= fmt_dt(@run_detail.run.started_at) %></td></tr>
+                  <tr><th>Finished</th><td class="mono"><%= fmt_dt(@run_detail.run.finished_at) %></td></tr>
+                  <tr><th>Failure</th><td><%= @run_detail.run.failure_reason || "n/a" %></td></tr>
+                </tbody>
+              </table>
+
+              <h2 class="section-title">Workflow Version</h2>
+              <%= if @run_detail.workflow_version do %>
+                <pre class="code-panel"><%= workflow_version_summary(@run_detail.workflow_version) %></pre>
+              <% else %>
+                <p class="empty-state">No workflow version is attached to this run.</p>
+              <% end %>
+
+              <h2 class="section-title">Agent Turns</h2>
+              <%= if @run_detail.turns == [] do %>
+                <p class="empty-state">No agent turns recorded.</p>
+              <% else %>
+                <table class="data-table">
+                  <thead><tr><th>Turn</th><th>Status</th><th>Started</th><th>Finished</th><th>Summary</th></tr></thead>
+                  <tbody>
+                    <tr :for={turn <- @run_detail.turns}>
+                      <td><%= turn.turn_index %></td>
+                      <td><%= turn.status %></td>
+                      <td class="mono"><%= fmt_dt(turn.started_at) %></td>
+                      <td class="mono"><%= fmt_dt(turn.finished_at) %></td>
+                      <td><%= turn.summary || "n/a" %></td>
+                    </tr>
+                  </tbody>
+                </table>
+              <% end %>
+
+              <h2 class="section-title">Events</h2>
+              <.event_table events={@run_detail.events} />
+            <% else %>
+              <p class="empty-state">Run not found.</p>
+            <% end %>
+          </section>
+
+        <% :issue_detail -> %>
+          <section class="section-card">
+            <h1 class="section-title">Issue Detail</h1>
+            <%= if @issue_detail.issue do %>
+              <pre class="code-panel"><%= inspect(@issue_detail.issue, pretty: true) %></pre>
+            <% else %>
+              <p class="empty-state">No persisted issue snapshot found for <span class="mono"><%= @route_params["identifier"] %></span>.</p>
+            <% end %>
+
+            <h2 class="section-title">Runs</h2>
+            <%= if @issue_detail.runs == [] do %>
+              <p class="empty-state">No persisted runs for this issue.</p>
+            <% else %>
+              <table class="data-table">
+                <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead>
+                <tbody>
+                  <tr :for={run <- @issue_detail.runs}>
+                    <td><a class="issue-link" href={"/runs/#{run.id}"}><%= run.id %></a></td>
+                    <td><%= run.status %></td>
+                    <td class="mono"><%= fmt_dt(run.started_at) %></td>
+                    <td class="mono"><%= fmt_dt(run.finished_at) %></td>
+                  </tr>
+                </tbody>
+              </table>
+            <% end %>
+
+            <h2 class="section-title">Events</h2>
+            <.event_table events={@issue_detail.events} />
+          </section>
+
+        <% :events -> %>
+          <section class="section-card">
+            <h1 class="section-title">Events</h1>
+            <p class="section-copy">Persisted Symphony events. Payloads are bounded and scrubbed before display.</p>
+            <form class="workflow-import-form" method="get" action="/events">
+              <label><span class="metric-label">Issue</span><input name="issue_identifier" value={@event_filters.issue_identifier} /></label>
+              <label><span class="metric-label">Run ID</span><input name="run_id" value={@event_filters.run_id} /></label>
+              <label><span class="metric-label">Event type</span><input name="event_type" value={@event_filters.event_type} /></label>
+              <label><span class="metric-label">Limit</span><input type="number" min="1" max="500" name="limit" value={@event_filters.limit} /></label>
+              <button class="subtle-button" type="submit">Apply filters</button>
+            </form>
+            <.event_table events={@events} />
           </section>
 
         <% :workers -> %>
@@ -313,6 +473,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <p><span class="metric-label">Tracker</span><strong><%= @workflow_form_summary.tracker %></strong></p>
                 <p><span class="metric-label">Project</span><strong><%= @workflow_form_summary.project %></strong></p>
                 <p><span class="metric-label">Repository</span><strong><%= @workflow_form_summary.repository %></strong></p>
+                <p><span class="metric-label">Hooks</span><strong><%= @workflow_form_summary.hooks %></strong></p>
                 <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
                 <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
                 <p><span class="metric-label">Prompt</span><strong><%= @workflow_form_summary.prompt_chars %> chars</strong></p>
@@ -335,6 +496,18 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <label><span class="metric-label">Checkout depth</span><input type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} /></label>
                   <label><span class="metric-label">Setup commands</span><textarea name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
                   <label><span class="metric-label">Cleanup commands</span><textarea name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
+                </section>
+
+                <section class="workflow-form-section">
+                  <h3>Lifecycle Hooks</h3>
+                  <p class="workflow-help-copy">
+                    Hooks execute shell commands in the issue workspace. Project checkout and setup run before after_create; cleared hook fields are removed from the saved workflow.
+                  </p>
+                  <label><span class="metric-label">Hook timeout ms</span><input type="number" min="1" name="workflow[hook_timeout_ms]" value={@workflow_form["hook_timeout_ms"]} /></label>
+                  <label><span class="metric-label">after_create</span><textarea name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea></label>
+                  <label><span class="metric-label">before_run</span><textarea name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea></label>
+                  <label><span class="metric-label">after_run</span><textarea name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea></label>
+                  <label><span class="metric-label">before_remove</span><textarea name="workflow[hook_before_remove]" rows="3"><%= @workflow_form["hook_before_remove"] %></textarea></label>
                 </section>
 
                 <section class="workflow-form-section">
@@ -460,7 +633,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     socket
     |> assign(:projects, persistence().list_projects())
     |> assign(:runs, persistence().list_runs(limit: 100))
-    |> assign(:events, persistence().list_events(limit: 100))
+    |> assign(:events, event_list(socket))
+    |> assign(:event_filters, event_filters(socket))
     |> assign(:workers, persistence().list_workers(limit: 100))
     |> assign(:worker_sessions, persistence().list_worker_sessions(limit: 100))
     |> assign(:tasks, persistence().list_tasks(limit: 100))
@@ -473,6 +647,71 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_setup_required, workflow_setup_required)
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
+    |> assign(:runtime_snapshot, runtime_snapshot())
+    |> assign_detail_data()
+  end
+
+  defp event_list(socket) do
+    filters = event_filters(socket)
+
+    persistence().list_events(
+      issue_identifier: blank_as_nil(filters.issue_identifier),
+      run_id: blank_as_nil(filters.run_id),
+      event_type: blank_as_nil(filters.event_type),
+      limit: filters.limit
+    )
+  end
+
+  defp event_filters(%{assigns: %{route_params: params}}) do
+    %{
+      issue_identifier: Map.get(params, "issue_identifier", ""),
+      run_id: Map.get(params, "run_id", ""),
+      event_type: Map.get(params, "event_type", ""),
+      limit: parse_limit(Map.get(params, "limit", "100"))
+    }
+  end
+
+  defp parse_limit(value) do
+    case Integer.parse(to_string(value || "")) do
+      {limit, ""} -> limit |> max(1) |> min(500)
+      _ -> 100
+    end
+  end
+
+  defp blank_as_nil(value) do
+    value = String.trim(to_string(value || ""))
+    if value == "", do: nil, else: value
+  end
+
+  defp assign_detail_data(%{assigns: %{live_action: :run_detail, route_params: %{"id" => id}}} = socket) do
+    run = persistence().get_run(id)
+
+    workflow_version =
+      case run && Map.get(run, :workflow_version_id) do
+        id when is_binary(id) -> persistence().get_workflow_version(id)
+        _ -> nil
+      end
+
+    assign(socket, :run_detail, %{
+      run: run,
+      workflow_version: workflow_version,
+      turns: if(run, do: persistence().list_agent_turns_for_run(run.id), else: []),
+      events: if(run, do: persistence().list_events(run_id: run.id, limit: 100), else: [])
+    })
+  end
+
+  defp assign_detail_data(%{assigns: %{live_action: :issue_detail, route_params: %{"identifier" => identifier}}} = socket) do
+    assign(socket, :issue_detail, %{
+      issue: persistence().get_issue_by_identifier(identifier),
+      runs: persistence().list_runs_for_issue(identifier, limit: 100),
+      events: persistence().list_events(issue_identifier: identifier, limit: 100)
+    })
+  end
+
+  defp assign_detail_data(socket) do
+    socket
+    |> assign_new(:run_detail, fn -> %{run: nil, workflow_version: nil, turns: [], events: []} end)
+    |> assign_new(:issue_detail, fn -> %{issue: nil, runs: [], events: []} end)
   end
 
   defp workflow_form(nil, {:ok, %{workflow: workflow}}) do
@@ -537,6 +776,17 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp persistence, do: PersistenceProvider.module()
 
+  defp orchestrator do
+    SymphonyElixirWeb.Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
+  end
+
+  defp runtime_snapshot do
+    case SymphonyElixir.Orchestrator.snapshot(orchestrator(), 1_000) do
+      %{polling: polling} -> %{listening?: Map.get(polling, :listening?, false)}
+      _ -> %{listening?: false}
+    end
+  end
+
   defp safe_import_workflow(project, raw, source) do
     persistence().import_workflow(project, raw, source)
   rescue
@@ -592,6 +842,47 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp fmt_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp fmt_dt(_), do: "n/a"
+
+  defp workflow_version_summary(version) do
+    inspect(
+      %{
+        id: Map.get(version, :id),
+        version: Map.get(version, :version),
+        source: Map.get(version, :source),
+        active: Map.get(version, :active),
+        inserted_at: Map.get(version, :inserted_at)
+      },
+      pretty: true
+    )
+  end
+
+  defp safe_event_payload(payload) do
+    payload
+    |> scrub_payload()
+    |> inspect(pretty: true, limit: 20)
+    |> truncate(2_000)
+  end
+
+  defp scrub_payload(%{} = payload) do
+    Map.new(payload, fn {key, value} ->
+      key_string = to_string(key)
+
+      if String.contains?(String.downcase(key_string), ["token", "secret", "authorization", "api_key"]) do
+        {key, "[REDACTED]"}
+      else
+        {key, scrub_payload(value)}
+      end
+    end)
+  end
+
+  defp scrub_payload(value) when is_list(value), do: Enum.map(value, &scrub_payload/1)
+  defp scrub_payload(value), do: value
+
+  defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit do
+    binary_part(value, 0, limit) <> "\n... truncated"
+  end
+
+  defp truncate(value, _limit), do: value
 
   defp labels_text(%{"values" => labels}) when is_list(labels), do: Enum.join(labels, ", ")
   defp labels_text(_), do: ""

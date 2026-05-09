@@ -27,6 +27,21 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :events, events))
   end
 
+  def put_runs(runs) when is_list(runs) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :runs, runs))
+  end
+
+  def put_issues(issues) when is_list(issues) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :issues, issues))
+  end
+
+  def put_agent_turns(turns) when is_list(turns) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :agent_turns, turns))
+  end
+
   def put_workflow_versions(versions, active_version \\ nil) when is_list(versions) do
     ensure_started()
 
@@ -93,9 +108,15 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, & &1.runs)
   end
 
-  def list_events(_opts \\ []) do
+  def list_events(opts \\ []) do
     ensure_started()
-    Agent.get(@name, & &1.events)
+
+    Agent.get(@name, fn state ->
+      state.events
+      |> filter_eq(:issue_identifier, Keyword.get(opts, :issue_identifier))
+      |> filter_eq(:run_id, Keyword.get(opts, :run_id))
+      |> filter_eq(:event_type, Keyword.get(opts, :event_type))
+    end)
   end
 
   def list_workers(_opts \\ []) do
@@ -151,7 +172,30 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def repo_available?, do: false
 
-  def get_run(_id), do: nil
+  def get_run(id) do
+    ensure_started()
+    Agent.get(@name, fn state -> Enum.find(state.runs, &(Map.get(&1, :id) == id)) end)
+  end
+
+  def get_workflow_version(id) do
+    ensure_started()
+    Agent.get(@name, fn state -> Enum.find(state.workflow_versions, &(Map.get(&1, :id) == id)) end)
+  end
+
+  def get_issue_by_identifier(identifier) do
+    ensure_started()
+    Agent.get(@name, fn state -> Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) end)
+  end
+
+  def list_runs_for_issue(identifier, _opts \\ []) do
+    ensure_started()
+    Agent.get(@name, fn state -> Enum.filter(state.runs, &(Map.get(&1, :issue_identifier) == identifier)) end)
+  end
+
+  def list_agent_turns_for_run(run_id) do
+    ensure_started()
+    Agent.get(@name, fn state -> Enum.filter(state.agent_turns, &(Map.get(&1, :run_id) == run_id)) end)
+  end
 
   def get_user(username) do
     ensure_started()
@@ -246,6 +290,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       worker_sessions: [],
       tasks: [],
       task_leases: [],
+      issues: [],
+      agent_turns: [],
       workflow_versions: [],
       active_workflow_version: nil,
       next_import_workflow_error: nil,
@@ -261,4 +307,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   end
 
   defp record_call(state, call), do: update_in(state.calls, &[call | &1])
+
+  defp filter_eq(values, _key, nil), do: values
+  defp filter_eq(values, _key, ""), do: values
+
+  defp filter_eq(values, key, expected) do
+    Enum.filter(values, &(Map.get(&1, key) == expected))
+  end
 end

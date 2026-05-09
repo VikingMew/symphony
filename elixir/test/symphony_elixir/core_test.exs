@@ -7,6 +7,26 @@ defmodule SymphonyElixir.CoreTest do
     def fetch_issues_by_states(_states), do: {:ok, []}
   end
 
+  defmodule NotifyingLinearClient do
+    def fetch_issue_states_by_ids(_issue_ids), do: {:ok, []}
+
+    def fetch_candidate_issues do
+      if test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid) do
+        send(test_pid, :fetch_candidate_issues_called)
+      end
+
+      {:ok, []}
+    end
+
+    def fetch_issues_by_states(_states) do
+      if test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid) do
+        send(test_pid, :fetch_terminal_issues_called)
+      end
+
+      {:ok, []}
+    end
+  end
+
   test "config defaults and validation checks" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -63,20 +83,37 @@ defmodule SymphonyElixir.CoreTest do
     assert message =~ "codex.command"
     assert message =~ "can't be blank"
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_command: "   ")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "   ",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     assert :ok = Config.validate!()
     assert Config.settings!().codex.command == "   "
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_command: "/bin/sh app-server")
-    assert :ok = Config.validate!()
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "/bin/sh app-server",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "definitely-not-valid")
-    assert :ok = Config.validate!()
-
-    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "unsafe-ish")
     assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      codex_approval_policy: "definitely-not-valid",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_thread_sandbox: "unsafe-ish",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
+    assert :ok = Config.validate!()
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       codex_turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["relative/path"]}
     )
 
@@ -260,6 +297,7 @@ defmodule SymphonyElixir.CoreTest do
 
   test "workflow supports manual profile executor" do
     write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       workflow_policy: %{states: %{"Ready to Merge" => %{profile: "merge"}}},
       profiles_policy: %{
         merge: %{
@@ -293,14 +331,130 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
+    refute Map.has_key?(hooks, "after_create")
+    refute Map.has_key?(hooks, "before_remove")
+
+    project = Map.get(config, "project", %{})
+    assert Map.get(project, "repository_url") == "https://github.com/openai/symphony"
+
+    assert Map.get(project, "setup_commands") == [
+             "if command -v mise >/dev/null 2>&1; then cd elixir && mise trust && mise exec -- mix deps.get; fi"
+           ]
+
+    assert Map.get(project, "cleanup_commands") == [
+             "cd elixir && mise exec -- mix workspace.before_remove"
+           ]
 
     assert String.trim(prompt) != ""
     assert is_binary(Config.workflow_prompt())
     assert Config.workflow_prompt() == prompt
+  end
+
+  test "workspace creation always recreates an existing local issue directory and reruns after_create" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-elixir-clean-workspace-#{System.unique_integer([:positive])}")
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      counter_file = Path.join(test_root, "counter")
+      workspace = Path.join(workspace_root, "MT-CLEAN")
+
+      File.mkdir_p!(workspace_root)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf x >> #{counter_file}"
+      )
+
+      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-CLEAN")
+      File.write!(Path.join(workspace, "stale.txt"), "stale")
+
+      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-CLEAN")
+
+      refute File.exists?(Path.join(workspace, "stale.txt"))
+      assert File.read!(counter_file) == "xx"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "project bootstrap runs before custom after_create hook" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-elixir-bootstrap-order-#{System.unique_integer([:positive])}")
+
+    try do
+      template_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-BOOT")
+
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "# cloned")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: template_repo,
+        project_setup_commands: ["printf setup > order"],
+        hook_after_create: "test -f README.md && printf hook >> order"
+      )
+
+      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-BOOT")
+
+      assert File.exists?(Path.join(workspace, "README.md"))
+      assert File.read!(Path.join(workspace, "order")) == "setuphook"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "remote workspace preparation recreates issue directory before reporting readiness" do
+    test_root =
+      Path.join(System.tmp_dir!(), "symphony-elixir-remote-clean-workspace-#{System.unique_integer([:positive])}")
+
+    previous_path = System.get_env("PATH")
+    previous_trace = System.get_env("SYMP_TEST_SSH_TRACE")
+
+    on_exit(fn ->
+      restore_env("PATH", previous_path)
+      restore_env("SYMP_TEST_SSH_TRACE", previous_trace)
+    end)
+
+    try do
+      trace_file = Path.join(test_root, "ssh.trace")
+      fake_ssh = Path.join(test_root, "ssh")
+
+      File.mkdir_p!(test_root)
+      System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
+      System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
+
+      File.write!(fake_ssh, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+      printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '/remote/workspaces/MT-REMOTE-CLEAN'
+      """)
+
+      File.chmod!(fake_ssh, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: "/remote/workspaces",
+        worker_ssh_hosts: ["worker-a"]
+      )
+
+      assert {:ok, "/remote/workspaces/MT-REMOTE-CLEAN"} =
+               Workspace.create_for_issue("MT-REMOTE-CLEAN", "worker-a")
+
+      trace = File.read!(trace_file)
+      assert trace =~ ~s(rm -rf "$workspace")
+      assert trace =~ ~s(mkdir -p "$workspace")
+      refute trace =~ "created=0"
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "linear api token resolves from LINEAR_API_KEY env var" do
@@ -313,7 +467,8 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       tracker_project_slug: "project",
-      codex_command: "/bin/sh app-server"
+      codex_command: "/bin/sh app-server",
+      project_repository_url: "git@example.com:org/repo.git"
     )
 
     assert Config.settings!().tracker.api_key == env_api_key
@@ -331,10 +486,45 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_assignee: nil,
       tracker_project_slug: "project",
-      codex_command: "/bin/sh app-server"
+      codex_command: "/bin/sh app-server",
+      project_repository_url: "git@example.com:org/repo.git"
     )
 
     assert Config.settings!().tracker.assignee == env_assignee
+  end
+
+  test "missing project repository url fails validation" do
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: nil)
+
+    assert {:error, :missing_project_repository_url} = Config.validate!()
+  end
+
+  test "missing project repository url prevents orchestrator polling" do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: nil,
+      poll_interval_ms: 5_000
+    )
+
+    Application.put_env(:symphony_elixir, :linear_client_module, NotifyingLinearClient)
+    Application.put_env(:symphony_elixir, :linear_client_test_pid, self())
+
+    orchestrator_name = Module.concat(__MODULE__, :MissingRepositoryUrlOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:linear_client_test_pid, previous_test_pid)
+
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    refute_receive :fetch_candidate_issues_called, 200
+    refute_receive :fetch_terminal_issues_called, 200
   end
 
   test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
@@ -385,7 +575,12 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "SymphonyElixir.start_link delegates to the orchestrator" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear", poll_interval_ms: 30_000)
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "linear",
+      poll_interval_ms: 30_000,
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
 
     on_exit(fn ->
@@ -615,6 +810,7 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:running, %{issue_id => running_entry})
         |> Map.put(:claimed, MapSet.new([issue_id]))
         |> Map.put(:retry_attempts, %{})
+        |> Map.put(:listening?, true)
       end)
 
       send(pid, :tick)
@@ -891,7 +1087,8 @@ defmodule SymphonyElixir.CoreTest do
       tick_timer_ref: nil,
       tick_token: stale_tick_token,
       codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
-      codex_rate_limits: nil
+      codex_rate_limits: nil,
+      listening?: true
     }
 
     assert {:reply, %{queued: true, coalesced: false}, refreshed_state} =
@@ -1429,6 +1626,227 @@ defmodule SymphonyElixir.CoreTest do
                      500
 
       assert session_id == "thread-live-turn-live"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner moves ready implementation issue to in progress after codex starts and before first turn" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-ready-transition-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(test_root)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition.trace}"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{\"id\":1,\"result\":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready\"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-ready\"}}}'
+            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            exit 0
+            ;;
+          *)
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
+
+      on_exit(fn ->
+        restore_env("SYMP_TEST_CODEX_TRACE", previous_trace)
+      end)
+
+      System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf ready > README.md",
+        codex_command: "#{codex_binary} app-server",
+        prompt: "Current status: {{ issue.state }}"
+      )
+
+      issue = %Issue{
+        id: "issue-ready-transition",
+        identifier: "MT-READY",
+        title: "Start implementation",
+        description: "Move after Codex startup",
+        state: "Ready",
+        url: "https://example.org/issues/MT-READY",
+        labels: []
+      }
+
+      test_pid = self()
+
+      transitioner = fn transition_issue, target_state ->
+        assert transition_issue.id == "issue-ready-transition"
+        assert transition_issue.state == "Ready"
+        assert target_state == "In Progress"
+        assert File.read!(trace_file) =~ "thread/start"
+        send(test_pid, {:implementation_started, target_state})
+        :ok
+      end
+
+      assert :ok =
+               AgentRunner.run(issue, nil,
+                 implementation_start_transitioner: transitioner,
+                 issue_state_fetcher: fn ["issue-ready-transition"] -> {:ok, [%{issue | state: "Done"}]} end
+               )
+
+      assert_receive {:implementation_started, "In Progress"}
+
+      trace = File.read!(trace_file)
+      assert trace =~ "Current status: In Progress"
+      refute trace =~ "Current status: Ready"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner does not move ready issue when codex startup fails" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-ready-startup-failure-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(test_root)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      printf '%s\\n' 'codex startup failed' >&2
+      exit 127
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf ready > README.md",
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-ready-startup-failure",
+        identifier: "MT-READY-FAIL",
+        title: "Startup failure",
+        description: "Do not transition",
+        state: "Ready",
+        url: "https://example.org/issues/MT-READY-FAIL",
+        labels: []
+      }
+
+      transitioner = fn _transition_issue, _target_state ->
+        flunk("Ready issue should not transition when Codex startup fails")
+      end
+
+      assert_raise RuntimeError, ~r/codex_startup_failed/, fn ->
+        AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
+      end
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner stops before first turn when ready to in progress transition fails" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-ready-transition-failure-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(test_root)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition-failure.trace}"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{\"id\":1,\"result\":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready-fail\"}}}'
+            ;;
+          *)
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
+
+      on_exit(fn ->
+        restore_env("SYMP_TEST_CODEX_TRACE", previous_trace)
+      end)
+
+      System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        hook_after_create: "printf ready > README.md",
+        codex_command: "#{codex_binary} app-server",
+        prompt: "Current status: {{ issue.state }}"
+      )
+
+      issue = %Issue{
+        id: "issue-ready-transition-failure",
+        identifier: "MT-READY-TRANSITION-FAIL",
+        title: "Transition failure",
+        description: "Do not send first turn",
+        state: "Ready",
+        url: "https://example.org/issues/MT-READY-TRANSITION-FAIL",
+        labels: []
+      }
+
+      transitioner = fn _transition_issue, "In Progress" -> {:error, :linear_state_not_found} end
+
+      assert_raise RuntimeError, ~r/implementation_start_transition_failed/, fn ->
+        AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
+      end
+
+      trace = File.read!(trace_file)
+      assert trace =~ "thread/start"
+      refute trace =~ "Current status:"
     after
       File.rm_rf(test_root)
     end

@@ -9,6 +9,7 @@ defmodule SymphonyElixirWeb.Layouts do
     {:dashboard, "Dashboard", "/"},
     {:workflows, "Workflows", "/workflows"},
     {:runs, "Runs", "/runs"},
+    {:events, "Events", "/events"},
     {:workers, "Workers", "/workers"},
     {:linear, "Linear", "/diagnostics/linear"},
     {:projects, "Projects", "/projects"},

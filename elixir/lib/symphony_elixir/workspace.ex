@@ -32,17 +32,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp ensure_workspace(workspace, nil) do
-    cond do
-      File.dir?(workspace) ->
-        {:ok, workspace, false}
-
-      File.exists?(workspace) ->
-        File.rm_rf!(workspace)
-        create_workspace(workspace)
-
-      true ->
-        create_workspace(workspace)
-    end
+    create_workspace(workspace)
   end
 
   defp ensure_workspace(workspace, worker_host) when is_binary(worker_host) do
@@ -50,18 +40,10 @@ defmodule SymphonyElixir.Workspace do
       [
         "set -eu",
         remote_shell_assign("workspace", workspace),
-        "if [ -d \"$workspace\" ]; then",
-        "  created=0",
-        "elif [ -e \"$workspace\" ]; then",
-        "  rm -rf \"$workspace\"",
-        "  mkdir -p \"$workspace\"",
-        "  created=1",
-        "else",
-        "  mkdir -p \"$workspace\"",
-        "  created=1",
-        "fi",
+        "rm -rf \"$workspace\"",
+        "mkdir -p \"$workspace\"",
         "cd \"$workspace\"",
-        "printf '%s\\t%s\\t%s\\n' '#{@remote_workspace_marker}' \"$created\" \"$(pwd -P)\""
+        "printf '%s\\t%s\\t%s\\n' '#{@remote_workspace_marker}' '1' \"$(pwd -P)\""
       ]
       |> Enum.reject(&(&1 == ""))
       |> Enum.join("\n")
@@ -208,21 +190,29 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
-    hooks = Config.settings!().hooks
-
     case created? do
       true ->
-        case hooks.after_create || Config.generated_after_create_hook() do
-          nil ->
-            :ok
-
-          command ->
-            run_hook(command, workspace, issue_context, "after_create", worker_host)
-        end
+        run_after_create_commands(workspace, issue_context, worker_host)
 
       false ->
         :ok
     end
+  end
+
+  defp run_after_create_commands(workspace, issue_context, worker_host) do
+    hooks = Config.settings!().hooks
+
+    [
+      {"project_bootstrap", Config.generated_after_create_hook()},
+      {"after_create", hooks.after_create}
+    ]
+    |> Enum.reject(fn {_hook_name, command} -> blank?(command) end)
+    |> Enum.reduce_while(:ok, fn {hook_name, command}, :ok ->
+      case run_hook(command, workspace, issue_context, hook_name, worker_host) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 
   defp maybe_run_before_remove_hook(workspace, nil) do
@@ -290,6 +280,8 @@ defmodule SymphonyElixir.Workspace do
 
   defp ignore_hook_failure(:ok), do: :ok
   defp ignore_hook_failure({:error, _reason}), do: :ok
+
+  defp blank?(value), do: String.trim(to_string(value || "")) == ""
 
   defp run_hook(command, workspace, issue_context, hook_name, nil) do
     timeout_ms = Config.settings!().hooks.timeout_ms

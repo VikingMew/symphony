@@ -73,7 +73,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
-  test "explicit after_create hook takes precedence over structured project bootstrap" do
+  test "explicit after_create hook runs after structured project bootstrap" do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
@@ -81,15 +81,26 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       )
 
     try do
+      template_repo = Path.join(workspace_root, "source")
+      File.mkdir_p!(template_repo)
+      File.write!(Path.join(template_repo, "README.md"), "structured first\n")
+      System.cmd("git", ["-C", template_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", template_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", template_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", template_repo, "add", "README.md"])
+      System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
+
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        project_repository_url: "git@example.com:org/repo.git",
-        hook_after_create: "echo explicit > marker.txt"
+        project_repository_url: template_repo,
+        project_setup_commands: ["echo setup > setup.txt"],
+        hook_after_create: "cat README.md > marker.txt"
       )
 
       assert {:ok, workspace} = Workspace.create_for_issue("S-PRECEDENCE")
-      assert File.read!(Path.join(workspace, "marker.txt")) == "explicit\n"
-      refute File.exists?(Path.join(workspace, ".git"))
+      assert File.read!(Path.join(workspace, "setup.txt")) == "setup\n"
+      assert File.read!(Path.join(workspace, "marker.txt")) == "structured first\n"
+      assert File.exists?(Path.join(workspace, ".git"))
     after
       File.rm_rf(workspace_root)
     end
@@ -111,7 +122,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Path.basename(first_workspace) == "MT_Det"
   end
 
-  test "workspace reuses existing issue directory without deleting local changes" do
+  test "workspace recreates existing issue directory and deletes local changes" do
     workspace_root =
       Path.join(
         System.tmp_dir!(),
@@ -137,11 +148,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       assert {:ok, second_workspace} = Workspace.create_for_issue("MT-REUSE")
       assert second_workspace == first_workspace
-      assert File.read!(Path.join(second_workspace, "README.md")) == "changed\n"
-      assert File.read!(Path.join(second_workspace, "local-progress.txt")) == "in progress\n"
-      assert File.read!(Path.join([second_workspace, "deps", "cache.txt"])) == "cached deps\n"
-      assert File.read!(Path.join([second_workspace, "_build", "artifact.txt"])) == "compiled artifact\n"
-      assert File.read!(Path.join([second_workspace, "tmp", "scratch.txt"])) == "remove me\n"
+      assert File.read!(Path.join(second_workspace, "README.md")) == "first\n"
+      refute File.exists?(Path.join(second_workspace, "local-progress.txt"))
+      refute File.exists?(Path.join([second_workspace, "deps", "cache.txt"]))
+      refute File.exists?(Path.join([second_workspace, "_build", "artifact.txt"]))
+      refute File.exists?(Path.join([second_workspace, "tmp", "scratch.txt"]))
     after
       File.rm_rf(workspace_root)
     end
@@ -261,6 +272,28 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       assert {:error, {:workspace_hook_failed, "after_create", 17, _output}} =
                Workspace.create_for_issue("MT-FAIL")
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace labels structured project bootstrap failures separately from after_create hooks" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-project-bootstrap-failure-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_setup_commands: ["echo setup failed && exit 17"]
+      )
+
+      assert {:error, {:workspace_hook_failed, "project_bootstrap", 17, output}} =
+               Workspace.create_for_issue("MT-PROJECT-BOOTSTRAP-FAIL")
+
+      assert output =~ "setup failed"
     after
       File.rm_rf(workspace_root)
     end
@@ -738,7 +771,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert File.read!(Path.join(workspace, "after_create.log")) == "after_create\n"
 
       assert {:ok, _workspace} = Workspace.create_for_issue("MT-HOOKS")
-      assert length(String.split(String.trim(File.read!(after_create_counter)), "\n")) == 1
+      assert length(String.split(String.trim(File.read!(after_create_counter)), "\n")) == 2
 
       assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS")
       assert File.read!(before_remove_marker) == "before_remove\n"
@@ -967,11 +1000,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert {:error, {:invalid_workflow_config, _message}} = Config.validate!()
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_approval_policy: "",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     assert :ok = Config.validate!()
     assert Config.settings!().codex.approval_policy == ""
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_thread_sandbox: "")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_thread_sandbox: "",
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     assert :ok = Config.validate!()
     assert Config.settings!().codex.thread_sandbox == ""
 
@@ -996,6 +1037,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert message =~ "project.setup_commands commands must not be blank"
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       codex_approval_policy: "future-policy",
       codex_thread_sandbox: "future-sandbox",
       codex_turn_sandbox_policy: %{
@@ -1097,7 +1139,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
 
-    write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 2)
+    write_workflow_file!(Workflow.workflow_file_path(),
+      worker_max_concurrent_agents_per_host: 2,
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     assert :ok = Config.validate!()
     assert Config.settings!().worker.max_concurrent_agents_per_host == 2
   end
