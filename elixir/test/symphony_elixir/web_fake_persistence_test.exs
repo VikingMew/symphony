@@ -31,14 +31,17 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     :ok
   end
 
-  test "projects page renders fake persistence without Repo" do
+  test "project settings page renders fake persistence without Repo" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
-    {:ok, _view, html} = live(build_conn(), "/projects")
+    {:ok, _view, html} = live(build_conn(), "/settings/projects")
 
+    assert html =~ "Projects"
     assert html =~ "Fake Project"
     assert html =~ "fake"
+    assert html =~ "git@github.com:org/repo.git"
+    assert html =~ "Linear project slug"
   end
 
   test "runs page does not render runtime listening controls" do
@@ -76,7 +79,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       id: "workflow-1",
       project_id: "fake-project-id",
       version: 7,
-      source: "web_form",
+      source: "web_workflow_settings",
       active: true,
       inserted_at: now,
       raw_workflow_md: workflow_import_raw("git@github.com:org/repo.git")
@@ -126,20 +129,29 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
-    {:ok, view, html} = live(build_conn(), "/workflows")
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
     assert html =~ "Draft Configuration"
-    assert html =~ "Project slug"
+    refute html =~ "Project slug"
+    refute html =~ ~s(name="workflow[tracker_project_slug]")
+    refute html =~ ~s(name="workflow[project_repository_url]")
+    refute html =~ ~s(name="workflow[project_default_branch]")
     assert html =~ "Lifecycle Hooks"
     assert html =~ "Hook timeout ms"
     assert html =~ ~s(phx-disable-with="Saving...")
-    refute html =~ "Raw WORKFLOW.md"
+    refute html =~ "Raw workflow source"
     refute html =~ "workflow[tracker_kind]"
     refute html =~ "workflow[tracker_endpoint]"
     refute html =~ "workflow[tracker_api_key]"
     refute html =~ "API key"
+    assert html =~ ~s(class="workflow-textbox workflow-textbox-compact")
+    assert html =~ ~s(class="workflow-textbox workflow-textbox-medium")
+    refute html =~ ~s(class="workflow-textbox workflow-textbox-prompt")
+    refute html =~ ~s(name="workflow[prompt_body]")
+    assert html =~ "Agents"
+    refute html =~ "Profile prompt template"
 
     params =
-      workflow_form_params()
+      workflow_page_form_params()
       |> Map.put("workspace_root", "/tmp/structured-workspaces")
 
     html =
@@ -149,21 +161,254 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     assert html =~ "Runtime workflow refreshed"
     assert html =~ "workflow-save-toast-success"
-    assert html =~ "Workflow saved"
+    assert html =~ "Workflow settings saved"
     assert html =~ "Version 1 is active"
 
-    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_form"} =
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
              Enum.find(FakePersistence.calls(), fn
-               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_form"} -> true
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
                _ -> false
              end)
 
     assert raw =~ "/tmp/structured-workspaces"
-    assert raw =~ "api_key"
+    assert raw =~ "git@github.com:org/repo.git"
+    assert raw =~ ~s(project_slug: "project")
+    refute raw =~ "api_key"
     assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
     assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
     assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
+  end
+
+  test "agent settings page edits profile settings through the workflow draft" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/agents")
+    assert html =~ "Agents"
+    assert html =~ "Profile Configuration"
+    assert html =~ "Base Prompt"
+    assert html =~ ~s(class="workflow-form-section agent-prompt-editor")
+    assert html =~ ~s(class="workflow-form-section agent-profiles-section")
+    assert html =~ ~s(class="workflow-profile-field-grid")
+    assert html =~ ~s(class="profile-field-group profile-field-group-prompt")
+    assert html =~ ~s(class="profile-prompt-layout")
+    assert html =~ ~s(class="agent-field agent-field-full")
+    assert html =~ ~s(class="agent-field-label")
+    assert html =~ "Identity"
+    assert html =~ "Execution"
+    assert html =~ "Prompt"
+    assert html =~ "Updates"
+    assert html =~ "Routing"
+    assert html =~ ~s(class="workflow-textbox workflow-textbox-prompt")
+    assert html =~ ~s(name="workflow[prompt_body]")
+    assert html =~ "Profile prompt template"
+    assert html =~ ~s(class="workflow-textbox workflow-textbox-profile")
+    assert html =~ "Save agent settings"
+
+    params = %{
+      "prompt_body" => "Changed shared base prompt.",
+      "profiles" => %{
+        "implementation" => %{
+          "prompt_template" => "Changed implementation profile prompt."
+        }
+      }
+    }
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
+      |> render_submit()
+
+    assert html =~ "Runtime workflow refreshed"
+    assert html =~ "Agent settings saved"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_agent_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_agent_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "Changed implementation profile prompt."
+    assert raw =~ "Changed shared base prompt."
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert loaded_workflow.prompt == "Changed shared base prompt."
+    assert get_in(loaded_workflow.config, ["profiles", "implementation", "prompt", "template"]) == "Changed implementation profile prompt."
+  end
+
+  test "settings tabs render only the active settings surface" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, projects_html} = live(build_conn(), "/settings")
+    assert projects_html =~ "Projects"
+    assert projects_html =~ "Add Project"
+    refute projects_html =~ "Draft Configuration"
+    refute projects_html =~ "Profile Configuration"
+    refute projects_html =~ "Execution mode:"
+
+    {:ok, _view, workflow_html} = live(build_conn(), "/settings/workflow")
+    assert workflow_html =~ "Draft Configuration"
+    assert workflow_html =~ "Version History"
+    refute workflow_html =~ "Add Project"
+    refute workflow_html =~ "Profile Configuration"
+    refute workflow_html =~ "Execution mode:"
+
+    {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
+    assert agents_html =~ "Profile Configuration"
+    assert agents_html =~ "Base Prompt"
+    assert agents_html =~ "Version History"
+    refute agents_html =~ "Draft Configuration"
+    refute agents_html =~ "Execution mode:"
+
+    {:ok, _view, runtime_html} = live(build_conn(), "/settings/runtime")
+    assert runtime_html =~ "Execution mode:"
+    refute runtime_html =~ "Draft Configuration"
+    refute runtime_html =~ "Profile Configuration"
+    refute runtime_html =~ "Version History"
+  end
+
+  test "project settings page creates and updates projects" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+
+    html =
+      view
+      |> form(".project-create-form",
+        project: %{
+          "name" => "Second Project",
+          "slug" => "second",
+          "linear_project_slug" => "linear-second",
+          "repository_url" => "git@github.com:org/second.git",
+          "default_branch" => "develop",
+          "enabled" => "true"
+        }
+      )
+      |> render_submit()
+
+    assert html =~ "Project settings saved"
+    assert html =~ "Second Project"
+    assert html =~ "git@github.com:org/second.git"
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:create_project, attrs} -> attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git"
+             _ -> false
+           end)
+
+    html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: %{
+          "id" => "fake-project-id",
+          "name" => "Renamed Project",
+          "slug" => "fake",
+          "linear_project_slug" => "renamed-linear",
+          "repository_url" => "git@github.com:org/renamed.git",
+          "default_branch" => "main",
+          "enabled" => "true"
+        }
+      )
+      |> render_submit()
+
+    assert html =~ "Renamed Project"
+    assert html =~ "git@github.com:org/renamed.git"
+  end
+
+  test "settings pages show separate version histories" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    now = DateTime.utc_now()
+
+    workflow_version = workflow_version("workflow-version", 3, "web_workflow_settings", workflow_import_raw("git@github.com:org/workflow.git"), now)
+    manual_version = workflow_version("manual-version", 2, "manual_import", workflow_import_raw("git@github.com:org/manual.git"), now)
+    agent_version = workflow_version("agent-version", 4, "web_agent_settings", agent_history_raw("git@github.com:org/agent.git"), now)
+
+    FakePersistence.put_workflow_versions([agent_version, workflow_version, manual_version], workflow_version)
+    start_test_endpoint()
+
+    {:ok, _view, workflow_html} = live(build_conn(), "/settings/workflow")
+    assert workflow_html =~ "web_workflow_settings"
+    refute workflow_html =~ "manual_import"
+    assert workflow_html =~ "Restore workflow settings"
+    refute workflow_html =~ "web_agent_settings"
+    refute workflow_html =~ "Restore agent settings"
+
+    {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
+    assert agents_html =~ "web_agent_settings"
+    assert agents_html =~ "Restore agent settings"
+    refute agents_html =~ "web_workflow_settings"
+    refute agents_html =~ "manual_import"
+    refute agents_html =~ "Restore workflow settings"
+  end
+
+  test "agent settings history restore only restores prompt and profiles" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    now = DateTime.utc_now()
+    current = workflow_version("current-version", 10, "web_workflow_settings", agent_history_raw("git@github.com:org/current.git"), now)
+    history = workflow_version("agent-history", 9, "web_agent_settings", agent_history_raw("git@github.com:org/agent-history.git"), now)
+
+    FakePersistence.put_workflow_versions([current, history], current)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/agents")
+    assert html =~ "Restore agent settings"
+
+    html = render_click(view, "restore_settings_version", %{"id" => "agent-history"})
+    assert html =~ "Agent settings restored"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_agent_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_agent_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "git@github.com:org/repo.git"
+    refute raw =~ "git@github.com:org/current.git"
+    refute raw =~ "git@github.com:org/agent-history.git"
+    assert raw =~ "Agent history prompt."
+    assert raw =~ "History implementation prompt."
+  end
+
+  test "workflow settings history restore keeps current prompt and profiles" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    now = DateTime.utc_now()
+    current = workflow_version("current-version", 10, "web_agent_settings", agent_history_raw("git@github.com:org/current.git"), now)
+    history = workflow_version("workflow-history", 9, "web_workflow_settings", workflow_import_raw("git@github.com:org/workflow-history.git"), now)
+
+    FakePersistence.put_workflow_versions([current, history], current)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    assert html =~ "Restore workflow settings"
+
+    html = render_click(view, "restore_settings_version", %{"id" => "workflow-history"})
+    assert html =~ "Workflow settings restored"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "git@github.com:org/repo.git"
+    refute raw =~ "git@github.com:org/workflow-history.git"
+    assert raw =~ "Agent history prompt."
+    assert raw =~ "History implementation prompt."
+    refute raw =~ "Imported workflow prompt."
+    refute raw =~ "Implement the task."
+  end
+
+  test "old workflow and agent settings routes are removed" do
+    start_test_endpoint()
+
+    assert build_conn() |> get("/workflows") |> response(404) =~ "Route not found"
+    assert build_conn() |> get("/agent-settings") |> response(404) =~ "Route not found"
+    assert build_conn() |> get("/projects") |> response(404) =~ "Route not found"
   end
 
   test "workflow page uses an explicit add button for allowed transitions" do
@@ -171,7 +416,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     write_workflow_file!(Workflow.workflow_file_path(), workflow_policy: workflow_policy_without_transitions())
     start_test_endpoint()
 
-    {:ok, view, html} = live(build_conn(), "/workflows")
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
 
     assert html =~ ~s(aria-label="Add transition")
     refute html =~ ~s(name="workflow[allowed_transitions][0][from]")
@@ -300,37 +545,14 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              SymphonyElixir.WorkflowForm.to_raw(draft)
   end
 
-  test "workflow form saves legacy tracker drafts as linear" do
-    draft =
-      SymphonyElixir.WorkflowForm.from_loaded(%{
-        config: %{
-          "tracker" => %{
-            "kind" => "legacy-local",
-            "project_slug" => "legacy",
-            "active_states" => ["Todo"],
-            "terminal_states" => ["Done"]
-          },
-          "polling" => %{"interval_ms" => 30_000}
-        },
-        prompt: "Legacy prompt"
-      })
-
-    assert SymphonyElixir.WorkflowForm.summary(draft).tracker == "linear"
-    assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(draft)
-    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
-    assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
-    assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
-    assert get_in(loaded_workflow.config, ["tracker", "api_key"]) == "$LINEAR_API_KEY"
-  end
-
   test "workflow page rejects invalid structured draft before import" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
-    {:ok, view, _html} = live(build_conn(), "/workflows")
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
 
     params =
-      workflow_form_params()
+      workflow_page_form_params()
       |> Map.put("polling_interval_ms", "bad")
 
     html =
@@ -354,11 +576,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     start_test_endpoint()
     FakePersistence.fail_next_import_workflow!(:database_unavailable)
 
-    {:ok, view, _html} = live(build_conn(), "/workflows")
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
 
     html =
       view
-      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_form_params())
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
       |> render_submit()
 
     assert html =~ "workflow-save-toast-error"
@@ -367,57 +589,19 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute html =~ "workflow-save-toast-success"
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_form"} -> true
+             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
              _ -> false
            end)
   end
 
-  test "workflow page imports workflow file into structured draft without saving" do
-    refute Process.whereis(SymphonyElixir.Repo)
-    start_test_endpoint()
-
-    {:ok, view, _html} = live(build_conn(), "/workflows")
-    raw = workflow_import_raw("git@github.com:org/imported.git")
-
-    upload =
-      file_input(view, ".workflow-import-form", :workflow_import, [
-        %{
-          last_modified: 1_700_000_000_000,
-          name: "WORKFLOW.md",
-          content: raw,
-          size: byte_size(raw),
-          type: "text/markdown"
-        }
-      ])
-
-    render_upload(upload, "WORKFLOW.md")
-
-    html =
-      view
-      |> form(".workflow-import-form", %{})
-      |> render_submit()
-
-    assert html =~ "git@github.com:org/imported.git"
-    assert html =~ "Profiles"
-    assert html =~ "implementation"
-    assert html =~ "Workflow Phases / State Routing"
-    assert html =~ "Ready"
-    refute html =~ "$LINEAR_API_KEY"
-
-    refute Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, _project, _raw, _source} -> true
-             _ -> false
-           end)
-  end
-
-  test "workflow page refuses to activate an invalid historical workflow version" do
+  test "workflow page refuses to restore an invalid historical workflow version" do
     refute Process.whereis(SymphonyElixir.Repo)
 
     invalid = %{
       id: "invalid-version",
       project_id: "fake-project-id",
       version: 2,
-      source: "web",
+      source: "web_workflow_settings",
       active: false,
       inserted_at: DateTime.utc_now(),
       raw_workflow_md: "---\nworkflow:\n  allowed_transitions:\n    - {from: Ready, to: Done, actor: robot}\n---\nPrompt\n"
@@ -426,14 +610,14 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     FakePersistence.put_workflow_versions([invalid])
     start_test_endpoint()
 
-    {:ok, view, _html} = live(build_conn(), "/workflows")
-    html = render_click(view, "activate_workflow", %{"id" => "invalid-version"})
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+    html = render_click(view, "restore_settings_version", %{"id" => "invalid-version"})
 
     assert html =~ "Validation failed"
     assert html =~ "allowed_transitions.actor"
 
     refute Enum.any?(FakePersistence.calls(), fn
-             {:activate_workflow_version, ^invalid} -> true
+             {:import_workflow, %{id: "fake-project-id"}, _raw, _source} -> true
              _ -> false
            end)
   end
@@ -534,6 +718,26 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     }
   end
 
+  defp workflow_page_form_params do
+    workflow_form_params()
+    |> Map.delete("prompt_body")
+    |> Map.delete("tracker_project_slug")
+    |> Map.delete("project_repository_url")
+    |> Map.delete("project_default_branch")
+  end
+
+  defp workflow_version(id, version, source, raw, inserted_at) do
+    %{
+      id: id,
+      project_id: "fake-project-id",
+      version: version,
+      source: source,
+      active: false,
+      inserted_at: inserted_at,
+      raw_workflow_md: raw
+    }
+  end
+
   defp workflow_policy_without_transitions do
     %{
       "states" => %{
@@ -551,7 +755,6 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     tracker:
       kind: linear
       endpoint: "https://api.linear.app/graphql"
-      api_key: "$LINEAR_API_KEY"
       project_slug: "project"
       active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
@@ -613,6 +816,13 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     Imported workflow prompt.
     """
+  end
+
+  defp agent_history_raw(repository_url) do
+    repository_url
+    |> workflow_import_raw()
+    |> String.replace("Imported workflow prompt.", "Agent history prompt.")
+    |> String.replace("Implement the task.", "History implementation prompt.")
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

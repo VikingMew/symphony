@@ -59,7 +59,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def default_project do
     ensure_started()
-    {:ok, %{id: "fake-project-id", name: "Fake Project", slug: "fake"}}
+    Agent.get(@name, fn state -> {:ok, hd(state.projects)} end)
   end
 
   def import_workflow(project, raw_workflow_md, source) do
@@ -101,6 +101,36 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def list_projects do
     ensure_started()
     Agent.get(@name, & &1.projects)
+  end
+
+  def create_project(attrs) do
+    ensure_started()
+
+    Agent.get_and_update(@name, fn state ->
+      project =
+        attrs
+        |> atomize_project_attrs()
+        |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
+
+      {{:ok, project}, state |> record_call({:create_project, attrs}) |> Map.update!(:projects, &(&1 ++ [project]))}
+    end)
+  end
+
+  def update_project(id, attrs) do
+    ensure_started()
+
+    Agent.get_and_update(@name, fn state ->
+      case Enum.find(state.projects, &(Map.get(&1, :id) == id)) do
+        nil ->
+          {{:error, :not_found}, state |> record_call({:update_project, id, attrs})}
+
+        project ->
+          updated = Map.merge(project, atomize_project_attrs(attrs))
+          projects = replace_project(state.projects, id, updated)
+
+          {{:ok, updated}, state |> record_call({:update_project, id, attrs}) |> Map.put(:projects, projects)}
+      end
+    end)
   end
 
   def list_runs(_opts \\ []) do
@@ -227,13 +257,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     |> Map.put(:project_id, version.project_id)
   end
 
-  def ensure_workflow_seeded_from_file(path) do
-    with {:ok, project} <- default_project(),
-         {:ok, raw} <- File.read(path) do
-      import_workflow(project, raw, "file")
-    end
-  end
-
   def worker_heartbeat_interval_seconds, do: 10
 
   def worker_lease_duration_seconds, do: 60
@@ -300,7 +323,18 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp initial_state do
     %{
       calls: [],
-      projects: [%{id: "fake-project-id", name: "Fake Project", slug: "fake", enabled: true}],
+      projects: [
+        %{
+          id: "fake-project-id",
+          name: "Fake Project",
+          slug: "fake",
+          linear_project_slug: "project",
+          repository_url: "git@github.com:org/repo.git",
+          default_branch: "main",
+          description: nil,
+          enabled: true
+        }
+      ],
       runs: [],
       events: [],
       workers: [],
@@ -324,6 +358,25 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   end
 
   defp record_call(state, call), do: update_in(state.calls, &[call | &1])
+
+  defp replace_project(projects, id, updated) do
+    Enum.map(projects, fn
+      %{id: ^id} -> updated
+      other -> other
+    end)
+  end
+
+  defp atomize_project_attrs(attrs) do
+    %{
+      name: Map.get(attrs, :name) || Map.get(attrs, "name"),
+      slug: Map.get(attrs, :slug) || Map.get(attrs, "slug"),
+      linear_project_slug: Map.get(attrs, :linear_project_slug) || Map.get(attrs, "linear_project_slug"),
+      repository_url: Map.get(attrs, :repository_url) || Map.get(attrs, "repository_url"),
+      default_branch: Map.get(attrs, :default_branch) || Map.get(attrs, "default_branch") || "main",
+      description: Map.get(attrs, :description) || Map.get(attrs, "description"),
+      enabled: Map.get(attrs, :enabled, Map.get(attrs, "enabled", true))
+    }
+  end
 
   defp filter_eq(values, _key, nil), do: values
   defp filter_eq(values, _key, ""), do: values

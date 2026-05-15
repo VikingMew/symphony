@@ -7,6 +7,9 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
 
+  @workflow_settings_source "web_workflow_settings"
+  @agent_settings_source "web_agent_settings"
+
   attr(:events, :list, required: true)
 
   @spec event_table(map()) :: Phoenix.LiveView.Rendered.t()
@@ -30,6 +33,32 @@ defmodule SymphonyElixirWeb.AdminLive do
     """
   end
 
+  attr(:active, :atom, required: true)
+
+  @spec settings_tabs(map()) :: Phoenix.LiveView.Rendered.t()
+  def settings_tabs(assigns) do
+    assigns =
+      assign(assigns, :tabs, [
+        {:projects, "Projects", "/settings/projects"},
+        {:workflow, "Workflow", "/settings/workflow"},
+        {:agents, "Agents", "/settings/agents"},
+        {:runtime, "Runtime", "/settings/runtime"}
+      ])
+
+    ~H"""
+    <nav class="settings-tabs" aria-label="Settings sections">
+      <a
+        :for={{key, label, path} <- @tabs}
+        class="settings-tab-link"
+        href={path}
+        aria-current={if key == @active, do: "page"}
+      >
+        {label}
+      </a>
+    </nav>
+    """
+  end
+
   @impl true
   def mount(params, _session, socket) do
     {:ok,
@@ -40,7 +69,6 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_validation_error, nil)
      |> assign(:workflow_form_valid?, false)
      |> assign(:workflow_form_summary, %{})
-     |> allow_upload(:workflow_import, accept: ~w(.md .markdown), max_entries: 1)
      |> refresh()}
   end
 
@@ -57,19 +85,20 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("save_workflow_form", %{"workflow" => params}, socket) do
-    draft = workflow_draft(socket, params)
+    draft = workflow_draft(socket, params) |> apply_project_settings(socket.assigns.default_project)
+    section = settings_tab(socket.assigns.live_action)
 
     socket =
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
            {:ok, _validation} <- WorkflowValidator.validate_raw(raw),
            {:ok, project} <- persistence().default_project(),
-           {:ok, version} <- safe_import_workflow(project, raw, "web_form") do
+           {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
 
         socket
-        |> put_flash(:info, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-        |> assign_save_notice(:success, "Workflow saved", "Version #{version.version} is active. Runtime workflow refreshed.")
-        |> assign(:workflow_diagnostics_notice, "Workflow saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> put_flash(:info, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign_save_notice(:success, "#{settings_section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
+        |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign(:workflow_validation_error, nil)
         |> refresh()
       else
@@ -102,6 +131,86 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("save_project_settings", %{"project" => params}, socket) do
+    id = blank_as_nil(Map.get(params, "id"))
+    attrs = project_attrs(params)
+
+    result =
+      case id do
+        nil -> persistence().create_project(attrs)
+        id -> persistence().update_project(id, attrs)
+      end
+
+    socket =
+      case result do
+        {:ok, project} ->
+          socket
+          |> put_flash(:info, "Project settings saved.")
+          |> assign_save_notice(:success, "Project settings saved", "#{project.name} is available in Settings.")
+          |> refresh()
+
+        {:error, reason} ->
+          message = changeset_or_reason(reason)
+
+          socket
+          |> put_flash(:error, "Project settings rejected: #{message}")
+          |> assign_save_notice(:error, "Project settings failed", message)
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("restore_settings_version", %{"id" => id}, socket) do
+    section = settings_tab(socket.assigns.live_action)
+    version = Enum.find(section_versions(socket.assigns.workflow_versions, section), &(&1.id == id))
+
+    socket =
+      with %{} = version <- version,
+           raw when is_binary(raw) <- persistence().export_workflow(version),
+           {:ok, history_draft} <- WorkflowForm.from_raw(raw),
+           draft <- restore_settings_section(section, socket.assigns.workflow_form, history_draft),
+           draft <- apply_project_settings(draft, socket.assigns.default_project),
+           {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
+           {:ok, _validation} <- WorkflowValidator.validate_raw(restored_raw),
+           {:ok, project} <- persistence().default_project(),
+           {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
+        _ = WorkflowStore.force_reload()
+
+        socket
+        |> put_flash(:info, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign_save_notice(:success, "#{settings_section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
+        |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign(:workflow_validation_error, nil)
+        |> refresh()
+      else
+        nil ->
+          put_flash(socket, :error, "Settings version not found")
+
+        {:error, {:workflow_validation_failed, message}} ->
+          socket
+          |> put_flash(:error, "Settings restore rejected: #{message}")
+          |> assign_save_notice(:error, "Settings restore failed", message)
+          |> assign(:workflow_validation_error, message)
+
+        {:error, message} when is_binary(message) ->
+          socket
+          |> put_flash(:error, "Settings restore rejected: #{message}")
+          |> assign_save_notice(:error, "Settings restore failed", message)
+          |> assign(:workflow_validation_error, message)
+
+        {:error, reason} ->
+          message = inspect(reason)
+
+          socket
+          |> put_flash(:error, "Settings restore rejected: #{message}")
+          |> assign_save_notice(:error, "Settings restore failed", message)
+      end
+
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_event("add_workflow_transition", _params, socket) do
     draft =
       socket.assigns
@@ -113,78 +222,6 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_form, draft)
      |> assign_workflow_validation(draft)}
-  end
-
-  @impl true
-  def handle_event("import_workflow_file", _params, socket) do
-    imported =
-      consume_uploaded_entries(socket, :workflow_import, fn %{path: path}, _entry ->
-        result =
-          case File.read(path) do
-            {:ok, raw} -> WorkflowForm.from_raw(raw)
-            {:error, reason} -> {:error, reason}
-          end
-
-        {:ok, result}
-      end)
-
-    socket =
-      case imported do
-        [{:ok, draft} | _] ->
-          socket
-          |> put_flash(:info, "Workflow import loaded into the draft form. Review and save it to create a version.")
-          |> assign(:workflow_save_notice, nil)
-          |> assign(:workflow_form, draft)
-          |> assign_workflow_validation(draft)
-
-        [] ->
-          socket
-          |> assign(:workflow_save_notice, nil)
-          |> put_flash(:error, "Choose a WORKFLOW.md file to import.")
-
-        [{:error, reason} | _] ->
-          socket
-          |> assign(:workflow_save_notice, nil)
-          |> put_flash(:error, "Workflow import failed: #{inspect(reason)}")
-      end
-
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("activate_workflow", %{"id" => id}, socket) do
-    version =
-      socket.assigns.workflow_versions
-      |> Enum.find(&(&1.id == id))
-
-    socket =
-      with %{} = version <- version,
-           {:ok, _validation} <-
-             WorkflowValidator.validate_version(version, fn version ->
-               persistence().export_workflow(version)
-             end),
-           {:ok, _version} <- persistence().activate_workflow_version(version) do
-        _ = WorkflowStore.force_reload()
-
-        socket
-        |> put_flash(:info, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
-        |> assign(:workflow_diagnostics_notice, "Workflow activated. Runtime workflow refreshed. Re-run Linear diagnostics.")
-        |> assign(:workflow_validation_error, nil)
-        |> refresh()
-      else
-        {:error, {:workflow_validation_failed, message}} ->
-          socket
-          |> put_flash(:error, "Workflow activation rejected: #{message}")
-          |> assign(:workflow_validation_error, message)
-
-        nil ->
-          put_flash(socket, :error, "Workflow version not found")
-
-        _ ->
-          put_flash(socket, :error, "Workflow version not found")
-      end
-
-    {:noreply, socket}
   end
 
   @impl true
@@ -246,28 +283,9 @@ defmodule SymphonyElixirWeb.AdminLive do
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
-      <SymphonyElixirWeb.Layouts.app_nav current={@live_action} />
+      <SymphonyElixirWeb.Layouts.app_nav current={nav_current(@live_action)} />
 
       <%= case @live_action do %>
-        <% :projects -> %>
-          <section class="section-card">
-            <h1 class="section-title">Projects</h1>
-            <%= if @projects == [] do %>
-              <p class="empty-state">No projects have been persisted yet.</p>
-            <% else %>
-              <table class="data-table">
-                <thead><tr><th>Name</th><th>Slug</th><th>Enabled</th></tr></thead>
-                <tbody>
-                  <tr :for={project <- @projects}>
-                    <td><%= project.name %></td>
-                    <td class="mono"><%= project.slug %></td>
-                    <td><%= project.enabled %></td>
-                  </tr>
-                </tbody>
-              </table>
-            <% end %>
-          </section>
-
         <% :runs -> %>
           <section class="section-card">
             <h1 class="section-title">Runs</h1>
@@ -427,9 +445,78 @@ defmodule SymphonyElixirWeb.AdminLive do
             <% end %>
           </section>
 
-        <% :workflows -> %>
+        <% action when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime] -> %>
+          <section class="section-card settings-header-card">
+            <h1 class="section-title">Settings</h1>
+            <p class="metric-label">Configure workflow routing, agent profiles, and runtime settings.</p>
+            <.settings_tabs active={settings_tab(action)} />
+          </section>
+
+          <%= case settings_tab(action) do %>
+            <% :projects -> %>
+          <section class="section-card settings-content-card">
+            <h2 class="section-title">Projects</h2>
+            <p class="metric-label">Each project owns its Linear project slug, repository URL, and default branch. Workflow and agent policy remain shared.</p>
+
+            <%= if @workflow_save_notice do %>
+              <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
+                <strong><%= @workflow_save_notice.title %></strong>
+                <span><%= @workflow_save_notice.message %></span>
+              </aside>
+            <% end %>
+
+            <div class="workflow-profile-grid">
+              <article :for={project <- @projects} class="workflow-profile-panel">
+                <header class="workflow-profile-header">
+                  <div>
+                    <h4><%= project.name %></h4>
+                    <p class="metric-label mono"><%= project.slug %></p>
+                  </div>
+                  <span class={if project.enabled, do: "status-badge status-info", else: "status-badge"}><%= if project.enabled, do: "enabled", else: "disabled" %></span>
+                </header>
+
+                <form class="workflow-form settings-editor-form project-edit-form" data-project-id={project.id} phx-submit="save_project_settings">
+                  <input type="hidden" name="project[id]" value={project.id} />
+                  <div class="workflow-profile-field-grid">
+                    <label class="settings-field"><span class="metric-label">Name</span><input name="project[name]" value={project.name} /></label>
+                    <label class="settings-field"><span class="metric-label">Internal slug</span><input name="project[slug]" value={project.slug} /></label>
+                    <label class="settings-field"><span class="metric-label">Linear project slug</span><input name="project[linear_project_slug]" value={project_value(project, :linear_project_slug)} /></label>
+                    <label class="settings-field"><span class="metric-label">Repository URL</span><input name="project[repository_url]" value={project_value(project, :repository_url)} /></label>
+                    <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value={project_value(project, :default_branch) || "main"} /></label>
+                    <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" value={project_value(project, :description)} /></label>
+                    <div class="workflow-checkbox-row">
+                      <input type="hidden" name="project[enabled]" value="false" />
+                      <label><input type="checkbox" name="project[enabled]" value="true" checked={project.enabled} /> Enabled</label>
+                    </div>
+                  </div>
+                  <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save project</button>
+                </form>
+              </article>
+            </div>
+
+            <section class="workflow-form-section">
+              <h3>Add Project</h3>
+              <form class="workflow-form settings-editor-form project-create-form" phx-submit="save_project_settings">
+                <div class="workflow-profile-field-grid">
+                  <label class="settings-field"><span class="metric-label">Name</span><input name="project[name]" /></label>
+                  <label class="settings-field"><span class="metric-label">Internal slug</span><input name="project[slug]" /></label>
+                  <label class="settings-field"><span class="metric-label">Linear project slug</span><input name="project[linear_project_slug]" /></label>
+                  <label class="settings-field"><span class="metric-label">Repository URL</span><input name="project[repository_url]" /></label>
+                  <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value="main" /></label>
+                  <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" /></label>
+                  <div class="workflow-checkbox-row">
+                    <input type="hidden" name="project[enabled]" value="false" />
+                    <label><input type="checkbox" name="project[enabled]" value="true" checked /> Enabled</label>
+                  </div>
+                </div>
+                <button class="subtle-button" type="submit" phx-disable-with="Saving...">Add project</button>
+              </form>
+            </section>
+          </section>
+
+            <% :workflow -> %>
           <section class="section-card">
-            <h1 class="section-title">Workflows</h1>
+            <h2 class="section-title">Workflow</h2>
             <p class="metric-label">
               Runtime source:
               <span class="status-badge status-info"><%= @runtime_workflow_source.type %></span>
@@ -439,7 +526,7 @@ defmodule SymphonyElixirWeb.AdminLive do
               <p class="empty-state">A database workflow is active, but runtime is currently using a different source.</p>
             <% end %>
             <%= if @workflow_setup_required do %>
-              <p class="empty-state">No active workflow is configured yet. Fill the structured draft below or import a WORKFLOW.md package.</p>
+              <p class="empty-state">No active workflow is configured yet. Fill the structured draft below.</p>
             <% end %>
             <%= if @workflow_diagnostics_notice do %>
               <p class="empty-state">
@@ -457,12 +544,6 @@ defmodule SymphonyElixirWeb.AdminLive do
               </aside>
             <% end %>
 
-            <form class="workflow-import-form" phx-submit="import_workflow_file">
-              <label class="metric-label">Import WORKFLOW.md package</label>
-              <.live_file_input upload={@uploads.workflow_import} />
-              <button class="subtle-button" type="submit">Load import into draft</button>
-            </form>
-
             <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form">
               <div class="workflow-form-header">
                 <div>
@@ -479,26 +560,23 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <p><span class="metric-label">Hooks</span><strong><%= @workflow_form_summary.hooks %></strong></p>
                 <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
                 <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
-                <p><span class="metric-label">Prompt</span><strong><%= @workflow_form_summary.prompt_chars %> chars</strong></p>
               </div>
 
               <div class="workflow-form-grid">
                 <section class="workflow-form-section">
                   <h3>Tracker</h3>
-                  <p class="metric-label">Linear tracker is managed by runtime configuration. Credentials are not shown here.</p>
-                  <label><span class="metric-label">Project slug</span><input name="workflow[tracker_project_slug]" value={@workflow_form["tracker_project_slug"]} /></label>
+                  <p class="metric-label">Linear tracker is managed by shared runtime configuration. Project-specific Linear slugs are configured in Settings / Projects.</p>
                   <label><span class="metric-label">Assignee</span><input name="workflow[tracker_assignee]" value={@workflow_form["tracker_assignee"]} /></label>
-                  <label><span class="metric-label">Active states</span><textarea name="workflow[active_states]" rows="5"><%= @workflow_form["active_states"] %></textarea></label>
-                  <label><span class="metric-label">Terminal states</span><textarea name="workflow[terminal_states]" rows="4"><%= @workflow_form["terminal_states"] %></textarea></label>
+                  <label><span class="metric-label">Active states</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[active_states]" rows="5"><%= @workflow_form["active_states"] %></textarea></label>
+                  <label><span class="metric-label">Terminal states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[terminal_states]" rows="4"><%= @workflow_form["terminal_states"] %></textarea></label>
                 </section>
 
                 <section class="workflow-form-section">
-                  <h3>Project / Bootstrap</h3>
-                  <label><span class="metric-label">Repository URL</span><input name="workflow[project_repository_url]" value={@workflow_form["project_repository_url"]} /></label>
-                  <label><span class="metric-label">Default branch</span><input name="workflow[project_default_branch]" value={@workflow_form["project_default_branch"]} /></label>
+                  <h3>Bootstrap</h3>
+                  <p class="metric-label">Repository URL and default branch are configured per project in Settings / Projects.</p>
                   <label><span class="metric-label">Checkout depth</span><input type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} /></label>
-                  <label><span class="metric-label">Setup commands</span><textarea name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
-                  <label><span class="metric-label">Cleanup commands</span><textarea name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
+                  <label><span class="metric-label">Setup commands</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
+                  <label><span class="metric-label">Cleanup commands</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
                 </section>
 
                 <section class="workflow-form-section">
@@ -507,10 +585,10 @@ defmodule SymphonyElixirWeb.AdminLive do
                     Hooks execute shell commands in the issue workspace. Project checkout and setup run before after_create; cleared hook fields are removed from the saved workflow.
                   </p>
                   <label><span class="metric-label">Hook timeout ms</span><input type="number" min="1" name="workflow[hook_timeout_ms]" value={@workflow_form["hook_timeout_ms"]} /></label>
-                  <label><span class="metric-label">after_create</span><textarea name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea></label>
-                  <label><span class="metric-label">before_run</span><textarea name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea></label>
-                  <label><span class="metric-label">after_run</span><textarea name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea></label>
-                  <label><span class="metric-label">before_remove</span><textarea name="workflow[hook_before_remove]" rows="3"><%= @workflow_form["hook_before_remove"] %></textarea></label>
+                  <label><span class="metric-label">after_create</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea></label>
+                  <label><span class="metric-label">before_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea></label>
+                  <label><span class="metric-label">after_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea></label>
+                  <label><span class="metric-label">before_remove</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_remove]" rows="3"><%= @workflow_form["hook_before_remove"] %></textarea></label>
                 </section>
 
                 <section class="workflow-form-section">
@@ -529,46 +607,6 @@ defmodule SymphonyElixirWeb.AdminLive do
               </div>
 
               <section class="workflow-form-section">
-                <h3>Profiles</h3>
-                <p class="workflow-help-copy">
-                  Base prompt is the shared task template. A profile prompt is stage-specific: extend prepends it to the base prompt, replace uses it instead of the base prompt, and state routing decides which profile applies.
-                </p>
-                <div class="workflow-profile-grid">
-                  <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class="workflow-profile-panel">
-                    <h4><%= profile_id %></h4>
-                    <label><span class="metric-label">Name</span><input name={"workflow[profiles][#{profile_id}][name]"} value={profile["name"]} /></label>
-                    <label>
-                      <span class="metric-label">Executor</span>
-                      <select name={"workflow[profiles][#{profile_id}][executor_type]"}>
-                        <option value="codex_agent" selected={profile["executor_type"] == "codex_agent"}>codex_agent</option>
-                        <option value="backend_action" selected={profile["executor_type"] == "backend_action"}>backend_action</option>
-                        <option value="manual" selected={profile["executor_type"] == "manual"}>manual</option>
-                        <option value="external_worker" selected={profile["executor_type"] == "external_worker"}>external_worker</option>
-                      </select>
-                    </label>
-                    <label>
-                      <span class="metric-label">Prompt mode</span>
-                      <select name={"workflow[profiles][#{profile_id}][prompt_mode]"}>
-                        <option value="extend" selected={profile["prompt_mode"] == "extend"}>extend</option>
-                        <option value="replace" selected={profile["prompt_mode"] == "replace"}>replace</option>
-                        <option value="disabled" selected={profile["prompt_mode"] == "disabled"}>disabled</option>
-                      </select>
-                    </label>
-                    <label><span class="metric-label">Profile prompt template</span><textarea name={"workflow[profiles][#{profile_id}][prompt_template]"} rows="5"><%= profile["prompt_template"] %></textarea></label>
-                    <div class="workflow-checkbox-row">
-                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_description]"} value="false" />
-                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_description]"} value="true" checked={profile["allow_description"] == "true"} /> Description</label>
-                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="false" />
-                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="true" checked={profile["allow_comment"] == "true"} /> Comment</label>
-                      <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_result]"} value="false" />
-                      <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_result]"} value="true" checked={profile["allow_result"] == "true"} /> Result</label>
-                    </div>
-                    <label><span class="metric-label">Allowed target states</span><textarea name={"workflow[profiles][#{profile_id}][target_states]"} rows="4"><%= profile["target_states"] %></textarea></label>
-                  </article>
-                </div>
-              </section>
-
-              <section class="workflow-form-section">
                 <h3>Workflow Phases / State Routing</h3>
                 <div class="workflow-routing-grid">
                   <label :for={{state, attrs} <- workflow_state_entries(@workflow_form)}>
@@ -579,7 +617,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                     </select>
                   </label>
                 </div>
-                <label><span class="metric-label">Human review states</span><textarea name="workflow[human_review_states]" rows="4"><%= @workflow_form["human_review_states"] %></textarea></label>
+                <label><span class="metric-label">Human review states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[human_review_states]" rows="4"><%= @workflow_form["human_review_states"] %></textarea></label>
                 <div>
                   <div class="workflow-subsection-heading">
                     <span class="metric-label">Allowed transitions</span>
@@ -613,30 +651,23 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </div>
               </section>
 
-              <section class="workflow-form-section workflow-prompt-section">
-                <h3>Prompt</h3>
-                <p class="workflow-help-copy">
-                  This base prompt is rendered for all first-turn agent runs unless the selected profile uses replace mode.
-                </p>
-                <label><span class="metric-label">Base prompt</span><textarea name="workflow[prompt_body]" rows="12"><%= @workflow_form["prompt_body"] %></textarea></label>
-              </section>
             </form>
           </section>
           <section class="section-card">
             <h2 class="section-title">Version History</h2>
-            <%= if @workflow_versions == [] do %>
+            <%= if section_versions(@workflow_versions, :workflow) == [] do %>
               <p class="empty-state">No workflow versions yet.</p>
             <% else %>
               <table class="data-table">
                 <thead><tr><th>Version</th><th>Source</th><th>Active</th><th>Created</th><th></th></tr></thead>
                 <tbody>
-                  <tr :for={version <- @workflow_versions}>
+                  <tr :for={version <- section_versions(@workflow_versions, :workflow)}>
                     <td><%= version.version %></td>
                     <td><%= version.source %></td>
                     <td><%= version.active %></td>
                     <td class="mono"><%= fmt_dt(version.inserted_at) %></td>
                     <td>
-                      <button :if={!version.active} class="subtle-button" phx-click="activate_workflow" phx-value-id={version.id}>Activate</button>
+                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id}>Restore workflow settings</button>
                     </td>
                   </tr>
                 </tbody>
@@ -644,12 +675,167 @@ defmodule SymphonyElixirWeb.AdminLive do
             <% end %>
           </section>
 
-        <% :settings -> %>
+            <% :agents -> %>
+          <section class="section-card settings-content-card">
+            <h2 class="section-title">Agents</h2>
+            <p class="metric-label">
+              Runtime source:
+              <span class="status-badge status-info"><%= @runtime_workflow_source.type %></span>
+              <span class="muted mono"><%= @runtime_workflow_source.detail %></span>
+            </p>
+            <%= if @workflow_validation_error do %>
+              <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
+            <% end %>
+            <%= if @workflow_save_notice do %>
+              <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
+                <strong><%= @workflow_save_notice.title %></strong>
+                <span><%= @workflow_save_notice.message %></span>
+              </aside>
+            <% end %>
+
+            <form class="workflow-form settings-editor-form agent-settings-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form">
+              <div class="workflow-form-header settings-action-row">
+                <div>
+                  <h2 class="section-title">Profile Configuration</h2>
+                  <p class="metric-label">Edit agent execution profiles, prompt composition, update permissions, and target states.</p>
+                </div>
+                <button class="subtle-button" type="submit" disabled={!@workflow_form_valid?} phx-disable-with="Saving...">Save agent settings</button>
+              </div>
+
+              <div class="workflow-summary-grid">
+                <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
+                <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
+                <p><span class="metric-label">Prompt</span><strong><%= @workflow_form_summary.prompt_chars %> chars</strong></p>
+              </div>
+
+              <section class="workflow-form-section agent-prompt-editor">
+                <div class="agent-section-heading">
+                  <div>
+                    <h3>Base Prompt</h3>
+                    <p class="workflow-help-copy">Shared task template used by profile prompts unless a profile replaces it.</p>
+                  </div>
+                  <span class="status-badge status-info">shared</span>
+                </div>
+                <div class="agent-field agent-field-full">
+                  <label class="agent-field-label" for="workflow-prompt-body">Base prompt</label>
+                  <textarea id="workflow-prompt-body" class="workflow-textbox workflow-textbox-prompt" name="workflow[prompt_body]" rows="12"><%= @workflow_form["prompt_body"] %></textarea>
+                </div>
+              </section>
+
+              <section class="workflow-form-section agent-profiles-section">
+                <div class="agent-section-heading">
+                  <div>
+                    <h3>Profiles</h3>
+                    <p class="workflow-help-copy">Each profile defines one stage-specific agent policy.</p>
+                  </div>
+                </div>
+                <div class="workflow-profile-grid">
+                  <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class="workflow-profile-panel">
+                    <header class="workflow-profile-header">
+                      <div>
+                        <h4><%= profile["name"] || profile_id %></h4>
+                        <p class="metric-label mono"><%= profile_id %></p>
+                      </div>
+                      <div class="workflow-profile-badges">
+                        <span class="status-badge status-info"><%= profile["executor_type"] %></span>
+                        <span class="status-badge"><%= profile["prompt_mode"] %></span>
+                      </div>
+                    </header>
+
+                    <div class="workflow-profile-field-grid">
+                      <section class="profile-field-group">
+                        <h5>Identity</h5>
+                        <div class="agent-field">
+                          <label class="agent-field-label" for={"profile-#{profile_id}-name"}>Name</label>
+                          <input id={"profile-#{profile_id}-name"} name={"workflow[profiles][#{profile_id}][name]"} value={profile["name"]} />
+                        </div>
+                      </section>
+
+                      <section class="profile-field-group">
+                        <h5>Execution</h5>
+                        <div class="agent-field">
+                          <label class="agent-field-label" for={"profile-#{profile_id}-executor"}>Executor</label>
+                          <select id={"profile-#{profile_id}-executor"} name={"workflow[profiles][#{profile_id}][executor_type]"}>
+                            <option value="codex_agent" selected={profile["executor_type"] == "codex_agent"}>codex_agent</option>
+                            <option value="backend_action" selected={profile["executor_type"] == "backend_action"}>backend_action</option>
+                            <option value="manual" selected={profile["executor_type"] == "manual"}>manual</option>
+                            <option value="external_worker" selected={profile["executor_type"] == "external_worker"}>external_worker</option>
+                          </select>
+                        </div>
+                      </section>
+
+                      <section class="profile-field-group profile-field-group-prompt">
+                        <h5>Prompt</h5>
+                        <div class="profile-prompt-layout">
+                          <div class="agent-field profile-prompt-mode-field">
+                            <label class="agent-field-label" for={"profile-#{profile_id}-prompt-mode"}>Prompt mode</label>
+                            <select id={"profile-#{profile_id}-prompt-mode"} name={"workflow[profiles][#{profile_id}][prompt_mode]"}>
+                              <option value="extend" selected={profile["prompt_mode"] == "extend"}>extend</option>
+                              <option value="replace" selected={profile["prompt_mode"] == "replace"}>replace</option>
+                              <option value="disabled" selected={profile["prompt_mode"] == "disabled"}>disabled</option>
+                            </select>
+                          </div>
+                          <div class="agent-field agent-field-full">
+                            <label class="agent-field-label" for={"profile-#{profile_id}-prompt-template"}>Profile prompt template</label>
+                            <textarea id={"profile-#{profile_id}-prompt-template"} class="workflow-textbox workflow-textbox-profile" name={"workflow[profiles][#{profile_id}][prompt_template]"} rows="5"><%= profile["prompt_template"] %></textarea>
+                          </div>
+                        </div>
+                      </section>
+
+                      <section class="profile-field-group">
+                        <h5>Updates</h5>
+                        <div class="workflow-checkbox-row">
+                          <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_description]"} value="false" />
+                          <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_description]"} value="true" checked={profile["allow_description"] == "true"} /> Description</label>
+                          <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="false" />
+                          <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_comment]"} value="true" checked={profile["allow_comment"] == "true"} /> Comment</label>
+                          <input type="hidden" name={"workflow[profiles][#{profile_id}][allow_result]"} value="false" />
+                          <label><input type="checkbox" name={"workflow[profiles][#{profile_id}][allow_result]"} value="true" checked={profile["allow_result"] == "true"} /> Result</label>
+                        </div>
+                      </section>
+
+                      <section class="profile-field-group">
+                        <h5>Routing</h5>
+                        <div class="agent-field">
+                          <label class="agent-field-label" for={"profile-#{profile_id}-target-states"}>Allowed target states</label>
+                          <textarea id={"profile-#{profile_id}-target-states"} class="workflow-textbox workflow-textbox-compact" name={"workflow[profiles][#{profile_id}][target_states]"} rows="4"><%= profile["target_states"] %></textarea>
+                        </div>
+                      </section>
+                    </div>
+                  </article>
+                </div>
+              </section>
+            </form>
+          </section>
           <section class="section-card">
-            <h1 class="section-title">Settings</h1>
+            <h2 class="section-title">Version History</h2>
+            <%= if section_versions(@workflow_versions, :agents) == [] do %>
+              <p class="empty-state">No agent settings versions yet.</p>
+            <% else %>
+              <table class="data-table">
+                <thead><tr><th>Version</th><th>Source</th><th>Active</th><th>Created</th><th></th></tr></thead>
+                <tbody>
+                  <tr :for={version <- section_versions(@workflow_versions, :agents)}>
+                    <td><%= version.version %></td>
+                    <td><%= version.source %></td>
+                    <td><%= version.active %></td>
+                    <td class="mono"><%= fmt_dt(version.inserted_at) %></td>
+                    <td>
+                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id}>Restore agent settings</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            <% end %>
+          </section>
+
+            <% :runtime -> %>
+          <section class="section-card">
+            <h2 class="section-title">Runtime</h2>
             <p class="metric-label">Execution mode: <span class="status-badge status-info"><%= @execution_mode %></span></p>
             <pre class="code-panel"><%= inspect(@tracker_configs, pretty: true) %></pre>
           </section>
+          <% end %>
       <% end %>
     </section>
     """
@@ -659,9 +845,11 @@ defmodule SymphonyElixirWeb.AdminLive do
     active = persistence().active_workflow_version()
     runtime = runtime_workflow()
     {workflow_form, workflow_setup_required} = workflow_form(active, runtime)
+    default_project = default_project()
 
     socket
     |> assign(:projects, persistence().list_projects())
+    |> assign(:default_project, default_project)
     |> assign(:runs, persistence().list_runs(limit: 100))
     |> assign(:events, event_list(socket))
     |> assign(:event_filters, event_filters(socket))
@@ -678,6 +866,40 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
+  end
+
+  defp nav_current(action) when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime], do: :settings
+  defp nav_current(action), do: action
+
+  defp settings_tab(:settings), do: :projects
+  defp settings_tab(:settings_projects), do: :projects
+  defp settings_tab(:settings_workflow), do: :workflow
+  defp settings_tab(:settings_agents), do: :agents
+  defp settings_tab(:settings_runtime), do: :runtime
+
+  defp default_project do
+    case persistence().default_project() do
+      {:ok, project} -> project
+      _ -> nil
+    end
+  end
+
+  defp settings_source(:agents), do: @agent_settings_source
+  defp settings_source(_section), do: @workflow_settings_source
+
+  defp settings_section_label(:agents), do: "Agent settings"
+  defp settings_section_label(_section), do: "Workflow settings"
+
+  defp section_versions(versions, section) do
+    Enum.filter(versions, &(settings_version_section(&1) == section))
+  end
+
+  defp settings_version_section(version) do
+    case Map.get(version, :source) || Map.get(version, "source") do
+      @agent_settings_source -> :agents
+      @workflow_settings_source -> :workflow
+      _source -> nil
+    end
   end
 
   defp event_list(socket) do
@@ -751,8 +973,6 @@ defmodule SymphonyElixirWeb.AdminLive do
     end
   end
 
-  defp workflow_form(nil, {:error, _reason}), do: {WorkflowForm.empty(), true}
-
   defp workflow_form(version, _runtime) do
     version
     |> persistence().export_workflow()
@@ -770,6 +990,53 @@ defmodule SymphonyElixirWeb.AdminLive do
     current
     |> deep_merge(params)
     |> Map.put("_base_config", base_config)
+  end
+
+  defp apply_project_settings(draft, nil), do: draft
+
+  defp apply_project_settings(draft, project) do
+    draft
+    |> Map.put("tracker_project_slug", project_value(project, :linear_project_slug) || "")
+    |> Map.put("project_repository_url", project_value(project, :repository_url) || "")
+    |> Map.put("project_default_branch", project_value(project, :default_branch) || "main")
+  end
+
+  defp project_attrs(params) do
+    %{
+      name: Map.get(params, "name", ""),
+      slug: Map.get(params, "slug", ""),
+      linear_project_slug: blank_as_nil(Map.get(params, "linear_project_slug")),
+      repository_url: blank_as_nil(Map.get(params, "repository_url")),
+      default_branch: blank_as_nil(Map.get(params, "default_branch")) || "main",
+      description: blank_as_nil(Map.get(params, "description")),
+      enabled: truthy_param?(Map.get(params, "enabled"))
+    }
+  end
+
+  defp project_value(project, key) do
+    Map.get(project, key) || Map.get(project, to_string(key))
+  end
+
+  defp changeset_or_reason(%Ecto.Changeset{} = changeset) do
+    changeset
+    |> Ecto.Changeset.traverse_errors(fn {message, _opts} -> message end)
+    |> inspect()
+  end
+
+  defp changeset_or_reason(reason), do: inspect(reason)
+
+  defp truthy_param?(value), do: to_string(value) == "true"
+
+  defp restore_settings_section(:agents, current, history) do
+    current
+    |> Map.put("prompt_body", Map.get(history, "prompt_body", ""))
+    |> Map.put("profiles", Map.get(history, "profiles", %{}))
+  end
+
+  defp restore_settings_section(_workflow, current, history) do
+    history
+    |> Map.put("prompt_body", Map.get(current, "prompt_body", ""))
+    |> Map.put("profiles", Map.get(current, "profiles", %{}))
   end
 
   defp append_empty_transition(draft) do
@@ -840,12 +1107,10 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   defp runtime_source_summary({:ok, %{source: source}}), do: source_summary(source)
-  defp runtime_source_summary({:error, reason}), do: %{type: "unavailable", detail: inspect(reason)}
 
   defp source_summary(%{type: type} = source), do: %{type: to_string(type), detail: source_detail(source)}
   defp source_summary(_source), do: %{type: "unknown", detail: "n/a"}
 
-  defp source_detail(%{type: :file, path: path}), do: path
   defp source_detail(%{type: :database, workflow_version_id: id}), do: id || "n/a"
   defp source_detail(%{type: :setup_required}), do: "setup required"
   defp source_detail(_source), do: "n/a"

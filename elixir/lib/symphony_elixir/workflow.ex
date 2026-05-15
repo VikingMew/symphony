@@ -1,22 +1,23 @@
 defmodule SymphonyElixir.Workflow do
   @moduledoc """
-  Loads a complete workflow package and prompt from WORKFLOW.md.
+  Loads a complete workflow package and prompt.
 
-  The Markdown file is the import/export artifact for one workflow version. Its
-  YAML front matter contains the `workflow` routing/rules object plus sibling
-  top-level objects such as `profiles`.
+  Split package parsing supports `workflow.yml` for runtime/routing data and
+  `profiles.yml` for agent profile settings plus the shared base prompt. The
+  runtime source is the active workflow version in SQLite.
   """
 
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.WorkflowStore
 
-  @workflow_file_name "WORKFLOW.md"
+  @workflow_config_file_names ["workflow.yml", "workflow.yaml"]
+  @profiles_config_file_names ["profiles.yml", "profiles.yaml"]
   @setup_prompt "Create a workflow from the Web UI to start running agents."
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
     Application.get_env(:symphony_elixir, :workflow_file_path) ||
-      Path.join(File.cwd!(), @workflow_file_name)
+      Path.join(File.cwd!(), "workflow.yml")
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
@@ -41,13 +42,7 @@ defmodule SymphonyElixir.Workflow do
 
   @spec current() :: {:ok, loaded_workflow()} | {:error, term()}
   def current do
-    case Process.whereis(WorkflowStore) do
-      pid when is_pid(pid) ->
-        WorkflowStore.current()
-
-      _ ->
-        load()
-    end
+    WorkflowStore.current()
   end
 
   @spec load() :: {:ok, loaded_workflow()} | {:error, term()}
@@ -57,12 +52,16 @@ defmodule SymphonyElixir.Workflow do
 
   @spec load(Path.t()) :: {:ok, loaded_workflow()} | {:error, term()}
   def load(path) when is_binary(path) do
-    case File.read(path) do
-      {:ok, content} ->
-        parse_content(content)
+    if split_package_available?(path) do
+      load_split_package(path)
+    else
+      case File.read(path) do
+        {:ok, content} ->
+          parse_content(content)
 
-      {:error, reason} ->
-        {:error, {:missing_workflow_file, path, reason}}
+        {:error, reason} ->
+          {:error, {:missing_workflow_file, path, reason}}
+      end
     end
   end
 
@@ -73,7 +72,6 @@ defmodule SymphonyElixir.Workflow do
         "tracker" => %{
           "kind" => "linear",
           "endpoint" => "https://api.linear.app/graphql",
-          "api_key" => "$LINEAR_API_KEY",
           "project_slug" => "",
           "active_states" => ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
           "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
@@ -89,16 +87,6 @@ defmodule SymphonyElixir.Workflow do
       prompt_template: @setup_prompt,
       setup_required: true
     }
-  end
-
-  @spec normalize_legacy_tracker_config(map()) :: map()
-  def normalize_legacy_tracker_config(config) when is_map(config) do
-    tracker =
-      config
-      |> Map.get("tracker", %{})
-      |> normalize_legacy_tracker()
-
-    Map.put(config, "tracker", tracker)
   end
 
   @spec parse_content(String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
@@ -121,31 +109,6 @@ defmodule SymphonyElixir.Workflow do
 
       {:error, reason} ->
         {:error, {:workflow_parse_error, reason}}
-    end
-  end
-
-  defp normalize_legacy_tracker(tracker) when is_map(tracker) do
-    tracker
-    |> Map.put("kind", "linear")
-    |> put_default_if_blank("endpoint", "https://api.linear.app/graphql")
-    |> put_default_if_blank("api_key", "$LINEAR_API_KEY")
-  end
-
-  defp normalize_legacy_tracker(_tracker) do
-    %{
-      "kind" => "linear",
-      "endpoint" => "https://api.linear.app/graphql",
-      "api_key" => "$LINEAR_API_KEY"
-    }
-  end
-
-  defp put_default_if_blank(map, key, default) do
-    case Map.get(map, key) do
-      value when is_binary(value) ->
-        if String.trim(value) == "", do: Map.put(map, key, default), else: map
-
-      _ ->
-        Map.put(map, key, default)
     end
   end
 
@@ -223,6 +186,111 @@ defmodule SymphonyElixir.Workflow do
       end
     end
   end
+
+  defp split_package_available?(path) do
+    if split_package_path?(path) do
+      path
+      |> split_package_dir()
+      |> workflow_config_path()
+      |> case do
+        nil -> false
+        workflow_path -> File.regular?(workflow_path)
+      end
+    else
+      false
+    end
+  end
+
+  defp load_split_package(path) do
+    dir = split_package_dir(path)
+
+    with {:ok, workflow_path} <- required_workflow_config_path(dir),
+         {:ok, workflow_config} <- yaml_file_to_map(workflow_path),
+         {:ok, profile_package} <- load_profiles_config(dir) do
+      prompt = profile_package.base_prompt |> normalize_base_prompt() |> to_prompt_body()
+
+      config =
+        workflow_config
+        |> Map.delete("profiles")
+        |> Map.put("profiles", profile_package.profiles)
+
+      {:ok,
+       %{
+         config: config,
+         prompt: prompt,
+         prompt_template: prompt
+       }}
+    end
+  end
+
+  defp split_package_dir(path) do
+    basename = Path.basename(path)
+
+    if basename in (@workflow_config_file_names ++ @profiles_config_file_names),
+      do: Path.dirname(path),
+      else: path
+  end
+
+  defp split_package_path?(path) do
+    basename = Path.basename(path)
+    extension = Path.extname(path)
+
+    basename in (@workflow_config_file_names ++ @profiles_config_file_names) or
+      extension == ""
+  end
+
+  defp required_workflow_config_path(dir) do
+    case workflow_config_path(dir) do
+      nil -> {:error, {:missing_workflow_file, Path.join(dir, "workflow.yml"), :enoent}}
+      path -> {:ok, path}
+    end
+  end
+
+  defp workflow_config_path(dir), do: first_regular_path(dir, @workflow_config_file_names)
+  defp profiles_config_path(dir), do: first_regular_path(dir, @profiles_config_file_names)
+
+  defp first_regular_path(dir, names) do
+    names
+    |> Enum.map(&Path.join(dir, &1))
+    |> Enum.find(&File.regular?/1)
+  end
+
+  defp yaml_file_to_map(path) do
+    with {:ok, content} <- File.read(path),
+         {:ok, decoded} <- YamlElixir.read_from_string(content) do
+      if is_map(decoded), do: {:ok, decoded}, else: {:error, {:workflow_yaml_not_a_map, path}}
+    else
+      {:error, %YamlElixir.ParsingError{} = reason} -> {:error, {:workflow_parse_error, reason}}
+      {:error, reason} -> {:error, {:missing_workflow_file, path, reason}}
+    end
+  end
+
+  defp load_profiles_config(dir) do
+    case profiles_config_path(dir) do
+      nil ->
+        {:ok, %{profiles: %{}, base_prompt: nil}}
+
+      path ->
+        with {:ok, decoded} <- yaml_file_to_map(path) do
+          normalize_profiles_file(decoded, path)
+        end
+    end
+  end
+
+  defp normalize_profiles_file(%{"profiles" => profiles} = package, _path) when is_map(profiles) do
+    %{profiles: profiles, base_prompt: normalize_base_prompt(Map.get(package, "base_prompt"))}
+    |> then(&{:ok, &1})
+  end
+
+  defp normalize_profiles_file(%{"profiles" => _profiles}, path), do: {:error, {:profiles_yaml_profiles_not_a_map, path}}
+
+  defp normalize_profiles_file(_package, path), do: {:error, {:profiles_yaml_missing_profiles, path}}
+
+  defp normalize_base_prompt(prompt) when is_binary(prompt), do: prompt
+  defp normalize_base_prompt(_prompt), do: nil
+
+  defp to_prompt_body(nil), do: ""
+  defp to_prompt_body(prompt), do: String.trim(prompt)
 
   defp maybe_reload_store do
     if Process.whereis(WorkflowStore) do

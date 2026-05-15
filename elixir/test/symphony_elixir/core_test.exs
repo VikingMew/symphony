@@ -383,7 +383,7 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_executor_for_state("Ready to Merge") == "manual"
   end
 
-  test "current WORKFLOW.md file is valid and complete" do
+  test "current split workflow package is valid and complete" do
     original_workflow_path = Workflow.workflow_file_path()
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
     Workflow.clear_workflow_file_path()
@@ -415,8 +415,6 @@ defmodule SymphonyElixir.CoreTest do
            ]
 
     assert String.trim(prompt) != ""
-    assert is_binary(Config.workflow_prompt())
-    assert Config.workflow_prompt() == prompt
   end
 
   test "workspace creation always recreates an existing local issue directory and reruns after_create" do
@@ -435,10 +433,12 @@ defmodule SymphonyElixir.CoreTest do
         hook_after_create: "printf x >> #{counter_file}"
       )
 
-      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-CLEAN")
+      assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-CLEAN")
       File.write!(Path.join(workspace, "stale.txt"), "stale")
 
-      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-CLEAN")
+      assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-CLEAN")
 
       refute File.exists?(Path.join(workspace, "stale.txt"))
       assert File.read!(counter_file) == "xx"
@@ -471,7 +471,9 @@ defmodule SymphonyElixir.CoreTest do
         hook_after_create: "test -f README.md && printf hook >> order"
       )
 
-      assert {:ok, ^workspace} = Workspace.create_for_issue("MT-BOOT")
+      assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+
+      assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-BOOT")
 
       assert File.exists?(Path.join(workspace, "README.md"))
       assert File.read!(Path.join(workspace, "order")) == "setuphook"
@@ -596,7 +598,7 @@ defmodule SymphonyElixir.CoreTest do
     refute_receive :fetch_terminal_issues_called, 200
   end
 
-  test "workflow file path defaults to WORKFLOW.md in the current working directory when app env is unset" do
+  test "workflow file path defaults to workflow.yml in the current working directory when app env is unset" do
     original_workflow_path = Workflow.workflow_file_path()
 
     on_exit(fn ->
@@ -605,11 +607,11 @@ defmodule SymphonyElixir.CoreTest do
 
     Workflow.clear_workflow_file_path()
 
-    assert Workflow.workflow_file_path() == Path.join(File.cwd!(), "WORKFLOW.md")
+    assert Workflow.workflow_file_path() == Path.join(File.cwd!(), "workflow.yml")
   end
 
   test "workflow file path resolves from app env when set" do
-    app_workflow_path = "/tmp/app/WORKFLOW.md"
+    app_workflow_path = "/tmp/app/workflow.yml"
 
     on_exit(fn ->
       Workflow.clear_workflow_file_path()
@@ -620,16 +622,55 @@ defmodule SymphonyElixir.CoreTest do
     assert Workflow.workflow_file_path() == app_workflow_path
   end
 
-  test "workflow load accepts prompt-only files without front matter" do
-    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "PROMPT_ONLY_WORKFLOW.md")
-    File.write!(workflow_path, "Prompt only\n")
+  test "workflow load accepts split workflow and profile-owned base prompt package" do
+    workflow_root =
+      Path.join(System.tmp_dir!(), "symphony-elixir-split-workflow-#{System.unique_integer([:positive])}")
 
-    assert {:ok, %{config: %{}, prompt: "Prompt only", prompt_template: "Prompt only"}} =
-             Workflow.load(workflow_path)
+    try do
+      File.mkdir_p!(workflow_root)
+
+      File.write!(Path.join(workflow_root, "workflow.yml"), """
+      tracker:
+        kind: linear
+        project_slug: project
+        active_states: ["Ready", "In Progress"]
+        terminal_states: ["Done"]
+      workflow:
+        states:
+          Ready:
+            profile: implementation
+      """)
+
+      File.write!(Path.join(workflow_root, "profiles.yml"), """
+      base_prompt: |
+        Profile-owned base prompt body
+      profiles:
+        implementation:
+          name: Implementation
+          executor:
+            type: codex_agent
+          prompt:
+            mode: extend
+            template: Implement the task.
+          allowed_updates:
+            description: false
+            comment: true
+            result: true
+            target_states: ["In Progress"]
+      """)
+
+      assert {:ok, workflow} = Workflow.load(Path.join(workflow_root, "workflow.yml"))
+      assert get_in(workflow.config, ["tracker", "project_slug"]) == "project"
+      assert get_in(workflow.config, ["workflow", "states", "Ready", "profile"]) == "implementation"
+      assert get_in(workflow.config, ["profiles", "implementation", "name"]) == "Implementation"
+      assert workflow.prompt == "Profile-owned base prompt body"
+    after
+      File.rm_rf(workflow_root)
+    end
   end
 
   test "workflow load accepts unterminated front matter with an empty prompt" do
-    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.md")
+    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "UNTERMINATED_WORKFLOW.txt")
     File.write!(workflow_path, "---\ntracker:\n  kind: linear\n")
 
     assert {:ok, %{config: %{"tracker" => %{"kind" => "linear"}}, prompt: "", prompt_template: ""}} =
@@ -637,7 +678,7 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   test "workflow load rejects non-map front matter" do
-    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "INVALID_FRONT_MATTER_WORKFLOW.md")
+    workflow_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "INVALID_FRONT_MATTER_WORKFLOW.txt")
     File.write!(workflow_path, "---\n- not-a-map\n---\nPrompt body\n")
 
     assert {:error, :workflow_front_matter_not_a_map} = Workflow.load(workflow_path)
@@ -1410,7 +1451,7 @@ defmodule SymphonyElixir.CoreTest do
 
     issue = %Issue{
       identifier: "MT-777",
-      title: "Make fallback prompt useful",
+      title: "Make prompt useful",
       description: "Include enough issue context to start working.",
       state: "In Progress",
       url: "https://example.org/issues/MT-777",
@@ -1421,7 +1462,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert prompt =~ "You are working on a Linear issue."
     assert prompt =~ "Identifier: MT-777"
-    assert prompt =~ "Title: Make fallback prompt useful"
+    assert prompt =~ "Title: Make prompt useful"
     assert prompt =~ "Body:"
     assert prompt =~ "Include enough issue context to start working."
     assert Config.workflow_prompt() =~ "{{ issue.identifier }}"
@@ -1448,43 +1489,35 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "No description provided."
   end
 
-  test "prompt builder reports workflow load failures separately from template parse errors" do
-    original_workflow_path = Workflow.workflow_file_path()
-    workflow_store_pid = Process.whereis(SymphonyElixir.WorkflowStore)
-
-    on_exit(fn ->
-      Workflow.set_workflow_file_path(original_workflow_path)
-
-      if is_pid(workflow_store_pid) and is_nil(Process.whereis(SymphonyElixir.WorkflowStore)) do
-        Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
-      end
-    end)
-
-    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.WorkflowStore)
-
-    Workflow.set_workflow_file_path(Path.join(System.tmp_dir!(), "missing-workflow-#{System.unique_integer([:positive])}.md"))
+  test "prompt builder uses setup-required prompt when the database has no active workflow" do
+    FakePersistence.reset!()
+    assert :ok = WorkflowStore.force_reload()
 
     issue = %Issue{
       identifier: "MT-780",
-      title: "Workflow unavailable",
-      description: "Missing workflow file",
+      title: "Setup workflow",
+      description: "No active workflow",
       state: "Todo",
       url: "https://example.org/issues/MT-780",
       labels: []
     }
 
-    assert_raise RuntimeError, ~r/workflow_unavailable:/, fn ->
-      PromptBuilder.build_prompt(issue)
-    end
+    assert PromptBuilder.build_prompt(issue) == "Create a workflow from the Web UI to start running agents."
   end
 
-  test "in-repo WORKFLOW.md renders correctly" do
+  test "in-repo split package renders correctly" do
     workflow_path = Workflow.workflow_file_path()
-    Workflow.set_workflow_file_path(Path.expand("WORKFLOW.md", File.cwd!()))
+    repo_workflow_path = Path.expand("workflow.yml", File.cwd!())
+    Workflow.set_workflow_file_path(repo_workflow_path)
+    {:ok, loaded} = Workflow.load(repo_workflow_path)
+    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+    WorkflowStore.force_reload()
 
     issue = %Issue{
       identifier: "MT-616",
-      title: "Use rich templates for WORKFLOW.md",
+      title: "Use rich templates for profile prompts",
       description: "Render with rich template variables",
       state: "In Progress",
       url: "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd",
@@ -1498,7 +1531,7 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "You are working on a Linear ticket `MT-616`"
     assert prompt =~ "Issue context:"
     assert prompt =~ "Identifier: MT-616"
-    assert prompt =~ "Title: Use rich templates for WORKFLOW.md"
+    assert prompt =~ "Title: Use rich templates for profile prompts"
     assert prompt =~ "Current status: In Progress"
     assert prompt =~ "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd"
     assert prompt =~ "This is an unattended orchestration session."

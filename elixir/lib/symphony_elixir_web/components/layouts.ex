@@ -7,12 +7,10 @@ defmodule SymphonyElixirWeb.Layouts do
 
   @nav_items [
     {:dashboard, "Dashboard", "/"},
-    {:workflows, "Workflows", "/workflows"},
     {:runs, "Runs", "/runs"},
     {:events, "Events", "/events"},
     {:workers, "Workers", "/workers"},
     {:linear, "Linear", "/diagnostics/linear"},
-    {:projects, "Projects", "/projects"},
     {:settings, "Settings", "/settings"}
   ]
 

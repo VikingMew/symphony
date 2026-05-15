@@ -385,6 +385,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       task = Task.async(fn -> Workspace.create_for_issue("MT-STREAM") end)
       workspace = Path.join(workspace_root, "MT-STREAM")
+      assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
       done_path = Path.join(workspace, "done.txt")
 
       assert wait_until(fn ->
@@ -395,7 +396,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                output_event? and not File.exists?(done_path)
              end)
 
-      assert {:ok, ^workspace} = Task.await(task, 2_000)
+      assert {:ok, ^canonical_workspace} = Task.await(task, 2_000)
 
       event_types =
         FakePersistence.list_events()
@@ -1106,6 +1107,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       project_repository_url: "git@example.com:org/repo.git"
     )
 
+    System.put_env("LINEAR_API_KEY", "token")
     assert :ok = Config.validate!()
     assert Config.settings!().codex.approval_policy == ""
 
@@ -1162,26 +1164,25 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Config.settings!().codex.command == "codex app-server"
   end
 
-  test "config resolves $VAR references for env-backed secret and path values" do
+  test "config resolves LINEAR_API_KEY and $VAR path values" do
     workspace_env_var = "SYMP_WORKSPACE_ROOT_#{System.unique_integer([:positive])}"
-    api_key_env_var = "SYMP_LINEAR_API_KEY_#{System.unique_integer([:positive])}"
     workspace_root = Path.join("/tmp", "symphony-workspace-root")
     api_key = "resolved-secret"
     codex_bin = Path.join(["~", "bin", "codex"])
 
     previous_workspace_root = System.get_env(workspace_env_var)
-    previous_api_key = System.get_env(api_key_env_var)
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     System.put_env(workspace_env_var, workspace_root)
-    System.put_env(api_key_env_var, api_key)
+    System.put_env("LINEAR_API_KEY", api_key)
 
     on_exit(fn ->
       restore_env(workspace_env_var, previous_workspace_root)
-      restore_env(api_key_env_var, previous_api_key)
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_api_token: "$#{api_key_env_var}",
+      tracker_api_token: "stale-workflow-token",
       workspace_root: "$#{workspace_env_var}",
       codex_command: "#{codex_bin} app-server"
     )
@@ -1200,13 +1201,16 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     previous_workspace_root = System.get_env(workspace_env_var)
     previous_api_key = System.get_env(api_key_env_var)
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     System.put_env(workspace_env_var, workspace_root)
     System.put_env(api_key_env_var, api_key)
+    System.put_env("LINEAR_API_KEY", "runtime-linear-token")
 
     on_exit(fn ->
       restore_env(workspace_env_var, previous_workspace_root)
       restore_env(api_key_env_var, previous_api_key)
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -1215,23 +1219,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     )
 
     config = Config.settings!()
-    assert config.tracker.api_key == "env:#{api_key_env_var}"
+    assert config.tracker.api_key == "runtime-linear-token"
     assert config.workspace.root == "env:#{workspace_env_var}"
   end
 
   test "config supports per-state max concurrent agent overrides" do
-    workflow = """
-    ---
-    agent:
-      max_concurrent_agents: 10
-      max_concurrent_agents_by_state:
-        todo: 1
-        "In Progress": 4
+    write_workflow_file!(Workflow.workflow_file_path(),
+      max_concurrent_agents: 10,
+      max_concurrent_agents_by_state: %{
+        todo: 1,
+        "In Progress": 4,
         "In Review": 2
-    ---
-    """
-
-    File.write!(Workflow.workflow_file_path(), workflow)
+      }
+    )
 
     assert Config.settings!().agent.max_concurrent_agents == 10
     assert Config.max_concurrent_agents_for_state("Todo") == 1
@@ -1283,25 +1283,21 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
            ]
   end
 
-  test "schema parse normalizes policy keys and env-backed fallbacks" do
+  test "schema parse normalizes policy keys and reads token only from LINEAR_API_KEY" do
     missing_workspace_env = "SYMP_MISSING_WORKSPACE_#{System.unique_integer([:positive])}"
     empty_secret_env = "SYMP_EMPTY_SECRET_#{System.unique_integer([:positive])}"
-    missing_secret_env = "SYMP_MISSING_SECRET_#{System.unique_integer([:positive])}"
 
     previous_missing_workspace_env = System.get_env(missing_workspace_env)
     previous_empty_secret_env = System.get_env(empty_secret_env)
-    previous_missing_secret_env = System.get_env(missing_secret_env)
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     System.delete_env(missing_workspace_env)
     System.put_env(empty_secret_env, "")
-    System.delete_env(missing_secret_env)
     System.put_env("LINEAR_API_KEY", "fallback-linear-token")
 
     on_exit(fn ->
       restore_env(missing_workspace_env, previous_missing_workspace_env)
       restore_env(empty_secret_env, previous_empty_secret_env)
-      restore_env(missing_secret_env, previous_missing_secret_env)
       restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
@@ -1312,20 +1308,22 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                codex: %{approval_policy: %{reject: %{sandbox_approval: true}}}
              })
 
-    assert settings.tracker.api_key == nil
+    assert settings.tracker.api_key == "fallback-linear-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
 
     assert settings.codex.approval_policy == %{
              "reject" => %{"sandbox_approval" => true}
            }
 
+    System.delete_env("LINEAR_API_KEY")
+
     assert {:ok, settings} =
              Schema.parse(%{
-               tracker: %{api_key: "$#{missing_secret_env}"},
+               tracker: %{api_key: "stale-workflow-token"},
                workspace: %{root: ""}
              })
 
-    assert settings.tracker.api_key == "fallback-linear-token"
+    assert settings.tracker.api_key == nil
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
   end
 

@@ -17,6 +17,9 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   }
   """
 
+  @linear_tracker_kind "linear"
+  @linear_endpoint "https://api.linear.app/graphql"
+
   @teams_query """
   query SymphonyLinearDiagnosticsTeams {
     teams(first: 100) {
@@ -92,6 +95,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
   defp workflow_context, do: WorkflowStore.current_with_source()
 
+  defp settings_from_workflow_context({:ok, %{workflow: %{setup_required: true}}}), do: {:error, :setup_required}
+
   defp settings_from_workflow_context({:ok, %{workflow: %{config: config}}}) when is_map(config) do
     with {:ok, settings} <- Schema.parse(config) do
       if settings.tracker.kind == "linear" do
@@ -102,7 +107,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     end
   end
 
-  defp settings_from_workflow_context({:error, reason}), do: {:error, reason}
   defp settings_from_workflow_context(_context), do: {:error, :workflow_config_unavailable}
 
   defp run_with_settings(settings, client, runtime_source) do
@@ -165,13 +169,16 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp config_error_result(reason, runtime_source) do
+    token = token_diagnostics(System.get_env("LINEAR_API_KEY"))
+
     %{
       config: %{
-        tracker_kind: "unavailable",
-        endpoint: "n/a",
+        tracker_kind: @linear_tracker_kind,
+        endpoint: @linear_endpoint,
         project_slug: "n/a",
         assignee: "n/a",
-        token_configured: false,
+        token_configured: token.configured,
+        token: token,
         active_states: [],
         terminal_states: []
       },
@@ -358,70 +365,18 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp token_diagnostics(token) do
-    metadata = raw_api_key_metadata()
+    env_present = !blank?(System.get_env("LINEAR_API_KEY"))
 
     %{
       configured: !blank?(token),
-      source: token_source(metadata),
-      raw_setting: metadata.raw_setting,
-      env_name: metadata.env_name,
-      env_present: metadata.env_present,
+      source: if(env_present, do: "env:LINEAR_API_KEY", else: "missing env:LINEAR_API_KEY"),
+      raw_setting: "env:LINEAR_API_KEY",
+      env_name: "LINEAR_API_KEY",
+      env_present: env_present,
       length: token_length(token),
       sha256_prefix: token_fingerprint(token)
     }
   end
-
-  defp raw_api_key_metadata do
-    raw_setting =
-      case WorkflowStore.current_with_source() do
-        {:ok, %{workflow: %{config: %{"tracker" => tracker}}}} when is_map(tracker) ->
-          Map.get(tracker, "api_key")
-
-        _ ->
-          nil
-      end
-
-    env_name = env_reference_name(raw_setting)
-
-    %{
-      raw_setting: raw_setting_label(raw_setting),
-      env_name: env_name,
-      env_present: env_present?(env_name),
-      linear_api_key_env_present: !blank?(System.get_env("LINEAR_API_KEY"))
-    }
-  end
-
-  defp token_source(%{raw_setting: "unset", linear_api_key_env_present: true}), do: "env:LINEAR_API_KEY fallback"
-  defp token_source(%{raw_setting: "unset"}), do: "missing"
-  defp token_source(%{env_name: env_name, env_present: true}) when is_binary(env_name), do: "env:#{env_name}"
-
-  defp token_source(%{env_name: env_name, env_present: false, linear_api_key_env_present: true}) when is_binary(env_name) do
-    "env:#{env_name} missing; using LINEAR_API_KEY fallback"
-  end
-
-  defp token_source(%{env_name: env_name}) when is_binary(env_name), do: "env:#{env_name} missing"
-  defp token_source(%{raw_setting: "literal"}), do: "workflow literal"
-  defp token_source(_metadata), do: "unknown"
-
-  defp raw_setting_label(nil), do: "unset"
-
-  defp raw_setting_label(value) when is_binary(value) do
-    case env_reference_name(value) do
-      nil -> "literal"
-      env_name -> "$#{env_name}"
-    end
-  end
-
-  defp raw_setting_label(_value), do: "unsupported"
-
-  defp env_reference_name("$" <> env_name) do
-    if String.match?(env_name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/), do: env_name
-  end
-
-  defp env_reference_name(_value), do: nil
-
-  defp env_present?(env_name) when is_binary(env_name), do: !blank?(System.get_env(env_name))
-  defp env_present?(_env_name), do: false
 
   defp token_length(token) when is_binary(token), do: String.length(token)
   defp token_length(_token), do: 0
@@ -529,7 +484,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
   defp format_runtime_source(_source), do: %{type: "unknown", detail: "unknown"}
 
-  defp runtime_source_detail(%{type: :file, path: path}), do: path
   defp runtime_source_detail(%{type: :database, workflow_version_id: id}), do: display_value(id)
   defp runtime_source_detail(%{type: :setup_required}), do: "setup required"
   defp runtime_source_detail(_source), do: "n/a"

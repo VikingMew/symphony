@@ -64,11 +64,11 @@ until a person moves the issue forward.
    [Harness engineering](https://openai.com/index/harness-engineering/).
 2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
    set it as the `LINEAR_API_KEY` environment variable.
-3. Copy this directory's `WORKFLOW.md` to your repo.
+3. Copy this directory's workflow package to your repo: `workflow.yml` and `profiles.yml`.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
    - The `linear` skill expects Symphony's restricted `linear_task_read` and `linear_task_update`
      app-server tools.
-5. Customize the copied `WORKFLOW.md` file for your project.
+5. Customize the copied workflow package for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
    - When creating a workflow based on this repo, note that it depends on a gated Linear state flow:
@@ -97,9 +97,7 @@ mise exec -- mix setup
 mise exec -- mix ecto.migrate
 mise exec -- mix build
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  --port 4000 \
-  ./WORKFLOW.md
+  --port 4000
 ```
 
 Open the dashboard at `http://127.0.0.1:4000/`.
@@ -208,18 +206,15 @@ docker run --rm -it \
 All dashboard images start in dashboard-first `--port` mode, run `mix ecto.migrate` on startup,
 write logs under `/data/logs`, and expose the dashboard at `http://127.0.0.1:4000/`.
 
-For dashboard-first setup with SQLite, `WORKFLOW.md` is optional when you start with `--port` and
-do not pass an explicit workflow path:
+For dashboard-first setup with SQLite, a local workflow package is optional:
 
 ```bash
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   --port 4000
 ```
 
 If an active workflow version already exists in SQLite, Symphony loads it. If the database is empty,
-open `/workflows` and create the first workflow from the raw editor. Traditional non-port CLI runs
-still require `WORKFLOW.md` unless database workflow loading is explicitly configured.
+open `/settings/workflow` and create the first workflow with the structured editor.
 
 Execution mode defaults to centralized in-process execution:
 
@@ -252,22 +247,25 @@ export SYMPHONY_ADMIN_PASSWORD="replace-this-password"
 
 ## Configuration
 
-Pass a custom workflow file path to `./bin/symphony` when starting the service:
+Symphony starts from the SQLite workflow database. Use `--database-path` to choose a database file:
 
 ```bash
-./bin/symphony /path/to/custom/WORKFLOW.md
+./bin/symphony --database-path /path/to/symphony.db
 ```
 
-If no path is passed, Symphony defaults to `./WORKFLOW.md` for non-port CLI runs. In `--port`
-dashboard mode, Symphony uses SQLite as the runtime workflow source. `WORKFLOW.md` is only an
-initial seed when no active database workflow exists; after that, `/workflows` edits the active
-database workflow used by the dashboard and Linear diagnostics.
+The local split package files, `workflow.yml` and `profiles.yml`, are package artifacts for import,
+export, and human-readable backups. They are not CLI startup arguments.
+
+At startup, Symphony uses SQLite as the runtime workflow source. If the database has no active
+workflow version, Symphony enters setup-required mode and does not poll Linear or schedule agents
+until Settings creates the first active workflow.
 
 Optional flags:
 
 - `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
 - `--port` also starts the Phoenix observability service (default: disabled) and enables
   database-backed workflow loading for dashboard-first setup
+- `--database-path` tells Symphony to use a different SQLite database file
 
 SQLite configuration:
 
@@ -280,23 +278,26 @@ Authentication configuration:
 - `SYMPHONY_ADMIN_USERNAME` sets the admin username
 - `SYMPHONY_ADMIN_PASSWORD` or `SYMPHONY_ADMIN_PASSWORD_HASH` sets the password credential
 
-The `WORKFLOW.md` file is the import/export artifact for one workflow package. Its YAML front
-matter contains runtime configuration, a `workflow` object for state routing and transitions, and
-top-level `profiles` for execution definitions. The Markdown body is the base Codex session prompt.
+The split workflow package format is organized by concern:
+
+- `workflow.yml` contains runtime configuration, tracker/project settings, state routing, and
+  transitions.
+- `profiles.yml` contains the shared base prompt and top-level agent execution profiles.
+
 Each profile may add a profile prompt policy:
 
 - `extend` uses the profile prompt together with the base prompt, rendered as profile template first and base prompt second.
 - `replace` uses the profile prompt template instead of the base prompt.
 - `disabled` is valid for non-Codex executors and leaves no profile prompt for Codex.
 
-Generic project example:
+Generic `workflow.yml` example:
 
-```md
----
+```yaml
 tracker:
   kind: linear
-  api_key: $LINEAR_API_KEY
   project_slug: "<your-linear-project-slug>"
+  active_states: ["Ready", "In Progress"]
+  terminal_states: ["Done", "Canceled", "Duplicate"]
 workspace:
   root: ~/code/symphony-workspaces
 project:
@@ -310,12 +311,38 @@ agent:
   max_turns: 20
 codex:
   command: codex app-server
----
-
-You are working on a Linear issue {{ issue.identifier }}.
-
-Title: {{ issue.title }} Body: {{ issue.description }}
+workflow:
+  states:
+    Ready:
+      profile: implementation
+    In Progress:
+      profile: implementation
 ```
+
+Generic `profiles.yml` example:
+
+```yaml
+base_prompt: |
+  You are working on a Linear issue {{ issue.identifier }}.
+
+  Title: {{ issue.title }} Body: {{ issue.description }}
+profiles:
+  implementation:
+    name: "Implementation"
+    executor:
+      type: codex_agent
+    prompt:
+      mode: extend
+      template: |
+        Implement, test, and verify the requested work.
+    allowed_updates:
+      description: false
+      comment: true
+      result: true
+      target_states: ["In Progress"]
+```
+
+New split packages put the base prompt in `profiles.yml`.
 
 Rust project setup can use the same shape with Rust-specific bootstrap commands:
 
@@ -329,10 +356,10 @@ project:
   cleanup_commands: []
 ```
 
-This repository's own `elixir/WORKFLOW.md` is a Symphony-specific workflow for developing
-Symphony itself. It declares `project.repository_url: https://github.com/openai/symphony` and
-may run `mise`/`mix` commands under `elixir/`; do not copy those values as a generic project
-template.
+This repository's own `elixir/workflow.yml` and `elixir/profiles.yml` are a Symphony-specific
+workflow package for developing Symphony itself. It declares
+`project.repository_url: https://github.com/openai/symphony` and may run `mise`/`mix` commands under
+`elixir/`; do not copy those values as a generic project template without editing them.
 
 Notes:
 
@@ -362,7 +389,8 @@ Notes:
   is controlled by `hooks.timeout_ms` and defaults to `60000`.
 - If a project hook or setup command needs `mise exec`, trust the repo config and fetch project
   dependencies during setup before invoking `mise` later from other hooks.
-- `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- Linear authentication always reads the runtime `LINEAR_API_KEY` environment variable. Do not put
+  API keys in workflow configuration.
 - `tracker.assignee` reads from `LINEAR_ASSIGNEE` when unset or when value is `$LINEAR_ASSIGNEE`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
@@ -371,7 +399,7 @@ Notes:
 
 ```yaml
 tracker:
-  api_key: $LINEAR_API_KEY
+  project_slug: "linear-project-slug"
 workspace:
   root: $SYMPHONY_WORKSPACE_ROOT
 hooks:
@@ -381,11 +409,9 @@ codex:
   command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
 ```
 
-- In explicit file mode, a missing or invalid startup `WORKFLOW.md` prevents boot.
-- In dashboard-first `--port` mode without an explicit workflow path, Symphony starts from the
-  active SQLite workflow version. If no active version exists, it imports local `WORKFLOW.md` once
-  when present; otherwise the dashboard starts in setup-required mode so `/workflows` can create
-  the first workflow.
+- Symphony starts from the active SQLite workflow version. If no active version exists, it imports
+  the local split workflow package once when present; otherwise the dashboard starts in setup-required
+  mode so `/settings/workflow` can create the first workflow.
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the source is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
@@ -396,7 +422,8 @@ codex:
 The observability and management UI runs on a Phoenix stack:
 
 - LiveView for the dashboard at `/`
-- LiveView management pages at `/projects`, `/runs`, `/workers`, `/workflows`, and `/settings`
+- LiveView management pages at `/runs`, `/workers`, and `/settings`
+- Settings tabs at `/settings/projects`, `/settings/workflow`, `/settings/agents`, and `/settings/runtime`
 - Linear integration diagnostics at `/diagnostics/linear`
 - JSON API for operational debugging under `/api/v1/*`
 - Worker API under `/api/worker/v1/*`
@@ -407,7 +434,8 @@ The observability and management UI runs on a Phoenix stack:
 
 - `lib/`: application code and Mix tasks
 - `test/`: ExUnit coverage for runtime behavior
-- `WORKFLOW.md`: in-repo workflow contract used by local runs
+- `workflow.yml`: in-repo example workflow routing/runtime package data
+- `profiles.yml`: in-repo example base prompt and agent profile package data
 - `../.codex/`: repository-local Codex skills and setup helpers
 
 ## Testing
@@ -442,9 +470,9 @@ the transport representative without depending on long-lived external machines.
 
 Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` if you want `make e2e` to target real SSH hosts instead.
 
-The live test creates a temporary Linear project and issue, writes a temporary `WORKFLOW.md`, runs
-a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
-Linear issue, then marks the project completed so the run remains visible in Linear.
+The live test creates a temporary Linear project and issue, writes a temporary split workflow
+package, runs a real agent turn, verifies the workspace side effect, requires Codex to comment on
+and close the Linear issue, then marks the project completed so the run remains visible in Linear.
 
 ## FAQ
 

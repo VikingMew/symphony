@@ -47,13 +47,14 @@ Codex 只能提交结构化意图，不能提交任意 Linear GraphQL 文档。
 
 ## 需要修改的系统范围
 
-按照本文设计，变化不只在 `WORKFLOW.md` 或 `codex.command`。需要把 workflow contract、后端 policy、Codex prompt 和 dynamic tools 一起调整。
+按照本文设计，变化不只在 workflow package 或 `codex.command`。需要把 workflow contract、后端 policy、Codex prompt 和 dynamic tools 一起调整。
 
-### `WORKFLOW.md`
+### Workflow package
 
-`WORKFLOW.md` 需要从简单的 active/terminal state 列表扩展为完整流程契约。它的导入单位是一个
-workflow package，不是只包含 `workflow:` 节点的对象：`workflow` 定义流程路由和状态流转，顶层
-`profiles` 定义可被 workflow 引用的执行 profile。
+split workflow package 由 `workflow.yml` 和 `profiles.yml` 组成；`profiles.yml` 同时包含
+base prompt 和执行 profile。它是导入/导出格式，不是运行时 source。它的导入单位不是只包含
+`workflow:` 节点的对象：`workflow` 定义流程路由和状态流转，顶层 `profiles` 定义可被 workflow
+引用的执行 profile。
 
 - 定义 state 到 profile 的路由，例如 `workflow.states.Refining.profile: refinement`。
 - 在顶层 `profiles` 定义 profile 自身，例如 `refinement`、`implementation`、`merge`，每个 profile 必须有 `name`。
@@ -173,7 +174,7 @@ dispatch matching prompt/tool policy
 - `linear_task_read`
 - `linear_task_update`
 
-如需 Linear 诊断或管理员级操作，应走 Symphony 后端/operator 内部路径，不作为 Codex workflow tool，也不放进 `WORKFLOW.md` 开关。
+如需 Linear 诊断或管理员级操作，应走 Symphony 后端/operator 内部路径，不作为 Codex workflow tool，也不放进 workflow 配置开关。
 
 后端 policy 必须在 tool 执行时校验：
 

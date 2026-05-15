@@ -88,7 +88,7 @@ Existing validator work can still be reused, but it must be attached to the stru
 - Upload malformed `WORKFLOW.md`; assert validation error and no persistence import call.
 - Upload syntactically valid but semantically invalid workflow; assert field/contract error and no persistence import call.
 - Upload valid `WORKFLOW.md`; assert parsed values populate the structured form and save confirmation is available.
-- Confirm valid draft; assert `Persistence.import_workflow/3` is called with a serialized workflow package and source `web_form`.
+- Confirm valid draft; assert `Persistence.import_workflow/3` is called with a serialized workflow package and the current workflow settings source.
 - Activate invalid historical version; assert activation is rejected before `activate_workflow_version/1`.
 - Assert no `generate workflow`, `template mode`, or repository/toolchain generator controls render on `/workflows`.
 - Export current active version; assert exported content can be uploaded again and validates equivalently.

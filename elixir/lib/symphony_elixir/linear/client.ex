@@ -176,10 +176,19 @@ defmodule SymphonyElixir.Linear.Client do
   @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def graphql(query, variables \\ %{}, opts \\ [])
       when is_binary(query) and is_map(variables) and is_list(opts) do
-    payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
-    request_fun = Keyword.get(opts, :request_fun, &post_graphql_request/2)
+    tracker = Config.settings!().tracker
 
-    with {:ok, headers} <- graphql_headers(),
+    graphql_with_auth(query, variables, tracker.api_key, tracker.endpoint, opts)
+  end
+
+  @spec graphql_with_auth(String.t(), map(), String.t() | nil, String.t() | nil, keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def graphql_with_auth(query, variables, api_key, endpoint, opts \\ [])
+      when is_binary(query) and is_map(variables) and is_list(opts) do
+    payload = build_graphql_payload(query, variables, Keyword.get(opts, :operation_name))
+    request_fun = Keyword.get(opts, :request_fun, fn request_payload, headers -> post_graphql_request(request_payload, headers, endpoint) end)
+
+    with {:ok, headers} <- graphql_headers(api_key),
          {:ok, %{status: 200, body: body}} <- request_fun.(payload, headers) do
       {:ok, body}
     else
@@ -474,23 +483,21 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp graphql_headers do
-    case Config.settings!().tracker.api_key do
-      nil ->
-        {:error, :missing_linear_api_token}
-
-      token ->
+  defp graphql_headers(api_key) do
+    case api_key do
+      token when is_binary(token) and token != "" ->
         {:ok,
          [
            {"Authorization", token},
            {"Content-Type", "application/json"}
          ]}
+
+      _ ->
+        {:error, :missing_linear_api_token}
     end
   end
 
-  defp post_graphql_request(payload, headers) do
-    endpoint = Config.settings!().tracker.endpoint
-
+  defp post_graphql_request(payload, headers, endpoint) do
     Req.post(endpoint,
       headers: headers,
       json: payload,

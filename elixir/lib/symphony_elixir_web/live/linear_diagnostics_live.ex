@@ -5,11 +5,16 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, Linear.Diagnostics, Linear.WorkflowBootstrap}
+  alias SymphonyElixir.{Config, Linear.Diagnostics, Linear.Discovery, Linear.WorkflowBootstrap}
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, socket |> assign(:refresh_message, nil) |> assign(:bootstrap_result, nil) |> assign(:diagnostics, Diagnostics.run())}
+    {:ok,
+     socket
+     |> assign(:refresh_message, nil)
+     |> assign(:bootstrap_result, nil)
+     |> assign(:discovery, nil)
+     |> assign(:diagnostics, Diagnostics.run())}
   end
 
   @impl true
@@ -21,6 +26,23 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
      |> assign(:diagnostics, diagnostics)
      |> assign(:bootstrap_result, nil)
      |> assign(:refresh_message, "Diagnostics refreshed at #{fmt_dt(diagnostics.ran_at)}")}
+  end
+
+  @impl true
+  def handle_event("fetch_linear_discovery", _params, socket) do
+    case Discovery.fetch() do
+      {:ok, discovery} ->
+        {:noreply,
+         socket
+         |> assign(:discovery, {:ok, discovery})
+         |> assign(:refresh_message, "Linear configuration fetched at #{fmt_dt(discovery.fetched_at)}")}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> assign(:discovery, {:error, reason})
+         |> assign(:refresh_message, "Linear configuration fetch failed: #{inspect(reason)}")}
+    end
   end
 
   @impl true
@@ -72,11 +94,142 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
           </div>
           <div class="status-stack">
             <button type="button" class="subtle-button" phx-click="refresh_diagnostics">Refresh</button>
+            <button type="button" class="subtle-button" phx-click="fetch_linear_discovery">Fetch Linear configuration</button>
           </div>
         </div>
       </header>
 
       <p :if={@refresh_message} class="empty-state">{@refresh_message}</p>
+
+      <section class="section-card">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Linear Configuration Discovery</h2>
+            <p class="section-copy">Fetch read-only Linear projects, teams, and workflow states to copy into Symphony settings.</p>
+          </div>
+          <button type="button" class="subtle-button" phx-click="fetch_linear_discovery">Fetch Linear configuration</button>
+        </div>
+
+        <%= case @discovery do %>
+          <% nil -> %>
+            <p class="empty-state">No discovery data fetched yet.</p>
+          <% {:error, reason} -> %>
+            <p class="error-copy"><strong>Discovery failed:</strong> <%= inspect(reason) %></p>
+          <% {:ok, discovery} -> %>
+            <div class="metric-grid">
+              <article class="metric-card">
+                <span class="status-badge status-info">Account</span>
+                <p class="metric-label">Viewer</p>
+                <p class="metric-detail"><%= discovery.viewer.name %> <span class="mono"><%= discovery.viewer.email %></span></p>
+              </article>
+              <article class="metric-card">
+                <span class="status-badge status-info">Projects</span>
+                <p class="metric-label">Visible projects</p>
+                <p class="metric-detail"><%= length(discovery.projects) %></p>
+              </article>
+              <article class="metric-card">
+                <span class="status-badge status-info">Teams</span>
+                <p class="metric-label">Visible teams</p>
+                <p class="metric-detail"><%= length(discovery.teams) %></p>
+              </article>
+              <article class="metric-card">
+                <span class="status-badge status-info">States</span>
+                <p class="metric-label">State names</p>
+                <p class="metric-detail"><%= length(discovery.states) %></p>
+              </article>
+            </div>
+
+            <div class="diagnostics-grid">
+              <div>
+                <h3 class="diagnostics-subtitle">Projects</h3>
+                <%= if discovery.projects == [] do %>
+                  <p class="empty-state">No Linear projects returned.</p>
+                <% else %>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Name</th>
+                          <th>Slug</th>
+                          <th>Teams</th>
+                          <th>URL</th>
+                          <th>Copy</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr :for={project <- discovery.projects}>
+                          <td><%= project.name %></td>
+                          <td class="mono"><%= project.slug %></td>
+                          <td><%= project_team_names(project) %></td>
+                          <td>
+                            <a :if={project.url != "n/a"} class="issue-link" href={project.url}>Open</a>
+                            <span :if={project.url == "n/a"} class="muted">n/a</span>
+                          </td>
+                          <td>
+                            <button type="button" class="subtle-button" data-label="Copy slug" data-copy={project.slug} onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);">Copy slug</button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                <% end %>
+              </div>
+
+              <div>
+                <h3 class="diagnostics-subtitle">Teams and States</h3>
+                <%= if discovery.teams == [] do %>
+                  <p class="empty-state">No Linear teams returned.</p>
+                <% else %>
+                  <div class="table-wrap">
+                    <table class="data-table">
+                      <thead>
+                        <tr>
+                          <th>Team</th>
+                          <th>Key</th>
+                          <th>States</th>
+                          <th>Copy</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr :for={team <- discovery.teams}>
+                          <td><%= team.name %></td>
+                          <td class="mono"><%= team.key %></td>
+                          <td><%= Enum.join(team.states, ", ") %></td>
+                          <td>
+                            <button type="button" class="subtle-button" data-label="Copy states" data-copy={Enum.join(team.states, "\n")} onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);">Copy states</button>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                <% end %>
+              </div>
+
+              <div>
+                <h3 class="diagnostics-subtitle">Suggested State Lists</h3>
+                <table class="data-table diagnostics-table">
+                  <tbody>
+                    <tr>
+                      <th>Active states</th>
+                      <td><%= Enum.join(discovery.suggestions.active_states, ", ") %></td>
+                      <td><button type="button" class="subtle-button" data-label="Copy" data-copy={Enum.join(discovery.suggestions.active_states, "\n")} onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);">Copy</button></td>
+                    </tr>
+                    <tr>
+                      <th>Terminal states</th>
+                      <td><%= Enum.join(discovery.suggestions.terminal_states, ", ") %></td>
+                      <td><button type="button" class="subtle-button" data-label="Copy" data-copy={Enum.join(discovery.suggestions.terminal_states, "\n")} onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);">Copy</button></td>
+                    </tr>
+                    <tr>
+                      <th>Review states</th>
+                      <td><%= Enum.join(discovery.suggestions.review_states, ", ") %></td>
+                      <td><button type="button" class="subtle-button" data-label="Copy" data-copy={Enum.join(discovery.suggestions.review_states, "\n")} onclick="navigator.clipboard.writeText(this.dataset.copy); this.textContent = 'Copied'; clearTimeout(this._copyTimer); this._copyTimer = setTimeout(() => { this.textContent = this.dataset.label }, 1200);">Copy</button></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+        <% end %>
+      </section>
 
       <section :if={bootstrap_missing_states(@diagnostics) != []} class="section-card">
         <div class="section-header">
@@ -327,6 +480,10 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
 
   defp states_data(diagnostics) do
     get_in(diagnostics, [:probes, :states, :data]) || %{}
+  end
+
+  defp project_team_names(project) do
+    Enum.map_join(project.teams, ", ", & &1.name)
   end
 
   defp bootstrap_missing_states(diagnostics) do

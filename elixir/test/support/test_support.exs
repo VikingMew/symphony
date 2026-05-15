@@ -1,6 +1,9 @@
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.{Workflow, WorkflowStore}
+
   defmacro __using__(_opts) do
     quote do
       use ExUnit.Case
@@ -16,6 +19,7 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Orchestrator
       alias SymphonyElixir.PromptBuilder
       alias SymphonyElixir.StatusDashboard
+      alias SymphonyElixir.TestSupport.FakePersistence
       alias SymphonyElixir.Tracker
       alias SymphonyElixir.Workflow
       alias SymphonyElixir.WorkflowStore
@@ -25,6 +29,10 @@ defmodule SymphonyElixir.TestSupport do
         only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
 
       setup do
+        FakePersistence.reset!()
+        previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+        System.put_env("LINEAR_API_KEY", "token")
+
         workflow_root =
           Path.join(
             System.tmp_dir!(),
@@ -32,13 +40,14 @@ defmodule SymphonyElixir.TestSupport do
           )
 
         File.mkdir_p!(workflow_root)
-        workflow_file = Path.join(workflow_root, "WORKFLOW.md")
+        workflow_file = Path.join(workflow_root, "workflow.yml")
         write_workflow_file!(workflow_file)
         Workflow.set_workflow_file_path(workflow_file)
         if Process.whereis(SymphonyElixir.WorkflowStore), do: SymphonyElixir.WorkflowStore.force_reload()
         stop_default_http_server()
 
         on_exit(fn ->
+          restore_env("LINEAR_API_KEY", previous_linear_api_key)
           Application.delete_env(:symphony_elixir, :workflow_file_path)
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :workflow_source)
@@ -52,11 +61,19 @@ defmodule SymphonyElixir.TestSupport do
 
   def write_workflow_file!(path, overrides \\ []) do
     workflow = workflow_content(overrides)
-    File.write!(path, workflow)
+    {:ok, loaded} = Workflow.parse_content(workflow)
+    {profiles, workflow_config} = Map.pop(loaded.config, "profiles", %{})
+    workflow_path = split_workflow_path(path)
+    profiles_path = Path.join(Path.dirname(workflow_path), "profiles.yml")
 
-    if Process.whereis(SymphonyElixir.WorkflowStore) do
+    File.mkdir_p!(Path.dirname(workflow_path))
+    File.write!(workflow_path, yaml_document(workflow_config))
+    File.write!(profiles_path, profiles_document(profiles, loaded.prompt))
+    seed_fake_active_workflow(workflow_path)
+
+    if Process.whereis(WorkflowStore) do
       try do
-        SymphonyElixir.WorkflowStore.force_reload()
+        WorkflowStore.force_reload()
       catch
         :exit, _reason -> :ok
       end
@@ -65,8 +82,40 @@ defmodule SymphonyElixir.TestSupport do
     :ok
   end
 
+  defp seed_fake_active_workflow(workflow_path) do
+    if Application.get_env(:symphony_elixir, :persistence_module) == FakePersistence do
+      {:ok, loaded} = Workflow.load(workflow_path)
+      raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+      {:ok, project} = FakePersistence.default_project()
+      {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+    end
+  end
+
   def restore_env(key, nil), do: System.delete_env(key)
   def restore_env(key, value), do: System.put_env(key, value)
+
+  defp split_workflow_path(path) do
+    if Path.basename(path) in ["workflow.yml", "workflow.yaml"],
+      do: path,
+      else: Path.join(Path.dirname(path), "workflow.yml")
+  end
+
+  defp profiles_document(profiles, prompt) do
+    "base_prompt: |\n" <> indent_block(prompt) <> "\nprofiles: #{yaml_value(profiles)}\n"
+  end
+
+  defp yaml_document(config) do
+    config
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map_join("\n", fn {key, value} -> "#{key}: #{yaml_value(value)}" end)
+    |> Kernel.<>("\n")
+  end
+
+  defp indent_block(prompt) do
+    prompt
+    |> String.split("\n", trim: false)
+    |> Enum.map_join("\n", &("  " <> &1))
+  end
 
   def stop_default_http_server do
     children =
@@ -99,7 +148,7 @@ defmodule SymphonyElixir.TestSupport do
         [
           tracker_kind: "linear",
           tracker_endpoint: "https://api.linear.app/graphql",
-          tracker_api_token: "token",
+          tracker_api_token: nil,
           tracker_project_slug: "project",
           tracker_assignee: nil,
           tracker_active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
@@ -188,7 +237,7 @@ defmodule SymphonyElixir.TestSupport do
         "tracker:",
         "  kind: #{yaml_value(tracker_kind)}",
         "  endpoint: #{yaml_value(tracker_endpoint)}",
-        "  api_key: #{yaml_value(tracker_api_token)}",
+        tracker_api_key_yaml(tracker_api_token),
         "  project_slug: #{yaml_value(tracker_project_slug)}",
         "  assignee: #{yaml_value(tracker_assignee)}",
         "  active_states: #{yaml_value(tracker_active_states)}",
@@ -231,6 +280,9 @@ defmodule SymphonyElixir.TestSupport do
     Enum.join(sections, "\n") <> "\n"
   end
 
+  defp tracker_api_key_yaml(nil), do: nil
+  defp tracker_api_key_yaml(token), do: "  api_key: #{yaml_value(token)}"
+
   defp workflow_yaml(nil), do: nil
   defp workflow_yaml(policy), do: "workflow: #{yaml_value(policy)}"
   defp profiles_yaml(nil), do: nil
@@ -251,7 +303,13 @@ defmodule SymphonyElixir.TestSupport do
   end
 
   defp yaml_value(value) when is_binary(value) do
-    "\"" <> String.replace(value, "\"", "\\\"") <> "\""
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\"", "\\\"")
+
+    "\"" <> escaped <> "\""
   end
 
   defp yaml_value(value) when is_integer(value), do: to_string(value)

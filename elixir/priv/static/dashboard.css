@@ -259,6 +259,48 @@ pre,
   color: var(--color-primary-hover);
 }
 
+.settings-header-card {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.settings-content-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  overflow-x: auto;
+  padding: 0.2rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card-muted);
+  scrollbar-width: thin;
+}
+
+.settings-tab-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.82rem;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 750;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.settings-tab-link:hover,
+.settings-tab-link[aria-current="page"] {
+  background: var(--card);
+  border-color: var(--color-primary-border);
+  color: var(--color-primary-hover);
+}
+
 .hero-card,
 .section-card,
 .metric-card,
@@ -596,12 +638,33 @@ pre,
 input,
 textarea,
 select {
+  box-sizing: border-box;
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
   border-radius: 10px;
   padding: 0.7rem 0.8rem;
   font: inherit;
+  width: 100%;
+}
+
+input,
+select {
+  height: 2.75rem;
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="hidden"] {
+  height: auto;
+  width: auto;
+}
+
+textarea {
+  min-height: 8rem;
+  max-height: 8rem;
+  overflow: auto;
+  resize: none;
 }
 
 input:focus,
@@ -642,7 +705,34 @@ a:focus-visible {
 
 .workflow-editor {
   width: 100%;
+  min-height: 28rem;
+  max-height: 28rem;
   font-family: "Sohne Mono", "SFMono-Regular", "SF Mono", Consolas, "Liberation Mono", monospace;
+}
+
+.workflow-textbox {
+  min-height: 8rem;
+  max-height: 8rem;
+}
+
+.workflow-textbox-compact {
+  min-height: 6rem;
+  max-height: 6rem;
+}
+
+.workflow-textbox-medium {
+  min-height: 9rem;
+  max-height: 9rem;
+}
+
+.workflow-textbox-profile {
+  min-height: 10rem;
+  max-height: 10rem;
+}
+
+.workflow-textbox-prompt {
+  min-height: 24rem;
+  max-height: 24rem;
 }
 
 .workflow-import-form,
@@ -652,6 +742,10 @@ a:focus-visible {
   margin-top: 1.2rem;
 }
 
+.settings-editor-form {
+  margin-top: 0;
+}
+
 .workflow-form-header {
   display: flex;
   gap: 1rem;
@@ -659,6 +753,19 @@ a:focus-visible {
   justify-content: space-between;
   padding-top: 1rem;
   border-top: 1px solid var(--line);
+}
+
+.settings-action-row {
+  position: sticky;
+  top: 0.75rem;
+  z-index: 8;
+  margin: -0.15rem -0.15rem 0;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-surface) 94%, transparent);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(16px);
 }
 
 .workflow-summary-grid {
@@ -691,6 +798,51 @@ a:focus-visible {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--color-surface);
+}
+
+.settings-field {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.settings-field-full {
+  grid-column: 1 / -1;
+}
+
+.settings-field input,
+.settings-field select,
+.settings-field textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.agent-settings-form .agent-field {
+  display: grid;
+  gap: 0.4rem;
+  min-width: 0;
+  width: 100%;
+}
+
+.agent-settings-form .agent-field-full {
+  grid-column: 1 / -1;
+}
+
+.agent-settings-form .agent-field-label {
+  display: block;
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.agent-settings-form .agent-field input,
+.agent-settings-form .agent-field select,
+.agent-settings-form .agent-field textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
 }
 
 .workflow-form-section h3 {
@@ -763,11 +915,84 @@ a:focus-visible {
 
 .workflow-profile-panel {
   display: grid;
-  gap: 0.75rem;
+  gap: 1rem;
   padding: 1rem;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--color-surface-muted);
+}
+
+.workflow-profile-header,
+.agent-section-heading {
+  display: flex;
+  gap: 1rem;
+  align-items: start;
+  justify-content: space-between;
+}
+
+.workflow-profile-header h4,
+.agent-section-heading h3 {
+  margin: 0;
+}
+
+.workflow-profile-header p,
+.agent-section-heading p {
+  margin-top: 0.25rem;
+}
+
+.workflow-profile-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.workflow-profile-field-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-field-group {
+  display: grid;
+  gap: 0.7rem;
+  align-content: start;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+
+.profile-field-group h5 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.profile-field-group-prompt {
+  grid-column: 1 / -1;
+}
+
+.profile-prompt-layout {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.profile-prompt-mode-field {
+  max-width: 16rem;
+}
+
+.agent-prompt-editor {
+  gap: 0.9rem;
+}
+
+.agent-prompt-editor textarea,
+.workflow-profile-panel textarea {
+  display: block;
 }
 
 .workflow-help-copy {
@@ -775,11 +1000,6 @@ a:focus-visible {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
-}
-
-.workflow-profile-panel h4 {
-  margin: 0;
-  font-size: 0.95rem;
 }
 
 .workflow-checkbox-row {
@@ -798,11 +1018,6 @@ a:focus-visible {
 
 .workflow-checkbox-row input {
   width: auto;
-}
-
-.workflow-prompt-section {
-  padding: 0;
-  border: 0;
 }
 
 .workflow-save-toast {
@@ -843,6 +1058,46 @@ a:focus-visible {
 .workflow-save-toast-error {
   border-color: var(--color-danger-border);
   background: var(--color-danger-soft);
+}
+
+@media (max-width: 780px) {
+  .settings-action-row,
+  .workflow-profile-header,
+  .agent-section-heading {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-action-row .subtle-button {
+    width: 100%;
+  }
+
+  .workflow-profile-badges {
+    justify-content: flex-start;
+  }
+
+  .workflow-profile-field-grid,
+  .profile-prompt-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-profile-field-grid > .profile-field-group {
+    grid-column: 1 / -1;
+  }
+
+  .profile-prompt-mode-field {
+    max-width: none;
+  }
+}
+
+@media (max-width: 960px) {
+  .workflow-profile-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-profile-field-grid > .profile-field-group {
+    grid-column: 1 / -1;
+  }
 }
 
 .workflow-save-toast-error strong {

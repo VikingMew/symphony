@@ -5,6 +5,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.LiveViewTest
 
   alias SymphonyElixir.Linear.Adapter
+  alias SymphonyElixir.TestSupport.FakePersistence
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -121,7 +122,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     :ok
   end
 
-  test "workflow store reloads changes, keeps last good workflow, and falls back when stopped" do
+  test "workflow store reloads active database workflow and can read without the server process" do
     ensure_workflow_store_running()
     assert {:ok, %{prompt: "You are an agent for this repository."}} = Workflow.current()
 
@@ -132,40 +133,32 @@ defmodule SymphonyElixir.ExtensionsTest do
       match?({:ok, %{prompt: "Second prompt"}}, Workflow.current())
     end)
 
-    File.write!(Workflow.workflow_file_path(), "---\ntracker: [\n---\nBroken prompt\n")
-    assert {:error, _reason} = WorkflowStore.force_reload()
-    assert {:ok, %{prompt: "Second prompt"}} = Workflow.current()
-
-    third_workflow = Path.join(Path.dirname(Workflow.workflow_file_path()), "THIRD_WORKFLOW.md")
+    third_workflow = Path.join([Path.dirname(Workflow.workflow_file_path()), "third", "workflow.yml"])
     write_workflow_file!(third_workflow, prompt: "Third prompt")
     Workflow.set_workflow_file_path(third_workflow)
     assert {:ok, %{prompt: "Third prompt"}} = Workflow.current()
 
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
-    assert {:ok, %{prompt: "Third prompt"}} = WorkflowStore.current()
+    write_workflow_file!(third_workflow, prompt: "Third prompt")
+    assert {:ok, %{workflow: %{prompt: "Third prompt"}, source: %{type: :database}}} = WorkflowStore.current_with_source()
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
-  test "workflow store init stops on missing workflow file" do
-    missing_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "MISSING_WORKFLOW.md")
-    Workflow.set_workflow_file_path(missing_path)
+  test "workflow store init uses setup required when no active workflow exists" do
+    FakePersistence.reset!()
 
-    assert {:stop, {:missing_workflow_file, ^missing_path, :enoent}} = WorkflowStore.init([])
+    assert {:ok, state} = WorkflowStore.init([])
+    assert state.workflow.setup_required
+    assert state.source.type == :setup_required
   end
 
-  test "workflow store start_link and poll callback cover missing-file error paths" do
+  test "workflow store start_link and poll callback use database workflow" do
     ensure_workflow_store_running()
     existing_path = Workflow.workflow_file_path()
-    manual_path = Path.join(Path.dirname(existing_path), "MANUAL_WORKFLOW.md")
-    missing_path = Path.join(Path.dirname(existing_path), "MANUAL_MISSING_WORKFLOW.md")
+    manual_path = Path.join([Path.dirname(existing_path), "manual", "workflow.yml"])
 
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
-
-    Workflow.set_workflow_file_path(missing_path)
-
-    assert {:error, {:missing_workflow_file, ^missing_path, :enoent}} =
-             WorkflowStore.force_reload()
 
     write_workflow_file!(manual_path, prompt: "Manual workflow prompt")
     Workflow.set_workflow_file_path(manual_path)
@@ -173,22 +166,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, manual_pid} = WorkflowStore.start_link()
     assert Process.alive?(manual_pid)
 
+    write_workflow_file!(manual_path, prompt: "Manual workflow prompt after poll")
     state = :sys.get_state(manual_pid)
-    File.write!(manual_path, "---\ntracker: [\n---\nBroken prompt\n")
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
-    assert returned_state.workflow.prompt == "Manual workflow prompt"
-    refute returned_state.stamp == nil
-    assert_receive :poll, 1_100
-
-    Workflow.set_workflow_file_path(missing_path)
-    assert {:noreply, path_error_state} = WorkflowStore.handle_info(:poll, returned_state)
-    assert path_error_state.workflow.prompt == "Manual workflow prompt"
-    assert_receive :poll, 1_100
-
-    Workflow.set_workflow_file_path(manual_path)
-    File.rm!(manual_path)
-    assert {:noreply, removed_state} = WorkflowStore.handle_info(:poll, path_error_state)
-    assert removed_state.workflow.prompt == "Manual workflow prompt"
+    assert returned_state.workflow.prompt == "Manual workflow prompt after poll"
+    assert returned_state.source.type == :database
     assert_receive :poll, 1_100
 
     Process.exit(manual_pid, :normal)
@@ -520,6 +502,21 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert dashboard_css =~ ".status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-live"
     assert dashboard_css =~ "[data-phx-main].phx-connected .status-badge-offline"
+    assert dashboard_css =~ "resize: none;"
+    assert dashboard_css =~ "overflow: auto;"
+    assert dashboard_css =~ ".workflow-textbox-compact"
+    assert dashboard_css =~ ".workflow-textbox-medium"
+    assert dashboard_css =~ ".workflow-textbox-profile"
+    assert dashboard_css =~ ".workflow-textbox-prompt"
+    assert dashboard_css =~ ".settings-content-card"
+    assert dashboard_css =~ ".settings-action-row"
+    assert dashboard_css =~ ".agent-prompt-editor"
+    assert dashboard_css =~ ".agent-settings-form .agent-field"
+    assert dashboard_css =~ ".agent-settings-form .agent-field-label"
+    assert dashboard_css =~ ".workflow-profile-field-grid"
+    assert dashboard_css =~ ".profile-field-group"
+    assert dashboard_css =~ ".profile-prompt-layout"
+    assert dashboard_css =~ "height: 2.75rem;"
 
     phoenix_html_js = response(get(build_conn(), "/vendor/phoenix_html/phoenix_html.js"), 200)
     assert phoenix_html_js =~ "phoenix.link.click"

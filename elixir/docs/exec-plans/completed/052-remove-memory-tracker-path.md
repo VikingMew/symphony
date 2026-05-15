@@ -99,9 +99,7 @@ The unsupported tracker diagnostics test now uses a generic unsupported tracker 
 
 Startup terminal workspace cleanup now validates the active workflow configuration before contacting Linear. This prevents an incomplete Linear setup from crashing application boot with a Req/Finch URL error after the memory fallback path is removed.
 
-Repeated dispatch-loop configuration errors are logged once per distinct reason. Existing local databases may still contain old `tracker.kind = "memory"` workflow versions, but they now start as a visible configuration error instead of crashing or repeatedly logging the same validation failure.
-
-Existing database workflow versions created before this correction are normalized at runtime and in the `/workflows` form boundary: legacy `tracker.kind = "memory"` is treated as Linear with the default Linear endpoint and `$LINEAR_API_KEY`. This is a compatibility migration for old persisted data, not a restored memory tracker path.
+Repeated dispatch-loop configuration errors are logged once per distinct reason. Existing local databases may still contain old `tracker.kind = "memory"` workflow versions; alpha-stage development no longer carries a runtime compatibility migration for those rows, so they must be replaced through the current Settings workflow contract.
 
 ## Dependencies
 

@@ -4,7 +4,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias SymphonyElixir.Linear.Diagnostics
+  alias SymphonyElixir.Linear.{Diagnostics, Discovery}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.{Workflow, WorkflowStore}
 
@@ -89,6 +89,65 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
+    defp default_response("SymphonyLinearDiscoveryViewer") do
+      %{
+        "data" => %{
+          "viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}
+        }
+      }
+    end
+
+    defp default_response("SymphonyLinearDiscoveryTeams") do
+      %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-1",
+                "key" => "PLAT",
+                "name" => "Platform",
+                "states" => %{
+                  "nodes" => [
+                    %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
+                    %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Needs Implementation Review", "type" => "started"},
+                    %{"id" => "state-done", "name" => "Done", "type" => "completed"},
+                    %{"id" => "state-canceled", "name" => "Canceled", "type" => "canceled"}
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    end
+
+    defp default_response("SymphonyLinearDiscoveryProjects") do
+      %{
+        "data" => %{
+          "projects" => %{
+            "nodes" => [
+              %{
+                "id" => "project-1",
+                "name" => "Migration Project",
+                "slugId" => "migration-project",
+                "url" => "https://linear.app/project/migration-project",
+                "teams" => %{
+                  "nodes" => [
+                    %{
+                      "id" => "team-1",
+                      "key" => "PLAT",
+                      "name" => "Platform"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    end
+
     defp default_response(_operation), do: %{}
   end
 
@@ -141,7 +200,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert diagnostics.config.project_slug == "project"
     assert diagnostics.config.token_configured
     assert diagnostics.config.token.configured
-    assert diagnostics.config.token.source == "workflow literal"
+    assert diagnostics.config.token.source == "env:LINEAR_API_KEY"
     assert diagnostics.config.token.length == 5
     assert diagnostics.config.token.sha256_prefix == "3c469e9d6c58"
     assert diagnostics.probes.api.status == :ok
@@ -189,7 +248,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     FakePersistence.reset!()
     {:ok, project} = FakePersistence.default_project()
-    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "web")
+    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "web_workflow_settings")
     Application.put_env(:symphony_elixir, :workflow_source, :database)
     assert :ok = WorkflowStore.force_reload()
 
@@ -200,6 +259,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   end
 
   test "diagnostics reports missing token without exposing token values" do
+    System.delete_env("LINEAR_API_KEY")
     write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
 
     diagnostics = Diagnostics.run()
@@ -207,6 +267,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     assert diagnostics.config.token_configured == false
     assert diagnostics.config.token.configured == false
+    assert diagnostics.config.token.source == "missing env:LINEAR_API_KEY"
     assert diagnostics.config.token.length == 0
     assert diagnostics.config.token.sha256_prefix == "n/a"
     assert diagnostics.probes.api.status == :error
@@ -247,7 +308,8 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     diagnostics = Diagnostics.run()
 
-    assert diagnostics.config.tracker_kind == "unavailable"
+    assert diagnostics.config.tracker_kind == "linear"
+    assert diagnostics.config.endpoint == "https://api.linear.app/graphql"
     assert diagnostics.probes.api.status == :error
     assert diagnostics.probes.api.detail =~ "unsupported_tracker_kind"
     assert diagnostics.probes.teams.status == :skipped
@@ -300,6 +362,25 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     refute log =~ "secret-token-value"
   end
 
+  test "linear discovery normalizes projects teams states and suggestions" do
+    assert {:ok, discovery} = Discovery.fetch()
+
+    assert discovery.viewer.name == "Ops User"
+    assert [%{name: "Migration Project", slug: "migration-project"}] = discovery.projects
+    assert [%{name: "Platform", key: "PLAT"}] = discovery.teams
+    assert "Ready" in discovery.states
+    assert "In Progress" in discovery.suggestions.active_states
+    assert "Done" in discovery.suggestions.terminal_states
+    assert "Needs Implementation Review" in discovery.suggestions.review_states
+  end
+
+  test "linear discovery reports missing token without crashing" do
+    System.delete_env("LINEAR_API_KEY")
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+
+    assert {:error, :missing_linear_api_token} = Discovery.fetch()
+  end
+
   test "diagnostics page is linked from navigator and renders fake candidate issues" do
     Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
       candidate_result:
@@ -324,6 +405,8 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
     assert html =~ "Linear Diagnostics"
+    assert html =~ "Fetch Linear configuration"
+    assert html =~ "No discovery data fetched yet."
     assert html =~ "Last run"
     assert html =~ "Run ID"
     assert html =~ "Diagnostics Log"
@@ -340,6 +423,29 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     refreshed_html = render_click(view, "refresh_diagnostics")
     assert refreshed_html =~ "Diagnostics refreshed at"
+
+    discovery_html = render_click(view, "fetch_linear_discovery")
+    assert discovery_html =~ "Linear configuration fetched at"
+    assert discovery_html =~ "Migration Project"
+    assert discovery_html =~ "migration-project"
+    assert discovery_html =~ "Platform"
+    assert discovery_html =~ "Copy slug"
+    assert discovery_html =~ "Suggested State Lists"
+    assert discovery_html =~ "Needs Implementation Review"
+  end
+
+  test "diagnostics page shows discovery errors without hiding diagnostics" do
+    System.delete_env("LINEAR_API_KEY")
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
+    assert html =~ "Linear Diagnostics"
+
+    error_html = render_click(view, "fetch_linear_discovery")
+    assert error_html =~ "Discovery failed"
+    assert error_html =~ "missing_linear_api_token"
+    assert error_html =~ "Tracker Configuration"
   end
 
   test "linear diagnostics route remains protected by auth" do

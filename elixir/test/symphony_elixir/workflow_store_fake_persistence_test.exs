@@ -22,9 +22,13 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
 
   test "database source loads active workflow through fake persistence when file is missing" do
     raw =
-      Workflow.workflow_file_path()
-      |> File.read!()
-      |> String.replace("You are an agent", "You are a fake database agent")
+      Workflow.load()
+      |> then(fn {:ok, workflow} ->
+        Workflow.to_markdown(
+          workflow.config,
+          String.replace(workflow.prompt, "You are an agent", "You are a fake database agent")
+        )
+      end)
 
     {:ok, project} = FakePersistence.default_project()
     assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
@@ -39,37 +43,12 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     refute Map.get(workflow, :setup_required, false)
   end
 
-  test "database source seeds through fake persistence when active workflow is missing" do
+  test "database source returns setup required when active workflow is missing even if local package exists" do
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
-    assert workflow.prompt =~ "You are an agent"
-    assert source.type == :database
-    assert FakePersistence.active_workflow_version()
-  end
-
-  test "database source normalizes legacy tracker workflow to linear" do
-    legacy_config = %{
-      "tracker" => %{
-        "kind" => "legacy-local",
-        "project_slug" => "legacy-project",
-        "active_states" => ["Todo"],
-        "terminal_states" => ["Done"]
-      },
-      "polling" => %{"interval_ms" => 30_000}
-    }
-
-    {:ok, project} = FakePersistence.default_project()
-    raw = Workflow.to_markdown(legacy_config, "Legacy workflow")
-    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
-
-    assert :ok = WorkflowStore.force_reload()
-    assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
-
-    assert source.type == :database
-    assert get_in(workflow.config, ["tracker", "kind"]) == "linear"
-    assert get_in(workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
-    assert get_in(workflow.config, ["tracker", "api_key"]) == "$LINEAR_API_KEY"
-    assert get_in(workflow.config, ["tracker", "project_slug"]) == "legacy-project"
+    assert workflow.setup_required
+    assert source.type == :setup_required
+    refute FakePersistence.active_workflow_version()
   end
 
   test "database source provides setup workflow when file and active workflow are missing" do

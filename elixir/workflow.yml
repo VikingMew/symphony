@@ -1,0 +1,42 @@
+agent:
+  max_concurrent_agents: 10
+  max_turns: 20
+codex:
+  approval_policy: "never"
+  command: "codex --config shell_environment_policy.inherit=all --config 'model=\"gpt-5.5\"' --config model_reasoning_effort=xhigh app-server"
+  thread_sandbox: "workspace-write"
+  turn_sandbox_policy:
+    type: "workspaceWrite"
+polling:
+  interval_ms: 5000
+project:
+  checkout_depth: 1
+  cleanup_commands: ["cd elixir && mise exec -- mix workspace.before_remove"]
+  default_branch: "main"
+  repository_url: "https://github.com/openai/symphony"
+  setup_commands: ["if command -v mise >/dev/null 2>&1; then cd elixir && mise trust && mise exec -- mix deps.get; fi"]
+tracker:
+  active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+  kind: "linear"
+  project_slug: "symphony-0c79b11b75ea"
+  terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
+workflow:
+  allowed_transitions: [{"actor": "codex", "from": "Refining", "profile": "refinement", "to": "Needs Refinement Review"}, {"actor": "human", "from": "Needs Refinement Review", "to": "Ready"}, {"actor": "human", "from": "Needs Refinement Review", "to": "Refining"}, {"actor": "codex", "from": "Ready", "profile": "implementation", "to": "In Progress"}, {"actor": "codex", "from": "In Progress", "profile": "implementation", "to": "Needs Implementation Review"}, {"actor": "human", "from": "Needs Implementation Review", "to": "Ready to Merge"}, {"actor": "human", "from": "Needs Implementation Review", "to": "In Progress"}, {"actor": "codex", "from": "Ready to Merge", "profile": "merge", "to": "Merging"}, {"actor": "codex", "from": "Merging", "profile": "merge", "to": "Done"}, {"actor": "human", "from": "Ready to Merge", "to": "In Progress"}]
+  human_review_states: ["Needs Refinement Review", "Needs Implementation Review"]
+  states:
+    In Progress:
+      profile: "implementation"
+    Merging:
+      profile: "merge"
+    Ready:
+      profile: "implementation"
+    Ready to Merge:
+      profile: "merge"
+    Refining:
+      profile: "refinement"
+  tool_policy:
+    linear:
+      exposed_tools: ["linear_task_read", "linear_task_update"]
+      raw_graphql: false
+workspace:
+  root: "~/code/symphony-workspaces"

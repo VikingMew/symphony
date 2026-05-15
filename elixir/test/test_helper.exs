@@ -15,6 +15,7 @@ SymphonyElixir.TestSupport.DatabaseIsolation.assert_safe_test_database!(initial_
 
 Application.put_env(:symphony_elixir, :start_repo, false)
 Application.put_env(:symphony_elixir, :allow_test_workflow_source, true)
+Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.TestSupport.FakePersistence)
 
 on_exit = fn ->
   :ok

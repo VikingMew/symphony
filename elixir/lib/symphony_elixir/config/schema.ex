@@ -59,7 +59,7 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
+        [:kind, :endpoint, :project_slug, :assignee, :active_states, :terminal_states],
         empty_values: []
       )
     end
@@ -575,7 +575,7 @@ defmodule SymphonyElixir.Config.Schema do
   defp finalize_settings(settings) do
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
+      | api_key: env_secret("LINEAR_API_KEY"),
         assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
     }
 
@@ -1002,6 +1002,8 @@ defmodule SymphonyElixir.Config.Schema do
       resolved -> resolved
     end
   end
+
+  defp env_secret(env_name), do: normalize_secret_value(System.get_env(env_name))
 
   defp resolve_path_value(value, default) when is_binary(value) do
     case normalize_path_token(value) do

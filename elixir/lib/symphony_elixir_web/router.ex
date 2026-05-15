@@ -46,7 +46,6 @@ defmodule SymphonyElixirWeb.Router do
     pipe_through([:browser, :browser_auth])
 
     live("/", DashboardLive, :index)
-    live("/projects", AdminLive, :projects)
     live("/runs", AdminLive, :runs)
     live("/runs/:id", AdminLive, :run_detail)
     live("/issues/:identifier", AdminLive, :issue_detail)
@@ -54,7 +53,10 @@ defmodule SymphonyElixirWeb.Router do
     live("/workers", AdminLive, :workers)
     live("/diagnostics/linear", LinearDiagnosticsLive, :index)
     live("/settings", AdminLive, :settings)
-    live("/workflows", AdminLive, :workflows)
+    live("/settings/projects", AdminLive, :settings_projects)
+    live("/settings/workflow", AdminLive, :settings_workflow)
+    live("/settings/agents", AdminLive, :settings_agents)
+    live("/settings/runtime", AdminLive, :settings_runtime)
   end
 
   scope "/", SymphonyElixirWeb do

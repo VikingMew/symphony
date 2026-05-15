@@ -88,7 +88,7 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert {:error, :invalid_credentials} = Auth.authenticate("admin", "wrong")
   end
 
-  test "dashboard exposes workflow settings navigation" do
+  test "dashboard exposes unified settings navigation" do
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/")
@@ -97,16 +97,22 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert html =~ "Operations Console"
     assert html =~ ~s(aria-current="page")
     assert html =~ "Dashboard"
-    assert html =~ "Workflows"
-    assert html =~ ~s(href="/workflows")
+    assert html =~ "Settings"
+    assert html =~ ~s(href="/settings")
+    refute html =~ ~s(href="/workflows")
+    refute html =~ ~s(href="/agent-settings")
 
-    {:ok, _workflow_view, workflow_html} = live(build_conn(), "/workflows")
+    {:ok, _workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
     assert workflow_html =~ ~s(class="top-banner")
     assert workflow_html =~ ~s(href="/")
     assert workflow_html =~ ~s(aria-current="page")
+    assert workflow_html =~ ~s(href="/settings/projects")
+    assert workflow_html =~ ~s(href="/settings/workflow")
+    assert workflow_html =~ ~s(href="/settings/agents")
+    assert workflow_html =~ ~s(href="/settings/runtime")
     assert workflow_html =~ "Draft Configuration"
-    assert workflow_html =~ "Project slug"
-    refute workflow_html =~ "Raw WORKFLOW.md"
+    refute workflow_html =~ ~s(name="workflow[tracker_project_slug]")
+    refute workflow_html =~ "Raw workflow source"
   end
 
   defp start_test_endpoint do

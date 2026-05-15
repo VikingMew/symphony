@@ -149,15 +149,21 @@ rm -f symphony.db symphony.db-shm symphony.db-wal
 mise exec -- mix ecto.migrate
 ```
 
-## 7. 配置 WORKFLOW.md
+## 7. 配置 workflow
 
-默认 workflow 文件是：
+运行时配置来源是 SQLite active workflow version。空数据库会进入 setup-required 状态，不会开始
+监听 Linear 或调度 agent；先在 `/settings/workflow` 和 `/settings/agents` 创建第一版 active
+workflow。
+
+`workflow.yml` 和 `profiles.yml` 是 split workflow package 的导入/导出格式，不是启动参数，也不
+是运行时 fallback。这个 package 由两个文件组成：
 
 ```text
-elixir/WORKFLOW.md
+elixir/workflow.yml
+elixir/profiles.yml
 ```
 
-最少需要确认这些字段：
+`workflow.yml` 里最少需要确认这些字段：
 
 ```yaml
 tracker:
@@ -190,6 +196,18 @@ workflow:
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]
       raw_graphql: false
+```
+
+`profiles.yml` 里配置共享 base prompt 和 agent profile：
+
+```yaml
+base_prompt: |
+  You are working on a Linear issue {{ issue.identifier }}.
+
+  Title: {{ issue.title }}
+  Description:
+  {{ issue.description }}
+
 profiles:
   refinement:
     name: "Refinement"
@@ -266,7 +284,9 @@ project:
 `project.setup_commands` 会先完成 checkout/setup，随后 `hooks.after_create` 作为附加自定义命令执行。
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
-`WORKFLOW.md` 的 YAML front matter 和 Markdown prompt 都是 Symphony 的 workflow contract。导入时它是一个完整 workflow package：`workflow` 定义状态路由和流转规则，顶层 `profiles` 定义被引用的执行 profile。后续可以通过 Web UI 的 `/workflows` 页面管理 workflow versions。
+Web UI 的 `/settings/workflow` tab 管理 workflow/routing，`/settings/agents` tab 管理 base
+prompt 和 profiles。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
+prompt 来源。
 
 当前默认 Linear 状态流是：
 
@@ -297,18 +317,14 @@ Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_up
 只启动编排服务，不开 dashboard：
 
 ```bash
-mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  ./WORKFLOW.md
+mise exec -- ./bin/symphony
 ```
 
-启动 Web dashboard 且继续使用显式文件模式，例如监听 4000 端口：
+启动 Web dashboard，例如监听 4000 端口：
 
 ```bash
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  --port 4000 \
-  ./WORKFLOW.md
+  --port 4000
 ```
 
 然后打开：
@@ -319,24 +335,24 @@ http://127.0.0.1:4000/
 
 如果启用了认证，先访问 `/login` 登录。
 
-显式传入 `./WORKFLOW.md` 时，运行时配置来源就是这个文件。Web UI 可以查看数据库中的 workflow versions，但不会改变当前运行使用的文件配置。
+运行时配置来源是 SQLite active workflow version。`workflow.yml` 和 `profiles.yml` 是导入、
+导出的 split package 文件，不再作为 CLI 启动参数，也不会在启动时自动导入。
 
 ### dashboard-first 数据库模式启动
 
-如果你希望从数据库或 UI 管理 workflow，只传 `--port`，不要传 `WORKFLOW.md`：
+如果你希望从数据库或 UI 管理 workflow，直接传 `--port`：
 
 ```bash
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
   --port 4000
 ```
 
 此时规则是：
 
 - 运行时配置来源是 SQLite active workflow version。
-- 如果 SQLite 中还没有 active workflow version，但当前目录有 `WORKFLOW.md`，它只会作为初始化文件导入一次。
-- 如果数据库和 `WORKFLOW.md` 都没有可用 workflow，先访问 `/workflows`，在 raw editor 中创建第一个 workflow。
-- 不带 `--port` 的传统 CLI 启动仍默认需要 `WORKFLOW.md`。
+- 如果 SQLite 中还没有 active workflow version，系统进入 setup-required。
+- setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
+- 不带 `--port` 时也使用 SQLite workflow source，只是不启动 Web dashboard。
 
 ## 9. 常用页面
 
@@ -344,11 +360,13 @@ mise exec -- ./bin/symphony \
 
 ```text
 /             当前运行状态 dashboard
-/projects     项目列表
 /runs         持久化 run 历史
 /workers      worker、task、lease 状态；集中式部署下可为空
-/workflows    WORKFLOW.md raw 编辑和版本历史
-/settings     tracker/config 摘要
+/settings     Settings 入口，默认打开 Projects tab
+/settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch
+/settings/workflow workflow/routing/runtime 共享结构化配置和版本历史
+/settings/agents agent profile、base prompt、profile prompt、allowed updates 配置
+/settings/runtime tracker/config 摘要
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
 ```
@@ -361,7 +379,7 @@ mise exec -- ./bin/symphony \
 export SYMPHONY_EXECUTION_MODE=centralized
 ```
 
-集中式模式下，Phoenix Panel 负责执行，不需要注册外部 worker。如果 `WORKFLOW.md` 配了
+集中式模式下，Phoenix Panel 负责执行，不需要注册外部 worker。如果 active workflow 配了
 `worker.ssh_hosts`，集中式执行会在这些 SSH host 上准备 workspace、运行 hooks，并启动
 `codex app-server`；否则就在本机运行。
 
@@ -446,17 +464,15 @@ mise exec -- mix ecto.migrate
 
 ```bash
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  --port 4000 \
-  ./WORKFLOW.md
+  --port 4000
 ```
 
-如果使用 dashboard-first 数据库模式，不要传 `./WORKFLOW.md`：
+如果需要指定数据库文件，使用 `--database-path`：
 
 ```bash
 mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  --port 4000
+  --port 4000 \
+  --database-path ./symphony.db
 ```
 
 ### Linear 拉不到 issue
@@ -464,7 +480,7 @@ mise exec -- ./bin/symphony \
 检查：
 
 - `LINEAR_API_KEY` 是否设置
-- `WORKFLOW.md` 里的 `tracker.project_slug` 是否正确
+- active workflow 里的 `tracker.project_slug` 是否正确
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
 

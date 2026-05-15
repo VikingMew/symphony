@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.WorkflowForm do
   @moduledoc """
-  Converts workflow packages to and from the structured `/workflows` draft form.
+  Converts workflow packages to and from the structured `/settings/workflow` draft form.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -73,7 +73,6 @@ defmodule SymphonyElixir.WorkflowForm do
         |> Map.get("_base_config", %{})
         |> put_path(["tracker", "kind"], "linear")
         |> put_path(["tracker", "endpoint"], linear_endpoint(draft))
-        |> put_optional_path(["tracker", "api_key"], tracker_api_key(draft))
         |> put_optional_path(["tracker", "project_slug"], Map.get(draft, "tracker_project_slug", ""))
         |> put_optional_path(["tracker", "assignee"], Map.get(draft, "tracker_assignee", ""))
         |> put_path(["tracker", "active_states"], lines(Map.get(draft, "active_states", "")))
@@ -262,16 +261,6 @@ defmodule SymphonyElixir.WorkflowForm do
     end
   end
 
-  defp tracker_api_key(draft) do
-    draft
-    |> Map.get("_base_config", %{})
-    |> get_string(["tracker", "api_key"], "$LINEAR_API_KEY")
-    |> case do
-      "" -> "$LINEAR_API_KEY"
-      api_key -> api_key
-    end
-  end
-
   defp put_project(config, draft, checkout_depth) do
     config
     |> put_optional_path(["project", "repository_url"], Map.get(draft, "project_repository_url", ""))
@@ -282,8 +271,6 @@ defmodule SymphonyElixir.WorkflowForm do
   end
 
   defp normalized_display_config(config) do
-    config = Workflow.normalize_legacy_tracker_config(config)
-
     case Schema.parse(config) do
       {:ok, settings} ->
         config

@@ -5,8 +5,7 @@ defmodule SymphonyElixir.CLI do
 
   alias SymphonyElixir.LogFile
 
-  @acknowledgement_switch :i_understand_that_this_will_be_running_without_the_usual_guardrails
-  @switches [{@acknowledgement_switch, :boolean}, logs_root: :string, port: :integer]
+  @switches [database_path: :string, logs_root: :string, port: :integer]
   @runtime_apps [
     :logger,
     :crypto,
@@ -25,8 +24,7 @@ defmodule SymphonyElixir.CLI do
 
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
-          file_regular?: (String.t() -> boolean()),
-          set_workflow_file_path: (String.t() -> :ok | {:error, term()}),
+          set_database_path: (String.t() -> :ok | {:error, term()}),
           set_workflow_source: (atom() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
@@ -49,17 +47,10 @@ defmodule SymphonyElixir.CLI do
   def evaluate(args, deps \\ runtime_deps()) do
     case OptionParser.parse(args, strict: @switches) do
       {opts, [], []} ->
-        with :ok <- require_guardrails_acknowledgement(opts),
-             :ok <- maybe_set_logs_root(opts, deps),
+        with :ok <- maybe_set_logs_root(opts, deps),
+             :ok <- maybe_set_database_path(opts, deps),
              :ok <- maybe_set_server_port(opts, deps) do
           run_default(opts, deps)
-        end
-
-      {opts, [workflow_path], []} ->
-        with :ok <- require_guardrails_acknowledgement(opts),
-             :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_server_port(opts, deps) do
-          run(workflow_path, deps)
         end
 
       _ ->
@@ -67,53 +58,21 @@ defmodule SymphonyElixir.CLI do
     end
   end
 
-  @spec run(String.t(), deps()) :: :ok | {:error, String.t()}
-  def run(workflow_path, deps) do
-    expanded_path = Path.expand(workflow_path)
-
-    if deps.file_regular?.(expanded_path) do
-      :ok = deps.set_workflow_source.(:file)
-      :ok = deps.set_workflow_file_path.(expanded_path)
-
-      case deps.ensure_all_started.() do
-        {:ok, _started_apps} ->
-          :ok
-
-        {:error, reason} ->
-          {:error, "Failed to start Symphony with workflow #{expanded_path}: #{inspect(reason)}"}
-      end
-    else
-      {:error, "Workflow file not found: #{expanded_path}"}
-    end
-  end
-
   @spec run_default(keyword(), deps()) :: :ok | {:error, String.t()}
-  def run_default(opts, deps) do
-    default_path = Path.expand("WORKFLOW.md")
-
-    cond do
-      port_mode?(opts) ->
-        :ok = deps.set_workflow_source.(:database)
-        start_without_file(default_path, deps)
-
-      deps.file_regular?.(default_path) ->
-        run(default_path, deps)
-
-      true ->
-        {:error, "Workflow file not found: #{default_path}"}
-    end
+  def run_default(_opts, deps) do
+    :ok = deps.set_workflow_source.(:database)
+    start_database(deps)
   end
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]"
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
   end
 
   @spec runtime_deps() :: deps()
   defp runtime_deps do
     %{
-      file_regular?: &File.regular?/1,
-      set_workflow_file_path: &SymphonyElixir.Workflow.set_workflow_file_path/1,
+      set_database_path: &set_database_path/1,
       set_workflow_source: &set_workflow_source/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
@@ -123,6 +82,7 @@ defmodule SymphonyElixir.CLI do
 
   defp start_runtime_application do
     with {:ok, started_apps} <- start_runtime_dependencies(),
+         :ok <- SymphonyElixir.DatabaseSetup.prepare(),
          {:ok, _pid} <- start_symphony_supervisor() do
       {:ok, started_apps ++ [:symphony_elixir]}
     end
@@ -167,49 +127,30 @@ defmodule SymphonyElixir.CLI do
     end
   end
 
-  defp require_guardrails_acknowledgement(opts) do
-    if Keyword.get(opts, @acknowledgement_switch, false) do
-      :ok
-    else
-      {:error, acknowledgement_banner()}
+  defp set_logs_root(logs_root) do
+    Application.put_env(:symphony_elixir, :log_file, LogFile.default_log_file(logs_root))
+    :ok
+  end
+
+  defp maybe_set_database_path(opts, deps) do
+    case Keyword.get_values(opts, :database_path) do
+      [] ->
+        :ok
+
+      values ->
+        database_path = values |> List.last() |> String.trim()
+
+        if database_path == "" do
+          {:error, usage_message()}
+        else
+          :ok = deps.set_database_path.(Path.expand(database_path))
+        end
     end
   end
 
-  @spec acknowledgement_banner() :: String.t()
-  defp acknowledgement_banner do
-    lines = [
-      "This Symphony implementation is a low key engineering preview.",
-      "Codex will run without any guardrails.",
-      "SymphonyElixir is not a supported product and is presented as-is.",
-      "To proceed, start with `--i-understand-that-this-will-be-running-without-the-usual-guardrails` CLI argument"
-    ]
-
-    width = Enum.max(Enum.map(lines, &String.length/1))
-    border = String.duplicate("─", width + 2)
-    top = "╭" <> border <> "╮"
-    bottom = "╰" <> border <> "╯"
-    spacer = "│ " <> String.duplicate(" ", width) <> " │"
-
-    content =
-      [
-        top,
-        spacer
-        | Enum.map(lines, fn line ->
-            "│ " <> String.pad_trailing(line, width) <> " │"
-          end)
-      ] ++ [spacer, bottom]
-
-    [
-      IO.ANSI.red(),
-      IO.ANSI.bright(),
-      Enum.join(content, "\n"),
-      IO.ANSI.reset()
-    ]
-    |> IO.iodata_to_binary()
-  end
-
-  defp set_logs_root(logs_root) do
-    Application.put_env(:symphony_elixir, :log_file, LogFile.default_log_file(logs_root))
+  defp set_database_path(database_path) do
+    config = Application.get_env(:symphony_elixir, SymphonyElixir.Repo, [])
+    Application.put_env(:symphony_elixir, SymphonyElixir.Repo, Keyword.put(config, :database, database_path))
     :ok
   end
 
@@ -234,22 +175,24 @@ defmodule SymphonyElixir.CLI do
     :ok
   end
 
-  defp set_workflow_source(source) when source in [:file, :database] do
-    Application.put_env(:symphony_elixir, :workflow_source, source)
+  defp set_workflow_source(:database) do
+    Application.put_env(:symphony_elixir, :workflow_source, :database)
     :ok
   end
 
-  defp start_without_file(default_path, deps) do
+  defp set_workflow_source(_source) do
+    {:error, :unsupported_workflow_source}
+  end
+
+  defp start_database(deps) do
     case deps.ensure_all_started.() do
       {:ok, _started_apps} ->
         :ok
 
       {:error, reason} ->
-        {:error, "Failed to start Symphony without workflow file #{default_path}: #{inspect(reason)}"}
+        {:error, "Failed to start Symphony: #{inspect(reason)}"}
     end
   end
-
-  defp port_mode?(opts), do: Keyword.has_key?(opts, :port)
 
   @spec wait_for_shutdown() :: no_return()
   defp wait_for_shutdown do

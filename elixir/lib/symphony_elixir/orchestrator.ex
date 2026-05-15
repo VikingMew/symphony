@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Orchestrator do
     now_ms = System.monotonic_time(:millisecond)
 
     state =
-      case Config.settings() do
+      case runtime_config() do
         {:ok, config} ->
           run_terminal_workspace_cleanup()
 
@@ -324,6 +324,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error?(:missing_linear_project_slug), do: true
   defp config_validation_error?(:missing_project_repository_url), do: true
   defp config_validation_error?(:missing_tracker_kind), do: true
+  defp config_validation_error?(:setup_required), do: true
   defp config_validation_error?(:workflow_front_matter_not_a_map), do: true
   defp config_validation_error?({:unsupported_tracker_kind, _kind}), do: true
   defp config_validation_error?({:invalid_workflow_config, _message}), do: true
@@ -331,30 +332,31 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error?({:workflow_parse_error, _reason}), do: true
   defp config_validation_error?(_reason), do: false
 
-  defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in WORKFLOW.md"
-  defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in WORKFLOW.md"
-  defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in WORKFLOW.md"
-  defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in WORKFLOW.md"
-  defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in WORKFLOW.md"
+  defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in workflow config"
+  defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in workflow config"
+  defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in workflow config"
+  defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in workflow config"
+  defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in workflow config"
+  defp config_validation_error_message(:setup_required), do: "No active workflow is configured. Open /settings/workflow to create one."
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
-    "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+    "Failed to parse workflow config: front matter must decode to a map"
   end
 
   defp config_validation_error_message({:unsupported_tracker_kind, kind}) do
-    "Unsupported tracker kind in WORKFLOW.md: #{inspect(kind)}"
+    "Unsupported tracker kind in workflow config: #{inspect(kind)}"
   end
 
   defp config_validation_error_message({:invalid_workflow_config, message}) do
-    "Invalid WORKFLOW.md config: #{message}"
+    "Invalid workflow config: #{message}"
   end
 
   defp config_validation_error_message({:missing_workflow_file, path, reason}) do
-    "Missing WORKFLOW.md at #{path}: #{inspect(reason)}"
+    "Missing workflow file at #{path}: #{inspect(reason)}"
   end
 
   defp config_validation_error_message({:workflow_parse_error, reason}) do
-    "Failed to parse WORKFLOW.md: #{inspect(reason)}"
+    "Failed to parse workflow config: #{inspect(reason)}"
   end
 
   defp reconcile_running_issues(%State{} = state) do
@@ -1328,7 +1330,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:start_listening, _from, state) do
-    case Config.settings() do
+    case runtime_config() do
       {:ok, _config} ->
         state = %{state | listening?: true, last_config_error: nil}
         state = schedule_tick(state, 0)
@@ -1880,7 +1882,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp record_session_completion_totals(state, _running_entry), do: state
 
   defp refresh_runtime_config(%State{} = state) do
-    case Config.settings() do
+    case runtime_config() do
       {:ok, config} ->
         %{
           state
@@ -1895,6 +1897,8 @@ defmodule SymphonyElixir.Orchestrator do
         |> Map.merge(%{listening?: false, poll_check_in_progress: false, max_concurrent_agents: 0})
     end
   end
+
+  defp runtime_config, do: Config.settings()
 
   defp config_error_payload(nil), do: nil
 

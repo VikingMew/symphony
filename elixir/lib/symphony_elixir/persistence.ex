@@ -39,7 +39,7 @@ defmodule SymphonyElixir.Persistence do
       case Repo.get_by(Project, slug: @default_project_slug) do
         nil ->
           %Project{}
-          |> Project.changeset(%{name: "Default", slug: @default_project_slug, enabled: true})
+          |> Project.changeset(%{name: "Default", slug: @default_project_slug, default_branch: "main", enabled: true})
           |> Repo.insert()
 
         project ->
@@ -62,6 +62,19 @@ defmodule SymphonyElixir.Persistence do
     if repo_available?(), do: %Project{} |> Project.changeset(attrs) |> Repo.insert(), else: {:error, :repo_unavailable}
   end
 
+  @spec update_project(Project.t() | String.t(), map()) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
+  def update_project(%Project{} = project, attrs) do
+    if repo_available?(), do: project |> Project.changeset(attrs) |> Repo.update(), else: {:error, :repo_unavailable}
+  end
+
+  def update_project(id, attrs) when is_binary(id) do
+    with true <- repo_available?() || {:error, :repo_unavailable},
+         %Project{} = project <- Repo.get(Project, id) || {:error, :not_found} do
+      update_project(project, attrs)
+    end
+  end
+
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowVersion.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import") when is_binary(raw_workflow_md) do
@@ -74,24 +87,6 @@ defmodule SymphonyElixir.Persistence do
         source: source,
         active: true
       })
-    end
-  end
-
-  @spec ensure_workflow_seeded_from_file(Path.t()) :: {:ok, WorkflowVersion.t()} | {:error, term()}
-  def ensure_workflow_seeded_from_file(path) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, project} <- default_project(),
-         nil <- active_workflow_version(project) do
-      path
-      |> File.read()
-      |> case do
-        {:ok, raw} -> import_workflow(project, raw, "file")
-        {:error, reason} -> {:error, {:missing_workflow_file, path, reason}}
-      end
-    else
-      %WorkflowVersion{} = version -> {:ok, version}
-      {:error, reason} -> {:error, reason}
-      false -> {:error, :repo_unavailable}
     end
   end
 

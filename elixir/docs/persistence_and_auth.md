@@ -62,10 +62,9 @@ The worker API uses its own protocol authentication. Registration requires
 
 ## Workflow Versions
 
-Workflow versions persist the complete `WORKFLOW.md` contract:
+Workflow versions persist the complete workflow package contract:
 
-- raw Markdown
-- parsed YAML front matter
+- parsed YAML config
 - prompt body
 - source
 - active flag
@@ -76,25 +75,35 @@ Database-backed workflow loading supports explicit database mode:
 Application.put_env(:symphony_elixir, :workflow_source, :database)
 ```
 
-The CLI enables database mode automatically when started with `--port` and no explicit workflow
-path. In that mode, `WORKFLOW.md` is an initialization file only: if no active SQLite workflow
-exists, Symphony imports it once. If neither SQLite nor `WORKFLOW.md` has a workflow, the dashboard
-starts in setup-required mode and `/workflows` can create the first active workflow. Traditional
-non-port CLI runs and explicit workflow paths keep file-backed `WORKFLOW.md` semantics.
+The CLI starts in database workflow mode. If no active SQLite workflow exists, Symphony starts in
+setup-required mode and does not poll Linear or schedule agents until `/settings/workflow` creates
+the first active workflow. Local split package files (`workflow.yml` and `profiles.yml`) are import
+and export artifacts, not startup seed data. Use `--database-path <path>` or
+`SYMPHONY_DATABASE_PATH` to select a different SQLite database file.
 
 ## Web UI
 
 The following browser pages are available when the Phoenix server is enabled:
 
 - `/`
-- `/projects`
 - `/runs`
 - `/workers`
-- `/workflows`
 - `/settings`
+- `/settings/projects`
+- `/settings/workflow`
+- `/settings/agents`
+- `/settings/runtime`
 - `/diagnostics/linear`
 
-The workflow page currently supports raw `WORKFLOW.md` editing and version history. The long-term target is a structured workflow configuration page with per-section fields, field-level verification, full `WORKFLOW.md` upload import, and full `WORKFLOW.md` export. See [Workflow 页面设计目标](workflow_page_design.zh-CN.md).
+Settings is one tabbed page: Projects owns project-specific Linear project slug, repository URL,
+and default branch; Workflow owns shared workflow/runtime/bootstrap policy; Agents owns execution
+profiles and the shared base prompt; and Runtime shows tracker/config summary. Workflow and Agents
+each show their own version history in the UI: Workflow history lists workflow settings saves,
+while Agents history lists profile/prompt saves. Restoring a history row is section-scoped
+and writes a new complete active workflow version instead of directly activating an older complete
+package. Runtime reads the SQLite active workflow version; split
+`workflow.yml`/`profiles.yml` packages are import/export artifacts. See
+[Workflow 页面设计目标](workflow_page_design.zh-CN.md).
 
 ## Worker State
 

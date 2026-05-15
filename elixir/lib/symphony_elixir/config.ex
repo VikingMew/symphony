@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Config do
   @moduledoc """
-  Runtime configuration loaded from `WORKFLOW.md`.
+  Runtime configuration loaded from the active workflow package.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -29,6 +29,9 @@ defmodule SymphonyElixir.Config do
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
     case Workflow.current() do
+      {:ok, %{setup_required: true}} ->
+        {:error, :setup_required}
+
       {:ok, %{config: config}} when is_map(config) ->
         Schema.parse(config)
 
@@ -209,25 +212,28 @@ defmodule SymphonyElixir.Config do
   defp format_config_error(reason) do
     case reason do
       {:missing_workflow_file, path, :enoent} when path in ["", nil] ->
-        "No active workflow is configured. Open /workflows to create one or start with a WORKFLOW.md file."
+        "No active workflow is configured. Open /settings/workflow to create one."
+
+      :setup_required ->
+        "No active workflow is configured. Open /settings/workflow to create one."
 
       {:invalid_workflow_config, message} ->
-        "Invalid WORKFLOW.md config: #{message}"
+        "Invalid workflow config: #{message}"
 
       {:missing_workflow_file, path, raw_reason} ->
-        "Missing WORKFLOW.md at #{path}: #{inspect(raw_reason)}"
+        "Missing workflow file at #{path}: #{inspect(raw_reason)}"
 
       {:workflow_parse_error, raw_reason} ->
-        "Failed to parse WORKFLOW.md: #{inspect(raw_reason)}"
+        "Failed to parse workflow config: #{inspect(raw_reason)}"
 
       :workflow_front_matter_not_a_map ->
-        "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
+        "Failed to parse workflow config: front matter must decode to a map"
 
       :missing_project_repository_url ->
-        "Project repository URL missing in WORKFLOW.md"
+        "Project repository URL missing in workflow config"
 
       other ->
-        "Invalid WORKFLOW.md config: #{inspect(other)}"
+        "Invalid workflow config: #{inspect(other)}"
     end
   end
 end

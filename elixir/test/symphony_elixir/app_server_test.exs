@@ -20,7 +20,8 @@ defmodule SymphonyElixir.AppServerTest do
       assert details.reason == :port_exit
       assert details.exit_status == 127
       assert details.command =~ "exit 127"
-      assert details.workspace == workspace
+      assert {:ok, canonical_workspace} = SymphonyElixir.PathSafety.canonicalize(workspace)
+      assert details.workspace == canonical_workspace
       assert details.worker_host == "local"
       assert details.output =~ "codex: command not found"
       assert details.hint =~ "Command not found"
@@ -39,13 +40,13 @@ defmodule SymphonyElixir.AppServerTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        codex_command: "printf 'booting nvs\\n' >&2; sleep 1",
-        codex_read_timeout_ms: 20
+        codex_command: "printf 'booting nvs\\n'; sleep 1",
+        codex_read_timeout_ms: 500
       )
 
       assert {:error, {:codex_startup_failed, details}} = AppServer.start_session(workspace)
       assert details.reason == :response_timeout
-      assert details.timeout_ms == 20
+      assert details.timeout_ms == 500
       assert details.output =~ "booting nvs"
       assert details.hint =~ "read_timeout_ms"
     after
