@@ -135,6 +135,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Projects"
     assert html =~ "Linear Configuration Discovery"
     assert html =~ "Fetch Linear configuration"
+    assert html =~ ~s(phx-disable-with="Fetching...")
     assert html =~ "No Linear discovery data fetched yet."
     assert html =~ "Fake Project"
     assert html =~ "fake"
@@ -173,6 +174,28 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert error_html =~ "Discovery failed"
     assert error_html =~ "missing_linear_api_token"
     assert error_html =~ "Projects"
+  end
+
+  test "workflow setup-required page does not show draft validation before edits" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+
+    assert html =~ "Runtime source:"
+    assert html =~ "setup_required"
+    assert html =~ "No active workflow is configured yet."
+    refute html =~ "Validation failed"
+    refute html =~ "missing_linear_project_slug"
+
+    edited_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: Map.put(workflow_page_form_params(), "active_states", "")
+      )
+      |> render_change()
+
+    assert edited_html =~ "Validation failed"
   end
 
   test "runs page does not render runtime listening controls" do

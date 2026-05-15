@@ -69,6 +69,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_diagnostics_notice, nil)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_validation_error, nil)
+     |> assign(:workflow_validation_visible?, false)
      |> assign(:workflow_form_valid?, false)
      |> assign(:workflow_form_summary, %{})
      |> refresh()}
@@ -98,6 +99,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     {:noreply,
      socket
      |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_validation_visible?, true)
      |> assign(:workflow_form, draft)
      |> assign_workflow_validation(draft)}
   end
@@ -119,12 +121,14 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign_save_notice(:success, "#{settings_section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign(:workflow_validation_error, nil)
+        |> assign(:workflow_validation_visible?, false)
         |> refresh()
       else
         {:error, message} when is_binary(message) ->
           socket
           |> put_flash(:error, "Workflow rejected: #{message}")
           |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
           |> assign(:workflow_validation_error, message)
           |> assign(:workflow_form_valid?, false)
@@ -133,6 +137,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           socket
           |> put_flash(:error, "Workflow rejected: #{message}")
           |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_validation_error, message)
           |> assign(:workflow_form, draft)
           |> assign(:workflow_form_valid?, false)
@@ -143,6 +148,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           socket
           |> put_flash(:error, "Workflow rejected: #{message}")
           |> assign_save_notice(:error, "Workflow save failed", message)
+          |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
       end
 
@@ -201,6 +207,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign_save_notice(:success, "#{settings_section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign(:workflow_validation_error, nil)
+        |> assign(:workflow_validation_visible?, false)
         |> refresh()
       else
         nil ->
@@ -210,12 +217,14 @@ defmodule SymphonyElixirWeb.AdminLive do
           socket
           |> put_flash(:error, "Settings restore rejected: #{message}")
           |> assign_save_notice(:error, "Settings restore failed", message)
+          |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_validation_error, message)
 
         {:error, message} when is_binary(message) ->
           socket
           |> put_flash(:error, "Settings restore rejected: #{message}")
           |> assign_save_notice(:error, "Settings restore failed", message)
+          |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_validation_error, message)
 
         {:error, reason} ->
@@ -224,6 +233,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           socket
           |> put_flash(:error, "Settings restore rejected: #{message}")
           |> assign_save_notice(:error, "Settings restore failed", message)
+          |> assign(:workflow_validation_visible?, true)
       end
 
     {:noreply, socket}
@@ -239,6 +249,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     {:noreply,
      socket
      |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_validation_visible?, true)
      |> assign(:workflow_form, draft)
      |> assign_workflow_validation(draft)}
   end
@@ -483,7 +494,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <h3>Linear Configuration Discovery</h3>
                   <p class="workflow-help-copy">Fetch read-only Linear projects, teams, and workflow states while filling project and workflow settings.</p>
                 </div>
-                <button type="button" class="subtle-button" phx-click="fetch_linear_discovery">Fetch Linear configuration</button>
+                <button type="button" class="subtle-button" phx-click="fetch_linear_discovery" phx-disable-with="Fetching...">Fetch Linear configuration</button>
               </div>
 
               <p :if={@linear_discovery_message} class="status-note"><%= @linear_discovery_message %></p>
@@ -685,7 +696,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <a class="issue-link" href="/diagnostics/linear">Open Linear diagnostics</a>
               </p>
             <% end %>
-            <%= if @workflow_validation_error do %>
+            <%= if @workflow_validation_visible? && @workflow_validation_error do %>
               <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
             <% end %>
             <%= if @workflow_save_notice do %>
@@ -834,7 +845,7 @@ defmodule SymphonyElixirWeb.AdminLive do
               <span class="status-badge status-info"><%= @runtime_workflow_source.type %></span>
               <span class="muted mono"><%= @runtime_workflow_source.detail %></span>
             </p>
-            <%= if @workflow_validation_error do %>
+            <%= if @workflow_validation_visible? && @workflow_validation_error do %>
               <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
             <% end %>
             <%= if @workflow_save_notice do %>
