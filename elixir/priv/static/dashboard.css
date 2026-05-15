@@ -486,6 +486,12 @@ pre,
   font-size: 0.94rem;
 }
 
+.status-note {
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
 .table-wrap {
   overflow-x: auto;
   margin-top: 1rem;

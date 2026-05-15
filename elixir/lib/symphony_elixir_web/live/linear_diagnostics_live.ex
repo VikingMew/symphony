@@ -11,6 +11,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
+     |> assign(:discovery_message, nil)
      |> assign(:refresh_message, nil)
      |> assign(:bootstrap_result, nil)
      |> assign(:discovery, nil)
@@ -25,6 +26,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
      socket
      |> assign(:diagnostics, diagnostics)
      |> assign(:bootstrap_result, nil)
+     |> assign(:discovery_message, nil)
      |> assign(:refresh_message, "Diagnostics refreshed at #{fmt_dt(diagnostics.ran_at)}")}
   end
 
@@ -35,13 +37,13 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
         {:noreply,
          socket
          |> assign(:discovery, {:ok, discovery})
-         |> assign(:refresh_message, "Linear configuration fetched at #{fmt_dt(discovery.fetched_at)}")}
+         |> assign(:discovery_message, "Linear configuration fetched at #{fmt_dt(discovery.fetched_at)}")}
 
       {:error, reason} ->
         {:noreply,
          socket
          |> assign(:discovery, {:error, reason})
-         |> assign(:refresh_message, "Linear configuration fetch failed: #{inspect(reason)}")}
+         |> assign(:discovery_message, "Linear configuration fetch failed: #{inspect(reason)}")}
     end
   end
 
@@ -96,9 +98,8 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
             <button type="button" class="subtle-button" phx-click="refresh_diagnostics">Refresh</button>
           </div>
         </div>
+        <p :if={@refresh_message} class="status-note">{@refresh_message}</p>
       </header>
-
-      <p :if={@refresh_message} class="empty-state">{@refresh_message}</p>
 
       <section class="section-card">
         <div class="section-header">
@@ -108,6 +109,8 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
           </div>
           <button type="button" class="subtle-button" phx-click="fetch_linear_discovery">Fetch Linear configuration</button>
         </div>
+
+        <p :if={@discovery_message} class="status-note">{@discovery_message}</p>
 
         <%= case @discovery do %>
           <% nil -> %>
