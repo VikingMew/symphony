@@ -575,6 +575,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
     assert html =~ "Linear Diagnostics"
     assert html =~ "Fetch Linear configuration"
+    assert html |> count_occurrences("Fetch Linear configuration") == 1
     assert html =~ "No discovery data fetched yet."
     assert html =~ "Last run"
     assert html =~ "Run ID"
@@ -638,6 +639,13 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
+  end
+
+  defp count_occurrences(string, pattern) do
+    string
+    |> String.split(pattern)
+    |> length()
+    |> Kernel.-(1)
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

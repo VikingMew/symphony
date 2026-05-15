@@ -94,7 +94,6 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
           </div>
           <div class="status-stack">
             <button type="button" class="subtle-button" phx-click="refresh_diagnostics">Refresh</button>
-            <button type="button" class="subtle-button" phx-click="fetch_linear_discovery">Fetch Linear configuration</button>
           </div>
         </div>
       </header>
