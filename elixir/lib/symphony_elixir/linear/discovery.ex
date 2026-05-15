@@ -24,6 +24,17 @@ defmodule SymphonyElixir.Linear.Discovery do
         id
         key
         name
+      }
+    }
+  }
+  """
+
+  @team_states_query """
+  query SymphonyLinearDiscoveryTeamStates($teamKey: String!) {
+    teams(filter: {key: {eq: $teamKey}}, first: 1) {
+      nodes {
+        id
+        key
         states(first: 100) {
           nodes {
             id
@@ -73,8 +84,9 @@ defmodule SymphonyElixir.Linear.Discovery do
          :ok <- require_token(tracker),
          {:ok, viewer_payload} <- graphql(client, tracker, @viewer_query, "SymphonyLinearDiscoveryViewer"),
          {:ok, teams_payload} <- graphql(client, tracker, @teams_query, "SymphonyLinearDiscoveryTeams"),
-         {:ok, projects_payload} <- graphql(client, tracker, @projects_query, "SymphonyLinearDiscoveryProjects") do
-      normalize_payload(viewer_payload, teams_payload, projects_payload)
+         {:ok, projects_payload} <- graphql(client, tracker, @projects_query, "SymphonyLinearDiscoveryProjects"),
+         {:ok, team_states_payloads} <- fetch_team_states(client, tracker, teams_payload) do
+      normalize_payload(viewer_payload, teams_payload, projects_payload, team_states_payloads)
     end
   end
 
@@ -87,22 +99,42 @@ defmodule SymphonyElixir.Linear.Discovery do
   defp require_token(%{api_key: token}) when is_binary(token) and token != "", do: :ok
   defp require_token(_tracker), do: {:error, :missing_linear_api_token}
 
-  defp graphql(client, tracker, query, operation_name) do
+  defp graphql(client, tracker, query, operation_name, variables \\ %{}) do
     opts = [operation_name: operation_name]
 
     if function_exported?(client, :graphql_with_auth, 5) do
-      client.graphql_with_auth(query, %{}, tracker.api_key, endpoint(tracker), opts)
+      client.graphql_with_auth(query, variables, tracker.api_key, endpoint(tracker), opts)
     else
-      client.graphql(query, %{}, opts)
+      client.graphql(query, variables, opts)
     end
   end
 
   defp endpoint(%{endpoint: endpoint}) when is_binary(endpoint) and endpoint != "", do: endpoint
   defp endpoint(_tracker), do: @linear_endpoint
 
-  defp normalize_payload(%{"data" => viewer_data}, %{"data" => teams_data}, %{"data" => projects_data})
+  defp fetch_team_states(client, tracker, %{"data" => teams_data}) when is_map(teams_data) do
+    teams_data
+    |> get_in(["teams", "nodes"])
+    |> normalize_team_keys()
+    |> Enum.reduce_while({:ok, []}, fn team_key, {:ok, payloads} ->
+      case graphql(client, tracker, @team_states_query, "SymphonyLinearDiscoveryTeamStates", %{"teamKey" => team_key}) do
+        {:ok, payload} -> {:cont, {:ok, [payload | payloads]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, payloads} -> {:ok, Enum.reverse(payloads)}
+      error -> error
+    end
+  end
+
+  defp fetch_team_states(_client, _tracker, %{"errors" => errors}), do: {:error, {:linear_graphql_errors, errors}}
+  defp fetch_team_states(_client, _tracker, _teams_payload), do: {:ok, []}
+
+  defp normalize_payload(%{"data" => viewer_data}, %{"data" => teams_data}, %{"data" => projects_data}, team_states_payloads)
        when is_map(viewer_data) and is_map(teams_data) and is_map(projects_data) do
-    teams = teams_data |> get_in(["teams", "nodes"]) |> normalize_teams()
+    team_states_by_id = normalize_team_states_payloads(team_states_payloads)
+    teams = teams_data |> get_in(["teams", "nodes"]) |> normalize_teams(team_states_by_id)
     team_states_by_id = Map.new(teams, &{&1.id, &1.states})
     projects = projects_data |> get_in(["projects", "nodes"]) |> normalize_projects(team_states_by_id)
     states = all_state_names(teams, projects)
@@ -118,11 +150,16 @@ defmodule SymphonyElixir.Linear.Discovery do
      }}
   end
 
-  defp normalize_payload(%{"errors" => errors}, _teams_payload, _projects_payload), do: {:error, {:linear_graphql_errors, errors}}
-  defp normalize_payload(_viewer_payload, %{"errors" => errors}, _projects_payload), do: {:error, {:linear_graphql_errors, errors}}
-  defp normalize_payload(_viewer_payload, _teams_payload, %{"errors" => errors}), do: {:error, {:linear_graphql_errors, errors}}
+  defp normalize_payload(%{"errors" => errors}, _teams_payload, _projects_payload, _team_states_payloads),
+    do: {:error, {:linear_graphql_errors, errors}}
 
-  defp normalize_payload(_viewer_payload, _teams_payload, _projects_payload) do
+  defp normalize_payload(_viewer_payload, %{"errors" => errors}, _projects_payload, _team_states_payloads),
+    do: {:error, {:linear_graphql_errors, errors}}
+
+  defp normalize_payload(_viewer_payload, _teams_payload, %{"errors" => errors}, _team_states_payloads),
+    do: {:error, {:linear_graphql_errors, errors}}
+
+  defp normalize_payload(_viewer_payload, _teams_payload, _projects_payload, _team_states_payloads) do
     {:ok,
      %{
        fetched_at: DateTime.utc_now(),
@@ -188,24 +225,52 @@ defmodule SymphonyElixir.Linear.Discovery do
 
   defp normalize_project_team(_team, _team_states_by_id), do: %{id: "n/a", key: "n/a", name: "n/a", states: []}
 
-  defp normalize_teams(teams) when is_list(teams) do
+  defp normalize_teams(teams, team_states_by_id) when is_list(teams) do
     teams
-    |> Enum.map(&normalize_team/1)
+    |> Enum.map(&normalize_team(&1, team_states_by_id))
     |> Enum.sort_by(&String.downcase(&1.name))
   end
 
-  defp normalize_teams(_teams), do: []
+  defp normalize_teams(_teams, _team_states_by_id), do: []
 
-  defp normalize_team(team) when is_map(team) do
+  defp normalize_team(team, team_states_by_id) when is_map(team) do
+    id = display_value(team["id"])
+
     %{
-      id: display_value(team["id"]),
+      id: id,
       key: display_value(team["key"]),
       name: display_value(team["name"]),
-      states: team |> get_in(["states", "nodes"]) |> state_nodes_to_names()
+      states: Map.get(team_states_by_id, id, [])
     }
   end
 
-  defp normalize_team(_team), do: %{id: "n/a", key: "n/a", name: "n/a", states: []}
+  defp normalize_team(_team, _team_states_by_id), do: %{id: "n/a", key: "n/a", name: "n/a", states: []}
+
+  defp normalize_team_keys(teams) when is_list(teams) do
+    teams
+    |> Enum.map(fn
+      %{"key" => key} when is_binary(key) -> String.trim(key)
+      _team -> nil
+    end)
+    |> Enum.reject(&blank?/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp normalize_team_keys(_teams), do: []
+
+  defp normalize_team_states_payloads(payloads) when is_list(payloads) do
+    payloads
+    |> Enum.flat_map(fn
+      %{"data" => %{"teams" => %{"nodes" => teams}}} when is_list(teams) -> teams
+      _payload -> []
+    end)
+    |> Map.new(fn team ->
+      {display_value(team["id"]), team |> get_in(["states", "nodes"]) |> state_nodes_to_names()}
+    end)
+  end
+
+  defp normalize_team_states_payloads(_payloads), do: %{}
 
   defp state_nodes_to_names(nodes) when is_list(nodes) do
     nodes

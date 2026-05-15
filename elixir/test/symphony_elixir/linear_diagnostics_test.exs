@@ -16,12 +16,14 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     alias SymphonyElixir.Linear.Issue
 
     @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
-    def graphql(_query, _variables, opts) do
+    def graphql(_query, variables, opts) do
       fake = Application.get_env(:symphony_elixir, :linear_diagnostics_fake, %{})
 
       case Map.get(fake, Keyword.get(opts, :operation_name)) do
-        nil -> {:ok, default_response(Keyword.get(opts, :operation_name))}
+        nil -> {:ok, default_response(Keyword.get(opts, :operation_name), variables)}
         {:error, reason} -> {:error, reason}
+        response when is_function(response, 2) -> {:ok, response.(variables, opts)}
+        response when is_function(response, 1) -> {:ok, response.(variables)}
         response -> {:ok, response}
       end
     end
@@ -32,11 +34,11 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       Map.get(fake, :candidate_result, {:ok, []})
     end
 
-    defp default_response("SymphonyLinearDiagnosticsViewer") do
+    defp default_response("SymphonyLinearDiagnosticsViewer", _variables) do
       %{"data" => %{"viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}}}
     end
 
-    defp default_response("SymphonyLinearDiagnosticsTeams") do
+    defp default_response("SymphonyLinearDiagnosticsTeams", _variables) do
       %{
         "data" => %{
           "teams" => %{
@@ -49,7 +51,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
-    defp default_response("SymphonyLinearDiagnosticsProject") do
+    defp default_response("SymphonyLinearDiagnosticsProject", _variables) do
       %{
         "data" => %{
           "projects" => %{
@@ -89,7 +91,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
-    defp default_response("SymphonyLinearDiscoveryViewer") do
+    defp default_response("SymphonyLinearDiscoveryViewer", _variables) do
       %{
         "data" => %{
           "viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}
@@ -97,7 +99,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
-    defp default_response("SymphonyLinearDiscoveryTeams") do
+    defp default_response("SymphonyLinearDiscoveryTeams", _variables) do
       %{
         "data" => %{
           "teams" => %{
@@ -105,7 +107,22 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
               %{
                 "id" => "team-1",
                 "key" => "PLAT",
-                "name" => "Platform",
+                "name" => "Platform"
+              }
+            ]
+          }
+        }
+      }
+    end
+
+    defp default_response("SymphonyLinearDiscoveryTeamStates", %{"teamKey" => "PLAT"}) do
+      %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-1",
+                "key" => "PLAT",
                 "states" => %{
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
@@ -122,7 +139,11 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
-    defp default_response("SymphonyLinearDiscoveryProjects") do
+    defp default_response("SymphonyLinearDiscoveryTeamStates", _variables) do
+      %{"data" => %{"teams" => %{"nodes" => []}}}
+    end
+
+    defp default_response("SymphonyLinearDiscoveryProjects", _variables) do
       %{
         "data" => %{
           "projects" => %{
@@ -148,7 +169,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       }
     end
 
-    defp default_response(_operation), do: %{}
+    defp default_response(_operation, _variables), do: %{}
   end
 
   setup do
@@ -372,6 +393,154 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert "In Progress" in discovery.suggestions.active_states
     assert "Done" in discovery.suggestions.terminal_states
     assert "Needs Implementation Review" in discovery.suggestions.review_states
+  end
+
+  test "linear discovery fetches workflow states with separate per-team queries" do
+    test_pid = self()
+
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryViewer" => %{"data" => %{"viewer" => nil}},
+      "SymphonyLinearDiscoveryTeams" => %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{"id" => "team-2", "key" => " OPS ", "name" => "Ops"},
+              %{"id" => "team-1", "key" => "PLAT", "name" => "Platform"},
+              %{"id" => "team-empty", "key" => "", "name" => "Empty"},
+              %{"id" => "team-missing-key", "name" => "Missing Key"},
+              :not_a_team
+            ]
+          }
+        }
+      },
+      "SymphonyLinearDiscoveryProjects" => %{
+        "data" => %{
+          "projects" => %{
+            "nodes" => [
+              %{
+                "id" => "project-2",
+                "name" => "Ops Project",
+                "slugId" => "ops-project",
+                "url" => "https://linear.app/project/ops-project",
+                "teams" => %{"nodes" => [%{"id" => "team-2", "key" => "OPS", "name" => "Ops"}, :not_a_team]}
+              },
+              :not_a_project
+            ]
+          }
+        }
+      },
+      "SymphonyLinearDiscoveryTeamStates" => fn variables, _opts ->
+        send(test_pid, {:team_states_query, variables})
+
+        case variables do
+          %{"teamKey" => "OPS"} ->
+            %{
+              "data" => %{
+                "teams" => %{
+                  "nodes" => [
+                    %{
+                      "id" => "team-2",
+                      "key" => "OPS",
+                      "states" => %{
+                        "nodes" => [
+                          %{"name" => " Backlog "},
+                          %{"name" => "Closed"},
+                          %{"name" => ""},
+                          %{"name" => nil},
+                          :not_a_state
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+
+          %{"teamKey" => "PLAT"} ->
+            %{
+              "data" => %{
+                "teams" => %{
+                  "nodes" => [
+                    %{
+                      "id" => "team-1",
+                      "key" => "PLAT",
+                      "states" => %{"nodes" => [%{"name" => "Todo"}, %{"name" => "Review"}]}
+                    }
+                  ]
+                }
+              }
+            }
+        end
+      end
+    })
+
+    assert {:ok, discovery} = Discovery.fetch()
+
+    assert_receive {:team_states_query, %{"teamKey" => "OPS"}}
+    assert_receive {:team_states_query, %{"teamKey" => "PLAT"}}
+    refute_received {:team_states_query, %{"teamKey" => ""}}
+    assert discovery.viewer == %{id: "n/a", name: "n/a", email: "n/a"}
+    assert Enum.find(discovery.teams, &(&1.key == "OPS")).states == ["Backlog", "Closed"]
+    assert Enum.find(discovery.teams, &(&1.key == "PLAT")).states == ["Review", "Todo"]
+    assert Enum.find(discovery.projects, &(&1.slug == "ops-project")).states == ["Backlog", "Closed"]
+    assert Enum.any?(discovery.projects, &(&1.name == "n/a"))
+    assert "Closed" in discovery.suggestions.terminal_states
+    assert "Review" in discovery.suggestions.active_states
+    assert "Review" in discovery.suggestions.review_states
+  end
+
+  test "linear discovery reports graphql payload errors" do
+    errors = [%{"message" => "Query too complex"}]
+
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryTeams" => %{"errors" => errors}
+    })
+
+    assert {:error, {:linear_graphql_errors, ^errors}} = Discovery.fetch()
+
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryViewer" => %{"errors" => errors}
+    })
+
+    assert {:error, {:linear_graphql_errors, ^errors}} = Discovery.fetch()
+
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryProjects" => %{"errors" => errors}
+    })
+
+    assert {:error, {:linear_graphql_errors, ^errors}} = Discovery.fetch()
+  end
+
+  test "linear discovery reports per-team workflow state request failures" do
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryTeamStates" => {:error, {:linear_api_status, 400, %{"message" => "boom"}}}
+    })
+
+    assert {:error, {:linear_api_status, 400, %{"message" => "boom"}}} = Discovery.fetch()
+  end
+
+  test "linear discovery tolerates empty payload shapes" do
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryTeams" => %{"data" => %{}},
+      "SymphonyLinearDiscoveryProjects" => %{"data" => %{}}
+    })
+
+    assert {:ok, discovery} = Discovery.fetch()
+    assert discovery.teams == []
+    assert discovery.projects == []
+    assert discovery.states == []
+    assert discovery.suggestions == %{active_states: [], terminal_states: [], review_states: []}
+
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiscoveryViewer" => %{},
+      "SymphonyLinearDiscoveryTeams" => %{},
+      "SymphonyLinearDiscoveryProjects" => %{}
+    })
+
+    assert {:ok, discovery} = Discovery.fetch()
+    assert discovery.viewer == %{}
+    assert discovery.teams == []
+    assert discovery.projects == []
   end
 
   test "linear discovery reports missing token without crashing" do
