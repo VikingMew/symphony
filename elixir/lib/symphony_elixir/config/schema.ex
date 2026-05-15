@@ -939,8 +939,6 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
-  defp validate_profile_target_state_references(_profiles, _known_states), do: []
-
   defp known_state?(known_states, state) when is_binary(state) do
     MapSet.member?(known_states, normalize_issue_state(String.trim(state)))
   end

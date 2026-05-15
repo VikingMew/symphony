@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.WorkerSession do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "worker_sessions" do
     belongs_to(:worker, SymphonyElixir.Persistence.Worker)
     field(:protocol_version, :string)

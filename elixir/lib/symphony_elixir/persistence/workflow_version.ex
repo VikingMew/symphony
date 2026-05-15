@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.WorkflowVersion do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "workflow_versions" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     field(:version, :integer)

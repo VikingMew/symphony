@@ -313,7 +313,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp states_probe(%{status: :ok, data: %{state_names: state_names}}, settings) do
     validation = WorkflowStateValidator.validate(settings, state_names)
     tracker = settings.tracker
-    workflow = settings.workflow || %{}
+    workflow = settings.workflow
 
     data =
       validation
@@ -468,12 +468,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     "linear_diagnostics step=#{entry.step} status=#{entry.status} message=#{entry.message} metadata=#{inspect(entry.metadata, limit: 20, printable_limit: 500)}"
   end
 
-  defp runtime_source(workflow_context) do
-    case workflow_context do
-      {:ok, %{source: source}} -> format_runtime_source(source)
-      {:error, reason} -> %{type: "unavailable", detail: format_reason(reason)}
-    end
-  end
+  defp runtime_source({:ok, %{source: source}}), do: format_runtime_source(source)
 
   defp format_runtime_source(%{type: type} = source) do
     %{

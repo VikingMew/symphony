@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.RunRecord do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "runs" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     belongs_to(:workflow_version, SymphonyElixir.Persistence.WorkflowVersion)

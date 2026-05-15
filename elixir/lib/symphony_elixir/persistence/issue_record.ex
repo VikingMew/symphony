@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.IssueRecord do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "issues" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     field(:tracker_issue_id, :string)

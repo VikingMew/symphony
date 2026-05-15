@@ -35,12 +35,15 @@ defmodule SymphonyElixir.Workflow do
   end
 
   @type loaded_workflow :: %{
-          config: map(),
-          prompt: String.t(),
-          prompt_template: String.t()
+          required(:config) => map(),
+          required(:prompt) => String.t(),
+          required(:prompt_template) => String.t(),
+          optional(:project_id) => term(),
+          optional(:setup_required) => boolean(),
+          optional(:workflow_version_id) => term()
         }
 
-  @spec current() :: {:ok, loaded_workflow()} | {:error, term()}
+  @spec current() :: {:ok, loaded_workflow()}
   def current do
     WorkflowStore.current()
   end

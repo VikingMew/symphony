@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.Worker do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "workers" do
     field(:name, :string)
     field(:status, :string, default: "offline")

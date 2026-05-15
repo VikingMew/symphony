@@ -18,7 +18,6 @@ defmodule SymphonyElixir.WorkflowValidator do
       {:ok, %{workflow: workflow, settings: settings}}
     else
       {:error, {:workflow_validation_failed, _message} = reason} -> {:error, reason}
-      {:error, reason} -> {:error, {:workflow_validation_failed, inspect(reason)}}
     end
   end
 
@@ -63,5 +62,4 @@ defmodule SymphonyElixir.WorkflowValidator do
   end
 
   defp format_reason(%_{} = error), do: Exception.message(error)
-  defp format_reason(reason), do: inspect(reason)
 end

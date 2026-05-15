@@ -701,8 +701,6 @@ defmodule SymphonyElixir.Orchestrator do
     Config.workflow_executor_for_state(state_name) in ["codex_agent", "backend_action"]
   end
 
-  defp executable_state?(_state_name), do: false
-
   defp issue_routable_to_worker?(%Issue{assigned_to_worker: assigned_to_worker})
        when is_boolean(assigned_to_worker),
        do: assigned_to_worker
@@ -1021,9 +1019,6 @@ defmodule SymphonyElixir.Orchestrator do
       end)
     else
       {:error, reason} ->
-        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
-
-      reason ->
         Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
     end
   end
@@ -1820,8 +1815,6 @@ defmodule SymphonyElixir.Orchestrator do
     |> Map.new()
   end
 
-  defp sanitize_history_metadata(_metadata), do: %{}
-
   defp sanitize_history_value(value) when is_binary(value) do
     if String.length(value) > 500, do: String.slice(value, 0, 500) <> "...", else: value
   end
@@ -2282,8 +2275,6 @@ defmodule SymphonyElixir.Orchestrator do
     :ok
   end
 
-  defp persist_polled_issues(_issues), do: :ok
-
   defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
@@ -2452,7 +2443,7 @@ defmodule SymphonyElixir.Orchestrator do
         run_id: run_id,
         issue_identifier: issue_identifier,
         event_type: event_type,
-        payload: payload || %{}
+        payload: payload
       })
 
     :ok

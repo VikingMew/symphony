@@ -146,10 +146,6 @@ defmodule SymphonyElixir.PromptBuilder do
 
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
 
-  defp prompt_template!({:error, reason}) do
-    raise RuntimeError, "workflow_unavailable: #{inspect(reason)}"
-  end
-
   defp parse_template!(prompt) when is_binary(prompt) do
     Solid.parse!(prompt)
   rescue

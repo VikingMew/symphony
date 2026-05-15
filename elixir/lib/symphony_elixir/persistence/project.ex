@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.Project do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "projects" do
     field(:name, :string)
     field(:slug, :string)

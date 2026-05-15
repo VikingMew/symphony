@@ -130,7 +130,7 @@ defmodule SymphonyElixir.WorkflowStore do
     }
   end
 
-  defp state_payload(%State{workflow: workflow, source: source}), do: %{workflow: workflow, source: source || %{type: :unknown}}
+  defp state_payload(%State{workflow: workflow, source: source}), do: %{workflow: workflow, source: source}
 
   defp database_source(workflow) when is_map(workflow) do
     %{

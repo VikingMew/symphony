@@ -34,9 +34,6 @@ defmodule SymphonyElixir.Config do
 
       {:ok, %{config: config}} when is_map(config) ->
         Schema.parse(config)
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -117,13 +114,8 @@ defmodule SymphonyElixir.Config do
 
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
-    case Workflow.current() do
-      {:ok, %{prompt_template: prompt}} ->
-        if String.trim(prompt) == "", do: @default_prompt_template, else: prompt
-
-      _ ->
-        @default_prompt_template
-    end
+    {:ok, %{prompt_template: prompt}} = Workflow.current()
+    if String.trim(prompt) == "", do: @default_prompt_template, else: prompt
   end
 
   @spec server_port() :: non_neg_integer() | nil
@@ -211,29 +203,11 @@ defmodule SymphonyElixir.Config do
 
   defp format_config_error(reason) do
     case reason do
-      {:missing_workflow_file, path, :enoent} when path in ["", nil] ->
-        "No active workflow is configured. Open /settings/workflow to create one."
-
       :setup_required ->
         "No active workflow is configured. Open /settings/workflow to create one."
 
       {:invalid_workflow_config, message} ->
         "Invalid workflow config: #{message}"
-
-      {:missing_workflow_file, path, raw_reason} ->
-        "Missing workflow file at #{path}: #{inspect(raw_reason)}"
-
-      {:workflow_parse_error, raw_reason} ->
-        "Failed to parse workflow config: #{inspect(raw_reason)}"
-
-      :workflow_front_matter_not_a_map ->
-        "Failed to parse workflow config: front matter must decode to a map"
-
-      :missing_project_repository_url ->
-        "Project repository URL missing in workflow config"
-
-      other ->
-        "Invalid workflow config: #{inspect(other)}"
     end
   end
 end

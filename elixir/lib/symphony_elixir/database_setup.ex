@@ -32,7 +32,6 @@ defmodule SymphonyElixir.DatabaseSetup do
     case Repo.__adapter__().storage_up(Repo.config()) do
       :ok -> :ok
       {:error, :already_up} -> :ok
-      {:error, reason} -> {:error, reason}
     end
   end
 

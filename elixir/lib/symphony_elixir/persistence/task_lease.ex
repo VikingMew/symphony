@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.TaskLease do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "task_leases" do
     belongs_to(:task, SymphonyElixir.Persistence.TaskRecord)
     belongs_to(:worker, SymphonyElixir.Persistence.Worker)

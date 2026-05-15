@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Persistence.User do
 
   @primary_key {:id, :binary_id, autogenerate: true}
 
+  @type t :: %__MODULE__{}
+
   schema "users" do
     field(:username, :string)
     field(:password_hash, :string)

@@ -497,11 +497,11 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp sanitize_startup_output(output) do
+  defp sanitize_startup_output(output) when is_binary(output) do
     @sensitive_codex_env_names
-    |> Enum.reduce(output || "", fn name, acc ->
+    |> Enum.reduce(output, fn name, acc ->
       case System.get_env(name) do
-        value when is_binary(value) and value != "" -> String.replace(acc, value, "[REDACTED #{name}]")
+        value when value not in [nil, ""] -> String.replace(acc, value, "[REDACTED #{name}]")
         _ -> acc
       end
     end)

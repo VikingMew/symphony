@@ -7,6 +7,8 @@ defmodule SymphonyElixir.Persistence.TaskRecord do
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
 
+  @type t :: %__MODULE__{}
+
   schema "tasks" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     belongs_to(:run, SymphonyElixir.Persistence.RunRecord)

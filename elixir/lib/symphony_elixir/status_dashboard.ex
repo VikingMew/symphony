@@ -256,25 +256,11 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp format_count(nil), do: "0"
-
   defp format_count(value) when is_integer(value) do
     value
     |> Integer.to_string()
     |> group_thousands()
   end
-
-  defp format_count(value) when is_binary(value) do
-    value
-    |> String.trim()
-    |> Integer.parse()
-    |> case do
-      {number, ""} -> group_thousands(Integer.to_string(number))
-      _ -> value
-    end
-  end
-
-  defp format_count(value), do: to_string(value)
 
   defp group_thousands(value) when is_binary(value) do
     sign = if String.starts_with?(value, "-"), do: "-", else: ""
