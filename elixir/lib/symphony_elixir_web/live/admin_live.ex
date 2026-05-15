@@ -111,7 +111,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
     socket =
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
-           {:ok, _validation} <- WorkflowValidator.validate_raw(raw),
+           {:ok, _validation} <- WorkflowValidator.validate_raw(raw, runtime?: false),
            {:ok, project} <- persistence().default_project(),
            {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
@@ -197,7 +197,7 @@ defmodule SymphonyElixirWeb.AdminLive do
            draft <- restore_settings_section(section, socket.assigns.workflow_form, history_draft),
            draft <- apply_project_settings(draft, socket.assigns.default_project),
            {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
-           {:ok, _validation} <- WorkflowValidator.validate_raw(restored_raw),
+           {:ok, _validation} <- WorkflowValidator.validate_raw(restored_raw, runtime?: false),
            {:ok, project} <- persistence().default_project(),
            {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
@@ -1226,7 +1226,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp assign_workflow_validation(socket, draft) do
     case WorkflowForm.to_raw(draft) do
       {:ok, raw} ->
-        case WorkflowValidator.validate_raw(raw) do
+        case WorkflowValidator.validate_raw(raw, runtime?: false) do
           {:ok, _validation} ->
             socket
             |> assign(:workflow_validation_error, nil)

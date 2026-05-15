@@ -191,11 +191,39 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     edited_html =
       view
       |> form("form[phx-submit='save_workflow_form']",
-        workflow: Map.put(workflow_page_form_params(), "active_states", "")
+        workflow: Map.put(workflow_page_form_params(), "hook_timeout_ms", "0")
       )
       |> render_change()
 
     assert edited_html =~ "Validation failed"
+  end
+
+  test "workflow page does not report project-owned Linear slug errors" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    assert {:ok, _project} = FakePersistence.update_project("fake-project-id", %{linear_project_slug: nil, repository_url: nil})
+
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+
+    refute html =~ "missing_linear_project_slug"
+
+    edited_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_change()
+
+    refute edited_html =~ "missing_linear_project_slug"
+    refute edited_html =~ "missing_project_repository_url"
+    refute edited_html =~ "Validation failed"
+
+    saved_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_submit()
+
+    assert saved_html =~ "Workflow settings saved"
+    refute saved_html =~ "missing_linear_project_slug"
+    refute saved_html =~ "missing_project_repository_url"
   end
 
   test "runs page does not render runtime listening controls" do

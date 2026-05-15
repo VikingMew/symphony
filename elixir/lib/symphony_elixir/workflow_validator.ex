@@ -11,10 +11,11 @@ defmodule SymphonyElixir.WorkflowValidator do
           | {:error, {:workflow_validation_failed, String.t()}}
 
   @spec validate_raw(String.t()) :: validation_result()
-  def validate_raw(raw_workflow_md) when is_binary(raw_workflow_md) do
+  @spec validate_raw(String.t(), keyword()) :: validation_result()
+  def validate_raw(raw_workflow_md, opts \\ []) when is_binary(raw_workflow_md) do
     with {:ok, workflow} <- parse_workflow(raw_workflow_md),
          {:ok, settings} <- parse_settings(workflow.config),
-         :ok <- validate_semantics(settings) do
+         :ok <- validate_semantics(settings, opts) do
       {:ok, %{workflow: workflow, settings: settings}}
     else
       {:error, {:workflow_validation_failed, _message} = reason} -> {:error, reason}
@@ -51,13 +52,17 @@ defmodule SymphonyElixir.WorkflowValidator do
     end
   end
 
-  defp validate_semantics(settings) do
-    case Config.validate_settings(settings) do
-      :ok ->
-        :ok
+  defp validate_semantics(settings, opts) do
+    if Keyword.get(opts, :runtime?, true) do
+      case Config.validate_settings(settings) do
+        :ok ->
+          :ok
 
-      {:error, reason} ->
-        {:error, {:workflow_validation_failed, "Invalid workflow semantics: #{inspect(reason)}"}}
+        {:error, reason} ->
+          {:error, {:workflow_validation_failed, "Invalid workflow semantics: #{inspect(reason)}"}}
+      end
+    else
+      :ok
     end
   end
 
