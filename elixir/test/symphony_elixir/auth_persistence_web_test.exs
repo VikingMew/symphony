@@ -31,6 +31,22 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert Auth.verify("correct horse", hash)
     refute Auth.verify("wrong", hash)
     refute Auth.verify("correct horse", "plaintext")
+    refute Auth.verify("correct horse", "pbkdf2_sha256$bad$bad$bad")
+    refute Auth.verify(nil, hash)
+  end
+
+  test "auth reports disabled unconfigured and invalid inputs" do
+    Application.put_env(:symphony_elixir, :auth, enabled: false)
+    refute Auth.enabled?()
+    refute Auth.configured?()
+    assert {:error, :not_configured} = Auth.authenticate("admin", "secret")
+    assert {:error, :invalid_credentials} = Auth.authenticate(nil, "secret")
+
+    Application.put_env(:symphony_elixir, :auth, enabled: true, username: "admin", password: "secret")
+    assert Auth.enabled?()
+    assert Auth.configured?()
+    assert {:ok, %{username: "admin"}} = Auth.authenticate("admin", "secret")
+    assert {:error, :invalid_credentials} = Auth.authenticate("other", "secret")
   end
 
   test "browser and api routes require auth when enabled" do

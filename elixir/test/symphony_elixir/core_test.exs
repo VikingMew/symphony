@@ -1363,6 +1363,81 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt == "Replace S-3"
   end
 
+  test "prompt builder renders built-in refinement merge and custom profile contracts" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-4",
+      title: "Exercise profile contracts",
+      description: "Prompt should explain each profile",
+      state: "Ready",
+      url: "https://example.org/issues/S-4",
+      labels: []
+    }
+
+    refinement_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "refinement",
+        allowed_updates: %{"target_states" => ["Needs Refinement Review"]}
+      )
+
+    assert refinement_prompt =~ "Workflow profile: refinement"
+    assert refinement_prompt =~ "Needs Refinement Review"
+    assert refinement_prompt =~ "Base S-4"
+
+    merge_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "merge",
+        allowed_updates: %{"target_states" => ["Done"]}
+      )
+
+    assert merge_prompt =~ "Workflow profile: merge"
+    assert merge_prompt =~ "Done"
+    assert merge_prompt =~ "Base S-4"
+
+    custom_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "qa",
+        allowed_updates: %{}
+      )
+
+    assert custom_prompt =~ "Workflow profile: qa"
+    assert custom_prompt =~ "the profile's allowed target states"
+    assert custom_prompt =~ "Base S-4"
+  end
+
+  test "prompt builder supports disabled profile prompts and implementation branch contract" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-5",
+      title: "Exercise implementation branch contract",
+      description: "Prompt should mention Linear branchName",
+      state: "In Progress",
+      url: "https://example.org/issues/S-5",
+      labels: [],
+      branch_name: "feature/s-5"
+    }
+
+    disabled_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: %{"prompt" => %{"mode" => "disabled"}},
+        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+      )
+
+    assert disabled_prompt == "Base S-5"
+
+    branch_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+      )
+
+    assert branch_prompt =~ "Required branch: `feature/s-5`"
+    assert branch_prompt =~ "Do not create or switch to a different task branch."
+  end
+
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
 
