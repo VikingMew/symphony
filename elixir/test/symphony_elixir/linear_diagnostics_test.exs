@@ -574,9 +574,9 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
     assert html =~ "Linear Diagnostics"
-    assert html =~ "Fetch Linear configuration"
-    assert html |> count_occurrences("Fetch Linear configuration") == 1
-    assert html =~ "No discovery data fetched yet."
+    refute html =~ "Fetch Linear configuration"
+    refute html =~ "Linear Configuration Discovery"
+    refute html =~ "No discovery data fetched yet."
     assert html =~ "Last run"
     assert html =~ "Run ID"
     assert html =~ "Diagnostics Log"
@@ -593,29 +593,18 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     refreshed_html = render_click(view, "refresh_diagnostics")
     assert refreshed_html =~ "Diagnostics refreshed at"
-
-    discovery_html = render_click(view, "fetch_linear_discovery")
-    assert discovery_html =~ "Linear configuration fetched at"
-    assert discovery_html =~ "Migration Project"
-    assert discovery_html =~ "migration-project"
-    assert discovery_html =~ "Platform"
-    assert discovery_html =~ "Copy slug"
-    assert discovery_html =~ "Suggested State Lists"
-    assert discovery_html =~ "Needs Implementation Review"
   end
 
-  test "diagnostics page shows discovery errors without hiding diagnostics" do
+  test "diagnostics page does not expose Linear discovery controls" do
     System.delete_env("LINEAR_API_KEY")
     write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
     start_test_endpoint()
 
-    {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
+    {:ok, _view, html} = live(build_conn(), "/diagnostics/linear")
     assert html =~ "Linear Diagnostics"
-
-    error_html = render_click(view, "fetch_linear_discovery")
-    assert error_html =~ "Discovery failed"
-    assert error_html =~ "missing_linear_api_token"
-    assert error_html =~ "Tracker Configuration"
+    assert html =~ "Tracker Configuration"
+    refute html =~ "Fetch Linear configuration"
+    refute html =~ "Linear Configuration Discovery"
   end
 
   test "linear diagnostics route remains protected by auth" do
@@ -639,13 +628,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
-  end
-
-  defp count_occurrences(string, pattern) do
-    string
-    |> String.split(pattern)
-    |> length()
-    |> Kernel.-(1)
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

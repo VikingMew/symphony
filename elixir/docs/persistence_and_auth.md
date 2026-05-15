@@ -96,7 +96,7 @@ The following browser pages are available when the Phoenix server is enabled:
 - `/diagnostics/linear`
 
 Settings is one tabbed page: Projects owns project-specific Linear project slug, repository URL,
-and default branch; Workflow owns shared workflow/runtime/bootstrap policy; Agents owns execution
+default branch, and read-only Linear discovery for copying project/state candidates; Workflow owns shared workflow/runtime/bootstrap policy; Agents owns execution
 profiles and the shared base prompt; and Runtime shows tracker/config summary. Workflow and Agents
 each show their own version history in the UI: Workflow history lists workflow settings saves,
 while Agents history lists profile/prompt saves. Restoring a history row is section-scoped

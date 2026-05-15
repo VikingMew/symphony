@@ -424,6 +424,7 @@ The observability and management UI runs on a Phoenix stack:
 - LiveView for the dashboard at `/`
 - LiveView management pages at `/runs`, `/workers`, and `/settings`
 - Settings tabs at `/settings/projects`, `/settings/workflow`, `/settings/agents`, and `/settings/runtime`
+- Linear configuration discovery inside `/settings/projects` for copying project slug and workflow state candidates
 - Linear integration diagnostics at `/diagnostics/linear`
 - JSON API for operational debugging under `/api/v1/*`
 - Worker API under `/api/worker/v1/*`

@@ -79,6 +79,7 @@ Tracker kind and endpoint are not product settings. They remain fixed to Linear 
 - Implemented copy-first discovery. Direct apply controls were intentionally not included in this slice to avoid silently mixing read-only diagnostics with settings mutation.
 - Added `SymphonyElixir.Linear.Discovery` as a read-only normalization boundary.
 - Extended the Linear client with `graphql_with_auth/5` so discovery can reuse the existing GraphQL request path with an explicitly resolved tracker token.
+- Superseded by Task 087 for UI placement: discovery now belongs in Settings Projects, while `/diagnostics/linear` remains focused on validating the active runtime configuration.
 
 ## Test Plan
 

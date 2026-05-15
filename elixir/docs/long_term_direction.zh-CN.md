@@ -252,7 +252,8 @@ verification、diff 审计、导出按钮和所有配置域的高级编辑。后
 
 Settings 页面长期应提供几个互相一致的 tab/入口：
 
-- `/settings/workflow` 结构化编辑：默认入口。按 tracker、project/bootstrap、workspace、hooks、agent、codex、
+- `/settings/projects` 项目配置：编辑每个 project 的 Linear project slug、repository URL、default branch，并提供只读 Linear discovery 辅助复制 Linear project slug 和 workflow state 名称。
+- `/settings/workflow` 结构化编辑：按 tracker、project/bootstrap、workspace、hooks、agent、codex、
   workflow routing、prompt 等区域编辑。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy。
 - `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。

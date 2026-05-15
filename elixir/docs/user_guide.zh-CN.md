@@ -363,7 +363,7 @@ mise exec -- ./bin/symphony \
 /runs         持久化 run 历史
 /workers      worker、task、lease 状态；集中式部署下可为空
 /settings     Settings 入口，默认打开 Projects tab
-/settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch
+/settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
 /settings/workflow workflow/routing/runtime 共享结构化配置和版本历史
 /settings/agents agent profile、base prompt、profile prompt、allowed updates 配置
 /settings/runtime tracker/config 摘要
@@ -484,5 +484,6 @@ mise exec -- ./bin/symphony \
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
 
-也可以打开 `/diagnostics/linear` 查看 token、project slug、workflow source、configured
-states 和候选 issue 查询结果。
+如果不确定 Linear project slug 或 workflow state 名称，先打开 `/settings/projects`，点击
+`Fetch Linear configuration` 获取只读 Linear discovery 结果并复制候选值。保存 Settings 后，再打开
+`/diagnostics/linear` 查看 token、project slug、workflow source、configured states 和候选 issue 查询结果。

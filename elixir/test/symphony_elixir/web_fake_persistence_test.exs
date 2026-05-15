@@ -10,14 +10,107 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
 
+  defmodule FakeLinearClient do
+    @moduledoc false
+
+    @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
+    def graphql(_query, variables, opts) do
+      fake = Application.get_env(:symphony_elixir, :linear_discovery_fake, %{})
+
+      case Map.get(fake, Keyword.get(opts, :operation_name)) do
+        nil -> {:ok, default_response(Keyword.get(opts, :operation_name), variables)}
+        {:error, reason} -> {:error, reason}
+        response -> {:ok, response}
+      end
+    end
+
+    defp default_response("SymphonyLinearDiscoveryViewer", _variables) do
+      %{"data" => %{"viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}}}
+    end
+
+    defp default_response("SymphonyLinearDiscoveryTeams", _variables) do
+      %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-1",
+                "key" => "PLAT",
+                "name" => "Platform"
+              }
+            ]
+          }
+        }
+      }
+    end
+
+    defp default_response("SymphonyLinearDiscoveryTeamStates", %{"teamKey" => "PLAT"}) do
+      %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-1",
+                "key" => "PLAT",
+                "states" => %{
+                  "nodes" => [
+                    %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
+                    %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Needs Implementation Review", "type" => "started"},
+                    %{"id" => "state-done", "name" => "Done", "type" => "completed"}
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    end
+
+    defp default_response("SymphonyLinearDiscoveryTeamStates", _variables) do
+      %{"data" => %{"teams" => %{"nodes" => []}}}
+    end
+
+    defp default_response("SymphonyLinearDiscoveryProjects", _variables) do
+      %{
+        "data" => %{
+          "projects" => %{
+            "nodes" => [
+              %{
+                "id" => "project-1",
+                "name" => "Migration Project",
+                "slugId" => "migration-project",
+                "url" => "https://linear.app/project/migration-project",
+                "teams" => %{
+                  "nodes" => [
+                    %{
+                      "id" => "team-1",
+                      "key" => "PLAT",
+                      "name" => "Platform"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    end
+
+    defp default_response(_operation, _variables), do: %{}
+  end
+
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
     previous_worker_api = Application.get_env(:symphony_elixir, :worker_api)
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_diagnostics_client_module)
+    previous_linear_fake = Application.get_env(:symphony_elixir, :linear_discovery_fake)
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     Application.put_env(:symphony_elixir, :worker_api, registration_token: @worker_token)
+    Application.put_env(:symphony_elixir, :linear_diagnostics_client_module, FakeLinearClient)
     System.put_env("LINEAR_API_KEY", "fake-linear-token")
     FakePersistence.reset!()
 
@@ -25,6 +118,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       restore_app_env(:persistence_module, previous_persistence)
       Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, previous_endpoint)
       restore_app_env(:worker_api, previous_worker_api)
+      restore_app_env(:linear_diagnostics_client_module, previous_linear_client)
+      restore_app_env(:linear_discovery_fake, previous_linear_fake)
       restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
@@ -38,10 +133,46 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, _view, html} = live(build_conn(), "/settings/projects")
 
     assert html =~ "Projects"
+    assert html =~ "Linear Configuration Discovery"
+    assert html =~ "Fetch Linear configuration"
+    assert html =~ "No Linear discovery data fetched yet."
     assert html =~ "Fake Project"
     assert html =~ "fake"
     assert html =~ "git@github.com:org/repo.git"
     assert html =~ "Linear project slug"
+  end
+
+  test "project settings page fetches Linear discovery candidates" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/projects")
+    assert html =~ "No Linear discovery data fetched yet."
+
+    discovery_html = render_click(view, "fetch_linear_discovery")
+
+    assert discovery_html =~ "Linear configuration fetched at"
+    assert discovery_html =~ "Migration Project"
+    assert discovery_html =~ "migration-project"
+    assert discovery_html =~ "Platform"
+    assert discovery_html =~ "Copy slug"
+    assert discovery_html =~ "Suggested State Lists"
+    assert discovery_html =~ "Needs Implementation Review"
+  end
+
+  test "project settings page shows Linear discovery errors inline" do
+    System.delete_env("LINEAR_API_KEY")
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/projects")
+    assert html =~ "Linear Configuration Discovery"
+
+    error_html = render_click(view, "fetch_linear_discovery")
+
+    assert error_html =~ "Discovery failed"
+    assert error_html =~ "missing_linear_api_token"
+    assert error_html =~ "Projects"
   end
 
   test "runs page does not render runtime listening controls" do

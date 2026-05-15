@@ -78,6 +78,7 @@ Plans should focus on product and engineering intent rather than full implementa
 71. [071-codex-mcp-elicitation-hard-stop.md](completed/071-codex-mcp-elicitation-hard-stop.md)
 72. [072-expose-workflow-state-parameters.md](completed/072-expose-workflow-state-parameters.md)
 73. [073-merge-branch-from-linear-branchname.md](completed/073-merge-branch-from-linear-branchname.md)
+87. [087-linear-discovery-settings-placement.md](completed/087-linear-discovery-settings-placement.md)
 
 ## Plan Guidelines
 
