@@ -170,6 +170,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
   defp config_error_result(reason, runtime_source) do
     token = token_diagnostics(System.get_env("LINEAR_API_KEY"))
+    detail = config_error_detail(reason)
 
     %{
       config: %{
@@ -184,13 +185,30 @@ defmodule SymphonyElixir.Linear.Diagnostics do
       },
       runtime_source: runtime_source,
       probes: %{
-        api: probe(:error, "Workflow config", "Cannot load active workflow config: #{format_reason(reason)}"),
-        teams: probe(:skipped, "Linear teams", "Skipped because workflow config is unavailable."),
-        project: probe(:skipped, "Project slug", "Skipped because workflow config is unavailable."),
-        states: probe(:skipped, "Workflow states", "Skipped because workflow config is unavailable."),
-        candidates: probe(:skipped, "Candidate issues", "Skipped because workflow config is unavailable.")
+        api: probe(:error, detail.title, detail.message),
+        teams: probe(:skipped, "Linear teams", detail.skip_message),
+        project: probe(:skipped, "Project slug", detail.skip_message),
+        states: probe(:skipped, "Workflow states", detail.skip_message),
+        candidates: probe(:skipped, "Candidate issues", detail.skip_message)
       },
       issues: []
+    }
+  end
+
+  defp config_error_detail(:setup_required) do
+    %{
+      title: "Setup required",
+      message:
+        "No active workflow is configured yet. Open Settings / Workflow to save a workflow version, then open Settings / Projects to set the Linear project slug and repository URL. Run Linear diagnostics again after saving both.",
+      skip_message: "Skipped because setup is not complete."
+    }
+  end
+
+  defp config_error_detail(reason) do
+    %{
+      title: "Runtime configuration",
+      message: "Cannot load active runtime configuration: #{format_reason(reason)}",
+      skip_message: "Skipped because runtime configuration is unavailable."
     }
   end
 

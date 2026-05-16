@@ -234,6 +234,24 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert [%{identifier: "LIN-1", state: "Ready", assignee: "assigned"}] = diagnostics.issues
   end
 
+  test "diagnostics gives setup-required next steps" do
+    Application.put_env(:symphony_elixir, :workflow_source, :database)
+    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+    FakePersistence.reset!()
+    assert :ok = WorkflowStore.force_reload()
+
+    diagnostics = Diagnostics.run()
+
+    assert diagnostics.runtime_source.type == "setup_required"
+    assert diagnostics.probes.api.status == :error
+    assert diagnostics.probes.api.title == "Setup required"
+    assert diagnostics.probes.api.detail =~ "Open Settings / Workflow"
+    assert diagnostics.probes.api.detail =~ "Settings / Projects"
+    assert diagnostics.probes.api.detail =~ "Linear project slug"
+    assert diagnostics.probes.teams.detail == "Skipped because setup is not complete."
+    refute diagnostics.probes.api.detail =~ "Cannot load active workflow config"
+  end
+
   test "database workflow source controls diagnostics project slug through fake persistence" do
     previous_source = Application.get_env(:symphony_elixir, :workflow_source)
 
