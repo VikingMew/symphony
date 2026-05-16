@@ -1160,6 +1160,17 @@ a:focus-visible {
   gap: 0.18rem;
 }
 
+.setup-guidance-item-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.setup-guidance-item-heading .status-badge {
+  width: fit-content;
+}
+
 .setup-guidance-card span {
   color: var(--muted);
 }

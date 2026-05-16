@@ -690,12 +690,15 @@ defmodule SymphonyElixirWeb.AdminLive do
             <%= if @workflow_setup_required do %>
               <p class="empty-state">No active workflow is configured yet. Fill the structured draft below.</p>
             <% end %>
-            <%= if @workflow_setup_missing_items != [] do %>
+            <%= if @configuration_missing_items != [] do %>
               <aside class="setup-guidance-card" role="status" aria-live="polite">
-                <h3>Setup checklist</h3>
+                <h3>Configuration checklist</h3>
                 <ul>
-                  <li :for={item <- @workflow_setup_missing_items}>
-                    <strong><%= item.title %></strong>
+                  <li :for={item <- @configuration_missing_items}>
+                    <div class="setup-guidance-item-heading">
+                      <span class="status-badge status-info"><%= item.scope %></span>
+                      <strong><%= item.title %></strong>
+                    </div>
                     <span><%= item.detail %></span>
                     <a :if={item.href} class="issue-link" href={item.href}><%= item.action %></a>
                   </li>
@@ -1037,7 +1040,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_form, workflow_form)
     |> assign_workflow_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
-    |> assign(:workflow_setup_missing_items, workflow_setup_missing_items(workflow_setup_required, default_project))
+    |> assign(:configuration_missing_items, configuration_missing_items(workflow_setup_required, default_project))
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
@@ -1059,7 +1062,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     end
   end
 
-  defp workflow_setup_missing_items(workflow_setup_required, project) do
+  defp configuration_missing_items(workflow_setup_required, project) do
     []
     |> maybe_add_workflow_version_item(workflow_setup_required)
     |> maybe_add_project_item(project, :linear_project_slug, "Linear project slug", "Set the Linear project slug on the default project.", "Edit projects")
@@ -1071,7 +1074,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     items ++
       [
         %{
-          title: "Workflow version",
+          scope: "Workflow",
+          title: "Active workflow version",
           detail: "Save the draft below to create the first active workflow version.",
           href: nil,
           action: nil
@@ -1082,12 +1086,12 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp maybe_add_workflow_version_item(items, _workflow_setup_required), do: items
 
   defp maybe_add_project_item(items, nil, _key, title, detail, action) do
-    items ++ [%{title: title, detail: detail, href: "/settings/projects", action: action}]
+    items ++ [%{scope: "Project", title: title, detail: detail, href: "/settings/projects", action: action}]
   end
 
   defp maybe_add_project_item(items, project, key, title, detail, action) do
     if blank?(project_value(project, key)) do
-      items ++ [%{title: title, detail: detail, href: "/settings/projects", action: action}]
+      items ++ [%{scope: "Project", title: title, detail: detail, href: "/settings/projects", action: action}]
     else
       items
     end
@@ -1098,6 +1102,7 @@ defmodule SymphonyElixirWeb.AdminLive do
       items ++
         [
           %{
+            scope: "Runtime",
             title: "Linear API token",
             detail: "Set LINEAR_API_KEY in the runtime environment before running Linear diagnostics or listening.",
             href: nil,
