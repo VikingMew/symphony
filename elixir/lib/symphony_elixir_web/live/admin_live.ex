@@ -126,8 +126,8 @@ defmodule SymphonyElixirWeb.AdminLive do
       else
         {:error, message} when is_binary(message) ->
           socket
-          |> put_flash(:error, "Workflow rejected: #{message}")
-          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
+          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
           |> assign(:workflow_validation_error, message)
@@ -135,8 +135,8 @@ defmodule SymphonyElixirWeb.AdminLive do
 
         {:error, {:workflow_validation_failed, message}} ->
           socket
-          |> put_flash(:error, "Workflow rejected: #{message}")
-          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
+          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_validation_error, message)
           |> assign(:workflow_form, draft)
@@ -146,8 +146,8 @@ defmodule SymphonyElixirWeb.AdminLive do
           message = inspect(reason)
 
           socket
-          |> put_flash(:error, "Workflow rejected: #{message}")
-          |> assign_save_notice(:error, "Workflow save failed", message)
+          |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
+          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
       end
@@ -478,7 +478,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         <% action when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime] -> %>
           <section class="section-card settings-header-card">
             <h1 class="section-title">Settings</h1>
-            <p class="metric-label">Configure workflow routing, agent profiles, and runtime settings.</p>
+            <p class="metric-label">Configure projects, workflow routing, agent profiles, and runtime settings.</p>
             <.settings_tabs active={settings_tab(action)} />
           </section>
 
@@ -487,6 +487,20 @@ defmodule SymphonyElixirWeb.AdminLive do
           <section class="section-card settings-content-card">
             <h2 class="section-title">Projects</h2>
             <p class="metric-label">Each project owns its Linear project slug, repository URL, and default branch. Workflow and agent policy remain shared.</p>
+            <%= if @project_configuration_items != [] do %>
+              <aside class="setup-guidance-card" role="status" aria-live="polite">
+                <h3>Project configuration checklist</h3>
+                <ul>
+                  <li :for={item <- @project_configuration_items}>
+                    <div class="setup-guidance-item-heading">
+                      <span class="status-badge status-info"><%= item.scope %></span>
+                      <strong><%= item.title %></strong>
+                    </div>
+                    <span><%= item.detail %></span>
+                  </li>
+                </ul>
+              </aside>
+            <% end %>
 
             <section class="workflow-form-section">
               <div class="section-header">
@@ -690,11 +704,11 @@ defmodule SymphonyElixirWeb.AdminLive do
             <%= if @workflow_setup_required do %>
               <p class="empty-state">No active workflow is configured yet. Fill the structured draft below.</p>
             <% end %>
-            <%= if @configuration_missing_items != [] do %>
+            <%= if @workflow_configuration_items != [] do %>
               <aside class="setup-guidance-card" role="status" aria-live="polite">
-                <h3>Configuration checklist</h3>
+                <h3>Workflow configuration checklist</h3>
                 <ul>
-                  <li :for={item <- @configuration_missing_items}>
+                  <li :for={item <- @workflow_configuration_items}>
                     <div class="setup-guidance-item-heading">
                       <span class="status-badge status-info"><%= item.scope %></span>
                       <strong><%= item.title %></strong>
@@ -732,10 +746,10 @@ defmodule SymphonyElixirWeb.AdminLive do
 
               <div class="workflow-summary-grid">
                 <p><span class="metric-label">Tracker</span><strong><%= @workflow_form_summary.tracker %></strong></p>
-                <p><span class="metric-label">Project</span><strong><%= @workflow_form_summary.project %></strong></p>
-                <p><span class="metric-label">Repository</span><strong><%= @workflow_form_summary.repository %></strong></p>
+                <p><span class="metric-label">Active states</span><strong><%= @workflow_form_summary.active_states %></strong></p>
+                <p><span class="metric-label">Terminal states</span><strong><%= @workflow_form_summary.terminal_states %></strong></p>
                 <p><span class="metric-label">Hooks</span><strong><%= @workflow_form_summary.hooks %></strong></p>
-                <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
+                <p><span class="metric-label">Setup commands</span><strong><%= @workflow_form_summary.setup_commands %></strong></p>
                 <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
               </div>
 
@@ -750,7 +764,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
                 <section class="workflow-form-section">
                   <h3>Bootstrap</h3>
-                  <p class="metric-label">Repository URL and default branch are configured per project in Settings / Projects.</p>
+                  <p class="metric-label">Project checkout source is configured per project in Settings / Projects.</p>
                   <label><span class="metric-label">Checkout depth</span><input type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} /></label>
                   <label><span class="metric-label">Setup commands</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
                   <label><span class="metric-label">Cleanup commands</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
@@ -1010,6 +1024,20 @@ defmodule SymphonyElixirWeb.AdminLive do
           <section class="section-card">
             <h2 class="section-title">Runtime</h2>
             <p class="metric-label">Execution mode: <span class="status-badge status-info"><%= @execution_mode %></span></p>
+            <%= if @runtime_configuration_items != [] do %>
+              <aside class="setup-guidance-card" role="status" aria-live="polite">
+                <h3>Runtime configuration checklist</h3>
+                <ul>
+                  <li :for={item <- @runtime_configuration_items}>
+                    <div class="setup-guidance-item-heading">
+                      <span class="status-badge status-info"><%= item.scope %></span>
+                      <strong><%= item.title %></strong>
+                    </div>
+                    <span><%= item.detail %></span>
+                  </li>
+                </ul>
+              </aside>
+            <% end %>
             <pre class="code-panel"><%= inspect(@tracker_configs, pretty: true) %></pre>
           </section>
           <% end %>
@@ -1023,6 +1051,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     runtime = runtime_workflow()
     {workflow_form, workflow_setup_required} = workflow_form(active, runtime)
     default_project = default_project()
+
+    configuration_items = configuration_missing_items(workflow_setup_required, default_project)
 
     socket
     |> assign(:projects, persistence().list_projects())
@@ -1040,7 +1070,9 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_form, workflow_form)
     |> assign_workflow_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
-    |> assign(:configuration_missing_items, configuration_missing_items(workflow_setup_required, default_project))
+    |> assign(:project_configuration_items, scoped_configuration_items(configuration_items, "Project"))
+    |> assign(:workflow_configuration_items, scoped_configuration_items(configuration_items, "Workflow"))
+    |> assign(:runtime_configuration_items, scoped_configuration_items(configuration_items, "Runtime"))
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
@@ -1112,6 +1144,10 @@ defmodule SymphonyElixirWeb.AdminLive do
     else
       items
     end
+  end
+
+  defp scoped_configuration_items(items, scope) do
+    Enum.filter(items, &(Map.get(&1, :scope) == scope))
   end
 
   defp settings_source(:agents), do: @agent_settings_source
