@@ -74,7 +74,7 @@ defmodule SymphonyElixir.Orchestrator do
           |> schedule_tick(config.polling.interval_ms)
 
         {:error, reason} ->
-          Logger.error("Orchestrator started with invalid workflow config; listening is disabled: #{inspect(reason)}")
+          Logger.error("Orchestrator started with invalid runtime configuration; listening is disabled: #{config_validation_error_message(reason)}")
 
           %State{
             poll_interval_ms: 30_000,
@@ -332,11 +332,11 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error?({:workflow_parse_error, _reason}), do: true
   defp config_validation_error?(_reason), do: false
 
-  defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in workflow config"
-  defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in workflow config"
-  defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in workflow config"
-  defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in workflow config"
-  defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in workflow config"
+  defp config_validation_error_message(:missing_linear_api_token), do: "Linear API token missing in runtime environment"
+  defp config_validation_error_message(:missing_linear_endpoint), do: "Linear endpoint missing in runtime tracker settings"
+  defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in Project Settings"
+  defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in Project Settings"
+  defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in runtime tracker settings"
   defp config_validation_error_message(:setup_required), do: "No active workflow is configured. Open /settings/workflow to create one."
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
@@ -344,7 +344,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp config_validation_error_message({:unsupported_tracker_kind, kind}) do
-    "Unsupported tracker kind in workflow config: #{inspect(kind)}"
+    "Unsupported tracker kind in runtime tracker settings: #{inspect(kind)}"
   end
 
   defp config_validation_error_message({:invalid_workflow_config, message}) do
@@ -358,6 +358,8 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error_message({:workflow_parse_error, reason}) do
     "Failed to parse workflow config: #{inspect(reason)}"
   end
+
+  defp config_validation_error_message(reason), do: inspect(reason)
 
   defp reconcile_running_issues(%State{} = state) do
     state = reconcile_stalled_running_issues(state)
@@ -1019,7 +1021,7 @@ defmodule SymphonyElixir.Orchestrator do
       end)
     else
       {:error, reason} ->
-        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
+        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{config_validation_error_message(reason)}")
     end
   end
 

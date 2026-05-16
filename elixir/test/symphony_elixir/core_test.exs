@@ -583,7 +583,16 @@ defmodule SymphonyElixir.CoreTest do
     Application.put_env(:symphony_elixir, :linear_client_test_pid, self())
 
     orchestrator_name = Module.concat(__MODULE__, :MissingRepositoryUrlOrchestrator)
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    {result, log} =
+      with_log(fn ->
+        Orchestrator.start_link(name: orchestrator_name)
+      end)
+
+    assert {:ok, pid} = result
+    assert log =~ "Project repository URL missing in Project Settings"
+    refute log =~ "Project repository URL missing in workflow config"
+    refute log =~ ":missing_project_repository_url"
 
     on_exit(fn ->
       restore_app_env(:linear_client_module, previous_linear_client)
