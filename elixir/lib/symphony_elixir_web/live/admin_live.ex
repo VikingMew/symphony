@@ -690,6 +690,18 @@ defmodule SymphonyElixirWeb.AdminLive do
             <%= if @workflow_setup_required do %>
               <p class="empty-state">No active workflow is configured yet. Fill the structured draft below.</p>
             <% end %>
+            <%= if @workflow_setup_missing_items != [] do %>
+              <aside class="setup-guidance-card" role="status" aria-live="polite">
+                <h3>Setup checklist</h3>
+                <ul>
+                  <li :for={item <- @workflow_setup_missing_items}>
+                    <strong><%= item.title %></strong>
+                    <span><%= item.detail %></span>
+                    <a :if={item.href} class="issue-link" href={item.href}><%= item.action %></a>
+                  </li>
+                </ul>
+              </aside>
+            <% end %>
             <%= if @workflow_diagnostics_notice do %>
               <p class="empty-state">
                 <%= @workflow_diagnostics_notice %>
@@ -1025,6 +1037,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_form, workflow_form)
     |> assign_workflow_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
+    |> assign(:workflow_setup_missing_items, workflow_setup_missing_items(workflow_setup_required, default_project))
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
@@ -1043,6 +1056,56 @@ defmodule SymphonyElixirWeb.AdminLive do
     case persistence().default_project() do
       {:ok, project} -> project
       _ -> nil
+    end
+  end
+
+  defp workflow_setup_missing_items(workflow_setup_required, project) do
+    []
+    |> maybe_add_workflow_version_item(workflow_setup_required)
+    |> maybe_add_project_item(project, :linear_project_slug, "Linear project slug", "Set the Linear project slug on the default project.", "Edit projects")
+    |> maybe_add_project_item(project, :repository_url, "Repository URL", "Set the repository URL on the default project so runs can create workspaces.", "Edit projects")
+    |> maybe_add_linear_api_token_item()
+  end
+
+  defp maybe_add_workflow_version_item(items, true) do
+    items ++
+      [
+        %{
+          title: "Workflow version",
+          detail: "Save the draft below to create the first active workflow version.",
+          href: nil,
+          action: nil
+        }
+      ]
+  end
+
+  defp maybe_add_workflow_version_item(items, _workflow_setup_required), do: items
+
+  defp maybe_add_project_item(items, nil, _key, title, detail, action) do
+    items ++ [%{title: title, detail: detail, href: "/settings/projects", action: action}]
+  end
+
+  defp maybe_add_project_item(items, project, key, title, detail, action) do
+    if blank?(project_value(project, key)) do
+      items ++ [%{title: title, detail: detail, href: "/settings/projects", action: action}]
+    else
+      items
+    end
+  end
+
+  defp maybe_add_linear_api_token_item(items) do
+    if blank?(System.get_env("LINEAR_API_KEY")) do
+      items ++
+        [
+          %{
+            title: "Linear API token",
+            detail: "Set LINEAR_API_KEY in the runtime environment before running Linear diagnostics or listening.",
+            href: nil,
+            action: nil
+          }
+        ]
+    else
+      items
     end
   end
 
@@ -1095,6 +1158,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     value = String.trim(to_string(value || ""))
     if value == "", do: nil, else: value
   end
+
+  defp blank?(value), do: is_nil(blank_as_nil(value))
 
   defp assign_detail_data(%{assigns: %{live_action: :run_detail, route_params: %{"id" => id}}} = socket) do
     run = persistence().get_run(id)

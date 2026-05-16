@@ -1134,6 +1134,36 @@ a:focus-visible {
   color: var(--danger);
 }
 
+.setup-guidance-card {
+  margin: 1rem 0 0;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.setup-guidance-card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+}
+
+.setup-guidance-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.setup-guidance-card li {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.setup-guidance-card span {
+  color: var(--muted);
+}
+
 @media (max-width: 860px) {
   .app-shell {
     padding: 1rem 0.85rem 2rem;

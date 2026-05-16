@@ -185,6 +185,9 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Runtime source:"
     assert html =~ "setup_required"
     assert html =~ "No active workflow is configured yet."
+    assert html =~ "Setup checklist"
+    assert html =~ "Workflow version"
+    assert html =~ "Save the draft below to create the first active workflow version."
     refute html =~ "Validation failed"
     refute html =~ "missing_linear_project_slug"
 
@@ -224,6 +227,24 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert saved_html =~ "Workflow settings saved"
     refute saved_html =~ "missing_linear_project_slug"
     refute saved_html =~ "missing_project_repository_url"
+  end
+
+  test "workflow page setup checklist points project-owned missing settings to projects" do
+    System.delete_env("LINEAR_API_KEY")
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    assert {:ok, _project} = FakePersistence.update_project("fake-project-id", %{linear_project_slug: nil, repository_url: nil})
+
+    {:ok, _view, html} = live(build_conn(), "/settings/workflow")
+
+    assert html =~ "Setup checklist"
+    assert html =~ "Workflow version"
+    assert html =~ "Linear project slug"
+    assert html =~ "Repository URL"
+    assert html =~ "Set LINEAR_API_KEY"
+    assert html =~ ~s(href="/settings/projects")
+    refute html =~ "missing_linear_project_slug"
+    refute html =~ "missing_project_repository_url"
   end
 
   test "runs page does not render runtime listening controls" do
