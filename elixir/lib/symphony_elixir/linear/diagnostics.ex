@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   """
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.{Linear.Client, Linear.Issue, Linear.WorkflowStateValidator, WorkflowStore}
+  alias SymphonyElixir.{Linear.Client, Linear.Issue, Linear.WorkflowStateValidator, PersistenceProvider, WorkflowStore}
   require Logger
 
   @viewer_query """
@@ -196,11 +196,12 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp config_error_detail(:setup_required) do
+    project_items = missing_project_setup_items()
+
     %{
       title: "Setup required",
-      message:
-        "No active workflow is configured yet. Open Settings / Workflow to save a workflow version, then open Settings / Projects to set the Linear project slug and repository URL. Run Linear diagnostics again after saving both.",
-      skip_message: "Skipped because setup is not complete."
+      message: setup_required_message(project_items),
+      skip_message: setup_required_skip_message(project_items)
     }
   end
 
@@ -210,6 +211,43 @@ defmodule SymphonyElixir.Linear.Diagnostics do
       message: "Cannot load active runtime configuration: #{format_reason(reason)}",
       skip_message: "Skipped because runtime configuration is unavailable."
     }
+  end
+
+  defp setup_required_message([]) do
+    "No active workflow is configured yet. Open Settings / Workflow to save a workflow version, then run Linear diagnostics again."
+  end
+
+  defp setup_required_message(project_items) do
+    items = Enum.join(project_items, " and ")
+
+    "No active workflow is configured yet. Open Settings / Workflow to save a workflow version. Open Settings / Projects to set #{items}, then run Linear diagnostics again."
+  end
+
+  defp setup_required_skip_message([]), do: "Skipped because no active workflow version is configured."
+  defp setup_required_skip_message(_project_items), do: "Skipped because setup is not complete."
+
+  defp missing_project_setup_items do
+    case PersistenceProvider.module().default_project() do
+      {:ok, project} ->
+        []
+        |> maybe_add_project_setup_item(project, :linear_project_slug, "the Linear project slug")
+        |> maybe_add_project_setup_item(project, :repository_url, "the repository URL")
+
+      _error ->
+        ["the Linear project slug", "the repository URL"]
+    end
+  rescue
+    _exception -> ["the Linear project slug", "the repository URL"]
+  catch
+    _kind, _reason -> ["the Linear project slug", "the repository URL"]
+  end
+
+  defp maybe_add_project_setup_item(items, project, key, label) do
+    if blank?(project_value(project, key)), do: items ++ [label], else: items
+  end
+
+  defp project_value(project, key) do
+    Map.get(project, key) || Map.get(project, to_string(key))
   end
 
   defp skipped_result(config, runtime_source, detail) do
