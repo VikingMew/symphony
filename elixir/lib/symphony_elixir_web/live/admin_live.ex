@@ -5,7 +5,8 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, Linear.Discovery, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
+  alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
+  alias SymphonyElixir.Linear.{Discovery, StateFixes, WorkflowStateValidator}
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
@@ -159,14 +160,19 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   attr(:discovery, :any, required: true)
+  attr(:draft, :map, required: true)
 
   @spec linear_workflow_discovery(map()) :: Phoenix.LiveView.Rendered.t()
   def linear_workflow_discovery(assigns) do
+    assigns =
+      assign(assigns, :state_check, linear_workflow_state_check(assigns.draft, assigns.discovery))
+
     ~H"""
     <%= case @discovery do %>
       <% {:ok, discovery} -> %>
         <section class="workflow-form-section">
           <h3>Linear Workflow State Candidates</h3>
+          <.linear_workflow_state_check_panel state_check={@state_check} />
           <div class="diagnostics-grid">
             <div>
               <h3 class="diagnostics-subtitle">Teams and States</h3>
@@ -222,6 +228,36 @@ defmodule SymphonyElixirWeb.AdminLive do
             </div>
           </div>
         </section>
+      <% _ -> %>
+    <% end %>
+    """
+  end
+
+  attr(:state_check, :any, required: true)
+
+  @spec linear_workflow_state_check_panel(map()) :: Phoenix.LiveView.Rendered.t()
+  def linear_workflow_state_check_panel(assigns) do
+    ~H"""
+    <%= case @state_check do %>
+      <% {:ok, %{status: :ok}} -> %>
+        <aside class="setup-guidance-card" role="status" aria-live="polite">
+          <h3>Linear state check</h3>
+          <p>Configured workflow states match the fetched Linear states.</p>
+        </aside>
+      <% {:ok, %{status: :error} = check} -> %>
+        <aside class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
+          <h3>Linear state check</h3>
+          <p>Settings are structurally valid, but these state names do not exist in the fetched Linear project. Rename them in Settings / Workflow or create the missing Linear statuses.</p>
+          <ul>
+            <li :for={item <- StateFixes.items(check)}>
+              <div class="setup-guidance-item-heading">
+                <span class="status-badge status-danger"><%= item.state %></span>
+                <strong><%= item.references %></strong>
+              </div>
+              <span><%= item.action %></span>
+            </li>
+          </ul>
+        </aside>
       <% _ -> %>
     <% end %>
     """
@@ -772,7 +808,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </ul>
               </aside>
             <% end %>
-            <.linear_workflow_discovery discovery={@linear_discovery} />
+            <.linear_workflow_discovery discovery={@linear_discovery} draft={@workflow_form} />
             <%= if @workflow_diagnostics_notice do %>
               <p class="empty-state">
                 <%= @workflow_diagnostics_notice %>
@@ -1407,6 +1443,17 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
     end
   end
+
+  defp linear_workflow_state_check(draft, {:ok, discovery}) when is_map(draft) do
+    with {:ok, raw} <- WorkflowForm.to_raw(draft),
+         {:ok, %{settings: settings}} <- WorkflowValidator.validate_raw(raw, runtime?: false) do
+      {:ok, WorkflowStateValidator.validate(settings, Map.get(discovery, :states, []))}
+    else
+      _ -> :unavailable
+    end
+  end
+
+  defp linear_workflow_state_check(_draft, _discovery), do: :unavailable
 
   defp persistence, do: PersistenceProvider.module()
 

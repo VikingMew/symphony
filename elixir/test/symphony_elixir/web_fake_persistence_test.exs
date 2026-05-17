@@ -187,6 +187,54 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute projects_html =~ "Linear Workflow State Candidates"
   end
 
+  test "workflow settings explains Linear state mismatches after discovery" do
+    Application.put_env(:symphony_elixir, :linear_discovery_fake, %{
+      "SymphonyLinearDiscoveryTeamStates" => %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-1",
+                "key" => "PLAT",
+                "states" => %{
+                  "nodes" => [
+                    %{"name" => "Refining"},
+                    %{"name" => "Needs Refinement Review"},
+                    %{"name" => "Ready"},
+                    %{"name" => "In Progress"},
+                    %{"name" => "Ready to Merge"},
+                    %{"name" => "Merging"},
+                    %{"name" => "Done"},
+                    %{"name" => "Canceled"},
+                    %{"name" => "Duplicate"}
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    refute html =~ "Linear state check"
+
+    html = render_click(view, "fetch_linear_discovery")
+
+    assert html =~ "Linear state check"
+    assert html =~ "Settings are structurally valid"
+    assert html =~ "Cancelled"
+    assert html =~ "Referenced by Terminal states"
+    assert html =~ "Needs Implementation Review"
+    assert html =~ "Referenced by Human review states"
+    assert html =~ "Profile implementation target states"
+    assert html =~ "Allowed transition In Progress -&gt; Needs Implementation Review"
+    assert html =~ "Needs Refinement Review"
+  end
+
   test "project settings page shows Linear discovery errors inline" do
     System.delete_env("LINEAR_API_KEY")
     refute Process.whereis(SymphonyElixir.Repo)

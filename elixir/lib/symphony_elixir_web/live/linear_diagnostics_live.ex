@@ -5,7 +5,8 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, Linear.Diagnostics, Linear.WorkflowBootstrap}
+  alias SymphonyElixir.Config
+  alias SymphonyElixir.Linear.{Diagnostics, StateFixes, WorkflowBootstrap}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -130,6 +131,32 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
           <p class="metric-label">{probe.title}</p>
           <p class="metric-detail">{probe.detail}</p>
         </article>
+      </section>
+
+      <section :if={linear_state_fix_items(@diagnostics) != []} class="section-card">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Workflow State Fixes</h2>
+            <p class="section-copy">
+              Settings validation checks local structure. Linear diagnostics checks whether those state names exist in the configured Linear project.
+            </p>
+          </div>
+          <a class="subtle-button" href="/settings/workflow">Open Workflow Settings</a>
+        </div>
+
+        <aside class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
+          <h3>Missing Linear states</h3>
+          <p>Rename these references in Settings / Workflow to an existing Linear state, or create the missing statuses in Linear.</p>
+          <ul>
+            <li :for={item <- linear_state_fix_items(@diagnostics)}>
+              <div class="setup-guidance-item-heading">
+                <span class="status-badge status-danger">{item.state}</span>
+                <strong>{item.references}</strong>
+              </div>
+              <span>{item.action}</span>
+            </li>
+          </ul>
+        </aside>
       </section>
 
       <section class="section-card">
@@ -341,6 +368,12 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
       get_in(diagnostics, [:probes, :api, :status]) == :ok and
       get_in(diagnostics, [:probes, :project, :status]) == :ok and
       get_in(diagnostics, [:probes, :project, :data, :project, :teams]) not in [nil, []]
+  end
+
+  defp linear_state_fix_items(diagnostics) do
+    diagnostics
+    |> states_data()
+    |> StateFixes.items()
   end
 
   defp list_text([]), do: "none"

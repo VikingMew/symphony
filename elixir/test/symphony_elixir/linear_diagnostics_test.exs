@@ -355,9 +355,64 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     diagnostics = Diagnostics.run()
 
     assert diagnostics.probes.states.status == :error
+    assert diagnostics.probes.states.detail =~ "Missing Linear states:"
     assert "Refining" in diagnostics.probes.states.data.missing_active
     assert "Done" in diagnostics.probes.states.data.missing_terminal
     assert Enum.any?(diagnostics.log, &(&1.step == "states" and &1.status == :error))
+  end
+
+  test "diagnostics page explains where missing Linear states are configured" do
+    Application.put_env(:symphony_elixir, :linear_diagnostics_fake, %{
+      "SymphonyLinearDiagnosticsProject" => %{
+        "data" => %{
+          "projects" => %{
+            "nodes" => [
+              %{
+                "id" => "project-1",
+                "name" => "Project",
+                "slugId" => "project",
+                "teams" => %{
+                  "nodes" => [
+                    %{
+                      "name" => "Team",
+                      "states" => %{
+                        "nodes" => [
+                          %{"name" => "Refining"},
+                          %{"name" => "Needs Refinement Review"},
+                          %{"name" => "Ready"},
+                          %{"name" => "In Progress"},
+                          %{"name" => "Ready to Merge"},
+                          %{"name" => "Merging"},
+                          %{"name" => "Done"},
+                          %{"name" => "Canceled"},
+                          %{"name" => "Duplicate"}
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/diagnostics/linear")
+
+    assert html =~ "Workflow State Fixes"
+    assert html =~ "Settings validation checks local structure"
+    assert html =~ "Cancelled"
+    assert html =~ "Referenced by Terminal states"
+    assert html =~ "Needs Implementation Review"
+    assert html =~ "Referenced by Human review states"
+    assert html =~ "Profile implementation target states"
+    assert html =~ "Allowed transition In Progress -&gt; Needs Implementation Review"
+    assert html =~ "Open Workflow Settings"
+    assert html =~ "Canceled"
+    assert html =~ "Needs Refinement Review"
   end
 
   test "diagnostics rejects unsupported tracker kinds" do

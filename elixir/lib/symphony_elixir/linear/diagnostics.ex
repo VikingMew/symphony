@@ -384,7 +384,12 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     if validation.status == :ok do
       probe(:ok, "Workflow states", "All configured workflow states exist in Linear.", data)
     else
-      probe(:error, "Workflow states", "Some configured workflow states were not found in Linear.", data)
+      probe(
+        :error,
+        "Workflow states",
+        "Missing Linear states: #{Enum.join(validation.missing_states, ", ")}. Open Settings / Workflow to rename references, or create the missing Linear statuses.",
+        data
+      )
     end
   end
 
