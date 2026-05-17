@@ -21,8 +21,7 @@ runtime.
 - Create and preserve isolated per-issue workspaces.
 - Run lifecycle hooks to prepare and clean workspaces.
 - Launch Codex App Server sessions with issue-specific prompts.
-- Keep runtime behavior configurable through either `WORKFLOW.md` or an active SQLite workflow
-  version.
+- Keep runtime behavior configurable through the active SQLite workflow version.
 - Persist projects, workflow versions, issues, runs, agent turns, workspaces, worker tasks, leases,
   and events in SQLite when the Repo is available.
 - Provide logs, JSON state APIs, Linear diagnostics, worker APIs, and a Phoenix LiveView dashboard.
@@ -33,7 +32,7 @@ runtime.
 - Symphony is not a general-purpose workflow engine.
 - Symphony is not a multi-tenant control plane.
 - Symphony does not implement project-specific ticket or PR policy in code; that policy belongs in
-  `WORKFLOW.md` and agent skills.
+  Settings-managed workflow/profile configuration and agent skills.
 - Symphony does not replace the coding agent. It schedules, isolates, prompts, and observes agent
   work.
 
@@ -44,7 +43,7 @@ flowchart TD
     linear[Linear Project / Issues] -->|poll eligible issues| tracker[Tracker Layer]
     tracker --> orchestrator[Orchestrator]
 
-    workflow[WORKFLOW.md / SQLite Workflow Version] --> loader[Workflow Loader]
+    workflow[SQLite Workflow Version] --> loader[Workflow Store]
     loader --> config[Config Layer]
     config --> orchestrator
     orchestrator --> sqlite[(SQLite / Ecto)]
@@ -76,14 +75,14 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant CLI as bin/symphony
-    participant Workflow as WORKFLOW.md / SQLite
+    participant Workflow as SQLite Workflow Store
     participant Orch as Orchestrator
     participant Linear as Linear API
     participant WS as Workspace
     participant Codex as Codex App Server
     participant GitHub as GitHub
 
-    CLI->>Workflow: Read YAML front matter and prompt body
+    CLI->>Workflow: Select active database workflow source
     CLI->>Orch: Start application supervision tree
 
     loop polling interval
@@ -115,15 +114,13 @@ Location: `elixir/lib/symphony_elixir/cli.ex`
 
 The CLI is the escript entrypoint built as `elixir/bin/symphony`. It accepts:
 
-- an optional workflow file path, defaulting to `./WORKFLOW.md`
 - `--logs-root <path>` to choose the log output root
 - `--port <port>` to enable the Phoenix observability server
-- `--i-understand-that-this-will-be-running-without-the-usual-guardrails` to acknowledge preview
-  runtime behavior
+- `--database-path <path>` to choose the SQLite database file
 
-The CLI validates the workflow path, stores runtime overrides, and starts the Elixir application.
-With `--port` and no explicit workflow path, it selects database workflow mode and allows the
-dashboard to create the first workflow when neither SQLite nor local `WORKFLOW.md` has one.
+The CLI stores runtime overrides, selects database workflow mode, prepares SQLite, and starts the
+Elixir application. If no active workflow version exists, Symphony enters setup-required mode and
+the Settings UI creates the first active workflow.
 
 ### 6.2 Workflow Loader
 
@@ -132,9 +129,9 @@ Locations:
 - `elixir/lib/symphony_elixir/workflow.ex`
 - `elixir/lib/symphony_elixir/workflow_store.ex`
 
-The workflow loader reads either a file-backed `WORKFLOW.md` or the active SQLite
-`workflow_versions` row, parses YAML front matter, and keeps the Markdown body as the prompt
-template. Symphony keeps running with the last known good workflow if a later reload fails.
+The workflow store reads the active SQLite `workflow_versions` row, parses the saved workflow
+package, and keeps the prompt body as the shared base prompt. If no active workflow exists, it
+returns a setup-required sentinel that does not poll Linear or schedule agents.
 
 ### 6.3 Config Layer
 
@@ -152,7 +149,6 @@ settings, sandbox settings, worker SSH host settings, and optional server settin
 Locations:
 
 - `elixir/lib/symphony_elixir/tracker.ex`
-- `elixir/lib/symphony_elixir/tracker/memory.ex`
 - `elixir/lib/symphony_elixir/linear/adapter.ex`
 - `elixir/lib/symphony_elixir/linear/client.ex`
 - `elixir/lib/symphony_elixir/linear/issue.ex`
@@ -223,8 +219,8 @@ port is configured, the service provides:
 - `/api/v1/state`: full state snapshot
 - `/api/v1/<issue_identifier>`: issue-specific state
 - `/api/v1/refresh`: manual refresh endpoint
-- `/projects`, `/runs`, `/workers`, `/workflows`, `/settings`: management pages
-- `/diagnostics/linear`: Linear configuration and candidate issue diagnostics
+- `/runs`, `/events`, `/workers`, `/settings/*`: management pages
+- `/diagnostics/linear`: validation for the active Linear runtime configuration
 
 ### 6.10 Persistence and Worker API
 
@@ -241,32 +237,10 @@ Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
 
 ## 7. Configuration Model
 
-`WORKFLOW.md` is the operational contract. It contains YAML front matter plus a Markdown prompt.
-
-Example:
-
-```md
----
-tracker:
-  kind: linear
-  project_slug: "example-project"
-workspace:
-  root: ~/code/workspaces
-hooks:
-  after_create: |
-    git clone git@github.com:your-org/your-repo.git .
-agent:
-  max_concurrent_agents: 10
-  max_turns: 20
-codex:
-  command: codex app-server
----
-
-You are working on Linear issue {{ issue.identifier }}.
-
-Title: {{ issue.title }}
-Description: {{ issue.description }}
-```
+The active workflow is a SQLite-backed workflow version. Operators create and update it through the
+Settings UI; startup can enter setup-required mode when no active workflow version exists.
+`workflow.yml` and `profiles.yml` are split package artifacts for import/export and examples, not
+startup authority.
 
 Important configuration areas:
 
@@ -299,17 +273,18 @@ The agent owns, through the workflow prompt and tools:
 - branch, commit, and PR operations
 - reviewer feedback handling
 
-This split keeps Symphony generic while allowing teams to encode project-specific execution policy in
-`WORKFLOW.md` and repository skills.
+This split keeps Symphony generic while allowing teams to encode shared execution policy in Settings
+and repository skills. Project-specific repository and Linear slug values live in project settings,
+while workflow routing and agent policy remain shared.
 
 ## 9. Failure Handling
 
 Symphony is designed for long-running operation and transient failure recovery:
 
-- Invalid startup workflow configuration prevents boot in explicit file mode.
-- Dashboard-first `--port` mode can boot without a workflow file when no active database workflow
-  exists, so the first workflow can be created through `/workflows`.
-- Invalid workflow reloads are logged, while the last known good workflow remains active.
+- Missing startup workflow configuration enters setup-required mode instead of polling Linear.
+- Dashboard-first `--port` mode can boot without an active workflow, so the first workflow can be
+  created through `/settings/workflow`.
+- Invalid workflow reloads are logged, while the last known good database workflow remains active.
 - Failed agent turns can be retried according to orchestrator policy.
 - Active runs are stopped when issue states become terminal or ineligible.
 - Terminal issues trigger cleanup of matching workspaces.
@@ -318,7 +293,7 @@ Symphony is designed for long-running operation and transient failure recovery:
 ## 10. Security and Trust Model
 
 The Elixir implementation is explicitly marked as prototype software for trusted environments. It can
-launch Codex with broad authority depending on `WORKFLOW.md` configuration.
+launch Codex with broad authority depending on Settings-managed workflow configuration.
 
 Security-sensitive controls include:
 
@@ -328,8 +303,9 @@ Security-sensitive controls include:
 - Codex thread and turn sandbox settings.
 - Credentials such as `LINEAR_API_KEY`, GitHub auth, SSH keys, and Codex auth.
 
-Operators should review `WORKFLOW.md` before running Symphony and should avoid using this preview
-implementation in untrusted repositories or untrusted host environments.
+Operators should review Settings-managed workflow/runtime configuration before enabling listening,
+and should avoid using this preview implementation in untrusted repositories or untrusted host
+environments.
 
 ## 11. Running Locally
 
@@ -352,19 +328,14 @@ Run without the dashboard:
 
 ```bash
 export LINEAR_API_KEY=...
-mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  ./WORKFLOW.md
+mise exec -- ./bin/symphony
 ```
 
 Run with the dashboard:
 
 ```bash
 export LINEAR_API_KEY=...
-mise exec -- ./bin/symphony \
-  --i-understand-that-this-will-be-running-without-the-usual-guardrails \
-  --port 4000 \
-  ./WORKFLOW.md
+mise exec -- ./bin/symphony --port 4000
 ```
 
 Run checks:
@@ -379,7 +350,7 @@ mise exec -- make all
 Common extension areas:
 
 - Add another tracker adapter behind the tracker abstraction.
-- Customize issue-state policy in `WORKFLOW.md`.
+- Customize issue-state policy in Settings / Workflow.
 - Add workspace hooks for project-specific setup and teardown.
 - Add repository-local Codex skills for commit, push, PR, Linear, or release workflows.
 - Extend the Phoenix dashboard or JSON API for operator needs.
@@ -394,7 +365,8 @@ Common extension areas:
 ├── ARCHITECTURE.md
 └── elixir
     ├── README.md
-    ├── WORKFLOW.md
+    ├── workflow.yml
+    ├── profiles.yml
     ├── Makefile
     ├── mise.toml
     ├── mix.exs

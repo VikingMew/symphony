@@ -24,9 +24,9 @@ The service solves four operational problems:
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps the workflow policy in a `WORKFLOW.md` contract so teams can version the agent prompt and
-  runtime settings with their code. Implementations MAY also import, persist, version, and serve an
-  active workflow contract from a control-plane datastore.
+- It keeps workflow policy in an active, versioned workflow record so teams can manage the agent
+  prompt and runtime settings through the service control plane. Implementations MAY import/export a
+  split package format for portability, but the active persisted workflow is the runtime authority.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
 
 Implementations are expected to document their trust and safety posture explicitly. This
@@ -51,8 +51,7 @@ Important boundary:
 - Create deterministic per-issue workspaces and preserve them across runs.
 - Stop active runs when issue state changes make them ineligible.
 - Recover from transient failures with exponential backoff.
-- Load runtime behavior from a `WORKFLOW.md` contract, or from an implementation-defined persisted
-  workflow version derived from that same contract.
+- Load runtime behavior from an implementation-defined active persisted workflow version.
 - Expose operator-visible observability (at minimum structured logs).
 - Support tracker/filesystem-driven restart recovery without requiring a persistent database; exact
   in-memory scheduler state is not restored.
@@ -73,8 +72,8 @@ Important boundary:
 ### 3.1 Main Components
 
 1. `Workflow Loader`
-   - Reads `WORKFLOW.md` or an implementation-defined active persisted workflow version.
-   - Parses YAML front matter and prompt body.
+   - Reads an implementation-defined active persisted workflow version.
+   - Parses the stored workflow config and prompt/profile data.
    - Returns `{config, prompt_template}`.
 
 2. `Config Layer`
@@ -117,12 +116,12 @@ Important boundary:
 
 Symphony is easiest to port when kept in these layers:
 
-1. `Policy Layer` (repo-defined)
-   - `WORKFLOW.md` prompt body.
+1. `Policy Layer` (service-defined, optionally package-backed)
+   - Active workflow prompt and profile data.
    - Team-specific rules for ticket handling, validation, and handoff.
 
 2. `Configuration Layer` (typed getters)
-   - Parses front matter into typed runtime settings.
+   - Parses active workflow config into typed runtime settings.
    - Handles defaults, environment tokens, and path normalization.
 
 3. `Coordination Layer` (orchestrator)
@@ -180,12 +179,12 @@ Fields:
 
 #### 4.1.2 Workflow Definition
 
-Parsed `WORKFLOW.md` payload:
+Parsed active workflow payload:
 
 - `config` (map)
-  - YAML front matter root object.
+  - Runtime workflow configuration.
 - `prompt_template` (string)
-  - Markdown body after front matter, trimmed.
+  - Base prompt template, trimmed.
 
 #### 4.1.3 Service Config (Typed View)
 
@@ -288,42 +287,45 @@ Fields:
 - `Session ID`
   - Compose from coding-agent `thread_id` and `turn_id` as `<thread_id>-<turn_id>`.
 
-## 5. Workflow Specification (Repository Contract)
+## 5. Workflow Specification (Persisted Runtime Contract)
 
-### 5.1 File Discovery and Path Resolution
+### 5.1 Active Workflow Selection
 
-Workflow file path precedence:
+Workflow source precedence:
 
-1. Explicit application/runtime setting (set by CLI startup path).
-2. Default: `WORKFLOW.md` in the current process working directory.
+1. Explicit active workflow version selected by the implementation datastore.
+2. Setup-required mode when no active workflow version exists.
 
 Loader behavior:
 
-- If the file cannot be read, return `missing_workflow_file` error.
-- The workflow file is expected to be repository-owned and version-controlled.
+- If no active workflow exists, return a typed setup-required error and keep the service alive.
+- The active workflow record is expected to be versioned and operator-visible.
+- Implementations MAY support import/export package files, but package files are not startup
+  authority unless an implementation explicitly imports them into the datastore.
 
-### 5.2 File Format
+### 5.2 Package Format
 
-`WORKFLOW.md` is a Markdown file with OPTIONAL YAML front matter.
+Portable workflow packages are implementation-defined. The current preferred package shape is split
+YAML:
+
+- `workflow.yml` for runtime settings, tracker policy, state routing, hooks, and Codex settings.
+- `profiles.yml` for shared base prompt and profile-specific agent policy.
 
 Design note:
 
-- `WORKFLOW.md` SHOULD be self-contained enough to describe and run different workflows (prompt,
-  runtime settings, hooks, and tracker selection/config) without requiring out-of-band
-  service-specific configuration.
+- A package SHOULD be self-contained enough to recreate an active workflow version after import.
+- A package SHOULD NOT be edited in place as the runtime source of truth.
 
 Parsing rules:
 
-- If file starts with `---`, parse lines until the next `---` as YAML front matter.
-- Remaining lines become the prompt body.
-- If front matter is absent, treat the entire file as prompt body and use an empty config map.
-- YAML front matter MUST decode to a map/object; non-map YAML is an error.
-- Prompt body is trimmed before use.
+- YAML files MUST decode to map/object roots; non-map YAML is an error.
+- Base prompt fields are trimmed before use.
+- Implementations MUST validate imported package data before activating a workflow version.
 
 Returned workflow object:
 
-- `config`: front matter root object (not nested under a `config` key).
-- `prompt_template`: trimmed Markdown body.
+- `config`: normalized runtime config object.
+- `prompt_template`: trimmed base prompt string.
 
 ### 5.3 Front Matter Schema
 
@@ -340,7 +342,7 @@ Unknown keys SHOULD be ignored for forward compatibility.
 
 Note:
 
-- The workflow front matter is extensible. Extensions MAY define additional top-level keys without
+- The workflow config object is extensible. Extensions MAY define additional top-level keys without
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
@@ -380,7 +382,7 @@ Fields:
 - `root` (path string or `$VAR`)
   - Default: `<system-temp>/symphony_workspaces`
   - `~` is expanded.
-  - Relative paths are resolved relative to the directory containing `WORKFLOW.md`.
+  - Relative paths are resolved relative to an implementation-defined runtime base directory.
   - The effective workspace root is normalized to an absolute path before use.
 
 #### 5.3.4 `hooks` (object)
@@ -458,7 +460,7 @@ fields locally if they want stricter startup checks.
 
 ### 5.4 Prompt Template Contract
 
-The Markdown body of `WORKFLOW.md` is the per-issue prompt template.
+The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
 
 Rendering requirements:
 
@@ -476,24 +478,24 @@ Template input variables:
 
 Fallback prompt behavior:
 
-- If the workflow prompt body is empty, the runtime MAY use a minimal default prompt
+- If the active workflow prompt is empty, the runtime MAY use a minimal default prompt
   (`You are working on an issue from Linear.`).
-- Workflow file read/parse failures are configuration/validation errors and SHOULD NOT silently fall
-  back to a prompt.
+- Workflow parse/validation failures are configuration errors and SHOULD NOT silently fall back to a
+  prompt.
 
 ### 5.5 Workflow Validation and Error Surface
 
 Error classes:
 
-- `missing_workflow_file`
+- `missing_active_workflow`
 - `workflow_parse_error`
-- `workflow_front_matter_not_a_map`
+- `workflow_package_not_a_map`
 - `template_parse_error` (during prompt rendering)
 - `template_render_error` (unknown variable/filter, invalid interpolation)
 
 Dispatch gating behavior:
 
-- Workflow file read/YAML errors block new dispatches until fixed.
+- Missing active workflow or workflow validation errors block new dispatches until fixed.
 - Template errors fail only the affected run attempt.
 
 ## 6. Configuration Specification
@@ -502,8 +504,8 @@ Dispatch gating behavior:
 
 Configuration is resolved in this order:
 
-1. Select the workflow file path (explicit runtime setting, otherwise cwd default).
-2. Parse YAML front matter into a raw config map.
+1. Select the active persisted workflow version.
+2. Parse its raw workflow config map.
 3. Apply built-in defaults for missing OPTIONAL fields.
 4. Resolve `$VAR_NAME` indirection only for config values that explicitly contain `$VAR_NAME`.
 5. Coerce and validate typed values.
@@ -518,15 +520,15 @@ Value coercion semantics:
   - `$VAR` expansion for env-backed path values
   - Apply expansion only to values intended to be local filesystem paths; do not rewrite URIs or
     arbitrary shell command strings.
-- Relative `workspace.root` values resolve relative to the directory containing the selected
-  `WORKFLOW.md`.
+- Relative `workspace.root` values resolve relative to the implementation-defined runtime base
+  directory.
 
 ### 6.2 Dynamic Reload Semantics
 
 Dynamic reload is REQUIRED:
 
-- The software MUST detect `WORKFLOW.md` changes.
-- On change, it MUST re-read and re-apply workflow config and prompt template without restart.
+- The software MUST detect active workflow version changes.
+- On change, it MUST re-read and re-apply workflow config and prompt/profile data without restart.
 - The software MUST attempt to adjust live behavior to the new config (for example polling
   cadence, concurrency limits, active/terminal states, codex settings, workspace paths/hooks, and
   prompt content for future runs).
@@ -1364,7 +1366,7 @@ Extension config:
 Enablement (extension):
 
 - Start the HTTP server when a CLI `--port` argument is provided.
-- Start the HTTP server when `server.port` is present in `WORKFLOW.md` front matter.
+- Start the HTTP server when `server.port` is present in active workflow config.
 - The `server` top-level key is owned by this extension.
 - Positive `server.port` values bind that port.
 - Implementations SHOULD bind loopback by default (`127.0.0.1` or host equivalent) unless explicitly
@@ -1521,9 +1523,8 @@ API design notes:
 ### 14.1 Failure Classes
 
 1. `Workflow/Config Failures`
-   - Missing `WORKFLOW.md` in file-backed startup mode, or no active persisted workflow in
-     database-backed mode when the implementation requires one before dispatch
-   - Invalid YAML front matter
+   - No active persisted workflow when the implementation requires one before dispatch
+   - Invalid workflow config/package data
    - Unsupported tracker kind or missing tracker credentials/project slug
    - Missing coding-agent executable
 
@@ -1593,8 +1594,8 @@ After restart:
 
 Operators can control behavior by:
 
-- Editing `WORKFLOW.md` (prompt and most runtime settings).
-- `WORKFLOW.md` changes are detected and re-applied automatically without restart according to
+- Editing the active workflow through the implementation control plane.
+- Active workflow changes are detected and re-applied automatically without restart according to
   Section 6.2.
 - Changing issue states in the tracker:
   - terminal state -> running session is stopped and workspace cleaned when reconciled
@@ -1639,7 +1640,7 @@ RECOMMENDED additional hardening for ports:
 
 ### 15.4 Hook Script Safety
 
-Workspace hooks are arbitrary shell scripts from `WORKFLOW.md`.
+Workspace hooks are arbitrary shell scripts from active workflow config.
 
 Implications:
 
@@ -1933,15 +1934,13 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.1 Workflow and Config Parsing
 
-- Workflow file path precedence:
-  - explicit runtime path is used when provided
-  - cwd default is `WORKFLOW.md` when no explicit runtime path is provided
-- Workflow file changes are detected and trigger re-read/re-apply without restart
+- Active workflow selection is datastore-backed and operator-visible
+- Active workflow changes are detected and trigger re-read/re-apply without restart
 - Invalid workflow reload keeps last known good effective configuration and emits an
   operator-visible error
-- Missing `WORKFLOW.md` returns typed error
-- Invalid YAML front matter returns typed error
-- Front matter non-map returns typed error
+- Missing active workflow returns typed setup-required error
+- Invalid workflow package/config data returns typed error
+- Non-map package/config roots return typed error
 - Config defaults apply when OPTIONAL values are missing
 - `tracker.kind` validation enforces currently supported kind (`linear`)
 - `tracker.api_key` works (including `$VAR` indirection)
@@ -2041,11 +2040,10 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 
 ### 17.7 CLI and Host Lifecycle
 
-- CLI accepts a positional workflow path argument (`path-to-WORKFLOW.md`)
-- CLI uses `./WORKFLOW.md` when no workflow path argument is provided
-- CLI errors on nonexistent explicit workflow path
-- CLI MAY allow a dashboard/control-plane startup mode without a default `./WORKFLOW.md` when it can
-  create or select an active persisted workflow before dispatch
+- CLI accepts runtime options such as port and datastore location
+- CLI does not require a workflow path argument
+- CLI can start in setup-required mode without an active workflow when the control plane can create
+  or select one before dispatch
 - CLI surfaces startup failure cleanly
 - CLI exits with success when application starts and shuts down normally
 - CLI exits nonzero when startup fails or the host process exits abnormally
@@ -2074,9 +2072,9 @@ Use the same validation profiles as Section 17:
 ### 18.1 REQUIRED for Conformance
 
 - Workflow path selection supports explicit runtime path and cwd default
-- `WORKFLOW.md` loader with YAML front matter + prompt body split
+- Active workflow loader with config + prompt/profile data
 - Typed config layer with defaults and `$` resolution
-- Dynamic `WORKFLOW.md` watch/reload/re-apply for config and prompt
+- Dynamic active workflow reload/re-apply for config and prompt
 - Polling orchestrator with single-authority mutable state
 - Issue tracker client with candidate fetch + state refresh + terminal fetch
 - Workspace manager with sanitized per-issue workspaces
@@ -2099,7 +2097,7 @@ Use the same validation profiles as Section 17:
 - `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
   app-server session using configured Symphony auth.
 - TODO: Persist retry queue and session metadata across process restarts.
-- TODO: Make observability settings configurable in workflow front matter without prescribing UI
+- TODO: Make observability settings configurable in active workflow config without prescribing UI
   implementation details.
 - TODO: Add first-class tracker write APIs (comments/state transitions) in the orchestrator instead
   of only via agent tools.
@@ -2108,7 +2106,7 @@ Use the same validation profiles as Section 17:
 ### 18.3 Operational Validation Before Production (RECOMMENDED)
 
 - Run the `Real Integration Profile` from Section 17.8 with valid credentials and network access.
-- Verify hook execution and workflow path resolution on the target host OS/shell environment.
+- Verify hook execution and runtime path resolution on the target host OS/shell environment.
 - If the OPTIONAL HTTP server is shipped, verify the configured port behavior and loopback/default
   bind expectations on the target environment.
 

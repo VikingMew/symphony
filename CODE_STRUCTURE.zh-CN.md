@@ -18,7 +18,8 @@
 │   └── worktree_init.sh
 └── elixir/
     ├── README.md
-    ├── WORKFLOW.md
+    ├── workflow.yml
+    ├── profiles.yml
     ├── AGENTS.md
     ├── Makefile
     ├── mise.toml
@@ -50,7 +51,8 @@
 ```text
 elixir/
 ├── README.md
-├── WORKFLOW.md
+├── workflow.yml
+├── profiles.yml
 ├── AGENTS.md
 ├── Makefile
 ├── mise.toml
@@ -64,7 +66,8 @@ elixir/
 | 路径 | 作用 |
 | --- | --- |
 | `elixir/README.md` | Elixir 实现的安装、运行、配置、测试和 FAQ。 |
-| `elixir/WORKFLOW.md` | 默认工作流文件，包含 YAML 运行配置和发给 Codex 的 Markdown prompt。 |
+| `elixir/workflow.yml` | shared workflow routing 和 runtime settings 的示例/导入 package。 |
+| `elixir/profiles.yml` | shared base prompt 和 agent profiles 的示例/导入 package。 |
 | `elixir/AGENTS.md` | 给 agent 阅读的仓库级工作指引。 |
 | `elixir/Makefile` | 常用开发命令，如 `test`、`lint`、`coverage`、`ci`、`e2e`。 |
 | `elixir/mise.toml` | 运行时工具版本：Erlang 28、Elixir 1.19.5 OTP 28。 |
@@ -80,7 +83,7 @@ elixir/
 - `elixir/lib/symphony_elixir.ex`
 - `elixir/lib/symphony_elixir/cli.ex`
 
-`SymphonyElixir.CLI` 是命令行入口，会被编译成 `elixir/bin/symphony`。它负责解析 CLI 参数、校验 workflow 文件路径、设置运行时覆盖项，然后启动 OTP 应用。
+`SymphonyElixir.CLI` 是命令行入口，会被编译成 `elixir/bin/symphony`。它负责解析 `--port`、`--db` 等运行时 CLI 参数、设置运行时覆盖项，然后启动 OTP 应用。workflow 权威来源是 SQLite active workflow version，不再是启动时传入的 workflow 文件路径。
 
 `SymphonyElixir.Application` 定义在 `elixir/lib/symphony_elixir.ex` 中，是 OTP 应用入口。它启动的监督树如下：
 
@@ -126,8 +129,8 @@ elixir/lib/symphony_elixir/
 | 模块 | 文件 | 职责 |
 | --- | --- | --- |
 | `SymphonyElixir.Application` | `symphony_elixir.ex` | OTP 应用入口和监督树定义。 |
-| `SymphonyElixir.CLI` | `cli.ex` | CLI 参数解析、guardrail 确认、workflow 路径设置、应用启动。 |
-| `SymphonyElixir.Workflow` | `workflow.ex` | workflow 文件路径管理和解析入口。 |
+| `SymphonyElixir.CLI` | `cli.ex` | CLI 参数解析、运行时覆盖项和应用启动。 |
+| `SymphonyElixir.Workflow` | `workflow.ex` | workflow package 解析、config/prompt 规范化入口。 |
 | `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | 保存当前 workflow 状态，以及最后一次可用的正确配置。 |
 | `SymphonyElixir.Config` | `config.ex` | 为 workflow 配置提供带默认值的类型化读取接口。 |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | 配置 schema 和校验规则。 |
@@ -152,18 +155,22 @@ elixir/lib/symphony_elixir/
 elixir/lib/symphony_elixir/linear/
 ├── adapter.ex
 ├── client.ex
-└── issue.ex
-
-elixir/lib/symphony_elixir/tracker/
-└── memory.ex
+├── diagnostics.ex
+├── discovery.ex
+├── issue.ex
+├── workflow_bootstrap.ex
+└── workflow_state_validator.ex
 ```
 
 | 模块 | 文件 | 职责 |
 | --- | --- | --- |
 | `SymphonyElixir.Linear.Adapter` | `linear/adapter.ex` | Linear 版本的 tracker adapter。 |
 | `SymphonyElixir.Linear.Client` | `linear/client.ex` | 底层 Linear API 请求。 |
+| `SymphonyElixir.Linear.Diagnostics` | `linear/diagnostics.ex` | 对 active Linear runtime 配置做只读诊断。 |
+| `SymphonyElixir.Linear.Discovery` | `linear/discovery.ex` | Settings 配置 project 和 workflow state 时使用的只读 Linear metadata。 |
 | `SymphonyElixir.Linear.Issue` | `linear/issue.ex` | 标准化后的 issue 结构。 |
-| `SymphonyElixir.Tracker.Memory` | `tracker/memory.ex` | 内存版 tracker，主要用于测试和本地模拟。 |
+| `SymphonyElixir.Linear.WorkflowBootstrap` | `linear/workflow_bootstrap.ex` | 根据 diagnostics 结果显式创建缺失的 Linear workflow states。 |
+| `SymphonyElixir.Linear.WorkflowStateValidator` | `linear/workflow_state_validator.ex` | 比较 Symphony 配置的 states 和 Linear team states。 |
 
 `Orchestrator` 依赖的是 `Tracker` 抽象，而不是直接依赖 Linear。这样调度逻辑和外部 API 细节可以分开。
 
@@ -228,11 +235,16 @@ elixir/lib/symphony_elixir_web/
 ```text
 GET  /                         LiveView dashboard
 GET  /login                    登录页面（启用认证时使用）
-GET  /projects                 项目管理
 GET  /runs                     run 历史
+GET  /runs/:id                 run 详情
+GET  /issues/:identifier       持久化 issue 快照
+GET  /events                   event 历史
 GET  /workers                  worker、task 和 lease 状态
-GET  /workflows                workflow 原文编辑和版本历史
-GET  /settings                 运行配置摘要
+GET  /settings                 Settings，默认打开 Projects
+GET  /settings/projects        Project settings
+GET  /settings/workflow        Workflow routing/runtime settings
+GET  /settings/agents          Agent profile 和 prompt settings
+GET  /settings/runtime         Runtime 摘要
 GET  /diagnostics/linear       Linear 诊断
 GET  /dashboard.css             Dashboard 样式
 GET  /api/v1/state              完整运行状态 JSON

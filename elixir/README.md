@@ -64,13 +64,13 @@ until a person moves the issue forward.
    [Harness engineering](https://openai.com/index/harness-engineering/).
 2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
    set it as the `LINEAR_API_KEY` environment variable.
-3. Copy this directory's workflow package to your repo: `workflow.yml` and `profiles.yml`.
+3. Start Symphony and create the first active workflow from Settings.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
    - The `linear` skill expects Symphony's restricted `linear_task_read` and `linear_task_update`
      app-server tools.
-5. Customize the copied workflow package for your project.
-   - To get your project's slug, right-click the project and copy its URL. The slug is part of the
-     URL.
+5. Configure Projects, Workflow, Agents, and Runtime from `/settings`.
+   - Use the shared Linear discovery helper in Settings to copy the correct project slug and state
+     names.
    - When creating a workflow based on this repo, note that it depends on a gated Linear state flow:
      "Refining", "Needs Refinement Review", "Ready", "In Progress", "Needs Implementation Review",
      "Ready to Merge", "Merging", "Done", "Canceled", and "Duplicate". You can customize them in
@@ -409,9 +409,8 @@ codex:
   command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
 ```
 
-- Symphony starts from the active SQLite workflow version. If no active version exists, it imports
-  the local split workflow package once when present; otherwise the dashboard starts in setup-required
-  mode so `/settings/workflow` can create the first workflow.
+- Symphony starts from the active SQLite workflow version. If no active version exists, the
+  dashboard starts in setup-required mode so `/settings/workflow` can create the first workflow.
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the source is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
@@ -424,7 +423,7 @@ The observability and management UI runs on a Phoenix stack:
 - LiveView for the dashboard at `/`
 - LiveView management pages at `/runs`, `/workers`, and `/settings`
 - Settings tabs at `/settings/projects`, `/settings/workflow`, `/settings/agents`, and `/settings/runtime`
-- Linear configuration discovery inside `/settings/projects` for copying project slug and workflow state candidates
+- Shared Linear configuration discovery inside Settings for copying project slug and workflow state candidates
 - Linear integration diagnostics at `/diagnostics/linear`
 - JSON API for operational debugging under `/api/v1/*`
 - Worker API under `/api/worker/v1/*`

@@ -484,6 +484,7 @@ mise exec -- ./bin/symphony \
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
 
-如果不确定 Linear project slug 或 workflow state 名称，先打开 `/settings/projects`，点击
-`Fetch Linear configuration` 获取只读 Linear discovery 结果并复制候选值。保存 Settings 后，再打开
-`/diagnostics/linear` 查看 token、project slug、workflow source、configured states 和候选 issue 查询结果。
+如果不确定 Linear project slug 或 workflow state 名称，先打开 Settings，点击
+`Fetch Linear configuration` 获取共享的只读 Linear discovery 结果；Projects 和 Workflow tab 会展示同一份
+读取结果的不同视图，方便复制候选值。保存 Settings 后，再打开 `/diagnostics/linear` 查看 token、project slug、
+workflow source、configured states 和候选 issue 查询结果。

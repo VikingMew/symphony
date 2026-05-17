@@ -143,22 +143,48 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Linear project slug"
   end
 
-  test "project settings page fetches Linear discovery candidates" do
+  test "settings Linear discovery is shared across project and workflow tabs" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
     {:ok, view, html} = live(build_conn(), "/settings/projects")
     assert html =~ "No Linear discovery data fetched yet."
 
-    discovery_html = render_click(view, "fetch_linear_discovery")
+    projects_html = render_click(view, "fetch_linear_discovery")
 
-    assert discovery_html =~ "Linear configuration fetched at"
-    assert discovery_html =~ "Migration Project"
-    assert discovery_html =~ "migration-project"
-    assert discovery_html =~ "Platform"
-    assert discovery_html =~ "Copy slug"
-    assert discovery_html =~ "Suggested State Lists"
-    assert discovery_html =~ "Needs Implementation Review"
+    assert projects_html =~ "Fetched at"
+    assert projects_html =~ "Refresh Linear configuration"
+    assert projects_html =~ "Linear Project Candidates"
+    assert projects_html =~ "Migration Project"
+    assert projects_html =~ "migration-project"
+    assert projects_html =~ "Platform"
+    assert projects_html =~ "Copy slug"
+    refute projects_html =~ "Linear Workflow State Candidates"
+    refute projects_html =~ "Suggested State Lists"
+
+    workflow_html =
+      view
+      |> element(~s(a[href="/settings/workflow"]), "Workflow")
+      |> render_click()
+
+    assert workflow_html =~ "Fetched at"
+    assert workflow_html =~ "Refresh Linear configuration"
+    assert workflow_html =~ "Linear Workflow State Candidates"
+    assert workflow_html =~ "Suggested State Lists"
+    assert workflow_html =~ "Needs Implementation Review"
+    refute workflow_html =~ "Linear Project Candidates"
+
+    assert length(Regex.scan(~r/Refresh Linear configuration/, workflow_html)) == 1
+
+    projects_html =
+      view
+      |> element(~s(a[href="/settings/projects"]), "Projects")
+      |> render_click()
+
+    assert projects_html =~ "Fetched at"
+    assert projects_html =~ "Linear Project Candidates"
+    assert projects_html =~ "migration-project"
+    refute projects_html =~ "Linear Workflow State Candidates"
   end
 
   test "project settings page shows Linear discovery errors inline" do

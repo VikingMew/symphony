@@ -18,7 +18,8 @@ the code.
 │   └── worktree_init.sh
 └── elixir/
     ├── README.md
-    ├── WORKFLOW.md
+    ├── workflow.yml
+    ├── profiles.yml
     ├── AGENTS.md
     ├── Makefile
     ├── mise.toml
@@ -50,7 +51,8 @@ implementation lives under `elixir/`.
 ```text
 elixir/
 ├── README.md
-├── WORKFLOW.md
+├── workflow.yml
+├── profiles.yml
 ├── AGENTS.md
 ├── Makefile
 ├── mise.toml
@@ -64,7 +66,8 @@ elixir/
 | Path | Purpose |
 | --- | --- |
 | `elixir/README.md` | Setup, run, configuration, testing, and FAQ for the Elixir implementation. |
-| `elixir/WORKFLOW.md` | Default workflow contract: YAML runtime config plus Codex prompt body. |
+| `elixir/workflow.yml` | Example/import package for shared workflow routing and runtime settings. |
+| `elixir/profiles.yml` | Example/import package for shared base prompt and agent profiles. |
 | `elixir/AGENTS.md` | Agent-facing repository guidance. |
 | `elixir/Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
 | `elixir/mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
@@ -81,7 +84,9 @@ Primary files:
 - `elixir/lib/symphony_elixir/cli.ex`
 
 `SymphonyElixir.CLI` is the command-line entrypoint compiled into `elixir/bin/symphony`. It parses
-CLI options, validates the workflow path, stores runtime overrides, and starts the OTP application.
+runtime CLI options such as `--port` and `--db`, stores runtime overrides, and starts the OTP
+application. Workflow authority is loaded from the SQLite active workflow version rather than a
+startup workflow path.
 
 `SymphonyElixir.Application` is defined in `elixir/lib/symphony_elixir.ex`. It starts the supervision
 tree:
@@ -129,8 +134,8 @@ elixir/lib/symphony_elixir/
 | Module | File | Responsibility |
 | --- | --- | --- |
 | `SymphonyElixir.Application` | `symphony_elixir.ex` | OTP application entrypoint and supervision tree. |
-| `SymphonyElixir.CLI` | `cli.ex` | CLI parsing, guardrail acknowledgement, workflow path setup, app startup. |
-| `SymphonyElixir.Workflow` | `workflow.ex` | Workflow file path management and workflow parsing entrypoints. |
+| `SymphonyElixir.CLI` | `cli.ex` | CLI parsing, runtime overrides, and app startup. |
+| `SymphonyElixir.Workflow` | `workflow.ex` | Workflow package parsing and config/prompt normalization entrypoints. |
 | `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | Keeps current workflow state and last known good configuration. |
 | `SymphonyElixir.Config` | `config.ex` | Typed accessors for workflow configuration and defaults. |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | Configuration schema and validation rules. |
@@ -155,18 +160,22 @@ elixir/lib/symphony_elixir/
 elixir/lib/symphony_elixir/linear/
 ├── adapter.ex
 ├── client.ex
-└── issue.ex
-
-elixir/lib/symphony_elixir/tracker/
-└── memory.ex
+├── diagnostics.ex
+├── discovery.ex
+├── issue.ex
+├── workflow_bootstrap.ex
+└── workflow_state_validator.ex
 ```
 
 | Module | File | Responsibility |
 | --- | --- | --- |
 | `SymphonyElixir.Linear.Adapter` | `linear/adapter.ex` | Implements the tracker interface for Linear. |
 | `SymphonyElixir.Linear.Client` | `linear/client.ex` | Low-level Linear API calls. |
+| `SymphonyElixir.Linear.Diagnostics` | `linear/diagnostics.ex` | Read-only validation for active Linear runtime configuration. |
+| `SymphonyElixir.Linear.Discovery` | `linear/discovery.ex` | Read-only Linear metadata used by Settings while configuring projects and workflow states. |
 | `SymphonyElixir.Linear.Issue` | `linear/issue.ex` | Normalized issue struct/model. |
-| `SymphonyElixir.Tracker.Memory` | `tracker/memory.ex` | In-memory tracker implementation used in tests and local simulation. |
+| `SymphonyElixir.Linear.WorkflowBootstrap` | `linear/workflow_bootstrap.ex` | Explicit creation of missing Linear workflow states from diagnostics. |
+| `SymphonyElixir.Linear.WorkflowStateValidator` | `linear/workflow_state_validator.ex` | Compares configured Symphony states with Linear team states. |
 
 The orchestrator depends on the tracker abstraction, not directly on Linear. This keeps the core
 dispatch logic separate from external API details.
@@ -233,11 +242,16 @@ Routes:
 ```text
 GET  /                         LiveView dashboard
 GET  /login                    Login page when auth is enabled
-GET  /projects                 Project management
 GET  /runs                     Run history
+GET  /runs/:id                 Run detail
+GET  /issues/:identifier       Persisted issue snapshot
+GET  /events                   Event history
 GET  /workers                  Worker, task, and lease state
-GET  /workflows                Workflow raw editor and version history
-GET  /settings                 Runtime settings summary
+GET  /settings                 Settings, defaulting to Projects
+GET  /settings/projects        Project settings
+GET  /settings/workflow        Workflow routing/runtime settings
+GET  /settings/agents          Agent profile and prompt settings
+GET  /settings/runtime         Runtime summary
 GET  /diagnostics/linear       Linear diagnostics
 GET  /dashboard.css             Dashboard stylesheet
 GET  /api/v1/state              Full runtime state JSON
