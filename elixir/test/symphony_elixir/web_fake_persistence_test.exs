@@ -275,7 +275,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       )
       |> render_change()
 
-    assert edited_html =~ "Validation failed"
+    assert edited_html =~ "Field errors"
+    assert edited_html =~ "Hook timeout must be a positive integer"
   end
 
   test "workflow page does not report project-owned Linear slug errors" do
@@ -643,6 +644,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     {:ok, workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
     assert workflow_html =~ ~s(phx-disable-with="Saving...")
+    assert workflow_html =~ "novalidate"
     assert workflow_html =~ "Save workflow version"
     refute workflow_html =~ ~s(disabled="disabled")
 
@@ -657,6 +659,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     {:ok, agent_view, agent_html} = live(build_conn(), "/settings/agents")
     assert agent_html =~ ~s(phx-disable-with="Saving...")
+    assert agent_html =~ "novalidate"
     assert agent_html =~ "Save agent settings"
     refute agent_html =~ ~s(disabled="disabled")
 
@@ -912,9 +915,13 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     assert {:error, "Hook timeout must be a positive integer"} =
              SymphonyElixir.WorkflowForm.to_raw(draft)
+
+    assert SymphonyElixir.WorkflowForm.field_errors(draft) == %{
+             "hook_timeout_ms" => "Hook timeout must be a positive integer"
+           }
   end
 
-  test "workflow page rejects invalid structured draft before import" do
+  test "workflow page shows local field errors before import" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
@@ -929,10 +936,15 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       |> form("form[phx-submit='save_workflow_form']", workflow: params)
       |> render_submit()
 
-    assert html =~ "Validation failed"
+    assert html =~ "Field errors"
+    assert html =~ "local field format issues"
+    assert html =~ "workflow-field-polling-interval-ms"
+    assert html =~ "field-invalid"
     assert html =~ "workflow-save-toast-error"
     assert html =~ "Workflow settings save failed"
+    assert html =~ "Fix highlighted fields before saving."
     assert html =~ "Polling interval must be a positive integer"
+    refute html =~ "Configuration check failed"
 
     refute Enum.any?(FakePersistence.calls(), fn
              {:import_workflow, _project, _raw, _source} -> true
@@ -982,7 +994,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, view, _html} = live(build_conn(), "/settings/workflow")
     html = render_click(view, "restore_settings_version", %{"id" => "invalid-version"})
 
-    assert html =~ "Validation failed"
+    assert html =~ "Configuration check failed"
     assert html =~ "allowed_transitions.actor"
 
     refute Enum.any?(FakePersistence.calls(), fn

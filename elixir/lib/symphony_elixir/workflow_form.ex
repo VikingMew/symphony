@@ -61,6 +61,17 @@ defmodule SymphonyElixir.WorkflowForm do
     end
   end
 
+  @spec field_errors(draft()) :: %{String.t() => String.t()}
+  def field_errors(draft) when is_map(draft) do
+    integer_field_specs()
+    |> Enum.reduce(%{}, fn {key, label}, errors ->
+      case parse_positive_integer(draft, key, label) do
+        {:ok, _value} -> errors
+        {:error, message} -> Map.put(errors, key, message)
+      end
+    end)
+  end
+
   @spec to_config(draft()) :: {:ok, map()} | {:error, String.t()}
   def to_config(draft) when is_map(draft) do
     with {:ok, polling_interval_ms} <- parse_positive_integer(draft, "polling_interval_ms", "Polling interval"),
@@ -92,6 +103,16 @@ defmodule SymphonyElixir.WorkflowForm do
 
       {:ok, config}
     end
+  end
+
+  defp integer_field_specs do
+    [
+      {"polling_interval_ms", "Polling interval"},
+      {"project_checkout_depth", "Checkout depth"},
+      {"agent_max_concurrent_agents", "Max agents"},
+      {"agent_max_turns", "Max turns"},
+      {"hook_timeout_ms", "Hook timeout"}
+    ]
   end
 
   @spec summary(draft()) :: map()

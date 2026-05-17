@@ -263,6 +263,18 @@ defmodule SymphonyElixirWeb.AdminLive do
     """
   end
 
+  attr(:field, :string, required: true)
+  attr(:errors, :map, required: true)
+
+  @spec workflow_field_error(map()) :: Phoenix.LiveView.Rendered.t()
+  def workflow_field_error(assigns) do
+    ~H"""
+    <p :if={Map.has_key?(@errors, @field)} class="field-error">
+      <%= Map.fetch!(@errors, @field) %>
+    </p>
+    """
+  end
+
   @impl true
   def mount(params, _session, socket) do
     {:ok,
@@ -273,6 +285,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:route_params, params)
      |> assign(:workflow_diagnostics_notice, nil)
      |> assign(:workflow_save_notice, nil)
+     |> assign(:workflow_field_errors, %{})
      |> assign(:workflow_validation_error, nil)
      |> assign(:workflow_validation_visible?, false)
      |> assign(:workflow_form_valid?, false)
@@ -335,6 +348,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> put_flash(:info, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign_save_notice(:success, "#{settings_section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+        |> assign(:workflow_field_errors, %{})
         |> assign(:workflow_validation_error, nil)
         |> assign(:workflow_validation_visible?, false)
         |> refresh()
@@ -342,10 +356,11 @@ defmodule SymphonyElixirWeb.AdminLive do
         {:error, message} when is_binary(message) ->
           socket
           |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
-          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
+          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", "Fix highlighted fields before saving.")
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
-          |> assign(:workflow_validation_error, message)
+          |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
+          |> assign(:workflow_validation_error, nil)
           |> assign(:workflow_form_valid?, false)
 
         {:error, {:workflow_validation_failed, message}} ->
@@ -353,6 +368,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
           |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
           |> assign(:workflow_validation_visible?, true)
+          |> assign(:workflow_field_errors, %{})
           |> assign(:workflow_validation_error, message)
           |> assign(:workflow_form, draft)
           |> assign(:workflow_form_valid?, false)
@@ -364,6 +380,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
           |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
           |> assign(:workflow_validation_visible?, true)
+          |> assign(:workflow_field_errors, %{})
           |> assign(:workflow_form, draft)
       end
 
@@ -815,8 +832,20 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <a class="issue-link" href="/diagnostics/linear">Open Linear diagnostics</a>
               </p>
             <% end %>
+            <%= if @workflow_validation_visible? && map_size(@workflow_field_errors) > 0 do %>
+              <aside class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
+                <h3>Field errors</h3>
+                <p>Fix the highlighted field values, then save again. These are local field format issues, not workflow semantics.</p>
+                <ul>
+                  <li :for={{field, message} <- @workflow_field_errors}>
+                    <a class="issue-link" href={"##{workflow_field_id(field)}"}><%= workflow_field_label(field) %></a>
+                    <span><%= message %></span>
+                  </li>
+                </ul>
+              </aside>
+            <% end %>
             <%= if @workflow_validation_visible? && @workflow_validation_error do %>
-              <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
+              <p class="error-copy"><strong>Configuration check failed:</strong> <%= @workflow_validation_error %></p>
             <% end %>
             <%= if @workflow_save_notice do %>
               <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
@@ -825,7 +854,7 @@ defmodule SymphonyElixirWeb.AdminLive do
               </aside>
             <% end %>
 
-            <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form">
+            <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form" novalidate>
               <div class="workflow-form-header">
                 <div>
                   <h2 class="section-title">Draft Configuration</h2>
@@ -855,7 +884,11 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <section class="workflow-form-section">
                   <h3>Bootstrap</h3>
                   <p class="metric-label">Project checkout source is configured per project in Settings / Projects.</p>
-                  <label><span class="metric-label">Checkout depth</span><input type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} /></label>
+                  <label>
+                    <span class="metric-label">Checkout depth</span>
+                    <input id={workflow_field_id("project_checkout_depth")} class={workflow_field_class(@workflow_field_errors, "project_checkout_depth")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "project_checkout_depth")} type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} />
+                    <.workflow_field_error field="project_checkout_depth" errors={@workflow_field_errors} />
+                  </label>
                   <label><span class="metric-label">Setup commands</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
                   <label><span class="metric-label">Cleanup commands</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
                 </section>
@@ -865,7 +898,11 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <p class="workflow-help-copy">
                     Hooks execute shell commands in the issue workspace. Project checkout and setup run before after_create; cleared hook fields are removed from the saved workflow.
                   </p>
-                  <label><span class="metric-label">Hook timeout ms</span><input type="number" min="1" name="workflow[hook_timeout_ms]" value={@workflow_form["hook_timeout_ms"]} /></label>
+                  <label>
+                    <span class="metric-label">Hook timeout ms</span>
+                    <input id={workflow_field_id("hook_timeout_ms")} class={workflow_field_class(@workflow_field_errors, "hook_timeout_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "hook_timeout_ms")} type="number" min="1" name="workflow[hook_timeout_ms]" value={@workflow_form["hook_timeout_ms"]} />
+                    <.workflow_field_error field="hook_timeout_ms" errors={@workflow_field_errors} />
+                  </label>
                   <label><span class="metric-label">after_create</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea></label>
                   <label><span class="metric-label">before_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea></label>
                   <label><span class="metric-label">after_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea></label>
@@ -875,9 +912,21 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <section class="workflow-form-section">
                   <h3>Runtime</h3>
                   <label><span class="metric-label">Workspace root</span><input name="workflow[workspace_root]" value={@workflow_form["workspace_root"]} /></label>
-                  <label><span class="metric-label">Polling interval ms</span><input type="number" min="1" name="workflow[polling_interval_ms]" value={@workflow_form["polling_interval_ms"]} /></label>
-                  <label><span class="metric-label">Max agents</span><input type="number" min="1" name="workflow[agent_max_concurrent_agents]" value={@workflow_form["agent_max_concurrent_agents"]} /></label>
-                  <label><span class="metric-label">Max turns</span><input type="number" min="1" name="workflow[agent_max_turns]" value={@workflow_form["agent_max_turns"]} /></label>
+                  <label>
+                    <span class="metric-label">Polling interval ms</span>
+                    <input id={workflow_field_id("polling_interval_ms")} class={workflow_field_class(@workflow_field_errors, "polling_interval_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "polling_interval_ms")} type="number" min="1" name="workflow[polling_interval_ms]" value={@workflow_form["polling_interval_ms"]} />
+                    <.workflow_field_error field="polling_interval_ms" errors={@workflow_field_errors} />
+                  </label>
+                  <label>
+                    <span class="metric-label">Max agents</span>
+                    <input id={workflow_field_id("agent_max_concurrent_agents")} class={workflow_field_class(@workflow_field_errors, "agent_max_concurrent_agents")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_concurrent_agents")} type="number" min="1" name="workflow[agent_max_concurrent_agents]" value={@workflow_form["agent_max_concurrent_agents"]} />
+                    <.workflow_field_error field="agent_max_concurrent_agents" errors={@workflow_field_errors} />
+                  </label>
+                  <label>
+                    <span class="metric-label">Max turns</span>
+                    <input id={workflow_field_id("agent_max_turns")} class={workflow_field_class(@workflow_field_errors, "agent_max_turns")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_turns")} type="number" min="1" name="workflow[agent_max_turns]" value={@workflow_form["agent_max_turns"]} />
+                    <.workflow_field_error field="agent_max_turns" errors={@workflow_field_errors} />
+                  </label>
                 </section>
 
                 <section class="workflow-form-section">
@@ -964,8 +1013,14 @@ defmodule SymphonyElixirWeb.AdminLive do
               <span class="status-badge status-info"><%= @runtime_workflow_source.type %></span>
               <span class="muted mono"><%= @runtime_workflow_source.detail %></span>
             </p>
+            <%= if @workflow_validation_visible? && map_size(@workflow_field_errors) > 0 do %>
+              <aside class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
+                <h3>Field errors</h3>
+                <p>Fix the highlighted field values, then save again. These are local field format issues, not workflow semantics.</p>
+              </aside>
+            <% end %>
             <%= if @workflow_validation_visible? && @workflow_validation_error do %>
-              <p class="error-copy"><strong>Validation failed:</strong> <%= @workflow_validation_error %></p>
+              <p class="error-copy"><strong>Configuration check failed:</strong> <%= @workflow_validation_error %></p>
             <% end %>
             <%= if @workflow_save_notice do %>
               <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
@@ -974,7 +1029,7 @@ defmodule SymphonyElixirWeb.AdminLive do
               </aside>
             <% end %>
 
-            <form class="workflow-form settings-editor-form agent-settings-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form">
+            <form class="workflow-form settings-editor-form agent-settings-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form" novalidate>
               <div class="workflow-form-header settings-action-row">
                 <div>
                   <h2 class="section-title">Profile Configuration</h2>
@@ -1420,29 +1475,60 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   defp assign_workflow_validation(socket, draft) do
-    case WorkflowForm.to_raw(draft) do
-      {:ok, raw} ->
-        case WorkflowValidator.validate_raw(raw, runtime?: false) do
-          {:ok, _validation} ->
-            socket
-            |> assign(:workflow_validation_error, nil)
-            |> assign(:workflow_form_valid?, true)
-            |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+    field_errors = WorkflowForm.field_errors(draft)
 
-          {:error, {:workflow_validation_failed, message}} ->
-            socket
-            |> assign(:workflow_validation_error, message)
-            |> assign(:workflow_form_valid?, false)
-            |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
-        end
+    if field_errors == %{},
+      do: assign_workflow_semantic_validation(socket, draft),
+      else: assign_workflow_field_validation(socket, draft, field_errors)
+  end
+
+  defp assign_workflow_field_validation(socket, draft, field_errors) do
+    socket
+    |> assign(:workflow_field_errors, field_errors)
+    |> assign(:workflow_validation_error, nil)
+    |> assign(:workflow_form_valid?, false)
+    |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+  end
+
+  defp assign_workflow_semantic_validation(socket, draft) do
+    with {:ok, raw} <- WorkflowForm.to_raw(draft),
+         {:ok, _validation} <- WorkflowValidator.validate_raw(raw, runtime?: false) do
+      socket
+      |> assign(:workflow_field_errors, %{})
+      |> assign(:workflow_validation_error, nil)
+      |> assign(:workflow_form_valid?, true)
+      |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+    else
+      {:error, {:workflow_validation_failed, message}} ->
+        assign_workflow_semantic_error(socket, draft, message)
 
       {:error, message} ->
-        socket
-        |> assign(:workflow_validation_error, message)
-        |> assign(:workflow_form_valid?, false)
-        |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+        assign_workflow_semantic_error(socket, draft, message)
     end
   end
+
+  defp assign_workflow_semantic_error(socket, draft, message) do
+    socket
+    |> assign(:workflow_field_errors, %{})
+    |> assign(:workflow_validation_error, message)
+    |> assign(:workflow_form_valid?, false)
+    |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
+  end
+
+  defp workflow_field_id(field), do: "workflow-field-#{String.replace(field, "_", "-")}"
+
+  defp workflow_field_class(errors, field) do
+    if workflow_field_invalid?(errors, field), do: "field-invalid", else: nil
+  end
+
+  defp workflow_field_invalid?(errors, field), do: Map.has_key?(errors, field)
+
+  defp workflow_field_label("polling_interval_ms"), do: "Polling interval ms"
+  defp workflow_field_label("project_checkout_depth"), do: "Checkout depth"
+  defp workflow_field_label("agent_max_concurrent_agents"), do: "Max agents"
+  defp workflow_field_label("agent_max_turns"), do: "Max turns"
+  defp workflow_field_label("hook_timeout_ms"), do: "Hook timeout ms"
+  defp workflow_field_label(field), do: field
 
   defp linear_workflow_state_check(draft, {:ok, discovery}) when is_map(draft) do
     with {:ok, raw} <- WorkflowForm.to_raw(draft),

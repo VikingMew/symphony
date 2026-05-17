@@ -1134,6 +1134,18 @@ a:focus-visible {
   color: var(--danger);
 }
 
+.field-invalid {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-soft);
+}
+
+.field-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .setup-guidance-card {
   margin: 1rem 0 0;
   padding: 1rem;
