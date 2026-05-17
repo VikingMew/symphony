@@ -644,6 +644,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
     assert workflow_html =~ ~s(phx-disable-with="Saving...")
     assert workflow_html =~ "Save workflow version"
+    refute workflow_html =~ ~s(disabled="disabled")
 
     workflow_saved_html =
       workflow_view
@@ -657,6 +658,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, agent_view, agent_html} = live(build_conn(), "/settings/agents")
     assert agent_html =~ ~s(phx-disable-with="Saving...")
     assert agent_html =~ "Save agent settings"
+    refute agent_html =~ ~s(disabled="disabled")
 
     agent_saved_html =
       agent_view

@@ -831,7 +831,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <h2 class="section-title">Draft Configuration</h2>
                   <p class="metric-label">Edit fields, review validation, then save a database workflow version.</p>
                 </div>
-                <button class="subtle-button" type="submit" disabled={!@workflow_form_valid?} phx-disable-with="Saving...">Save workflow version</button>
+                <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save workflow version</button>
               </div>
 
               <div class="workflow-summary-grid">
@@ -980,7 +980,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <h2 class="section-title">Profile Configuration</h2>
                   <p class="metric-label">Edit agent execution profiles, prompt composition, update permissions, and target states.</p>
                 </div>
-                <button class="subtle-button" type="submit" disabled={!@workflow_form_valid?} phx-disable-with="Saving...">Save agent settings</button>
+                <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save agent settings</button>
               </div>
 
               <div class="workflow-summary-grid">
