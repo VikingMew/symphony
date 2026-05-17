@@ -84,6 +84,8 @@ Plans should focus on product and engineering intent rather than full implementa
 90. [090-project-owned-workspace-source-strategy.md](completed/090-project-owned-workspace-source-strategy.md)
 91. [091-worktree-source-strategy-runtime.md](completed/091-worktree-source-strategy-runtime.md)
 92. [092-agent-exit-result-classification.md](completed/092-agent-exit-result-classification.md)
+93. [093-settings-save-only-when-dirty.md](completed/093-settings-save-only-when-dirty.md)
+94. [094-worktree-bootstrap-timeout-and-stall-boundary.md](completed/094-worktree-bootstrap-timeout-and-stall-boundary.md)
 
 ## Plan Guidelines
 

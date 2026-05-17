@@ -1061,6 +1061,15 @@ a:focus-visible {
   color: var(--color-success-hover);
 }
 
+.workflow-save-toast-info {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+}
+
+.workflow-save-toast-info strong {
+  color: var(--color-primary-hover);
+}
+
 .workflow-save-toast-error {
   border-color: var(--color-danger-border);
   background: var(--color-danger-soft);

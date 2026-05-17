@@ -473,6 +473,56 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "worktree bootstrap clone uses initialize timeout" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-initialize-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH") || ""
+
+    try do
+      fake_bin = Path.join(test_root, "bin")
+      File.mkdir_p!(fake_bin)
+
+      fake_git = Path.join(fake_bin, "git")
+
+      File.write!(fake_git, """
+      #!/bin/sh
+      echo "Receiving objects: fake slow clone"
+      sleep 1
+      exit 0
+      """)
+
+      File.chmod!(fake_git, 0o755)
+      System.put_env("PATH", fake_bin <> ":" <> previous_path)
+
+      workspace_root = Path.join(test_root, "workspaces")
+      base_path = Path.join([test_root, "cache", "base"])
+      worktree_root = Path.join(test_root, "worktrees")
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        initialize_timeout_ms: 50,
+        project_repository_url: "git@example.com:org/repo.git",
+        project_default_branch: "main",
+        project_source_strategy: "worktree",
+        project_worktree_base_path: base_path,
+        project_worktree_root: worktree_root
+      )
+
+      assert {:error, {:workspace_hook_timeout, "project_bootstrap", 50, details}} =
+               Workspace.create_for_issue("WT-INITIALIZE-TIMEOUT")
+
+      assert details.elapsed_ms >= 50
+      assert details.recent_output =~ "Receiving objects: fake slow clone"
+    after
+      System.put_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace hook output is persisted while local hook is still running" do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)

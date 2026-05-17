@@ -293,6 +293,7 @@ defmodule SymphonyElixir.Workspace do
 
   defp prepare_worktree_source(settings, workspace, issue_context) do
     project = settings.project
+    timeout_ms = settings.workspace.initialize_timeout_ms
     started_at = System.monotonic_time(:millisecond)
     base_path = worktree_base_path(settings)
     branch = "symphony/#{safe_identifier(issue_context.issue_identifier)}"
@@ -302,10 +303,10 @@ defmodule SymphonyElixir.Workspace do
     persist_phase_event("workspace_bootstrap", :started, issue_context, workspace, nil, started_at, %{source_strategy: "worktree"})
 
     result =
-      with :ok <- ensure_worktree_base_repo(project, base_path),
-           :ok <- maybe_fetch_worktree_base(project, base_path),
-           :ok <- cleanup_stale_worktree(base_path, workspace, project) do
-        add_worktree(base_path, workspace, branch, project.default_branch)
+      with :ok <- ensure_worktree_base_repo(project, base_path, timeout_ms),
+           :ok <- maybe_fetch_worktree_base(project, base_path, timeout_ms),
+           :ok <- cleanup_stale_worktree(base_path, workspace, project, timeout_ms) do
+        add_worktree(base_path, workspace, branch, project.default_branch, timeout_ms)
       end
 
     case result do
@@ -329,7 +330,7 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  defp ensure_worktree_base_repo(project, base_path) do
+  defp ensure_worktree_base_repo(project, base_path, timeout_ms) do
     cond do
       git_repo?(base_path) ->
         :ok
@@ -341,11 +342,11 @@ defmodule SymphonyElixir.Workspace do
         {:error, :missing_project_repository_url}
 
       true ->
-        clone_worktree_base(project, base_path)
+        clone_worktree_base(project, base_path, timeout_ms)
     end
   end
 
-  defp clone_worktree_base(project, base_path) do
+  defp clone_worktree_base(project, base_path, timeout_ms) do
     parent = Path.dirname(base_path)
     File.mkdir_p!(parent)
 
@@ -354,37 +355,37 @@ defmodule SymphonyElixir.Workspace do
       |> maybe_append_git_arg("--branch", project.default_branch)
       |> Kernel.++([project.repository_url, base_path])
 
-    run_git(parent, args)
+    run_git(parent, args, timeout_ms)
   end
 
-  defp maybe_fetch_worktree_base(%{worktree_fetch: false}, _base_path), do: :ok
-  defp maybe_fetch_worktree_base(_project, base_path), do: run_git(base_path, ["fetch", "--all", "--prune"])
+  defp maybe_fetch_worktree_base(%{worktree_fetch: false}, _base_path, _timeout_ms), do: :ok
+  defp maybe_fetch_worktree_base(_project, base_path, timeout_ms), do: run_git(base_path, ["fetch", "--all", "--prune"], timeout_ms)
 
-  defp cleanup_stale_worktree(base_path, workspace, %{worktree_cleanup: false}) do
-    if File.exists?(workspace), do: {:error, {:worktree_exists, workspace}}, else: run_git(base_path, ["worktree", "prune"])
+  defp cleanup_stale_worktree(base_path, workspace, %{worktree_cleanup: false}, timeout_ms) do
+    if File.exists?(workspace), do: {:error, {:worktree_exists, workspace}}, else: run_git(base_path, ["worktree", "prune"], timeout_ms)
   end
 
-  defp cleanup_stale_worktree(base_path, workspace, _project) do
-    _ = run_git(base_path, ["worktree", "remove", "--force", workspace])
-    _ = run_git(base_path, ["worktree", "prune"])
+  defp cleanup_stale_worktree(base_path, workspace, _project, timeout_ms) do
+    _ = run_git(base_path, ["worktree", "remove", "--force", workspace], timeout_ms)
+    _ = run_git(base_path, ["worktree", "prune"], timeout_ms)
     File.rm_rf!(workspace)
     File.mkdir_p!(Path.dirname(workspace))
     :ok
   end
 
-  defp add_worktree(base_path, workspace, branch, default_branch) do
-    ref = worktree_base_ref(base_path, default_branch)
-    run_git(base_path, ["worktree", "add", "-B", branch, workspace, ref])
+  defp add_worktree(base_path, workspace, branch, default_branch, timeout_ms) do
+    ref = worktree_base_ref(base_path, default_branch, timeout_ms)
+    run_git(base_path, ["worktree", "add", "-B", branch, workspace, ref], timeout_ms)
   end
 
-  defp worktree_base_ref(base_path, branch) when is_binary(branch) and branch != "" do
-    case run_git(base_path, ["rev-parse", "--verify", branch]) do
+  defp worktree_base_ref(base_path, branch, timeout_ms) when is_binary(branch) and branch != "" do
+    case run_git(base_path, ["rev-parse", "--verify", branch], timeout_ms) do
       :ok -> branch
       {:error, _reason} -> "origin/#{branch}"
     end
   end
 
-  defp worktree_base_ref(_base_path, _branch), do: "HEAD"
+  defp worktree_base_ref(_base_path, _branch, _timeout_ms), do: "HEAD"
 
   defp git_repo?(path) do
     File.dir?(path) and run_git(path, ["rev-parse", "--git-dir"]) == :ok
@@ -436,6 +437,31 @@ defmodule SymphonyElixir.Workspace do
     case System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: [{"GIT_TERMINAL_PROMPT", "0"}]) do
       {_output, 0} -> :ok
       {output, status} -> {:error, {:git_command_failed, args, status, sanitize_hook_output_for_log(output)}}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp run_git(cwd, args, nil), do: run_git(cwd, args)
+
+  defp run_git(cwd, args, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+    executable = System.find_executable("git") || "git"
+    command = shell_escape(executable) <> " " <> Enum.map_join(args, " ", &shell_escape/1)
+
+    command
+    |> run_local_hook_command(cwd, timeout_ms, fn _chunk, _recent_output -> :ok end)
+    |> case do
+      {:ok, {_output, 0}} ->
+        :ok
+
+      {:ok, {output, status}} ->
+        {:error, {:git_command_failed, args, status, sanitize_hook_output_for_log(output)}}
+
+      {:error, {:workspace_hook_timeout, "local_command", ^timeout_ms, details}} ->
+        {:error, {:workspace_hook_timeout, "project_bootstrap", timeout_ms, details}}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   rescue
     error -> {:error, error}

@@ -5,7 +5,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore, WorkflowValidator}
+  alias SymphonyElixir.{Config, PersistenceProvider, Workflow, WorkflowForm, WorkflowStore, WorkflowValidator}
   alias SymphonyElixir.Linear.{Discovery, StateFixes, WorkflowStateValidator}
 
   @workflow_settings_source "web_workflow_settings"
@@ -376,6 +376,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
     socket =
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
+           :changed <- workflow_change_status(raw, socket),
            {:ok, project} <- persistence().default_project(),
            {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
@@ -389,6 +390,14 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign_workflow_validation(draft)
         |> refresh()
       else
+        :unchanged ->
+          socket
+          |> put_flash(:info, "#{settings_section_label(section)} already up to date.")
+          |> assign_save_notice(:info, "#{settings_section_label(section)} already up to date", "No changes to save.")
+          |> assign(:workflow_validation_visible?, true)
+          |> assign(:workflow_form, draft)
+          |> assign_workflow_validation(draft)
+
         {:error, message} when is_binary(message) ->
           socket
           |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
@@ -421,11 +430,16 @@ defmodule SymphonyElixirWeb.AdminLive do
     result =
       case id do
         nil -> persistence().create_project(attrs)
-        id -> persistence().update_project(id, attrs)
+        id -> maybe_update_project(id, attrs, socket)
       end
 
     socket =
       case result do
+        :unchanged ->
+          socket
+          |> put_flash(:info, "Project settings already up to date.")
+          |> assign_save_notice(:info, "Project settings already up to date", "No changes to save.")
+
         {:ok, project} ->
           socket
           |> put_flash(:info, "Project settings saved.")
@@ -1262,6 +1276,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     socket
     |> assign(:projects, persistence().list_projects())
     |> assign(:default_project, default_project)
+    |> assign(:active_workflow_version, active)
     |> assign(:runs, persistence().list_runs(limit: 100))
     |> assign(:events, event_list(socket))
     |> assign(:event_filters, event_filters(socket))
@@ -1497,6 +1512,47 @@ defmodule SymphonyElixirWeb.AdminLive do
       enabled: truthy_param?(Map.get(params, "enabled"))
     }
   end
+
+  defp maybe_update_project(id, attrs, socket) do
+    case Enum.find(socket.assigns.projects, &(project_value(&1, :id) == id)) do
+      nil ->
+        persistence().update_project(id, attrs)
+
+      project ->
+        if project_changed?(project, attrs), do: persistence().update_project(id, attrs), else: :unchanged
+    end
+  end
+
+  defp project_changed?(project, attrs) do
+    Enum.any?(project_compare_fields(), fn field ->
+      normalize_project_value(project_value(project, field)) != normalize_project_value(Map.get(attrs, field))
+    end)
+  end
+
+  defp project_compare_fields do
+    [
+      :name,
+      :slug,
+      :linear_project_slug,
+      :repository_url,
+      :default_branch,
+      :checkout_depth,
+      :source_strategy,
+      :worktree_base_path,
+      :worktree_root,
+      :worktree_fetch,
+      :worktree_cleanup,
+      :description,
+      :enabled
+    ]
+  end
+
+  defp normalize_project_value(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: value
+  end
+
+  defp normalize_project_value(value), do: value
 
   defp parse_project_checkout_depth(value) do
     case Integer.parse(to_string(value || "")) do
@@ -1812,6 +1868,35 @@ defmodule SymphonyElixirWeb.AdminLive do
     exception -> {:error, Exception.message(exception)}
   catch
     kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp workflow_change_status(raw, socket) do
+    case Map.get(socket.assigns, :active_workflow_version) do
+      nil ->
+        :changed
+
+      version ->
+        current_raw = persistence().export_workflow(version)
+
+        if canonical_workflow_equal?(current_raw, raw), do: :unchanged, else: :changed
+    end
+  end
+
+  defp canonical_workflow_equal?(left_raw, right_raw) do
+    with {:ok, left} <- canonical_workflow(left_raw),
+         {:ok, right} <- canonical_workflow(right_raw) do
+      left == right
+    else
+      _ -> left_raw == right_raw
+    end
+  end
+
+  defp canonical_workflow(raw) do
+    with {:ok, workflow} <- Workflow.parse_content(raw),
+         draft <- WorkflowForm.from_loaded(workflow),
+         {:ok, config} <- WorkflowForm.to_config(draft) do
+      {:ok, %{config: config, prompt: Map.get(draft, "prompt_body", "")}}
+    end
   end
 
   defp assign_save_notice(socket, level, title, message) do

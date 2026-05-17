@@ -6,6 +6,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.WorkflowForm
 
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
@@ -707,6 +708,122 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute runtime_html =~ "Save project"
   end
 
+  test "settings no-op saves show unchanged notices without persistence" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    raw = workflow_raw!(workflow_form_params())
+    active = workflow_version("active-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow_versions([active], active)
+
+    start_test_endpoint()
+
+    {:ok, workflow_view, _workflow_html} = live(build_conn(), "/settings/workflow")
+
+    workflow_noop_html =
+      workflow_view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_submit()
+
+    assert workflow_noop_html =~ "workflow-save-toast-info"
+    assert workflow_noop_html =~ "Workflow settings already up to date"
+    assert workflow_noop_html =~ "No changes to save"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+
+    {:ok, agent_view, _agent_html} = live(build_conn(), "/settings/agents")
+
+    agent_noop_html =
+      agent_view
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: %{"prompt_body" => "You are an agent for this repository."}
+      )
+      |> render_submit()
+
+    assert agent_noop_html =~ "workflow-save-toast-info"
+    assert agent_noop_html =~ "Agent settings already up to date"
+    assert agent_noop_html =~ "No changes to save"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+
+    {:ok, project_view, _project_html} = live(build_conn(), "/settings/projects")
+
+    project_noop_html =
+      project_view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: %{
+          "id" => "fake-project-id",
+          "name" => "Fake Project",
+          "slug" => "fake",
+          "linear_project_slug" => "project",
+          "repository_url" => "git@github.com:org/repo.git",
+          "default_branch" => "main",
+          "checkout_depth" => "1",
+          "source_strategy" => "clone",
+          "worktree_base_path" => "",
+          "worktree_root" => "",
+          "worktree_fetch" => "true",
+          "worktree_cleanup" => "true",
+          "description" => "",
+          "enabled" => "true"
+        }
+      )
+      |> render_submit()
+
+    assert project_noop_html =~ "workflow-save-toast-info"
+    assert project_noop_html =~ "Project settings already up to date"
+    assert project_noop_html =~ "No changes to save"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:update_project, "fake-project-id", _attrs} -> true
+             _ -> false
+           end)
+  end
+
+  test "settings no-op save keeps semantic check messages without creating another version" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    invalid_params =
+      workflow_form_params()
+      |> Map.put("allowed_transitions", %{
+        "0" => %{"from" => "In Progress", "to" => "Unknown Review", "actor" => "codex", "profile" => "implementation"}
+      })
+
+    raw = workflow_raw!(invalid_params)
+    active = workflow_version("active-invalid-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow_versions([active], active)
+
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+
+    params =
+      workflow_page_form_params()
+      |> Map.put("allowed_transitions", %{
+        "0" => %{"from" => "In Progress", "to" => "Unknown Review", "actor" => "codex", "profile" => "implementation"}
+      })
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
+      |> render_submit()
+
+    assert html =~ "workflow-save-toast-info"
+    assert html =~ "Workflow settings already up to date"
+    assert html =~ "Configuration check failed"
+    assert html =~ "Allowed transition 1"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+  end
+
   test "settings pages show separate version histories" do
     refute Process.whereis(SymphonyElixir.Repo)
 
@@ -1211,6 +1328,17 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     |> Map.delete("project_repository_url")
     |> Map.delete("project_default_branch")
     |> Map.delete("project_checkout_depth")
+  end
+
+  defp workflow_raw!(params) do
+    WorkflowForm.empty()
+    |> Map.merge(params)
+    |> Map.put("_base_config", %{})
+    |> WorkflowForm.to_raw()
+    |> case do
+      {:ok, raw} -> raw
+      {:error, reason} -> flunk("expected workflow params to render as raw workflow, got: #{inspect(reason)}")
+    end
   end
 
   defp workflow_version(id, version, source, raw, inserted_at) do
