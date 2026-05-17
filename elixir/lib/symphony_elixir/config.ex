@@ -91,9 +91,14 @@ defmodule SymphonyElixir.Config do
     Schema.workflow_allowed_updates(settings!(), profile)
   end
 
-  @spec generated_after_create_hook() :: String.t() | nil
-  def generated_after_create_hook do
-    Schema.generated_after_create_hook(settings!())
+  @spec generated_project_bootstrap_commands() :: String.t() | nil
+  def generated_project_bootstrap_commands do
+    Schema.generated_project_bootstrap_commands(settings!())
+  end
+
+  @spec project_setup_commands() :: String.t() | nil
+  def project_setup_commands do
+    Schema.project_setup_commands(settings!())
   end
 
   @spec generated_before_remove_hook() :: String.t() | nil

@@ -72,7 +72,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                           %{"name" => "Needs Refinement Review"},
                           %{"name" => "Ready"},
                           %{"name" => "In Progress"},
-                          %{"name" => "Needs Implementation Review"},
+                          %{"name" => "In Review"},
                           %{"name" => "Ready to Merge"},
                           %{"name" => "Merging"},
                           %{"name" => "Done"},
@@ -127,7 +127,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "Needs Implementation Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"},
                     %{"id" => "state-canceled", "name" => "Canceled", "type" => "canceled"}
                   ]
@@ -406,10 +406,10 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert html =~ "Settings validation checks local structure"
     assert html =~ "Cancelled"
     assert html =~ "Referenced by Terminal states"
-    assert html =~ "Needs Implementation Review"
+    assert html =~ "In Review"
     assert html =~ "Referenced by Human review states"
     assert html =~ "Profile implementation target states"
-    assert html =~ "Allowed transition In Progress -&gt; Needs Implementation Review"
+    assert html =~ "Allowed transition In Progress -&gt; In Review"
     assert html =~ "Open Workflow Settings"
     assert html =~ "Canceled"
     assert html =~ "Needs Refinement Review"
@@ -483,7 +483,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert "Ready" in discovery.states
     assert "In Progress" in discovery.suggestions.active_states
     assert "Done" in discovery.suggestions.terminal_states
-    assert "Needs Implementation Review" in discovery.suggestions.review_states
+    assert "In Review" in discovery.suggestions.review_states
   end
 
   test "linear discovery fetches workflow states with separate per-team queries" do

@@ -30,7 +30,7 @@ defmodule SymphonyElixir.MergeFlowTest do
     result =
       DynamicTool.execute(
         "linear_task_update",
-        %{"target_state" => "Needs Implementation Review", "comment" => "ready"},
+        %{"target_state" => "In Review", "comment" => "ready"},
         issue: issue,
         profile: "implementation",
         workspace: "/tmp/workspace",
@@ -62,7 +62,7 @@ defmodule SymphonyElixir.MergeFlowTest do
          %{
            "data" => %{
              "issue" => %{
-               "team" => %{"states" => %{"nodes" => [%{"id" => "state-review", "name" => "Needs Implementation Review"}]}}
+               "team" => %{"states" => %{"nodes" => [%{"id" => "state-review", "name" => "In Review"}]}}
              }
            }
          }}
@@ -71,7 +71,7 @@ defmodule SymphonyElixir.MergeFlowTest do
     result =
       DynamicTool.execute(
         "linear_task_update",
-        %{"target_state" => "Needs Implementation Review"},
+        %{"target_state" => "In Review"},
         issue: issue,
         profile: "implementation",
         workspace: "/tmp/workspace",

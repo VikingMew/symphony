@@ -25,7 +25,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   @type worker_host :: String.t() | nil
 
-  @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
+  @spec run(map(), pid() | nil, keyword()) :: :ok | {:error, term()}
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     # The orchestrator owns host retries so one worker lifetime never hops machines.
     worker_host = selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
@@ -37,9 +37,29 @@ defmodule SymphonyElixir.AgentRunner do
         :ok
 
       {:error, reason} ->
-        Logger.error("Agent run failed for #{issue_context(issue)}: #{inspect(reason)}")
-        raise RuntimeError, "Agent run failed for #{issue_context(issue)}: #{inspect(reason)}"
+        Logger.error("Agent run failed for #{issue_context(issue)}: #{failure_summary(reason)}")
+        {:error, reason}
     end
+  end
+
+  defp failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
+    elapsed_ms = if is_map(details), do: Map.get(details, :elapsed_ms), else: nil
+    output = if is_map(details), do: Map.get(details, :recent_output, ""), else: ""
+
+    "workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{elapsed_ms} output=#{compact_output(output)}"
+  end
+
+  defp failure_summary(reason), do: reason |> inspect(limit: 20, printable_limit: 1_000) |> compact_output()
+
+  defp compact_output(output) do
+    output
+    |> to_string()
+    |> String.replace("\r", "\n")
+    |> String.split("\n", trim: true)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.take(-8)
+    |> Enum.join(" | ")
+    |> String.slice(0, 1_000)
   end
 
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do

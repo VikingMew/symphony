@@ -138,14 +138,14 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_profile_for_state("Refining") == "refinement"
     assert Config.workflow_profile_for_state("In Progress") == "implementation"
     assert Config.workflow_profile_for_state("Ready to Merge") == "merge"
-    assert Config.workflow_profile_for_state("Needs Implementation Review") == nil
+    assert Config.workflow_profile_for_state("In Review") == nil
     assert Config.workflow_executor_for_state("Ready") == "codex_agent"
-    assert Config.human_review_state?("Needs Implementation Review")
+    assert Config.human_review_state?("In Review")
     refute Config.human_review_state?("In Progress")
 
     assert Config.workflow_allowed_updates("implementation")["target_states"] == [
              "In Progress",
-             "Needs Implementation Review"
+             "In Review"
            ]
 
     assert get_in(config.workflow, ["tool_policy", "linear", "exposed_tools"]) == [
@@ -262,7 +262,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert :ok = Config.validate!()
     assert Config.human_review_state?("In Review")
-    refute Config.human_review_state?("Needs Implementation Review")
+    refute Config.human_review_state?("Needs Review")
     assert Config.workflow_allowed_updates("implementation")["target_states"] == ["In Progress", "In Review"]
   end
 
@@ -1108,7 +1108,7 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent exited: :boom"} =
+    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent crashed: :boom"} =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 39_500, 40_500)
@@ -1148,7 +1148,7 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent exited: :boom"} =
+    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent crashed: :boom"} =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 9_000, 10_500)
@@ -1323,13 +1323,13 @@ defmodule SymphonyElixir.CoreTest do
     prompt =
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
-        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+        allowed_updates: %{"target_states" => ["In Review"]}
       )
 
     assert prompt =~ "Workflow profile: implementation"
     assert prompt =~ "`linear_task_read`"
     assert prompt =~ "`linear_task_update`"
-    assert prompt =~ "Needs Implementation Review"
+    assert prompt =~ "In Review"
     assert prompt =~ "Ticket S-2"
   end
 
@@ -1352,7 +1352,7 @@ defmodule SymphonyElixir.CoreTest do
           "name" => "Implementation",
           "prompt" => %{"mode" => "extend", "template" => "Stage {{ workflow.profile_name }} {{ issue.identifier }}"}
         },
-        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+        allowed_updates: %{"target_states" => ["In Review"]}
       )
 
     assert prompt =~ "Stage Implementation S-3"
@@ -1366,7 +1366,7 @@ defmodule SymphonyElixir.CoreTest do
           "name" => "Implementation",
           "prompt" => %{"mode" => "replace", "template" => "Replace {{ issue.identifier }}"}
         },
-        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+        allowed_updates: %{"target_states" => ["In Review"]}
       )
 
     assert prompt == "Replace S-3"
@@ -1432,7 +1432,7 @@ defmodule SymphonyElixir.CoreTest do
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
         profile_policy: %{"prompt" => %{"mode" => "disabled"}},
-        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+        allowed_updates: %{"target_states" => ["In Review"]}
       )
 
     assert disabled_prompt == "Base S-5"
@@ -1440,7 +1440,7 @@ defmodule SymphonyElixir.CoreTest do
     branch_prompt =
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
-        allowed_updates: %{"target_states" => ["Needs Implementation Review"]}
+        allowed_updates: %{"target_states" => ["In Review"]}
       )
 
     assert branch_prompt =~ "Required branch: `feature/s-5`"
@@ -1976,9 +1976,8 @@ defmodule SymphonyElixir.CoreTest do
         flunk("Ready issue should not transition when Codex startup fails")
       end
 
-      assert_raise RuntimeError, ~r/codex_startup_failed/, fn ->
-        AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
-      end
+      assert {:error, {:codex_startup_failed, _details}} =
+               AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
     after
       File.rm_rf(test_root)
     end
@@ -2049,9 +2048,8 @@ defmodule SymphonyElixir.CoreTest do
 
       transitioner = fn _transition_issue, "In Progress" -> {:error, :linear_state_not_found} end
 
-      assert_raise RuntimeError, ~r/implementation_start_transition_failed/, fn ->
-        AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
-      end
+      assert {:error, {:implementation_start_transition_failed, :linear_state_not_found}} =
+               AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
 
       trace = File.read!(trace_file)
       assert trace =~ "thread/start"
@@ -2119,9 +2117,8 @@ defmodule SymphonyElixir.CoreTest do
         state: "In Progress"
       }
 
-      assert_raise RuntimeError, ~r/workspace_prepare_failed/, fn ->
-        AgentRunner.run(issue, nil, worker_host: "worker-a")
-      end
+      assert {:error, {:workspace_prepare_failed, "worker-a", 75, "worker-a prepare failed\n"}} =
+               AgentRunner.run(issue, nil, worker_host: "worker-a")
 
       trace = File.read!(trace_file)
       assert trace =~ "worker-a bash -lc"

@@ -1,15 +1,16 @@
 # Workflow 页面设计目标
 
-本文维护 Settings 中 Workflow 和 Agents tabs 的长期目标状态。它关注 Web UI 如何编辑、验证、上传导入、导出和版本化完整 workflow package。
+本文维护 Settings 中 Workflow、Agents 和相关 Project 配置入口的长期目标状态。它关注 Web UI 如何编辑、验证、上传导入、导出和版本化完整 workflow package，同时明确哪些配置属于 project 记录而不是 workflow draft。
 
 ## 目标
 
 `/settings/workflow` 不应主要表现为一个巨大的纯文本框。目标页面应该像普通配置页面一样，由多个表单区域、输入框、选择器、textarea、列表编辑器、预览和校验结果组成。
 
-页面必须覆盖完整 workflow package contract，而不是只覆盖 prompt：
+Settings 必须覆盖完整 runtime contract，而不是只覆盖 prompt。不同 tab 的责任边界如下：
 
-- project 配置
-- tracker 配置
+- project 配置：属于 `/settings/projects`，包括每个 project 的 Linear project slug、repository URL、default branch、enabled 状态和描述。
+- tracker 连接边界：Linear tracker kind 和默认 endpoint 是固定 runtime fact，不作为 workflow 表单里的可编辑字段。
+- workflow tracker policy：属于 `/settings/workflow`，包括 assignee、active states、terminal states、human review states 和 allowed transitions。
 - polling 配置
 - workspace 配置
 - hook 配置
@@ -23,11 +24,11 @@
 
 Settings 长期应提供几个互相一致的 tab/入口：
 
-- `/settings/projects` 项目设置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch 和 enabled 状态。
+- `/settings/projects` 项目设置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch 和 enabled 状态；共享 Linear discovery 结果可辅助复制 project slug。
 - `/settings/workflow` 结构化编辑：按 tracker、bootstrap、workspace、hooks、agent、codex、workflow routing 等区域编辑共享策略。
 - `/settings/agents` 结构化编辑：编辑 base prompt、profiles、profile prompt policy、allowed updates、executor policy。
 - `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。
-- 文件上传导入：上传 `workflow.yml` 和 `profiles.yml`，解析后进入同一套结构化模型，显示 diff 和校验结果，通过后才能保存为新的 workflow version。
+- 文件上传导入：上传 `workflow.yml` 和 `profiles.yml`，解析后进入同一套结构化模型，显示 diff 和校验结果。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure，并阻止运行时监听。
 
 这些入口必须写入同一个 workflow version 模型，避免 UI 配置、导入文件和导出的 Markdown 配置分裂。
 
@@ -36,8 +37,8 @@ Settings 长期应提供几个互相一致的 tab/入口：
 `/settings/workflow` 的目标状态是一个可逐步保存、可验证、可审计的配置工作台。页面应按配置域拆分，而不是要求用户直接编辑完整 YAML。
 
 - Overview：显示 runtime source、active workflow version、最近保存/激活时间、是否有未保存变更、当前配置是否通过校验。
-- Tracker：编辑 assignee、active states、terminal states。Linear project slug 在 `/settings/projects` 按 project 配置。
-- Bootstrap：编辑 checkout depth、setup commands、cleanup commands。repository URL 和 default branch 在 `/settings/projects` 按 project 配置。
+- Tracker：编辑 assignee、active states、terminal states。Linear project slug 在 `/settings/projects` 按 project 配置；tracker kind 和 endpoint 不在这里编辑。
+- Bootstrap：编辑 initialize timeout、setup commands、cleanup commands。repository URL、default branch、checkout depth 和 source strategy 在 `/settings/projects` 按 project 配置。
 - Workspace：编辑 workspace root 和清理策略。
 - Hooks：分别编辑 after_create、before_run、after_run、before_remove 和 timeout。
 - Agent：编辑 max concurrent agents、max turns、retry/backoff、按 state 或 profile 的并发限制。
@@ -60,7 +61,7 @@ Settings 长期应提供几个互相一致的 tab/入口：
 典型校验包括：
 
 - Tracker：状态名称是否为空、active/terminal 是否冲突。
-- Projects / Bootstrap：按 project 校验 Linear project slug、repository URL、default branch；共享 bootstrap 命令校验为空/危险命令、workspace 初始化是否可生成。
+- Projects / Bootstrap：按 project 校验 Linear project slug、repository URL、default branch；共享 bootstrap 命令校验为空/危险命令、initialize timeout 必须为正整数、workspace 初始化是否可生成。
 - Workspace：路径是否为空、是否落在允许范围、是否可展开 `~`。
 - Hooks：每个 hook 单独显示 shell 风险提示、timeout 校验和可选 dry-run/preview。
 - Agent：并发数、turn 数、retry/backoff 必须是正整数，状态/profile 引用必须存在。
@@ -69,7 +70,13 @@ Settings 长期应提供几个互相一致的 tab/入口：
 - Profiles：Codex profile 的 `extend/replace` 必须有 template，`disabled` 只能用于非 Codex executor，target states 必须被 workflow 允许。
 - Prompt：按 profile 展示渲染后的 prompt，例如 refinement/implementation/merge 各自的 `extend` 或 `replace` 结果。
 
-UI 行为上，字段失效时应在对应输入附近显示错误，同时页面顶部聚合当前阻塞保存的问题。保存按钮只能在完整 contract validation 通过时创建新的 workflow version。
+UI 行为上，字段失效时应在对应输入附近显示错误，同时页面顶部聚合当前阻塞保存的问题。保存按钮必须始终给出明确反馈：点击后显示 saving，成功显示 saved，失败显示 failed 和原因。
+
+字段级错误和语义错误必须分开处理：
+
+- Field validation 阻止保存的是无法可靠解析或持久化的字段值，例如必须为正整数却不是数字。
+- Section / Contract validation 可以生成 configuration check failure，但不应阻止保存一个可解析的 draft；即使错误来自当前页面内的 transition/state/profile 组合，也只能提示和阻止运行时监听，不能阻止用户保存长表单进度。保存后运行时可以继续保持 setup-required 或 listening disabled，并在 Settings / Diagnostics 中说明缺哪个 project、workflow state、transition 或环境变量。
+- Linear state existence 属于外部系统匹配问题。Settings 可以显示 discovery 对比结果和修复建议，但不应把“Linear 侧没有这个 state”伪装成输入框格式错误。
 
 ## Split Package 上传导入
 
@@ -80,9 +87,9 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 1. 上传 `workflow.yml` 和 `profiles.yml`。
 2. 解析 runtime/routing YAML、profiles YAML 和 `base_prompt`。
 3. 映射到结构化 workflow form state。
-4. 运行 field、section、contract 三层 verification。
+4. 运行 field、section、contract 三层 verification，并区分“不能解析/不能保存”和“能保存但运行时不可用”。
 5. 展示与当前 active workflow version 的 diff。
-6. 通过校验后保存为新的 workflow version。
+6. 字段可解析时保存为新的 workflow version；语义校验结果随版本一起展示为 configuration check。
 7. 用户显式激活或保存即激活，取决于页面当前操作语义。
 
 ## 导出
@@ -96,8 +103,9 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 后续实现应能验证：
 
 - `/settings/workflow` 默认展示结构化配置页面，而不是只有 raw textarea。
-- 修改单个字段会在该字段附近显示 verification 结果。
+- 修改单个字段会在该字段附近显示 field verification 结果。
 - 跨字段错误会显示在对应 section 和页面顶部汇总里。
+- 语义错误不会让保存按钮失效；保存后会刷新 configuration check，并明确说明下一步去 Projects、Workflow、Agents 还是环境变量修。
 - 导入无效 split package 不会创建 workflow version。
 - 导入有效 split package 会生成结构化表单 state、展示 diff，并能保存为 workflow version。
 - 导入入口只接受上传文件，不提供粘贴原文。

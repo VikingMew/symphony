@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Workspace do
       with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
            :ok <- validate_workspace_path(workspace, worker_host),
            {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
-           :ok <- maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
+           :ok <- maybe_run_after_create_commands(workspace, issue_context, created?, worker_host) do
         {:ok, workspace}
       end
     rescue
@@ -79,6 +79,7 @@ defmodule SymphonyElixir.Workspace do
         case validate_workspace_path(workspace, nil) do
           :ok ->
             maybe_run_before_remove_hook(workspace, nil)
+            maybe_remove_project_worktree(workspace)
             File.rm_rf(workspace)
 
           {:error, reason} ->
@@ -179,7 +180,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp workspace_path_for_issue(safe_id, nil) when is_binary(safe_id) do
-    Config.settings!().workspace.root
+    workspace_root()
     |> Path.join(safe_id)
     |> PathSafety.canonicalize()
   end
@@ -188,11 +189,26 @@ defmodule SymphonyElixir.Workspace do
     {:ok, Path.join(Config.settings!().workspace.root, safe_id)}
   end
 
+  defp workspace_root do
+    settings = Config.settings!()
+
+    case settings.project.source_strategy do
+      "worktree" ->
+        case settings.project.worktree_root do
+          root when is_binary(root) and root != "" -> root
+          _ -> settings.workspace.root
+        end
+
+      _clone ->
+        settings.workspace.root
+    end
+  end
+
   defp safe_identifier(identifier) do
     String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
   end
 
-  defp maybe_run_after_create_hook(workspace, issue_context, created?, worker_host) do
+  defp maybe_run_after_create_commands(workspace, issue_context, created?, worker_host) do
     case created? do
       true ->
         run_after_create_commands(workspace, issue_context, worker_host)
@@ -205,18 +221,229 @@ defmodule SymphonyElixir.Workspace do
   defp run_after_create_commands(workspace, issue_context, worker_host) do
     hooks = Config.settings!().hooks
 
-    [
-      {"project_bootstrap", Config.generated_after_create_hook()},
-      {"after_create", hooks.after_create}
-    ]
-    |> Enum.reject(fn {_hook_name, command} -> blank?(command) end)
-    |> Enum.reduce_while(:ok, fn {hook_name, command}, :ok ->
-      case run_hook(command, workspace, issue_context, hook_name, worker_host) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
+    with :ok <- run_project_bootstrap(workspace, issue_context, worker_host) do
+      run_optional_hook(hooks.after_create, workspace, issue_context, "after_create", worker_host)
+    end
   end
+
+  defp run_project_bootstrap(workspace, issue_context, nil) do
+    settings = Config.settings!()
+
+    case settings.project.source_strategy do
+      "worktree" ->
+        with :ok <- prepare_worktree_source(settings, workspace, issue_context) do
+          run_optional_hook(
+            Config.project_setup_commands(),
+            workspace,
+            issue_context,
+            "project_bootstrap",
+            nil,
+            settings.workspace.initialize_timeout_ms
+          )
+        end
+
+      _clone ->
+        run_optional_hook(
+          Config.generated_project_bootstrap_commands(),
+          workspace,
+          issue_context,
+          "project_bootstrap",
+          nil,
+          settings.workspace.initialize_timeout_ms
+        )
+    end
+  end
+
+  defp run_project_bootstrap(workspace, issue_context, worker_host) when is_binary(worker_host) do
+    settings = Config.settings!()
+
+    case settings.project.source_strategy do
+      "worktree" ->
+        {:error, {:unsupported_remote_source_strategy, "worktree", worker_host}}
+
+      _clone ->
+        run_optional_hook(
+          Config.generated_project_bootstrap_commands(),
+          workspace,
+          issue_context,
+          "project_bootstrap",
+          worker_host,
+          settings.workspace.initialize_timeout_ms
+        )
+    end
+  end
+
+  defp run_optional_hook(command, _workspace, _issue_context, _hook_name, _worker_host) when command in [nil, ""], do: :ok
+
+  defp run_optional_hook(command, workspace, issue_context, hook_name, worker_host) do
+    run_optional_hook(command, workspace, issue_context, hook_name, worker_host, nil)
+  end
+
+  defp run_optional_hook(command, _workspace, _issue_context, _hook_name, _worker_host, _timeout_ms) when command in [nil, ""],
+    do: :ok
+
+  defp run_optional_hook(command, workspace, issue_context, hook_name, worker_host, timeout_ms) do
+    command
+    |> blank?()
+    |> case do
+      true -> :ok
+      false -> run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_ms)
+    end
+  end
+
+  defp prepare_worktree_source(settings, workspace, issue_context) do
+    project = settings.project
+    started_at = System.monotonic_time(:millisecond)
+    base_path = worktree_base_path(settings)
+    branch = "symphony/#{safe_identifier(issue_context.issue_identifier)}"
+
+    Logger.info("Preparing project worktree #{issue_log_context(issue_context)} base=#{base_path} workspace=#{workspace}")
+    log_phase("workspace_bootstrap", :started, issue_context, workspace, nil)
+    persist_phase_event("workspace_bootstrap", :started, issue_context, workspace, nil, started_at, %{source_strategy: "worktree"})
+
+    result =
+      with :ok <- ensure_worktree_base_repo(project, base_path),
+           :ok <- maybe_fetch_worktree_base(project, base_path),
+           :ok <- cleanup_stale_worktree(base_path, workspace, project) do
+        add_worktree(base_path, workspace, branch, project.default_branch)
+      end
+
+    case result do
+      :ok ->
+        persist_phase_event("workspace_bootstrap", :completed, issue_context, workspace, nil, started_at, %{
+          source_strategy: "worktree",
+          base_path: base_path,
+          branch: branch
+        })
+
+        :ok
+
+      {:error, reason} ->
+        persist_phase_event("workspace_bootstrap", :failed, issue_context, workspace, nil, started_at, %{
+          source_strategy: "worktree",
+          base_path: base_path,
+          reason: inspect(reason)
+        })
+
+        {:error, reason}
+    end
+  end
+
+  defp ensure_worktree_base_repo(project, base_path) do
+    cond do
+      git_repo?(base_path) ->
+        :ok
+
+      File.exists?(base_path) and not empty_directory?(base_path) ->
+        {:error, {:invalid_worktree_base_repo, base_path}}
+
+      blank?(project.repository_url) ->
+        {:error, :missing_project_repository_url}
+
+      true ->
+        clone_worktree_base(project, base_path)
+    end
+  end
+
+  defp clone_worktree_base(project, base_path) do
+    parent = Path.dirname(base_path)
+    File.mkdir_p!(parent)
+
+    args =
+      ["clone", "--progress"]
+      |> maybe_append_git_arg("--branch", project.default_branch)
+      |> Kernel.++([project.repository_url, base_path])
+
+    run_git(parent, args)
+  end
+
+  defp maybe_fetch_worktree_base(%{worktree_fetch: false}, _base_path), do: :ok
+  defp maybe_fetch_worktree_base(_project, base_path), do: run_git(base_path, ["fetch", "--all", "--prune"])
+
+  defp cleanup_stale_worktree(base_path, workspace, %{worktree_cleanup: false}) do
+    if File.exists?(workspace), do: {:error, {:worktree_exists, workspace}}, else: run_git(base_path, ["worktree", "prune"])
+  end
+
+  defp cleanup_stale_worktree(base_path, workspace, _project) do
+    _ = run_git(base_path, ["worktree", "remove", "--force", workspace])
+    _ = run_git(base_path, ["worktree", "prune"])
+    File.rm_rf!(workspace)
+    File.mkdir_p!(Path.dirname(workspace))
+    :ok
+  end
+
+  defp add_worktree(base_path, workspace, branch, default_branch) do
+    ref = worktree_base_ref(base_path, default_branch)
+    run_git(base_path, ["worktree", "add", "-B", branch, workspace, ref])
+  end
+
+  defp worktree_base_ref(base_path, branch) when is_binary(branch) and branch != "" do
+    case run_git(base_path, ["rev-parse", "--verify", branch]) do
+      :ok -> branch
+      {:error, _reason} -> "origin/#{branch}"
+    end
+  end
+
+  defp worktree_base_ref(_base_path, _branch), do: "HEAD"
+
+  defp git_repo?(path) do
+    File.dir?(path) and run_git(path, ["rev-parse", "--git-dir"]) == :ok
+  end
+
+  defp empty_directory?(path) do
+    case File.ls(path) do
+      {:ok, []} -> true
+      _ -> false
+    end
+  end
+
+  defp worktree_base_path(settings) do
+    case settings.project.worktree_base_path do
+      path when is_binary(path) and path != "" ->
+        Path.expand(path)
+
+      _ ->
+        Path.join([settings.workspace.root, ".symphony", "repos", repository_cache_key(settings.project)])
+    end
+  end
+
+  defp repository_cache_key(project) do
+    source = project.repository_url || "project"
+    digest = :crypto.hash(:sha256, source) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+    "#{safe_identifier(project.default_branch || "main")}-#{digest}"
+  end
+
+  defp maybe_remove_project_worktree(workspace) do
+    settings = Config.settings!()
+
+    if settings.project.source_strategy == "worktree" do
+      base_path = worktree_base_path(settings)
+
+      if git_repo?(base_path) do
+        _ = run_git(base_path, ["worktree", "remove", "--force", workspace])
+        _ = run_git(base_path, ["worktree", "prune"])
+      end
+    end
+
+    :ok
+  rescue
+    _error -> :ok
+  end
+
+  defp run_git(cwd, args) do
+    executable = System.find_executable("git") || "git"
+
+    case System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: [{"GIT_TERMINAL_PROMPT", "0"}]) do
+      {_output, 0} -> :ok
+      {output, status} -> {:error, {:git_command_failed, args, status, sanitize_hook_output_for_log(output)}}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp maybe_append_git_arg(args, _flag, nil), do: args
+  defp maybe_append_git_arg(args, _flag, ""), do: args
+  defp maybe_append_git_arg(args, flag, value), do: args ++ [flag, value]
 
   defp maybe_run_before_remove_hook(workspace, nil) do
     hooks = Config.settings!().hooks
@@ -286,12 +513,14 @@ defmodule SymphonyElixir.Workspace do
 
   defp blank?(value), do: String.trim(to_string(value || "")) == ""
 
-  defp run_hook(command, workspace, issue_context, hook_name, nil) do
-    timeout_ms = Config.settings!().hooks.timeout_ms
+  defp run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_override_ms \\ nil)
+
+  defp run_hook(command, workspace, issue_context, hook_name, nil, timeout_override_ms) do
+    timeout_ms = timeout_override_ms || Config.settings!().hooks.timeout_ms
     started_at = System.monotonic_time(:millisecond)
     phase = phase_for_hook(hook_name)
 
-    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local")
+    log_workspace_command_start(hook_name, issue_context, workspace, nil)
     log_phase(phase, :started, issue_context, workspace, nil)
     persist_phase_event(phase, :started, issue_context, workspace, nil, started_at, %{})
     persist_hook_event("workspace.hook_started", issue_context, hook_name, workspace, nil, command, started_at, %{})
@@ -303,12 +532,12 @@ defmodule SymphonyElixir.Workspace do
     |> handle_local_hook_result(workspace, issue_context, hook_name, nil, command, started_at, timeout_ms)
   end
 
-  defp run_hook(command, workspace, issue_context, hook_name, worker_host) when is_binary(worker_host) do
-    timeout_ms = Config.settings!().hooks.timeout_ms
+  defp run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_override_ms) when is_binary(worker_host) do
+    timeout_ms = timeout_override_ms || Config.settings!().hooks.timeout_ms
     started_at = System.monotonic_time(:millisecond)
     phase = phase_for_hook(hook_name)
 
-    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
+    log_workspace_command_start(hook_name, issue_context, workspace, worker_host)
     log_phase(phase, :started, issue_context, workspace, worker_host)
     persist_phase_event(phase, :started, issue_context, workspace, worker_host, started_at, %{})
 
@@ -501,6 +730,22 @@ defmodule SymphonyElixir.Workspace do
     |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+/, "\\1[REDACTED]")
   end
 
+  defp log_workspace_command_start("project_bootstrap", issue_context, workspace, nil) do
+    Logger.info("Running project bootstrap #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local")
+  end
+
+  defp log_workspace_command_start("project_bootstrap", issue_context, workspace, worker_host) do
+    Logger.info("Running project bootstrap #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
+  end
+
+  defp log_workspace_command_start(hook_name, issue_context, workspace, nil) do
+    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=local")
+  end
+
+  defp log_workspace_command_start(hook_name, issue_context, workspace, worker_host) do
+    Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
+  end
+
   defp persist_hook_output(issue_context, hook_name, workspace, worker_host, command, started_at, chunk, recent_output) do
     sanitized_chunk = sanitize_hook_output_for_log(chunk, @hook_event_output_bytes)
 
@@ -575,7 +820,7 @@ defmodule SymphonyElixir.Workspace do
 
   defp validate_workspace_path(workspace, nil) when is_binary(workspace) do
     expanded_workspace = Path.expand(workspace)
-    expanded_root = Path.expand(Config.settings!().workspace.root)
+    expanded_root = Path.expand(workspace_root())
     expanded_root_prefix = expanded_root <> "/"
 
     with {:ok, canonical_workspace} <- PathSafety.canonicalize(expanded_workspace),

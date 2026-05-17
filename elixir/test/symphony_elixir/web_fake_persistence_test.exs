@@ -56,7 +56,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "Needs Implementation Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"}
                   ]
                 }
@@ -171,7 +171,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert workflow_html =~ "Refresh Linear configuration"
     assert workflow_html =~ "Linear Workflow State Candidates"
     assert workflow_html =~ "Suggested State Lists"
-    assert workflow_html =~ "Needs Implementation Review"
+    assert workflow_html =~ "In Review"
     refute workflow_html =~ "Linear Project Candidates"
 
     assert length(Regex.scan(~r/Refresh Linear configuration/, workflow_html)) == 1
@@ -228,10 +228,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Settings are structurally valid"
     assert html =~ "Cancelled"
     assert html =~ "Referenced by Terminal states"
-    assert html =~ "Needs Implementation Review"
+    assert html =~ "In Review"
     assert html =~ "Referenced by Human review states"
     assert html =~ "Profile implementation target states"
-    assert html =~ "Allowed transition In Progress -&gt; Needs Implementation Review"
+    assert html =~ "Allowed transition In Progress -&gt; In Review"
     assert html =~ "Needs Refinement Review"
   end
 
@@ -330,6 +330,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert projects_html =~ "Project configuration checklist"
     assert projects_html =~ "Linear project slug"
     assert projects_html =~ "Repository URL"
+    assert projects_html =~ "settings-check-invalid"
+    assert projects_html =~ "settings-check-title-invalid"
     refute projects_html =~ "Workflow configuration checklist"
     refute projects_html =~ "Runtime configuration checklist"
 
@@ -434,6 +436,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute html =~ ~s(name="workflow[project_repository_url]")
     refute html =~ ~s(name="workflow[project_default_branch]")
     assert html =~ "Lifecycle Hooks"
+    assert html =~ "Initialize timeout ms"
     assert html =~ "Hook timeout ms"
     assert html =~ ~s(phx-disable-with="Saving...")
     refute html =~ "Raw workflow source"
@@ -582,6 +585,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           "linear_project_slug" => "linear-second",
           "repository_url" => "git@github.com:org/second.git",
           "default_branch" => "develop",
+          "checkout_depth" => "3",
+          "source_strategy" => "worktree",
+          "worktree_base_path" => "/tmp/symphony-cache",
+          "worktree_root" => "/tmp/symphony-worktrees",
+          "worktree_fetch" => "true",
+          "worktree_cleanup" => "false",
           "enabled" => "true"
         }
       )
@@ -592,8 +601,15 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "git@github.com:org/second.git"
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:create_project, attrs} -> attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git"
-             _ -> false
+             {:create_project, attrs} ->
+               attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git" and
+                 attrs.checkout_depth == 3 and attrs.source_strategy == "worktree" and
+                 attrs.worktree_base_path == "/tmp/symphony-cache" and
+                 attrs.worktree_root == "/tmp/symphony-worktrees" and attrs.worktree_fetch == true and
+                 attrs.worktree_cleanup == false
+
+             _ ->
+               false
            end)
 
     html =
@@ -606,6 +622,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           "linear_project_slug" => "renamed-linear",
           "repository_url" => "git@github.com:org/renamed.git",
           "default_branch" => "main",
+          "checkout_depth" => "1",
+          "source_strategy" => "clone",
+          "worktree_base_path" => "",
+          "worktree_root" => "",
           "enabled" => "true"
         }
       )
@@ -815,6 +835,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
             "terminal_states" => ["Done"]
           },
           "polling" => %{"interval_ms" => 30_000},
+          "workspace" => %{"initialize_timeout_ms" => 60_000},
           "project" => %{"repository_url" => "git@github.com:org/repo.git"},
           "hooks" => %{
             "timeout_ms" => 60_000,
@@ -834,12 +855,15 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       |> Map.put("hook_before_run", "echo edited")
       |> Map.put("hook_after_run", "echo after")
       |> Map.put("hook_before_remove", "echo remove")
+      |> Map.put("initialize_timeout_ms", "90000")
       |> Map.put("hook_timeout_ms", "45000")
 
     assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(edited)
     assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
 
     hooks = get_in(loaded_workflow.config, ["hooks"])
+    workspace = get_in(loaded_workflow.config, ["workspace"])
+    assert workspace["initialize_timeout_ms"] == 90_000
     refute Map.has_key?(hooks, "after_create")
     assert hooks["before_run"] == "echo edited"
     assert hooks["after_run"] == "echo after"
@@ -921,6 +945,20 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            }
   end
 
+  test "workflow form rejects invalid initialize timeout" do
+    draft =
+      workflow_form_params()
+      |> Map.put("_base_config", %{})
+      |> Map.put("initialize_timeout_ms", "0")
+
+    assert {:error, "Initialize timeout must be a positive integer"} =
+             SymphonyElixir.WorkflowForm.to_raw(draft)
+
+    assert SymphonyElixir.WorkflowForm.field_errors(draft) == %{
+             "initialize_timeout_ms" => "Initialize timeout must be a positive integer"
+           }
+  end
+
   test "workflow page shows local field errors before import" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
@@ -952,6 +990,70 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            end)
   end
 
+  test "workflow page saves parseable drafts with semantic configuration errors" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+
+    params =
+      workflow_page_form_params()
+      |> Map.put("allowed_transitions", %{
+        "0" => %{"from" => "In Progress", "to" => "Unknown Review", "actor" => "codex", "profile" => "implementation"}
+      })
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
+      |> render_submit()
+
+    assert html =~ "workflow-save-toast-success"
+    assert html =~ "Workflow settings saved"
+    assert html =~ "Configuration check failed"
+    assert html =~ "allowed_transitions.to"
+    assert html =~ "Configuration check targets"
+    assert html =~ "Allowed transition 1"
+    assert html =~ "workflow-transition-row settings-check-invalid"
+    assert html =~ "settings-check-message"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "\"to\": \"Unknown Review\""
+  end
+
+  test "agent settings highlights profile-owned semantic check failures" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/agents")
+
+    params = %{
+      "profiles" => %{
+        "implementation" => %{
+          "target_states" => "Needs Implementation Review"
+        }
+      }
+    }
+
+    html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: params)
+      |> render_submit()
+
+    assert html =~ "workflow-save-toast-success"
+    assert html =~ "Agent settings saved"
+    assert html =~ "Configuration check failed"
+    assert html =~ "implementation allowed target states"
+    assert html =~ "profile-implementation-target-states"
+    assert html =~ "settings-check-invalid"
+    assert html =~ "settings-check-title-invalid"
+    assert html =~ "Linear state name limit of 25 characters"
+  end
+
   test "workflow page shows popup feedback when save persistence fails" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
@@ -975,7 +1077,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            end)
   end
 
-  test "workflow page refuses to restore an invalid historical workflow version" do
+  test "workflow page restores parseable historical workflow version with semantic errors" do
     refute Process.whereis(SymphonyElixir.Repo)
 
     invalid = %{
@@ -994,11 +1096,13 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, view, _html} = live(build_conn(), "/settings/workflow")
     html = render_click(view, "restore_settings_version", %{"id" => "invalid-version"})
 
+    assert html =~ "workflow-save-toast-success"
+    assert html =~ "Workflow settings restored"
     assert html =~ "Configuration check failed"
     assert html =~ "allowed_transitions.actor"
 
-    refute Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, %{id: "fake-project-id"}, _raw, _source} -> true
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
              _ -> false
            end)
   end
@@ -1086,6 +1190,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "project_setup_commands" => "mix deps.get",
       "project_cleanup_commands" => "",
       "workspace_root" => "/tmp/symphony-workspaces",
+      "initialize_timeout_ms" => "60000",
       "agent_max_concurrent_agents" => "1",
       "agent_max_turns" => "20",
       "codex_command" => "codex app-server",
@@ -1105,6 +1210,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     |> Map.delete("tracker_project_slug")
     |> Map.delete("project_repository_url")
     |> Map.delete("project_default_branch")
+    |> Map.delete("project_checkout_depth")
   end
 
   defp workflow_version(id, version, source, raw, inserted_at) do
@@ -1170,7 +1276,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           profile: merge
         Merging:
           profile: merge
-      human_review_states: ["Needs Refinement Review", "Needs Implementation Review"]
+      human_review_states: ["Needs Refinement Review", "In Review"]
       allowed_transitions:
         - {from: Ready, to: In Progress, actor: codex, profile: implementation}
       tool_policy:
@@ -1187,7 +1293,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
         name: "Implementation"
         executor: {type: codex_agent}
         prompt: {mode: extend, template: "Implement the task."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "Needs Implementation Review"]}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "In Review"]}
       merge:
         name: "Merge"
         executor: {type: codex_agent}

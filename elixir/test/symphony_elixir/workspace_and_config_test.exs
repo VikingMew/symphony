@@ -74,6 +74,94 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "worktree source strategy auto-clones base repo and creates per-issue worktrees" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-source-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      base_path = Path.join([test_root, "cache", "base"])
+      worktree_root = Path.join(test_root, "worktrees")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "worktree source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: source_repo,
+        project_default_branch: "main",
+        project_source_strategy: "worktree",
+        project_worktree_base_path: base_path,
+        project_worktree_root: worktree_root,
+        project_setup_commands: ["printf setup > setup.txt"],
+        hook_after_create: "printf after > after.txt"
+      )
+
+      assert {:ok, first_workspace} = Workspace.create_for_issue("WT-1")
+      assert String.ends_with?(first_workspace, "/worktrees/WT-1")
+      assert File.read!(Path.join(base_path, "README.md")) == "worktree source\n"
+      assert File.read!(Path.join(first_workspace, "README.md")) == "worktree source\n"
+      assert File.read!(Path.join(first_workspace, "setup.txt")) == "setup"
+      assert File.read!(Path.join(first_workspace, "after.txt")) == "after"
+      assert File.exists?(Path.join(first_workspace, ".git"))
+
+      assert {:ok, second_workspace} = Workspace.create_for_issue("WT-2")
+      assert String.ends_with?(second_workspace, "/worktrees/WT-2")
+      assert File.read!(Path.join(second_workspace, "README.md")) == "worktree source\n"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "worktree source strategy rejects non-empty invalid base repo path" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-invalid-base-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      base_path = Path.join([test_root, "cache", "base"])
+      worktree_root = Path.join(test_root, "worktrees")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "worktree source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      File.mkdir_p!(base_path)
+      File.write!(Path.join(base_path, "not-a-git-repo"), "")
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: source_repo,
+        project_default_branch: "main",
+        project_source_strategy: "worktree",
+        project_worktree_base_path: base_path,
+        project_worktree_root: worktree_root
+      )
+
+      assert {:error, {:invalid_worktree_base_repo, ^base_path}} = Workspace.create_for_issue("WT-BAD")
+      refute File.exists?(Path.join([worktree_root, "WT-BAD", ".git"]))
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "structured project bootstrap clone commands are noninteractive" do
     assert {:ok, ssh_settings} =
              Schema.parse(%{
@@ -84,7 +172,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                }
              })
 
-    ssh_hook = Schema.generated_after_create_hook(ssh_settings)
+    ssh_hook = Schema.generated_project_bootstrap_commands(ssh_settings)
     assert ssh_hook =~ "GIT_TERMINAL_PROMPT=0"
     assert ssh_hook =~ "GIT_ASKPASS="
     assert ssh_hook =~ "SSH_ASKPASS="
@@ -100,7 +188,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
                }
              })
 
-    https_hook = Schema.generated_after_create_hook(https_settings)
+    https_hook = Schema.generated_project_bootstrap_commands(https_settings)
     assert https_hook =~ "GIT_TERMINAL_PROMPT=0"
     assert https_hook =~ "GIT_ASKPASS="
     assert https_hook =~ "SSH_ASKPASS="
@@ -353,6 +441,33 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       assert details.elapsed_ms >= 50
       assert details.recent_output =~ "before-timeout"
+    after
+      File.rm_rf(workspace_root)
+    end
+  end
+
+  test "workspace uses initialize timeout for project bootstrap separately from hook timeout" do
+    workspace_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-initialize-timeout-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        initialize_timeout_ms: 50,
+        hook_timeout_ms: 1_000,
+        project_setup_commands: ["echo initializing; sleep 1"],
+        hook_after_create: "touch after-create"
+      )
+
+      assert {:error, {:workspace_hook_timeout, "project_bootstrap", 50, details}} =
+               Workspace.create_for_issue("MT-INITIALIZE-TIMEOUT")
+
+      assert details.elapsed_ms >= 50
+      assert details.recent_output =~ "initializing"
+      refute File.exists?(Path.join([workspace_root, "MT-INITIALIZE-TIMEOUT", "after-create"]))
     after
       File.rm_rf(workspace_root)
     end
@@ -993,6 +1108,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.tracker.api_key == nil
     assert config.tracker.project_slug == nil
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+    assert config.workspace.initialize_timeout_ms == 60_000
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
@@ -1084,6 +1200,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_stall_timeout_ms: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.stall_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), initialize_timeout_ms: 0)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "workspace.initialize_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_active_states: %{todo: true},
@@ -1325,6 +1445,38 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert settings.tracker.api_key == nil
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+  end
+
+  test "schema rejects Linear state names longer than Linear allows" do
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               tracker: %{
+                 active_states: ["Ready", "Needs Implementation Review"],
+                 terminal_states: ["Done"]
+               },
+               workflow: %{
+                 states: %{"Ready" => %{profile: "implementation"}},
+                 human_review_states: ["Needs Implementation Review"],
+                 allowed_transitions: [
+                   %{from: "Ready", to: "Needs Implementation Review", actor: "codex", profile: "implementation"}
+                 ]
+               },
+               profiles: %{
+                 implementation: %{
+                   name: "Implementation",
+                   executor: %{type: "codex_agent"},
+                   prompt: %{mode: "extend", template: "Implement"},
+                   allowed_updates: %{target_states: ["Needs Implementation Review"]}
+                 }
+               }
+             })
+
+    assert message =~ "Linear state name limit of 25 characters"
+    assert message =~ "Needs Implementation Review"
+    assert message =~ "tracker.active_states"
+    assert message =~ "human_review_states"
+    assert message =~ "allowed_transitions.to"
+    assert message =~ "profiles.implementation.allowed_updates.target_states"
   end
 
   test "schema resolves sandbox policies from explicit and default workspaces" do

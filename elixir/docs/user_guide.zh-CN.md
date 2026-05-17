@@ -171,10 +171,12 @@ tracker:
   project_slug: "你的 Linear project slug"
 workspace:
   root: ~/code/symphony-workspaces
+  initialize_timeout_ms: 60000
 project:
   repository_url: "git@github.com:your-org/your-repo.git"
   default_branch: "main"
   checkout_depth: 1
+  source_strategy: "clone"
   setup_commands: []
   cleanup_commands: []
 codex:
@@ -191,7 +193,7 @@ workflow:
       profile: merge
     Merging:
       profile: merge
-  human_review_states: ["Needs Refinement Review", "Needs Implementation Review"]
+  human_review_states: ["Needs Refinement Review", "In Review"]
   tool_policy:
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]
@@ -234,7 +236,7 @@ profiles:
       description: false
       comment: true
       result: true
-      target_states: ["In Progress", "Needs Implementation Review"]
+      target_states: ["In Progress", "In Review"]
   merge:
     name: "Merge"
     executor:
@@ -248,10 +250,19 @@ profiles:
       target_states: ["Done"]
 ```
 
-`workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。Symphony
-会在这个目录下为每个 Linear issue 创建子目录，然后把 `project.repository_url` 指向的仓库
-clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
+`workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。默认
+`source_strategy: clone` 会在这个目录下为每个 Linear issue 创建子目录，然后把
+`project.repository_url` 指向的仓库 clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
 workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动 agent。
+`workspace.initialize_timeout_ms` 控制项目初始化阶段的超时，包括 clone/worktree 准备和
+`project.setup_commands`；它在 Settings / Workflow / Bootstrap 中编辑。`hooks.timeout_ms` 只控制
+after_create、before_run、after_run、before_remove 等 lifecycle hooks。
+
+如果同一个本地机器会同时处理很多同仓库任务，可以在 Project Settings 里把 source strategy 设为
+`worktree`。第一次运行时，Symphony 会自动把 `project.repository_url` clone 到集中式 base repo
+cache；之后每个 issue 会从这个 base repo 创建独立 git worktree。可选字段包括
+`worktree_base_path`、`worktree_root`、`worktree_fetch` 和 `worktree_cleanup`。这些都属于 Project
+Settings，不应该写进 `hooks.after_create` 或 `hooks.before_run`。
 
 Rust 项目可以这样写 bootstrap：
 
@@ -260,6 +271,7 @@ project:
   repository_url: "git@github.com:your-org/your-rust-repo.git"
   default_branch: "main"
   checkout_depth: 1
+  source_strategy: "clone"
   setup_commands:
     - cargo fetch
   cleanup_commands: []
@@ -270,6 +282,7 @@ Elixir 项目才应该使用 Elixir 专属命令，例如：
 ```yaml
 project:
   repository_url: "git@github.com:your-org/your-elixir-repo.git"
+  source_strategy: "clone"
   setup_commands:
     - mise trust
     - mise exec -- mix deps.get
@@ -277,11 +290,12 @@ project:
     - mix workspace.before_remove || true
 ```
 
-每次 agent start 都会重新创建该 issue workspace；如果同名目录已经存在，Symphony 会先删除它，再重新 clone/setup。
-因此未提交或未推送的本地进度不应只保存在 issue workspace 中。
+每次 agent start 都会重新创建该 issue workspace；`clone` 策略会删除同名目录再 clone/setup，
+`worktree` 策略会清理 stale worktree registration 和目录后重新创建 worktree。因此未提交或未推送的本地进度不应只保存在 issue workspace 中。
 
 `hooks.after_create` / `hooks.before_remove` 仍然可用。`project.repository_url` 和
-`project.setup_commands` 会先完成 checkout/setup，随后 `hooks.after_create` 作为附加自定义命令执行。
+source strategy 会先完成 source preparation，`project.setup_commands` 再完成 setup，随后
+`hooks.after_create` 作为附加自定义命令执行。
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
 Web UI 的 `/settings/workflow` tab 管理 workflow/routing，`/settings/agents` tab 管理 base
@@ -296,7 +310,7 @@ Backlog
   -> Needs Refinement Review
   -> Ready
   -> In Progress
-  -> Needs Implementation Review
+  -> In Review
   -> Ready to Merge
   -> Merging
   -> Done
@@ -304,7 +318,7 @@ Backlog
 
 其中 `Refining`、`Ready`、`In Progress`、`Ready to Merge`、`Merging` 是可调度状态，会放进
 `tracker.active_states`，并通过 `workflow.states.<state>.profile` 指定对应 profile。`Needs
-Refinement Review` 和 `Needs Implementation Review` 是人工确认状态，不应放进 active states。
+Refinement Review` 和 `In Review` 是人工确认状态，不应放进 active states。
 `Done`、`Canceled` 和 `Duplicate` 是终态。
 
 Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、
@@ -399,7 +413,14 @@ worker API 需要 registration token：
 export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
 ```
 
-## 11. 开发和验证命令
+## 11. 热更新
+
+Symphony 当前支持 Settings / workflow 配置热更新：保存新的 SQLite active workflow version 后，
+运行时会重新读取配置，不需要重启服务。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
+
+详细说明见 [Symphony 热更新说明](hot_update.zh-CN.md)。
+
+## 12. 开发和验证命令
 
 格式检查：
 
@@ -438,7 +459,7 @@ export LINEAR_API_KEY="..."
 mise exec -- make e2e
 ```
 
-## 12. 常见问题
+## 13. 常见问题
 
 ### 找不到 Elixir 或 Erlang
 

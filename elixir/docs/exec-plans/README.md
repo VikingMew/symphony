@@ -80,6 +80,10 @@ Plans should focus on product and engineering intent rather than full implementa
 73. [073-merge-branch-from-linear-branchname.md](completed/073-merge-branch-from-linear-branchname.md)
 87. [087-linear-discovery-settings-placement.md](completed/087-linear-discovery-settings-placement.md)
 88. [088-shared-linear-discovery-settings-state.md](completed/088-shared-linear-discovery-settings-state.md)
+89. [089-settings-check-field-highlighting.md](completed/089-settings-check-field-highlighting.md)
+90. [090-project-owned-workspace-source-strategy.md](completed/090-project-owned-workspace-source-strategy.md)
+91. [091-worktree-source-strategy-runtime.md](completed/091-worktree-source-strategy-runtime.md)
+92. [092-agent-exit-result-classification.md](completed/092-agent-exit-result-classification.md)
 
 ## Plan Guidelines
 

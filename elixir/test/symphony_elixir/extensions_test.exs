@@ -804,7 +804,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         "states" => %{
           "Ready" => %{"profile" => "implementation"}
         },
-        "human_review_states" => ["In Review"],
+        "human_review_states" => ["Needs Implementation Review"],
         "allowed_transitions" => [
           %{"from" => "Needs Implementation Review", "to" => "Ready", "actor" => "human"}
         ]
@@ -828,7 +828,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         "states" => %{
           "Ready" => %{"profile" => "implementation"}
         },
-        "human_review_states" => ["In Review"],
+        "human_review_states" => ["Needs Implementation Review"],
         "allowed_transitions" => [
           %{"from" => "Needs Implementation Review", "to" => "Ready", "actor" => "human"}
         ]

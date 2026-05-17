@@ -5,7 +5,6 @@ defmodule SymphonyElixir.Persistence do
 
   import Ecto.Query
 
-  alias SymphonyElixir.Config.Schema, as: ConfigSchema
   alias SymphonyElixir.Repo
   alias SymphonyElixir.Workflow
 
@@ -78,8 +77,7 @@ defmodule SymphonyElixir.Persistence do
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowVersion.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import") when is_binary(raw_workflow_md) do
-    with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
-         {:ok, _settings} <- ConfigSchema.parse(loaded.config) do
+    with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md) do
       create_workflow_version(project, %{
         raw_workflow_md: raw_workflow_md,
         yaml_config: loaded.config,

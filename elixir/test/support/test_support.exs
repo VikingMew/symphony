@@ -155,6 +155,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),
+          initialize_timeout_ms: 60_000,
           project_repository_url: nil,
           project_default_branch: "main",
           project_checkout_depth: 1,
@@ -199,11 +200,8 @@ defmodule SymphonyElixir.TestSupport do
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
-    project_repository_url = Keyword.get(config, :project_repository_url)
-    project_default_branch = Keyword.get(config, :project_default_branch)
-    project_checkout_depth = Keyword.get(config, :project_checkout_depth)
-    project_setup_commands = Keyword.get(config, :project_setup_commands)
-    project_cleanup_commands = Keyword.get(config, :project_cleanup_commands)
+    initialize_timeout_ms = Keyword.get(config, :initialize_timeout_ms)
+    project_config = project_config(config)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
@@ -246,13 +244,8 @@ defmodule SymphonyElixir.TestSupport do
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
-        project_yaml(
-          project_repository_url,
-          project_default_branch,
-          project_checkout_depth,
-          project_setup_commands,
-          project_cleanup_commands
-        ),
+        "  initialize_timeout_ms: #{yaml_value(initialize_timeout_ms)}",
+        project_yaml(project_config),
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
         "agent:",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
@@ -288,16 +281,48 @@ defmodule SymphonyElixir.TestSupport do
   defp profiles_yaml(nil), do: nil
   defp profiles_yaml(policy), do: "profiles: #{yaml_value(policy)}"
 
-  defp project_yaml(nil, _default_branch, _checkout_depth, [], []), do: nil
+  defp project_config(config) do
+    %{
+      repository_url: Keyword.get(config, :project_repository_url),
+      default_branch: Keyword.get(config, :project_default_branch),
+      checkout_depth: Keyword.get(config, :project_checkout_depth),
+      source_strategy: Keyword.get(config, :project_source_strategy),
+      worktree_base_path: Keyword.get(config, :project_worktree_base_path),
+      worktree_root: Keyword.get(config, :project_worktree_root),
+      worktree_fetch: Keyword.get(config, :project_worktree_fetch),
+      worktree_cleanup: Keyword.get(config, :project_worktree_cleanup),
+      setup_commands: Keyword.get(config, :project_setup_commands),
+      cleanup_commands: Keyword.get(config, :project_cleanup_commands)
+    }
+  end
 
-  defp project_yaml(repository_url, default_branch, checkout_depth, setup_commands, cleanup_commands) do
+  defp project_yaml(%{
+         repository_url: nil,
+         default_branch: _default_branch,
+         checkout_depth: _checkout_depth,
+         source_strategy: nil,
+         worktree_base_path: nil,
+         worktree_root: nil,
+         worktree_fetch: nil,
+         worktree_cleanup: nil,
+         setup_commands: [],
+         cleanup_commands: []
+       }),
+       do: nil
+
+  defp project_yaml(project) do
     [
       "project:",
-      "  repository_url: #{yaml_value(repository_url)}",
-      "  default_branch: #{yaml_value(default_branch)}",
-      "  checkout_depth: #{yaml_value(checkout_depth)}",
-      "  setup_commands: #{yaml_value(setup_commands)}",
-      "  cleanup_commands: #{yaml_value(cleanup_commands)}"
+      "  repository_url: #{yaml_value(project.repository_url)}",
+      "  default_branch: #{yaml_value(project.default_branch)}",
+      "  checkout_depth: #{yaml_value(project.checkout_depth)}",
+      "  source_strategy: #{yaml_value(project.source_strategy)}",
+      "  worktree_base_path: #{yaml_value(project.worktree_base_path)}",
+      "  worktree_root: #{yaml_value(project.worktree_root)}",
+      "  worktree_fetch: #{yaml_value(project.worktree_fetch)}",
+      "  worktree_cleanup: #{yaml_value(project.worktree_cleanup)}",
+      "  setup_commands: #{yaml_value(project.setup_commands)}",
+      "  cleanup_commands: #{yaml_value(project.cleanup_commands)}"
     ]
     |> Enum.join("\n")
   end

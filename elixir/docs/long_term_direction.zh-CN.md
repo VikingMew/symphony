@@ -38,6 +38,7 @@ Elixir / Phoenix Web Service
 当前已知对齐说明：
 
 - `已落地`：SQLite workflow version、Settings tabbed configuration、结构化 `/settings/workflow` draft form、`/settings/agents` base prompt/profile 编辑、版本保存/激活、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
+- `已落地`：Project source/bootstrap 由 Project Settings 和 Workflow Bootstrap 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；Workflow Bootstrap 拥有 `workspace.initialize_timeout_ms`，用于 clone/worktree 初始化和 project setup 超时。`hooks.timeout_ms` 只控制 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 - `阶段未到`：运行时完全 DB-only。目标状态下 Orchestrator、diagnostics、Settings 和 agent runner 都只读取 DB active workflow version；本地 split package 文件只作为导入/导出格式存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
 - `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、diff 审计和页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
 - `部分落地`：`profiles.<id>.executor.type` schema 支持 `codex_agent`、`manual`、`backend_action`、`external_worker`，调度层当前只自动执行 `codex_agent` 状态；manual/backend/external 是路由契约和后续执行器扩展点。
@@ -230,13 +231,13 @@ events
 
 ### 阶段 2：Web UI 管理配置
 
-当前 Settings 已从早期 raw editor 演进为 tabbed configuration：`/settings/workflow` 承载结构化 draft form，`/settings/agents` 承载 profile 设置。可以从 runtime 或数据库 workflow
-version 生成表单，编辑后保存为新的 workflow version。这个阶段仍是 `部分落地`：页面已经不再只是一个巨大纯文本框，但还没有完整覆盖字段级
+当前 Settings 已从早期 raw editor 演进为 tabbed configuration：`/settings/projects` 承载 project 设置，`/settings/workflow` 承载结构化 workflow/routing draft form，`/settings/agents` 承载 profile 设置，`/settings/runtime` 承载运行时摘要。可以从数据库 workflow
+version 和 projects 表生成表单，编辑后保存为新的数据库版本或 project 记录。这个阶段仍是 `部分落地`：页面已经不再只是一个巨大纯文本框，但还没有完整覆盖字段级
 verification、diff 审计、导出按钮和所有配置域的高级编辑。后续目标是继续把 workflow package 拆成更
-完整的可编辑数据模型。拆分时必须覆盖整个文件，而不是只覆盖 prompt：
+完整的可编辑数据模型。拆分时必须覆盖整个运行时 contract，而不是只覆盖 prompt：
 
-- project 配置
-- tracker 配置
+- project 配置：每个 project 的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述；这些字段不属于 Workflow tab。
+- tracker 连接边界：tracker kind 和 endpoint 是固定的 Linear/runtime 连接语义，不作为用户可编辑 workflow 字段。
 - polling 配置
 - workspace 配置
 - hook 配置
@@ -252,17 +253,40 @@ verification、diff 审计、导出按钮和所有配置域的高级编辑。后
 
 Settings 页面长期应提供几个互相一致的 tab/入口：
 
-- `/settings/projects` 项目配置：编辑每个 project 的 Linear project slug、repository URL、default branch，并提供只读 Linear discovery 辅助复制 Linear project slug 和 workflow state 名称。
-- `/settings/workflow` 结构化编辑：按 tracker、project/bootstrap、workspace、hooks、agent、codex、
-  workflow routing、prompt 等区域编辑。
+- `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
+- `/settings/workflow` 结构化编辑：按 tracker policy、bootstrap、workspace、hooks、agent、codex、
+  workflow routing、human review states、allowed transitions 等共享区域编辑。project repository 和 Linear project slug 不在这里编辑。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy。
-- `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。
+- `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
 - 文件上传导入：上传 split package，解析后进入同一套结构化模型，显示校验结果；后续补齐
-  与当前 active version 的 diff，校验通过后才能保存为新的 workflow version。
+  与当前 active version 的 diff。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
 这些入口必须写入同一个 workflow version 模型。导入文件写入 DB version；导出文件来自 DB version；运行时只读取 DB active version，避免 UI 配置、文件配置和运行时配置分裂。
 详细页面结构、verification 分层、上传导入流程和导出定位维护在
 [Workflow 页面设计目标](workflow_page_design.zh-CN.md)。
+
+#### Settings 保存和校验原则
+
+Settings 是主要配置入口，不是 diagnostics 的附属页面。所有 tab 的保存行为必须一致：
+
+- 保存按钮必须是可操作的。长表单不应因为浏览器原生 required/number 校验静默阻止 LiveView submit；需要使用应用内 validation 展示错误。
+- 点击保存后必须有明确反馈：`Saving...`、`Saved` toast 或 `Failed` toast。保存完成后刷新 validation，但不能让 validation 刷新吞掉保存反馈。
+- 字段级错误和语义错误必须分开。字段级错误是单个输入框自身不合法，例如空值、正整数、URL/slug 格式；这类错误显示在字段旁边，并在页面顶部汇总。
+- 语义错误是跨字段或跨系统的配置不一致，例如 transition 引用未知 state、profile target state 不在 workflow state model 中、Linear 侧不存在某个 state；这类错误应显示为 configuration check，不要伪装成某个输入框本身坏了。
+- workflow draft 只要字段本身可解析，就应该允许保存为数据库版本；即使语义错误发生在当前页面内，也只应作为 configuration check 提示，而不是让用户无法保存长表单进度。语义错误会让运行时保持 setup-required 或 listening disabled，并在 Settings 和 Diagnostics 中给出下一步修复指引。
+- 每个 Settings 页面都要有页面级 version history：Workflow 保存来源、Agents 保存来源、Project 保存记录应分开展示。恢复某个页面历史时，应写入新的完整 active workflow version 或 project 更新，而不是直接覆盖其它页面负责的字段。
+
+#### Linear 配置和 discovery 边界
+
+Linear 相关配置必须避免在 Settings、Diagnostics 和 runtime 之间制造三套说法：
+
+- Linear API token 只来自环境变量，例如 `LINEAR_API_KEY`。UI 不显示、不保存、不回填 token；最多展示是否存在、来源和安全摘要。
+- Tracker kind 固定为 Linear，endpoint 固定为默认 Linear GraphQL endpoint。它们可以在 diagnostics 中展示为 runtime fact，但不应显示为用户需要填写的 `n/a` 配置项。
+- Linear discovery 是 Settings 的只读辅助能力。Projects 和 Workflow tab 共享同一份读取结果：Projects 用它复制 project slug，Workflow 用它核对 active/terminal/review state 和 transition target。
+- Discovery 必须显示 fetching、fetched、failed 状态；失败要展示可行动原因。读取结果不能自动修改 Settings，用户必须显式复制或保存。
+- Diagnostics 验证的是 active runtime config；Settings 验证的是当前 draft 和保存后的数据库配置。两者可以同时显示同一个 Linear state mismatch，但措辞必须说明问题归属：project 字段缺失去 Projects 修，workflow state/transition 缺失去 Workflow 修，token 缺失去环境变量修。
+- Linear state mismatch 需要聚焦核心：列出 missing state、引用位置、是否在 Linear available states 里有近似可选项，以及用户下一步可以“改 workflow state 名称”还是“去 Linear 新建/重命名 state”。
+- Linear state 名称长度必须在 validator 中显式校验。当前按 Linear 限制使用 25 个字符上限；例如 `Needs Refinement Review` 可以通过，`Needs Implementation Review` 应被 configuration check 明确指出超过长度限制。推荐默认实现验收状态使用较短的 `In Review`。
 
 ### 阶段 2.0：三阶段执行 profile
 
@@ -332,7 +356,7 @@ profiles:
       description: false
       comment: true
       result: true
-      target_states: ["In Progress", "Needs Implementation Review"]
+      target_states: ["In Progress", "In Review"]
 
   merge:
     name: "Merge"
@@ -382,9 +406,12 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 
 - `workspace.root` 只表示 Symphony 创建 issue workspace 的根目录。
 - 项目代码来源应显式配置，例如必填的 `project.repository_url`、`project.default_branch`、
-  `project.checkout_depth`。
+  `project.checkout_depth` 和 `project.source_strategy`。
+- `clone` 和 `worktree` 是同一层级的 project source strategy。`clone` 为默认策略，会把仓库 clone 到 issue workspace；`worktree` 会先确保集中式 base repo cache 存在，再为每个 issue 创建独立 git worktree。
+- worktree 的 base repo path、worktree root、fetch-before-create 和 stale cleanup policy 都属于 Project Settings。缺省 base repo cache 位于 workspace root 下的 `.symphony/repos/`，不需要用户通过 hook 手动 clone。
 - bootstrap 命令应按项目类型生成或配置，例如 Rust 项目的 `cargo fetch`、Elixir 项目的
   `mix deps.get`、Node 项目的 `npm ci`。
+- project setup commands 在 source preparation 之后、custom `hooks.after_create` 之前运行。hooks 是 post-source lifecycle commands，不应用来表达 clone 或 worktree 创建。
 - cleanup 命令必须可选；没有项目级清理需求时不要默认运行语言专属命令。
 - Web UI 和样板生成器应支持选择项目类型或直接填写 bootstrap commands。
 - 生成出的 split package 必须让用户一眼看出需要替换 repo URL、workspace root 和项目命令。
@@ -392,9 +419,9 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 推荐演进路径：
 
 1. 先提供不绑定语言的通用样板，只保留 repo clone 和可选 bootstrap placeholders。
-2. 再新增 project bootstrap schema，把 repo URL、branch、setup commands、cleanup commands
+2. 再新增 project bootstrap schema，把 repo URL、branch、checkout depth、source strategy、setup commands、cleanup commands
    结构化保存。
-3. 最后让 Web UI 根据 bootstrap schema 生成 hooks，并在保存前校验危险或缺失配置。
+3. 最后让 Web UI 根据 project bootstrap schema 执行 project source preparation 和 setup commands，并在保存前校验危险或缺失配置；不要再把 project checkout 表达成 generated hook。
 
 ### 阶段 3：配置版本化（已落地基础模型）
 
@@ -457,10 +484,10 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - 暂停/恢复 project。
 - 手动 refresh tracker。
 - 停止、重试、清理 run。
-- 配置 Linear project slug、active states、terminal states。
+- 在 Projects 配置 Linear project slug、repository URL、default branch；在 Workflow 配置 active states、terminal states、human review states 和 transitions。
 - 配置 workspace root、hooks、Codex command。
 - 编辑完整 workflow package contract 的结构化字段，包括 `workflow.yml` 和 `profiles.yml`。当前已覆盖核心字段，仍需补齐所有配置域和更细字段校验。
-- 预览 workflow diff，并在保存前运行 schema 校验。当前已运行 schema 校验，diff 预览仍是后续。
+- 预览 workflow diff，并在保存前运行字段/schema 校验；跨字段和 Linear 外部匹配问题保存为 configuration check。当前已运行 schema 校验，diff 预览仍是后续。
 - 查看每个 run 绑定的 workflow version 和原始 workflow 内容。
 
 ## 8. 安全方向

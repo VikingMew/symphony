@@ -155,10 +155,17 @@ defmodule SymphonyElixir.Orchestrator do
 
         state = handle_worker_down_reason(state, issue_id, running_entry, reason, session_id)
 
-        Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
+        Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} exit=#{agent_exit_summary(reason, running_entry)}")
 
         notify_dashboard()
         {:noreply, state}
+    end
+  end
+
+  def handle_info({:agent_runner_finished, issue_id, result}, %{running: running} = state) when is_binary(issue_id) do
+    case Map.get(running, issue_id) do
+      nil -> {:noreply, state}
+      running_entry -> {:noreply, %{state | running: Map.put(running, issue_id, Map.put(running_entry, :agent_result, result))}}
     end
   end
 
@@ -257,6 +264,10 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, state}
   end
 
+  defp handle_worker_down_reason(state, issue_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
+    handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id)
+  end
+
   defp handle_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
     Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
@@ -272,17 +283,62 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
-    Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+    Logger.warning("Agent task crashed for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}; scheduling retry")
+
+    next_attempt = next_retry_attempt_from_running(running_entry)
+    summary = "agent crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
+    schedule_issue_retry(state, issue_id, next_attempt, %{
+      identifier: running_entry.identifier,
+      error: summary,
+      worker_host: Map.get(running_entry, :worker_host),
+      workspace_path: Map.get(running_entry, :workspace_path)
+    })
+    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", summary) end)
+  end
+
+  defp handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id) do
+    summary = agent_failure_summary(reason)
+    Logger.warning("Agent task failed for issue_id=#{issue_id} session_id=#{session_id} #{summary}; scheduling retry")
 
     next_attempt = next_retry_attempt_from_running(running_entry)
 
     schedule_issue_retry(state, issue_id, next_attempt, %{
       identifier: running_entry.identifier,
-      error: "agent exited: #{inspect(reason)}",
+      error: summary,
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
-    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", "agent exited: #{inspect(reason)}") end)
+    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", summary) end)
+  end
+
+  defp agent_exit_summary(:normal, %{agent_result: :ok}), do: "completed"
+  defp agent_exit_summary(:normal, %{agent_result: {:error, reason}}), do: "failed #{agent_failure_summary(reason)}"
+  defp agent_exit_summary(:normal, _running_entry), do: "completed"
+  defp agent_exit_summary(reason, _running_entry), do: "crashed #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
+  defp agent_failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
+    elapsed_ms = if is_map(details), do: Map.get(details, :elapsed_ms), else: nil
+    output = if is_map(details), do: Map.get(details, :recent_output, ""), else: ""
+    setting = timeout_setting_hint(hook_name)
+
+    "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{elapsed_ms} setting=#{setting} output=#{compact_log_output(output)}"
+  end
+
+  defp agent_failure_summary(reason), do: "class=agent_domain_failure reason=#{compact_log_output(inspect(reason, limit: 20, printable_limit: 1_000))}"
+
+  defp timeout_setting_hint("project_bootstrap"), do: "Settings / Workflow / Bootstrap / Initialize timeout ms"
+  defp timeout_setting_hint(_hook_name), do: "Settings / Workflow / Lifecycle Hooks / Hook timeout ms"
+
+  defp compact_log_output(output) do
+    output
+    |> to_string()
+    |> String.replace("\r", "\n")
+    |> String.split("\n", trim: true)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.take(-8)
+    |> Enum.join(" | ")
+    |> String.slice(0, 1_000)
   end
 
   defp maybe_dispatch(%State{} = state) do
@@ -815,7 +871,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           result = AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           send(recipient, {:agent_runner_finished, issue.id, result})
+           result
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
@@ -917,10 +975,15 @@ defmodule SymphonyElixir.Orchestrator do
 
     timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
 
-    error_suffix = if is_binary(error), do: " error=#{error}", else: ""
+    if Map.get(metadata, :delay_type) == :continuation do
+      Logger.info("Scheduling continuation check issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms")
+      persist_event("run.continuation_scheduled", identifier, %{issue_id: issue_id, delay_ms: delay_ms})
+    else
+      error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
-    Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
-    persist_event("run.retry_scheduled", identifier, %{issue_id: issue_id, attempt: next_attempt, delay_ms: delay_ms, error: error})
+      Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+      persist_event("run.retry_scheduled", identifier, %{issue_id: issue_id, attempt: next_attempt, delay_ms: delay_ms, error: error})
+    end
 
     %{
       state

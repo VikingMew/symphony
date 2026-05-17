@@ -28,9 +28,15 @@ defmodule SymphonyElixir.WorkflowForm do
       "project_repository_url" => get_string(display_config, ["project", "repository_url"], ""),
       "project_default_branch" => get_string(display_config, ["project", "default_branch"], "main"),
       "project_checkout_depth" => get_integer_string(display_config, ["project", "checkout_depth"], 1),
+      "project_source_strategy" => get_string(display_config, ["project", "source_strategy"], "clone"),
+      "project_worktree_base_path" => get_string(display_config, ["project", "worktree_base_path"], ""),
+      "project_worktree_root" => get_string(display_config, ["project", "worktree_root"], ""),
+      "project_worktree_fetch" => get_boolean_string(display_config, ["project", "worktree_fetch"], true),
+      "project_worktree_cleanup" => get_boolean_string(display_config, ["project", "worktree_cleanup"], true),
       "project_setup_commands" => get_list_text(display_config, ["project", "setup_commands"]),
       "project_cleanup_commands" => get_list_text(display_config, ["project", "cleanup_commands"]),
       "workspace_root" => get_string(display_config, ["workspace", "root"], "/tmp/symphony-workspaces"),
+      "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
       "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
       "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
@@ -76,6 +82,7 @@ defmodule SymphonyElixir.WorkflowForm do
   def to_config(draft) when is_map(draft) do
     with {:ok, polling_interval_ms} <- parse_positive_integer(draft, "polling_interval_ms", "Polling interval"),
          {:ok, checkout_depth} <- parse_positive_integer(draft, "project_checkout_depth", "Checkout depth"),
+         {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout") do
@@ -91,6 +98,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["polling", "interval_ms"], polling_interval_ms)
         |> put_project(draft, checkout_depth)
         |> put_path(["workspace", "root"], Map.get(draft, "workspace_root", ""))
+        |> put_path(["workspace", "initialize_timeout_ms"], initialize_timeout_ms)
         |> put_path(["agent", "max_concurrent_agents"], max_agents)
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
@@ -108,7 +116,7 @@ defmodule SymphonyElixir.WorkflowForm do
   defp integer_field_specs do
     [
       {"polling_interval_ms", "Polling interval"},
-      {"project_checkout_depth", "Checkout depth"},
+      {"initialize_timeout_ms", "Initialize timeout"},
       {"agent_max_concurrent_agents", "Max agents"},
       {"agent_max_turns", "Max turns"},
       {"hook_timeout_ms", "Hook timeout"}
@@ -287,6 +295,11 @@ defmodule SymphonyElixir.WorkflowForm do
     |> put_optional_path(["project", "repository_url"], Map.get(draft, "project_repository_url", ""))
     |> put_optional_path(["project", "default_branch"], Map.get(draft, "project_default_branch", ""))
     |> put_path(["project", "checkout_depth"], checkout_depth)
+    |> put_path(["project", "source_strategy"], Map.get(draft, "project_source_strategy", "clone"))
+    |> put_optional_path(["project", "worktree_base_path"], Map.get(draft, "project_worktree_base_path", ""))
+    |> put_optional_path(["project", "worktree_root"], Map.get(draft, "project_worktree_root", ""))
+    |> put_path(["project", "worktree_fetch"], truthy?(Map.get(draft, "project_worktree_fetch", "true")))
+    |> put_path(["project", "worktree_cleanup"], truthy?(Map.get(draft, "project_worktree_cleanup", "true")))
     |> put_path(["project", "setup_commands"], lines(Map.get(draft, "project_setup_commands", "")))
     |> put_path(["project", "cleanup_commands"], lines(Map.get(draft, "project_cleanup_commands", "")))
   end

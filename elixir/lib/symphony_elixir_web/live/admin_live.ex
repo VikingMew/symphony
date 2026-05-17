@@ -275,6 +275,42 @@ defmodule SymphonyElixirWeb.AdminLive do
     """
   end
 
+  attr(:targets, :list, required: true)
+  attr(:tab, :atom, required: true)
+  attr(:field, :atom, required: true)
+  attr(:scope, :any, default: nil)
+
+  @spec settings_check_messages(map()) :: Phoenix.LiveView.Rendered.t()
+  def settings_check_messages(assigns) do
+    assigns = assign(assigns, :messages, settings_check_messages(assigns.targets, assigns.tab, assigns.field, assigns.scope))
+
+    ~H"""
+    <p :for={message <- @messages} class="settings-check-message"><%= message %></p>
+    """
+  end
+
+  attr(:targets, :list, required: true)
+  attr(:current_tab, :atom, required: true)
+
+  @spec settings_check_summary(map()) :: Phoenix.LiveView.Rendered.t()
+  def settings_check_summary(assigns) do
+    ~H"""
+    <aside :if={@targets != []} class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
+      <h3>Configuration check targets</h3>
+      <ul>
+        <li :for={target <- @targets}>
+          <div class="setup-guidance-item-heading">
+            <span class="status-badge status-danger"><%= settings_tab_label(target.tab) %></span>
+            <strong><%= target.title %></strong>
+          </div>
+          <span><%= target.message %></span>
+          <a :if={target.tab != @current_tab} class="issue-link" href={settings_tab_path(target.tab)}>Open <%= settings_tab_label(target.tab) %></a>
+        </li>
+      </ul>
+    </aside>
+    """
+  end
+
   @impl true
   def mount(params, _session, socket) do
     {:ok,
@@ -286,6 +322,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_diagnostics_notice, nil)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_field_errors, %{})
+     |> assign(:workflow_check_targets, [])
      |> assign(:workflow_validation_error, nil)
      |> assign(:workflow_validation_visible?, false)
      |> assign(:workflow_form_valid?, false)
@@ -339,7 +376,6 @@ defmodule SymphonyElixirWeb.AdminLive do
 
     socket =
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
-           {:ok, _validation} <- WorkflowValidator.validate_raw(raw, runtime?: false),
            {:ok, project} <- persistence().default_project(),
            {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
@@ -348,9 +384,9 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> put_flash(:info, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign_save_notice(:success, "#{settings_section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-        |> assign(:workflow_field_errors, %{})
-        |> assign(:workflow_validation_error, nil)
-        |> assign(:workflow_validation_visible?, false)
+        |> assign(:workflow_validation_visible?, true)
+        |> assign(:workflow_form, draft)
+        |> assign_workflow_validation(draft)
         |> refresh()
       else
         {:error, message} when is_binary(message) ->
@@ -361,16 +397,6 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> assign(:workflow_form, draft)
           |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
           |> assign(:workflow_validation_error, nil)
-          |> assign(:workflow_form_valid?, false)
-
-        {:error, {:workflow_validation_failed, message}} ->
-          socket
-          |> put_flash(:error, "#{settings_section_label(section)} rejected: #{message}")
-          |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", message)
-          |> assign(:workflow_validation_visible?, true)
-          |> assign(:workflow_field_errors, %{})
-          |> assign(:workflow_validation_error, message)
-          |> assign(:workflow_form, draft)
           |> assign(:workflow_form_valid?, false)
 
         {:error, reason} ->
@@ -429,7 +455,6 @@ defmodule SymphonyElixirWeb.AdminLive do
            draft <- restore_settings_section(section, socket.assigns.workflow_form, history_draft),
            draft <- apply_project_settings(draft, socket.assigns.default_project),
            {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
-           {:ok, _validation} <- WorkflowValidator.validate_raw(restored_raw, runtime?: false),
            {:ok, project} <- persistence().default_project(),
            {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
         _ = WorkflowStore.force_reload()
@@ -438,19 +463,13 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> put_flash(:info, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign_save_notice(:success, "#{settings_section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
-        |> assign(:workflow_validation_error, nil)
-        |> assign(:workflow_validation_visible?, false)
+        |> assign(:workflow_validation_visible?, true)
+        |> assign(:workflow_form, draft)
+        |> assign_workflow_validation(draft)
         |> refresh()
       else
         nil ->
           put_flash(socket, :error, "Settings version not found")
-
-        {:error, {:workflow_validation_failed, message}} ->
-          socket
-          |> put_flash(:error, "Settings restore rejected: #{message}")
-          |> assign_save_notice(:error, "Settings restore failed", message)
-          |> assign(:workflow_validation_visible?, true)
-          |> assign(:workflow_validation_error, message)
 
         {:error, message} when is_binary(message) ->
           socket
@@ -762,9 +781,25 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <div class="workflow-profile-field-grid">
                     <label class="settings-field"><span class="metric-label">Name</span><input name="project[name]" value={project.name} /></label>
                     <label class="settings-field"><span class="metric-label">Internal slug</span><input name="project[slug]" value={project.slug} /></label>
-                    <label class="settings-field"><span class="metric-label">Linear project slug</span><input name="project[linear_project_slug]" value={project_value(project, :linear_project_slug)} /></label>
-                    <label class="settings-field"><span class="metric-label">Repository URL</span><input name="project[repository_url]" value={project_value(project, :repository_url)} /></label>
+                    <label class={project_field_class(@project_configuration_items, "Linear project slug")}><span class={project_field_title_class(@project_configuration_items, "Linear project slug")}>Linear project slug</span><input name="project[linear_project_slug]" value={project_value(project, :linear_project_slug)} /></label>
+                    <label class={project_field_class(@project_configuration_items, "Repository URL")}><span class={project_field_title_class(@project_configuration_items, "Repository URL")}>Repository URL</span><input name="project[repository_url]" value={project_value(project, :repository_url)} /></label>
                     <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value={project_value(project, :default_branch) || "main"} /></label>
+                    <label class="settings-field"><span class="metric-label">Checkout depth</span><input type="number" min="1" name="project[checkout_depth]" value={project_value(project, :checkout_depth) || 1} /></label>
+                    <label class="settings-field">
+                      <span class="metric-label">Source strategy</span>
+                      <select name="project[source_strategy]">
+                        <option value="clone" selected={project_value(project, :source_strategy) in [nil, "clone"]}>clone</option>
+                        <option value="worktree" selected={project_value(project, :source_strategy) == "worktree"}>worktree</option>
+                      </select>
+                    </label>
+                    <label class="settings-field"><span class="metric-label">Worktree base path</span><input name="project[worktree_base_path]" value={project_value(project, :worktree_base_path)} /></label>
+                    <label class="settings-field"><span class="metric-label">Worktree root</span><input name="project[worktree_root]" value={project_value(project, :worktree_root)} /></label>
+                    <div class="workflow-checkbox-row">
+                      <input type="hidden" name="project[worktree_fetch]" value="false" />
+                      <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked={project_value(project, :worktree_fetch) != false} /> Fetch before worktree</label>
+                      <input type="hidden" name="project[worktree_cleanup]" value="false" />
+                      <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked={project_value(project, :worktree_cleanup) != false} /> Clean stale worktree</label>
+                    </div>
                     <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" value={project_value(project, :description)} /></label>
                     <div class="workflow-checkbox-row">
                       <input type="hidden" name="project[enabled]" value="false" />
@@ -785,6 +820,22 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <label class="settings-field"><span class="metric-label">Linear project slug</span><input name="project[linear_project_slug]" /></label>
                   <label class="settings-field"><span class="metric-label">Repository URL</span><input name="project[repository_url]" /></label>
                   <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value="main" /></label>
+                  <label class="settings-field"><span class="metric-label">Checkout depth</span><input type="number" min="1" name="project[checkout_depth]" value="1" /></label>
+                  <label class="settings-field">
+                    <span class="metric-label">Source strategy</span>
+                    <select name="project[source_strategy]">
+                      <option value="clone" selected>clone</option>
+                      <option value="worktree">worktree</option>
+                    </select>
+                  </label>
+                  <label class="settings-field"><span class="metric-label">Worktree base path</span><input name="project[worktree_base_path]" /></label>
+                  <label class="settings-field"><span class="metric-label">Worktree root</span><input name="project[worktree_root]" /></label>
+                  <div class="workflow-checkbox-row">
+                    <input type="hidden" name="project[worktree_fetch]" value="false" />
+                    <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked /> Fetch before worktree</label>
+                    <input type="hidden" name="project[worktree_cleanup]" value="false" />
+                    <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked /> Clean stale worktree</label>
+                  </div>
                   <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" /></label>
                   <div class="workflow-checkbox-row">
                     <input type="hidden" name="project[enabled]" value="false" />
@@ -846,6 +897,7 @@ defmodule SymphonyElixirWeb.AdminLive do
             <% end %>
             <%= if @workflow_validation_visible? && @workflow_validation_error do %>
               <p class="error-copy"><strong>Configuration check failed:</strong> <%= @workflow_validation_error %></p>
+              <.settings_check_summary targets={@workflow_check_targets} current_tab={:workflow} />
             <% end %>
             <%= if @workflow_save_notice do %>
               <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
@@ -873,40 +925,40 @@ defmodule SymphonyElixirWeb.AdminLive do
               </div>
 
               <div class="workflow-form-grid">
-                <section class="workflow-form-section">
-                  <h3>Tracker</h3>
+                <section class={settings_check_class(@workflow_check_targets, :workflow, :tracker_section, nil, "workflow-form-section")}>
+                  <h3 class={settings_check_title_class(@workflow_check_targets, :workflow, :tracker_section)}>Tracker</h3>
                   <p class="metric-label">Linear tracker is managed by shared runtime configuration. Project-specific Linear slugs are configured in Settings / Projects.</p>
-                  <label><span class="metric-label">Assignee</span><input name="workflow[tracker_assignee]" value={@workflow_form["tracker_assignee"]} /></label>
-                  <label><span class="metric-label">Active states</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[active_states]" rows="5"><%= @workflow_form["active_states"] %></textarea></label>
-                  <label><span class="metric-label">Terminal states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[terminal_states]" rows="4"><%= @workflow_form["terminal_states"] %></textarea></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :tracker_assignee)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :tracker_assignee)}>Assignee</span><input name="workflow[tracker_assignee]" value={@workflow_form["tracker_assignee"]} /></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :active_states)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :active_states)}>Active states</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[active_states]" rows="5" aria-invalid={settings_check_invalid?(@workflow_check_targets, :workflow, :active_states)}><%= @workflow_form["active_states"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:active_states} /></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :terminal_states)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :terminal_states)}>Terminal states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[terminal_states]" rows="4" aria-invalid={settings_check_invalid?(@workflow_check_targets, :workflow, :terminal_states)}><%= @workflow_form["terminal_states"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:terminal_states} /></label>
                 </section>
 
                 <section class="workflow-form-section">
                   <h3>Bootstrap</h3>
                   <p class="metric-label">Project checkout source is configured per project in Settings / Projects.</p>
                   <label>
-                    <span class="metric-label">Checkout depth</span>
-                    <input id={workflow_field_id("project_checkout_depth")} class={workflow_field_class(@workflow_field_errors, "project_checkout_depth")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "project_checkout_depth")} type="number" min="1" name="workflow[project_checkout_depth]" value={@workflow_form["project_checkout_depth"]} />
-                    <.workflow_field_error field="project_checkout_depth" errors={@workflow_field_errors} />
+                    <span class="metric-label">Initialize timeout ms</span>
+                    <input id={workflow_field_id("initialize_timeout_ms")} class={workflow_field_class(@workflow_field_errors, "initialize_timeout_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "initialize_timeout_ms")} type="number" min="1" name="workflow[initialize_timeout_ms]" value={@workflow_form["initialize_timeout_ms"]} />
+                    <.workflow_field_error field="initialize_timeout_ms" errors={@workflow_field_errors} />
                   </label>
-                  <label><span class="metric-label">Setup commands</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[project_setup_commands]" rows="5"><%= @workflow_form["project_setup_commands"] %></textarea></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :setup_commands)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :setup_commands)}>Setup commands</span><textarea class="workflow-textbox workflow-textbox-medium" name="workflow[project_setup_commands]" rows="5" aria-invalid={settings_check_invalid?(@workflow_check_targets, :workflow, :setup_commands)}><%= @workflow_form["project_setup_commands"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:setup_commands} /></label>
                   <label><span class="metric-label">Cleanup commands</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[project_cleanup_commands]" rows="4"><%= @workflow_form["project_cleanup_commands"] %></textarea></label>
                 </section>
 
                 <section class="workflow-form-section">
                   <h3>Lifecycle Hooks</h3>
                   <p class="workflow-help-copy">
-                    Hooks execute shell commands in the issue workspace. Project checkout and setup run before after_create; cleared hook fields are removed from the saved workflow.
+                    Hooks execute shell commands in the issue workspace after initialization. Project checkout and setup use Initialize timeout ms, then after_create runs with the hook timeout below.
                   </p>
                   <label>
                     <span class="metric-label">Hook timeout ms</span>
                     <input id={workflow_field_id("hook_timeout_ms")} class={workflow_field_class(@workflow_field_errors, "hook_timeout_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "hook_timeout_ms")} type="number" min="1" name="workflow[hook_timeout_ms]" value={@workflow_form["hook_timeout_ms"]} />
                     <.workflow_field_error field="hook_timeout_ms" errors={@workflow_field_errors} />
                   </label>
-                  <label><span class="metric-label">after_create</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea></label>
-                  <label><span class="metric-label">before_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea></label>
-                  <label><span class="metric-label">after_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea></label>
-                  <label><span class="metric-label">before_remove</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_remove]" rows="3"><%= @workflow_form["hook_before_remove"] %></textarea></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :hook_after_create)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :hook_after_create)}>after_create</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_create]" rows="4"><%= @workflow_form["hook_after_create"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:hook_after_create} /></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :hook_before_run)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :hook_before_run)}>before_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_run]" rows="3"><%= @workflow_form["hook_before_run"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:hook_before_run} /></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :hook_after_run)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :hook_after_run)}>after_run</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_after_run]" rows="3"><%= @workflow_form["hook_after_run"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:hook_after_run} /></label>
+                  <label class={settings_check_class(@workflow_check_targets, :workflow, :hook_before_remove)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :hook_before_remove)}>before_remove</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[hook_before_remove]" rows="3"><%= @workflow_form["hook_before_remove"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:hook_before_remove} /></label>
                 </section>
 
                 <section class="workflow-form-section">
@@ -939,18 +991,19 @@ defmodule SymphonyElixirWeb.AdminLive do
               <section class="workflow-form-section">
                 <h3>Workflow Phases / State Routing</h3>
                 <div class="workflow-routing-grid">
-                  <label :for={{state, attrs} <- workflow_state_entries(@workflow_form)}>
-                    <span class="metric-label"><%= state %></span>
+                  <label :for={{state, attrs} <- workflow_state_entries(@workflow_form)} class={settings_check_class(@workflow_check_targets, :workflow, :workflow_state, state)}>
+                    <span class={settings_check_title_class(@workflow_check_targets, :workflow, :workflow_state, state)}><%= state %></span>
                     <select name={"workflow[workflow_states][#{state}][profile]"}>
                       <option value="">No profile</option>
                       <option :for={profile <- WorkflowForm.profile_options(@workflow_form)} value={profile} selected={attrs["profile"] == profile}><%= profile %></option>
                     </select>
+                    <.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:workflow_state} scope={state} />
                   </label>
                 </div>
-                <label><span class="metric-label">Human review states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[human_review_states]" rows="4"><%= @workflow_form["human_review_states"] %></textarea></label>
+                <label class={settings_check_class(@workflow_check_targets, :workflow, :human_review_states)}><span class={settings_check_title_class(@workflow_check_targets, :workflow, :human_review_states)}>Human review states</span><textarea class="workflow-textbox workflow-textbox-compact" name="workflow[human_review_states]" rows="4" aria-invalid={settings_check_invalid?(@workflow_check_targets, :workflow, :human_review_states)}><%= @workflow_form["human_review_states"] %></textarea><.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:human_review_states} /></label>
                 <div>
                   <div class="workflow-subsection-heading">
-                    <span class="metric-label">Allowed transitions</span>
+                    <span class={settings_check_title_class(@workflow_check_targets, :workflow, :allowed_transitions)}>Allowed transitions</span>
                     <button
                       class="workflow-add-button"
                       type="button"
@@ -964,7 +1017,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                     <div class="workflow-transition-header">To</div>
                     <div class="workflow-transition-header">Actor</div>
                     <div class="workflow-transition-header">Profile</div>
-                    <div :for={{transition, index} <- transition_entries(@workflow_form)} class="workflow-transition-row">
+                    <div :for={{transition, index} <- transition_entries(@workflow_form)} class={settings_check_class(@workflow_check_targets, :workflow, :allowed_transition, index, "workflow-transition-row")}>
                       <input name={"workflow[allowed_transitions][#{index}][from]"} value={transition["from"]} />
                       <input name={"workflow[allowed_transitions][#{index}][to]"} value={transition["to"]} />
                       <select name={"workflow[allowed_transitions][#{index}][actor]"}>
@@ -976,6 +1029,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                         <option value="">No profile</option>
                         <option :for={profile <- WorkflowForm.profile_options(@workflow_form)} value={profile} selected={transition["profile"] == profile}><%= profile %></option>
                       </select>
+                      <.settings_check_messages targets={@workflow_check_targets} tab={:workflow} field={:allowed_transition} scope={index} />
                     </div>
                   </div>
                 </div>
@@ -1021,6 +1075,7 @@ defmodule SymphonyElixirWeb.AdminLive do
             <% end %>
             <%= if @workflow_validation_visible? && @workflow_validation_error do %>
               <p class="error-copy"><strong>Configuration check failed:</strong> <%= @workflow_validation_error %></p>
+              <.settings_check_summary targets={@workflow_check_targets} current_tab={:agents} />
             <% end %>
             <%= if @workflow_save_notice do %>
               <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_save_notice.level}"]} role="status" aria-live="polite">
@@ -1066,10 +1121,10 @@ defmodule SymphonyElixirWeb.AdminLive do
                   </div>
                 </div>
                 <div class="workflow-profile-grid">
-                  <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class="workflow-profile-panel">
+                  <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class={settings_check_class(@workflow_check_targets, :agents, :profile_panel, profile_id, "workflow-profile-panel")}>
                     <header class="workflow-profile-header">
                       <div>
-                        <h4><%= profile["name"] || profile_id %></h4>
+                        <h4 class={settings_check_title_class(@workflow_check_targets, :agents, :profile_panel, profile_id)}><%= profile["name"] || profile_id %></h4>
                         <p class="metric-label mono"><%= profile_id %></p>
                       </div>
                       <div class="workflow-profile-badges">
@@ -1081,39 +1136,43 @@ defmodule SymphonyElixirWeb.AdminLive do
                     <div class="workflow-profile-field-grid">
                       <section class="profile-field-group">
                         <h5>Identity</h5>
-                        <div class="agent-field">
-                          <label class="agent-field-label" for={"profile-#{profile_id}-name"}>Name</label>
-                          <input id={"profile-#{profile_id}-name"} name={"workflow[profiles][#{profile_id}][name]"} value={profile["name"]} />
+                        <div class={settings_check_class(@workflow_check_targets, :agents, :profile_name, profile_id, "agent-field")}>
+                          <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_name, profile_id, "agent-field-label")} for={"profile-#{profile_id}-name"}>Name</label>
+                          <input id={"profile-#{profile_id}-name"} name={"workflow[profiles][#{profile_id}][name]"} value={profile["name"]} aria-invalid={settings_check_invalid?(@workflow_check_targets, :agents, :profile_name, profile_id)} />
+                          <.settings_check_messages targets={@workflow_check_targets} tab={:agents} field={:profile_name} scope={profile_id} />
                         </div>
                       </section>
 
                       <section class="profile-field-group">
                         <h5>Execution</h5>
-                        <div class="agent-field">
-                          <label class="agent-field-label" for={"profile-#{profile_id}-executor"}>Executor</label>
+                        <div class={settings_check_class(@workflow_check_targets, :agents, :profile_executor, profile_id, "agent-field")}>
+                          <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_executor, profile_id, "agent-field-label")} for={"profile-#{profile_id}-executor"}>Executor</label>
                           <select id={"profile-#{profile_id}-executor"} name={"workflow[profiles][#{profile_id}][executor_type]"}>
                             <option value="codex_agent" selected={profile["executor_type"] == "codex_agent"}>codex_agent</option>
                             <option value="backend_action" selected={profile["executor_type"] == "backend_action"}>backend_action</option>
                             <option value="manual" selected={profile["executor_type"] == "manual"}>manual</option>
                             <option value="external_worker" selected={profile["executor_type"] == "external_worker"}>external_worker</option>
                           </select>
+                          <.settings_check_messages targets={@workflow_check_targets} tab={:agents} field={:profile_executor} scope={profile_id} />
                         </div>
                       </section>
 
                       <section class="profile-field-group profile-field-group-prompt">
                         <h5>Prompt</h5>
                         <div class="profile-prompt-layout">
-                          <div class="agent-field profile-prompt-mode-field">
-                            <label class="agent-field-label" for={"profile-#{profile_id}-prompt-mode"}>Prompt mode</label>
+                          <div class={settings_check_class(@workflow_check_targets, :agents, :profile_prompt_mode, profile_id, "agent-field profile-prompt-mode-field")}>
+                            <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_prompt_mode, profile_id, "agent-field-label")} for={"profile-#{profile_id}-prompt-mode"}>Prompt mode</label>
                             <select id={"profile-#{profile_id}-prompt-mode"} name={"workflow[profiles][#{profile_id}][prompt_mode]"}>
                               <option value="extend" selected={profile["prompt_mode"] == "extend"}>extend</option>
                               <option value="replace" selected={profile["prompt_mode"] == "replace"}>replace</option>
                               <option value="disabled" selected={profile["prompt_mode"] == "disabled"}>disabled</option>
                             </select>
+                            <.settings_check_messages targets={@workflow_check_targets} tab={:agents} field={:profile_prompt_mode} scope={profile_id} />
                           </div>
-                          <div class="agent-field agent-field-full">
-                            <label class="agent-field-label" for={"profile-#{profile_id}-prompt-template"}>Profile prompt template</label>
-                            <textarea id={"profile-#{profile_id}-prompt-template"} class="workflow-textbox workflow-textbox-profile" name={"workflow[profiles][#{profile_id}][prompt_template]"} rows="5"><%= profile["prompt_template"] %></textarea>
+                          <div class={settings_check_class(@workflow_check_targets, :agents, :profile_prompt_template, profile_id, "agent-field agent-field-full")}>
+                            <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_prompt_template, profile_id, "agent-field-label")} for={"profile-#{profile_id}-prompt-template"}>Profile prompt template</label>
+                            <textarea id={"profile-#{profile_id}-prompt-template"} class="workflow-textbox workflow-textbox-profile" name={"workflow[profiles][#{profile_id}][prompt_template]"} rows="5" aria-invalid={settings_check_invalid?(@workflow_check_targets, :agents, :profile_prompt_template, profile_id)}><%= profile["prompt_template"] %></textarea>
+                            <.settings_check_messages targets={@workflow_check_targets} tab={:agents} field={:profile_prompt_template} scope={profile_id} />
                           </div>
                         </div>
                       </section>
@@ -1132,9 +1191,10 @@ defmodule SymphonyElixirWeb.AdminLive do
 
                       <section class="profile-field-group">
                         <h5>Routing</h5>
-                        <div class="agent-field">
-                          <label class="agent-field-label" for={"profile-#{profile_id}-target-states"}>Allowed target states</label>
-                          <textarea id={"profile-#{profile_id}-target-states"} class="workflow-textbox workflow-textbox-compact" name={"workflow[profiles][#{profile_id}][target_states]"} rows="4"><%= profile["target_states"] %></textarea>
+                        <div class={settings_check_class(@workflow_check_targets, :agents, :profile_target_states, profile_id, "agent-field")}>
+                          <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_target_states, profile_id, "agent-field-label")} for={"profile-#{profile_id}-target-states"}>Allowed target states</label>
+                          <textarea id={"profile-#{profile_id}-target-states"} class="workflow-textbox workflow-textbox-compact" name={"workflow[profiles][#{profile_id}][target_states]"} rows="4" aria-invalid={settings_check_invalid?(@workflow_check_targets, :agents, :profile_target_states, profile_id)}><%= profile["target_states"] %></textarea>
+                          <.settings_check_messages targets={@workflow_check_targets} tab={:agents} field={:profile_target_states} scope={profile_id} />
                         </div>
                       </section>
                     </div>
@@ -1412,6 +1472,12 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Map.put("tracker_project_slug", project_value(project, :linear_project_slug) || "")
     |> Map.put("project_repository_url", project_value(project, :repository_url) || "")
     |> Map.put("project_default_branch", project_value(project, :default_branch) || "main")
+    |> Map.put("project_checkout_depth", to_string(project_value(project, :checkout_depth) || 1))
+    |> Map.put("project_source_strategy", project_value(project, :source_strategy) || "clone")
+    |> Map.put("project_worktree_base_path", project_value(project, :worktree_base_path) || "")
+    |> Map.put("project_worktree_root", project_value(project, :worktree_root) || "")
+    |> Map.put("project_worktree_fetch", boolean_string(project_value(project, :worktree_fetch), true))
+    |> Map.put("project_worktree_cleanup", boolean_string(project_value(project, :worktree_cleanup), true))
   end
 
   defp project_attrs(params) do
@@ -1421,10 +1487,26 @@ defmodule SymphonyElixirWeb.AdminLive do
       linear_project_slug: blank_as_nil(Map.get(params, "linear_project_slug")),
       repository_url: blank_as_nil(Map.get(params, "repository_url")),
       default_branch: blank_as_nil(Map.get(params, "default_branch")) || "main",
+      checkout_depth: parse_project_checkout_depth(Map.get(params, "checkout_depth")),
+      source_strategy: Map.get(params, "source_strategy", "clone"),
+      worktree_base_path: blank_as_nil(Map.get(params, "worktree_base_path")),
+      worktree_root: blank_as_nil(Map.get(params, "worktree_root")),
+      worktree_fetch: truthy_param?(Map.get(params, "worktree_fetch", "true")),
+      worktree_cleanup: truthy_param?(Map.get(params, "worktree_cleanup", "true")),
       description: blank_as_nil(Map.get(params, "description")),
       enabled: truthy_param?(Map.get(params, "enabled"))
     }
   end
+
+  defp parse_project_checkout_depth(value) do
+    case Integer.parse(to_string(value || "")) do
+      {integer, ""} when integer > 0 -> integer
+      _ -> 1
+    end
+  end
+
+  defp boolean_string(nil, default), do: to_string(default)
+  defp boolean_string(value, _default), do: to_string(value)
 
   defp project_value(project, key) do
     Map.get(project, key) || Map.get(project, to_string(key))
@@ -1485,6 +1567,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp assign_workflow_field_validation(socket, draft, field_errors) do
     socket
     |> assign(:workflow_field_errors, field_errors)
+    |> assign(:workflow_check_targets, [])
     |> assign(:workflow_validation_error, nil)
     |> assign(:workflow_form_valid?, false)
     |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
@@ -1495,6 +1578,7 @@ defmodule SymphonyElixirWeb.AdminLive do
          {:ok, _validation} <- WorkflowValidator.validate_raw(raw, runtime?: false) do
       socket
       |> assign(:workflow_field_errors, %{})
+      |> assign(:workflow_check_targets, [])
       |> assign(:workflow_validation_error, nil)
       |> assign(:workflow_form_valid?, true)
       |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
@@ -1510,10 +1594,185 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp assign_workflow_semantic_error(socket, draft, message) do
     socket
     |> assign(:workflow_field_errors, %{})
+    |> assign(:workflow_check_targets, workflow_check_targets(draft, message))
     |> assign(:workflow_validation_error, message)
     |> assign(:workflow_form_valid?, false)
     |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
   end
+
+  defp workflow_check_targets(draft, message) do
+    text = to_string(message)
+    quoted = quoted_values(text)
+
+    []
+    |> Kernel.++(workflow_state_length_targets(text))
+    |> Kernel.++(workflow_tracker_targets(text))
+    |> Kernel.++(workflow_human_review_targets(text))
+    |> Kernel.++(workflow_state_route_targets(text, draft))
+    |> Kernel.++(workflow_transition_targets(text, draft, quoted))
+    |> Kernel.++(workflow_profile_targets(text, quoted))
+    |> Enum.uniq_by(fn target -> {target.tab, target.field, target.scope, target.message} end)
+  end
+
+  defp workflow_state_length_targets(text) do
+    cond do
+      String.contains?(text, "tracker.active_states") ->
+        [check_target(:workflow, :active_states, nil, "Active states", text)]
+
+      String.contains?(text, "tracker.terminal_states") ->
+        [check_target(:workflow, :terminal_states, nil, "Terminal states", text)]
+
+      String.contains?(text, "human_review_states") ->
+        [check_target(:workflow, :human_review_states, nil, "Human review states", text)]
+
+      true ->
+        []
+    end
+  end
+
+  defp workflow_tracker_targets(text) do
+    []
+    |> maybe_check_target(String.contains?(text, "tracker.active_states"), :workflow, :active_states, nil, "Active states", text)
+    |> maybe_check_target(String.contains?(text, "tracker.terminal_states"), :workflow, :terminal_states, nil, "Terminal states", text)
+  end
+
+  defp workflow_human_review_targets(text) do
+    if String.contains?(text, "human_review_states") do
+      [check_target(:workflow, :human_review_states, nil, "Human review states", text)]
+    else
+      []
+    end
+  end
+
+  defp workflow_state_route_targets(text, draft) do
+    states = draft |> Map.get("workflow_states", %{}) |> Map.keys()
+
+    states
+    |> Enum.filter(&(String.contains?(text, "states.#{&1}") or String.contains?(text, inspect(&1))))
+    |> Enum.map(&check_target(:workflow, :workflow_state, &1, "Workflow state #{&1}", text))
+  end
+
+  defp workflow_transition_targets(text, draft, quoted) do
+    if String.contains?(text, "allowed_transitions") do
+      transition_entries(draft)
+      |> Enum.filter(fn {transition, _index} -> transition_matches_message?(transition, quoted, text) end)
+      |> transition_check_targets(text)
+    else
+      []
+    end
+  end
+
+  defp transition_check_targets([], text), do: [check_target(:workflow, :allowed_transitions, nil, "Allowed transitions", text)]
+
+  defp transition_check_targets(entries, text) do
+    Enum.map(entries, fn {_transition, index} ->
+      check_target(:workflow, :allowed_transition, index, "Allowed transition #{index + 1}", text)
+    end)
+  end
+
+  defp workflow_profile_targets(text, quoted) do
+    Regex.scan(~r/profiles\.([^. ,]+)\.([^,\n]+)/, text)
+    |> Enum.flat_map(fn [_match, profile, rest] ->
+      field =
+        cond do
+          String.contains?(rest, "allowed_updates.target_states") -> :profile_target_states
+          String.contains?(rest, "prompt.template") -> :profile_prompt_template
+          String.contains?(rest, "prompt.mode") -> :profile_prompt_mode
+          String.contains?(rest, "executor.type") -> :profile_executor
+          String.starts_with?(rest, "name") -> :profile_name
+          true -> :profile_panel
+        end
+
+      title = profile_target_title(field, profile)
+      message = profile_message(text, quoted)
+
+      [
+        check_target(:agents, field, profile, title, message),
+        check_target(:agents, :profile_panel, profile, "Profile #{profile}", message)
+      ]
+    end)
+  end
+
+  defp profile_message(text, []), do: text
+  defp profile_message(text, quoted), do: "#{text} (#{Enum.join(quoted, ", ")})"
+
+  defp profile_target_title(:profile_target_states, profile), do: "#{profile} allowed target states"
+  defp profile_target_title(:profile_prompt_template, profile), do: "#{profile} prompt template"
+  defp profile_target_title(:profile_prompt_mode, profile), do: "#{profile} prompt mode"
+  defp profile_target_title(:profile_executor, profile), do: "#{profile} executor"
+  defp profile_target_title(:profile_name, profile), do: "#{profile} name"
+  defp profile_target_title(_field, profile), do: "Profile #{profile}"
+
+  defp quoted_values(text) do
+    Regex.scan(~r/"([^"]+)"/, text)
+    |> Enum.map(fn [_match, value] -> value end)
+  end
+
+  defp transition_matches_message?(_transition, [], _text), do: true
+
+  defp transition_matches_message?(transition, quoted, text) do
+    values = [Map.get(transition, "from"), Map.get(transition, "to"), Map.get(transition, "actor"), Map.get(transition, "profile")]
+
+    Enum.any?(values, fn value ->
+      value = to_string(value || "")
+      value != "" and (Enum.member?(quoted, value) or String.contains?(text, value))
+    end)
+  end
+
+  defp maybe_check_target(targets, true, tab, field, scope, title, message), do: [check_target(tab, field, scope, title, message) | targets]
+  defp maybe_check_target(targets, false, _tab, _field, _scope, _title, _message), do: targets
+
+  defp check_target(tab, field, scope, title, message) do
+    %{tab: tab, field: field, scope: scope, title: title, message: message}
+  end
+
+  defp settings_check_class(targets, tab, field, scope \\ nil, base \\ "settings-field") do
+    [base, if(settings_check_invalid?(targets, tab, field, scope), do: "settings-check-invalid")]
+  end
+
+  defp settings_check_title_class(targets, tab, field, scope \\ nil, base \\ "metric-label") do
+    [base, if(settings_check_invalid?(targets, tab, field, scope), do: "settings-check-title-invalid")]
+  end
+
+  defp settings_check_invalid?(targets, tab, field, scope \\ nil) do
+    Enum.any?(targets, &settings_check_match?(&1, tab, field, scope))
+  end
+
+  defp settings_check_messages(targets, tab, field, scope) do
+    targets
+    |> Enum.filter(&settings_check_match?(&1, tab, field, scope))
+    |> Enum.map(& &1.message)
+    |> Enum.uniq()
+  end
+
+  defp settings_check_match?(target, tab, field, scope) do
+    target.tab == tab and target.field == field and normalize_scope(target.scope) == normalize_scope(scope)
+  end
+
+  defp normalize_scope(nil), do: nil
+  defp normalize_scope(scope), do: to_string(scope)
+
+  defp settings_tab_label(:projects), do: "Projects"
+  defp settings_tab_label(:workflow), do: "Workflow"
+  defp settings_tab_label(:agents), do: "Agents"
+  defp settings_tab_label(:runtime), do: "Runtime"
+  defp settings_tab_label(tab), do: to_string(tab)
+
+  defp settings_tab_path(:projects), do: "/settings/projects"
+  defp settings_tab_path(:workflow), do: "/settings/workflow"
+  defp settings_tab_path(:agents), do: "/settings/agents"
+  defp settings_tab_path(:runtime), do: "/settings/runtime"
+  defp settings_tab_path(_tab), do: "/settings"
+
+  defp project_field_class(items, title) do
+    ["settings-field", if(project_item_present?(items, title), do: "settings-check-invalid")]
+  end
+
+  defp project_field_title_class(items, title) do
+    ["metric-label", if(project_item_present?(items, title), do: "settings-check-title-invalid")]
+  end
+
+  defp project_item_present?(items, title), do: Enum.any?(items, &(Map.get(&1, :title) == title))
 
   defp workflow_field_id(field), do: "workflow-field-#{String.replace(field, "_", "-")}"
 
@@ -1524,10 +1783,10 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp workflow_field_invalid?(errors, field), do: Map.has_key?(errors, field)
 
   defp workflow_field_label("polling_interval_ms"), do: "Polling interval ms"
-  defp workflow_field_label("project_checkout_depth"), do: "Checkout depth"
   defp workflow_field_label("agent_max_concurrent_agents"), do: "Max agents"
   defp workflow_field_label("agent_max_turns"), do: "Max turns"
   defp workflow_field_label("hook_timeout_ms"), do: "Hook timeout ms"
+  defp workflow_field_label("initialize_timeout_ms"), do: "Initialize timeout ms"
   defp workflow_field_label(field), do: field
 
   defp linear_workflow_state_check(draft, {:ok, discovery}) when is_map(draft) do

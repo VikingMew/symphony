@@ -26,14 +26,14 @@
 主要适用于实现阶段：
 
 ```text
-Ready -> In Progress -> Needs Implementation Review -> Ready to Merge -> Merging -> Done
+Ready -> In Progress -> In Review -> Ready to Merge -> Merging -> Done
 ```
 
 其中：
 
 - `Ready`：需求已由人确认，可开始实现。
 - `In Progress`：Codex 正在实现和验证。
-- `Needs Implementation Review`：等待人验收实现。
+- `In Review`：等待人验收实现。
 - `Ready to Merge`：人已验收，准备合并。
 - `Merging`：Codex 或受控自动化执行合并流程。
 - `Done`：任务完成。
@@ -41,15 +41,15 @@ Ready -> In Progress -> Needs Implementation Review -> Ready to Merge -> Merging
 本文重点维护：
 
 ```text
-Ready -> In Progress -> Needs Implementation Review
+Ready -> In Progress -> In Review
 ```
 
-`Needs Implementation Review -> Ready to Merge` 由人触发。`Ready to Merge -> Merging -> Done` 可由后续 merge 工作流维护。
+`In Review -> Ready to Merge` 由人触发。`Ready to Merge -> Merging -> Done` 可由后续 merge 工作流维护。
 
 该流程支持打回：
 
 ```text
-Needs Implementation Review -> In Progress
+In Review -> In Progress
 Ready to Merge -> In Progress
 ```
 
@@ -117,7 +117,7 @@ Codex 通过 `linear_task_read` 读取当前 task detail、最近评论和状态
 分析输入优先级：
 
 1. 最新明确人工评论，尤其是打回原因。
-2. 最近状态变更，例如 `Needs Implementation Review -> In Progress`。
+2. 最近状态变更，例如 `In Review -> In Progress`。
 3. 当前 issue description。
 4. PR review 或 branch/commit 信息，如果已经记录在评论或 Linear issue
    attachment 中。
@@ -251,7 +251,7 @@ Notes:
 实现验证完成后，Codex 通过 `linear_task_update` 请求状态流转：
 
 ```text
-In Progress -> Needs Implementation Review
+In Progress -> In Review
 ```
 
 `Ready -> In Progress` 是 Symphony 后端在 Codex session 启动成功后执行的入口流转，
@@ -270,7 +270,7 @@ In Progress -> Needs Implementation Review
 人确认后执行：
 
 ```text
-Needs Implementation Review -> Ready to Merge
+In Review -> Ready to Merge
 ```
 
 Codex 不应自动执行这个确认动作。
@@ -292,7 +292,7 @@ Codex 不应自动执行这个确认动作。
 处理原则：
 
 - workspace 准备失败：不进入 `In Progress`，或如果已进入则 comment 说明并保持状态等待人工处理。
-- 测试失败：保留分支和改动，comment 说明失败命令，不进入 `Needs Implementation Review`，除非项目允许“带失败验收”。
+- 测试失败：保留分支和改动，comment 说明失败命令，不进入 `In Review`，除非项目允许“带失败验收”。
 - push 失败：不进入 review 状态，comment 或 run event 记录失败原因。
 - comment 失败：不阻塞本地结果保存，但不应静默转状态。
 - transition 失败：保留 comment 和 branch，run 标记为需要人工处理。
@@ -330,8 +330,8 @@ Codex 不应自动执行这个确认动作。
 - Codex 可以运行测试并记录验证结果。
 - Codex 可以推送 feature branch。
 - Codex 可以评论当前 Linear task。
-- Codex 可以请求 `In Progress -> Needs Implementation Review`。
-- Codex 不能自动执行 `Needs Implementation Review -> Ready to Merge`。
+- Codex 可以请求 `In Progress -> In Review`。
+- Codex 不能自动执行 `In Review -> Ready to Merge`。
 - Codex 不能直接持有 Linear API Key。
 - Codex 不能在未读取评论的情况下处理打回任务。
 - 失败路径不会静默推进状态。

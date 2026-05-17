@@ -1139,6 +1139,31 @@ a:focus-visible {
   background: var(--color-danger-soft);
 }
 
+.settings-check-invalid {
+  border-color: var(--color-danger-border) !important;
+  background: var(--color-danger-soft) !important;
+}
+
+.settings-check-title-invalid {
+  color: var(--danger) !important;
+}
+
+.settings-check-message {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.workflow-transition-row.settings-check-invalid > * {
+  border-color: var(--color-danger-border);
+  background: var(--color-danger-soft);
+}
+
+.workflow-transition-row .settings-check-message {
+  grid-column: 1 / -1;
+}
+
 .field-error {
   margin: 0;
   color: var(--danger);

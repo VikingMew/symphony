@@ -11,6 +11,8 @@ defmodule SymphonyElixir.Config.Schema do
 
   @type t :: %__MODULE__{}
 
+  @linear_state_name_max_length 25
+
   defmodule StringOrMap do
     @moduledoc false
     @behaviour Ecto.Type
@@ -91,12 +93,14 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:initialize_timeout_ms, :integer, default: 60_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root], empty_values: [])
+      |> cast(attrs, [:root, :initialize_timeout_ms], empty_values: [])
+      |> validate_number(:initialize_timeout_ms, greater_than: 0)
     end
   end
 
@@ -110,6 +114,11 @@ defmodule SymphonyElixir.Config.Schema do
       field(:repository_url, :string)
       field(:default_branch, :string, default: "main")
       field(:checkout_depth, :integer, default: 1)
+      field(:source_strategy, :string, default: "clone")
+      field(:worktree_base_path, :string)
+      field(:worktree_root, :string)
+      field(:worktree_fetch, :boolean, default: true)
+      field(:worktree_cleanup, :boolean, default: true)
       field(:setup_commands, {:array, :string}, default: [])
       field(:cleanup_commands, {:array, :string}, default: [])
     end
@@ -119,12 +128,26 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:repository_url, :default_branch, :checkout_depth, :setup_commands, :cleanup_commands],
+        [
+          :repository_url,
+          :default_branch,
+          :checkout_depth,
+          :source_strategy,
+          :worktree_base_path,
+          :worktree_root,
+          :worktree_fetch,
+          :worktree_cleanup,
+          :setup_commands,
+          :cleanup_commands
+        ],
         empty_values: []
       )
       |> validate_optional_non_blank(:repository_url)
       |> validate_optional_non_blank(:default_branch)
+      |> validate_optional_non_blank(:worktree_base_path)
+      |> validate_optional_non_blank(:worktree_root)
       |> validate_number(:checkout_depth, greater_than: 0)
+      |> validate_inclusion(:source_strategy, ["clone", "worktree"])
       |> validate_command_list(:setup_commands)
       |> validate_command_list(:cleanup_commands)
     end
@@ -437,11 +460,11 @@ defmodule SymphonyElixir.Config.Schema do
   def workflow_allowed_updates(_settings, _profile), do: %{}
 
   @doc false
-  @spec generated_after_create_hook(%__MODULE__{}) :: String.t() | nil
-  def generated_after_create_hook(%__MODULE__{project: %Project{} = project}) do
+  @spec generated_project_bootstrap_commands(%__MODULE__{}) :: String.t() | nil
+  def generated_project_bootstrap_commands(%__MODULE__{project: %Project{} = project}) do
     commands =
       []
-      |> maybe_append_clone_command(project)
+      |> maybe_append_source_command(project)
       |> Kernel.++(project.setup_commands || [])
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
@@ -449,7 +472,21 @@ defmodule SymphonyElixir.Config.Schema do
     if commands == [], do: nil, else: Enum.join(commands, "\n")
   end
 
-  def generated_after_create_hook(_settings), do: nil
+  def generated_project_bootstrap_commands(_settings), do: nil
+
+  @doc false
+  @spec project_setup_commands(%__MODULE__{}) :: String.t() | nil
+  def project_setup_commands(%__MODULE__{project: %Project{} = project}) do
+    commands =
+      project.setup_commands
+      |> List.wrap()
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    if commands == [], do: nil, else: Enum.join(commands, "\n")
+  end
+
+  def project_setup_commands(_settings), do: nil
 
   @doc false
   @spec generated_before_remove_hook(%__MODULE__{}) :: String.t() | nil
@@ -494,12 +531,14 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
-  defp maybe_append_clone_command(commands, %Project{repository_url: repository_url})
+  defp maybe_append_source_command(commands, %Project{source_strategy: "worktree"}), do: commands
+
+  defp maybe_append_source_command(commands, %Project{repository_url: repository_url})
        when not is_binary(repository_url) or repository_url == "" do
     commands
   end
 
-  defp maybe_append_clone_command(commands, %Project{} = project) do
+  defp maybe_append_source_command(commands, %Project{} = project) do
     clone_parts =
       ["GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "SSH_ASKPASS="]
       |> maybe_append_git_ssh_command(project.repository_url)
@@ -607,15 +646,15 @@ defmodule SymphonyElixir.Config.Schema do
         "Ready to Merge" => %{"profile" => "merge"},
         "Merging" => %{"profile" => "merge"}
       },
-      "human_review_states" => ["Needs Refinement Review", "Needs Implementation Review"],
+      "human_review_states" => ["Needs Refinement Review", "In Review"],
       "allowed_transitions" => [
         %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
         %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
         %{"from" => "Needs Refinement Review", "to" => "Refining", "actor" => "human"},
         %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "In Progress", "to" => "Needs Implementation Review", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "Needs Implementation Review", "to" => "Ready to Merge", "actor" => "human"},
-        %{"from" => "Needs Implementation Review", "to" => "In Progress", "actor" => "human"},
+        %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
+        %{"from" => "In Review", "to" => "Ready to Merge", "actor" => "human"},
+        %{"from" => "In Review", "to" => "In Progress", "actor" => "human"},
         %{"from" => "Ready to Merge", "to" => "Merging", "actor" => "codex", "profile" => "merge"},
         %{"from" => "Merging", "to" => "Done", "actor" => "codex", "profile" => "merge"},
         %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
@@ -660,7 +699,7 @@ defmodule SymphonyElixir.Config.Schema do
           "description" => false,
           "comment" => true,
           "result" => true,
-          "target_states" => ["In Progress", "Needs Implementation Review"]
+          "target_states" => ["In Progress", "In Review"]
         }
       },
       "merge" => %{
@@ -721,6 +760,7 @@ defmodule SymphonyElixir.Config.Schema do
   defp workflow_policy_errors(workflow, profiles, tracker) when is_map(workflow) do
     []
     |> Kernel.++(validate_no_nested_profiles(workflow))
+    |> Kernel.++(validate_tracker_state_names(tracker))
     |> Kernel.++(validate_states(Map.get(workflow, "states", %{}), profiles))
     |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
@@ -744,29 +784,47 @@ defmodule SymphonyElixir.Config.Schema do
       |> Map.keys()
       |> MapSet.new()
 
-    Enum.flat_map(states, fn {state, policy} ->
-      profile = if is_map(policy), do: Map.get(policy, "profile")
-
-      cond do
-        not is_binary(state) or String.trim(state) == "" ->
-          ["states must use non-empty state names"]
-
-        not is_map(policy) ->
-          ["states.#{state} must be a map"]
-
-        not is_binary(profile) or String.trim(profile) == "" ->
-          ["states.#{state}.profile must be a non-empty string"]
-
-        not MapSet.member?(known_profiles, profile) ->
-          ["states.#{state}.profile references unknown profile #{profile}"]
-
-        true ->
-          []
-      end
-    end)
+    Enum.flat_map(states, &validate_state_policy(&1, known_profiles))
   end
 
   defp validate_states(_states, _profiles), do: ["states must be a map"]
+
+  defp validate_state_policy({state, policy}, known_profiles) when is_binary(state) do
+    if String.trim(state) == "" do
+      ["states must use non-empty state names"]
+    else
+      validate_named_state_policy(state, policy, known_profiles)
+    end
+  end
+
+  defp validate_state_policy(_entry, _known_profiles), do: ["states must use non-empty state names"]
+
+  defp validate_named_state_policy(state, policy, known_profiles) do
+    if linear_state_name_too_long?(state) do
+      [linear_state_name_length_error("states.#{state}", state)]
+    else
+      validate_state_policy_map(state, policy, known_profiles)
+    end
+  end
+
+  defp validate_state_policy_map(state, policy, known_profiles) when is_map(policy) do
+    validate_state_policy_profile(state, Map.get(policy, "profile"), known_profiles)
+  end
+
+  defp validate_state_policy_map(state, _policy, _known_profiles), do: ["states.#{state} must be a map"]
+
+  defp validate_state_policy_profile(state, profile, known_profiles) do
+    cond do
+      not is_binary(profile) or String.trim(profile) == "" ->
+        ["states.#{state}.profile must be a non-empty string"]
+
+      not MapSet.member?(known_profiles, profile) ->
+        ["states.#{state}.profile references unknown profile #{profile}"]
+
+      true ->
+        []
+    end
+  end
 
   defp profile_policy_errors(profiles) when is_map(profiles) do
     Enum.flat_map(profiles, fn {profile, policy} ->
@@ -844,6 +902,8 @@ defmodule SymphonyElixir.Config.Schema do
         []
         |> maybe_required_string_error(from, "allowed_transitions.from")
         |> maybe_required_string_error(to, "allowed_transitions.to")
+        |> maybe_linear_state_name_length_error(from, "allowed_transitions.from")
+        |> maybe_linear_state_name_length_error(to, "allowed_transitions.to")
         |> maybe_actor_error(actor)
 
       _transition ->
@@ -901,6 +961,13 @@ defmodule SymphonyElixir.Config.Schema do
   defp tracker_states(%Tracker{} = tracker, field), do: Map.get(tracker, field) || []
   defp tracker_states(_tracker, _field), do: []
 
+  defp validate_tracker_state_names(%Tracker{} = tracker) do
+    validate_string_list(tracker.active_states || [], "tracker.active_states") ++
+      validate_string_list(tracker.terminal_states || [], "tracker.terminal_states")
+  end
+
+  defp validate_tracker_state_names(_tracker), do: []
+
   defp validate_transition_state_references(transitions, known_states) when is_list(transitions) do
     Enum.flat_map(transitions, fn
       transition when is_map(transition) ->
@@ -949,6 +1016,10 @@ defmodule SymphonyElixir.Config.Schema do
     if is_binary(value) and String.trim(value) != "", do: errors, else: [field <> " must be a non-empty string" | errors]
   end
 
+  defp maybe_linear_state_name_length_error(errors, value, field) do
+    if linear_state_name_too_long?(value), do: [linear_state_name_length_error(field, value) | errors], else: errors
+  end
+
   defp maybe_actor_error(errors, actor) do
     if actor in ["codex", "human"], do: errors, else: ["allowed_transitions.actor must be either codex or human" | errors]
   end
@@ -956,14 +1027,29 @@ defmodule SymphonyElixir.Config.Schema do
   defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp validate_string_list(values, field) when is_list(values) do
-    if Enum.all?(values, &(is_binary(&1) and String.trim(&1) != "")) do
-      []
-    else
-      [field <> " must be a list of non-empty strings"]
+    cond do
+      not Enum.all?(values, &(is_binary(&1) and String.trim(&1) != "")) ->
+        [field <> " must be a list of non-empty strings"]
+
+      too_long = Enum.find(values, &linear_state_name_too_long?/1) ->
+        [linear_state_name_length_error(field, too_long)]
+
+      true ->
+        []
     end
   end
 
   defp validate_string_list(_values, field), do: [field <> " must be a list of non-empty strings"]
+
+  defp linear_state_name_too_long?(value) when is_binary(value) do
+    value |> String.trim() |> String.length() > @linear_state_name_max_length
+  end
+
+  defp linear_state_name_too_long?(_value), do: false
+
+  defp linear_state_name_length_error(field, value) do
+    "#{field} exceeds Linear state name limit of #{@linear_state_name_max_length} characters: #{inspect(value)}"
+  end
 
   defp normalize_keys(value) when is_map(value) do
     Enum.reduce(value, %{}, fn {key, raw_value}, normalized ->

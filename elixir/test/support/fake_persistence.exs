@@ -331,6 +331,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
           linear_project_slug: "project",
           repository_url: "git@github.com:org/repo.git",
           default_branch: "main",
+          checkout_depth: 1,
+          source_strategy: "clone",
+          worktree_base_path: nil,
+          worktree_root: nil,
+          worktree_fetch: true,
+          worktree_cleanup: true,
           description: nil,
           enabled: true
         }
@@ -368,14 +374,24 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   defp atomize_project_attrs(attrs) do
     %{
-      name: Map.get(attrs, :name) || Map.get(attrs, "name"),
-      slug: Map.get(attrs, :slug) || Map.get(attrs, "slug"),
-      linear_project_slug: Map.get(attrs, :linear_project_slug) || Map.get(attrs, "linear_project_slug"),
-      repository_url: Map.get(attrs, :repository_url) || Map.get(attrs, "repository_url"),
-      default_branch: Map.get(attrs, :default_branch) || Map.get(attrs, "default_branch") || "main",
-      description: Map.get(attrs, :description) || Map.get(attrs, "description"),
-      enabled: Map.get(attrs, :enabled, Map.get(attrs, "enabled", true))
+      name: project_attr(attrs, :name),
+      slug: project_attr(attrs, :slug),
+      linear_project_slug: project_attr(attrs, :linear_project_slug),
+      repository_url: project_attr(attrs, :repository_url),
+      default_branch: project_attr(attrs, :default_branch, "main"),
+      checkout_depth: project_attr(attrs, :checkout_depth, 1),
+      source_strategy: project_attr(attrs, :source_strategy, "clone"),
+      worktree_base_path: project_attr(attrs, :worktree_base_path),
+      worktree_root: project_attr(attrs, :worktree_root),
+      worktree_fetch: project_attr(attrs, :worktree_fetch, true),
+      worktree_cleanup: project_attr(attrs, :worktree_cleanup, true),
+      description: project_attr(attrs, :description),
+      enabled: project_attr(attrs, :enabled, true)
     }
+  end
+
+  defp project_attr(attrs, key, default \\ nil) do
+    Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))
   end
 
   defp filter_eq(values, _key, nil), do: values

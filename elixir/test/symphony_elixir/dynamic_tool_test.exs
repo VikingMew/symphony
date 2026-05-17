@@ -77,7 +77,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         "linear_task_update",
         %{
           "comment" => "Ready for review",
-          "target_state" => "Needs Implementation Review",
+          "target_state" => "In Review",
           "result" => %{"tests" => "green"}
         },
         task_updater: fn payload ->
@@ -89,7 +89,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert_received {:task_updater_called,
                      %{
                        "comment" => "Ready for review",
-                       "target_state" => "Needs Implementation Review",
+                       "target_state" => "In Review",
                        "result" => %{"tests" => "green"}
                      }}
 

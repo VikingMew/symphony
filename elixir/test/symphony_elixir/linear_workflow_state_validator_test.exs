@@ -47,18 +47,18 @@ defmodule SymphonyElixir.LinearWorkflowStateValidatorTest do
           "Ready to Merge" => %{"profile" => "merge"},
           "Merging" => %{"profile" => "merge"}
         },
-        "human_review_states" => ["Needs Refinement Review", "Needs Implementation Review"],
+        "human_review_states" => ["Needs Refinement Review", "In Review"],
         "allowed_transitions" => [
           %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
           %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
-          %{"from" => "In Progress", "to" => "Needs Implementation Review", "actor" => "codex", "profile" => "implementation"},
+          %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
           %{"from" => "Ready to Merge", "to" => "Merging", "actor" => "codex", "profile" => "merge"},
           %{"from" => "Merging", "to" => "Done", "actor" => "codex", "profile" => "merge"}
         ]
       },
       profiles: %{
         "refinement" => %{"allowed_updates" => %{"target_states" => ["Needs Refinement Review"]}},
-        "implementation" => %{"allowed_updates" => %{"target_states" => ["In Progress", "Needs Implementation Review"]}},
+        "implementation" => %{"allowed_updates" => %{"target_states" => ["In Progress", "In Review"]}},
         "merge" => %{"allowed_updates" => %{"target_states" => ["Merging", "Done"]}}
       }
     }

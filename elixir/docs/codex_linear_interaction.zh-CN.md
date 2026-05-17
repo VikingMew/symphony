@@ -58,7 +58,7 @@ base prompt 和执行 profile。它是导入/导出格式，不是运行时 sour
 
 - 定义 state 到 profile 的路由，例如 `workflow.states.Refining.profile: refinement`。
 - 在顶层 `profiles` 定义 profile 自身，例如 `refinement`、`implementation`、`merge`，每个 profile 必须有 `name`。
-- 定义 human review states，例如 `Needs Refinement Review`、`Needs Implementation Review`。
+- 定义 human review states，例如 `Needs Refinement Review`、`In Review`。
 - 定义 allowed transitions，包含 source state、target state、actor 和可选前置条件。
 - 定义每个 profile 可用的 Linear update 能力，例如是否允许改 description、是否允许提交 result、允许转到哪些目标状态。
 
@@ -76,7 +76,7 @@ workflow:
 
   human_review_states:
     - "Needs Refinement Review"
-    - "Needs Implementation Review"
+    - "In Review"
 
   allowed_transitions:
     - from: "Refining"
@@ -94,13 +94,13 @@ workflow:
       actor: "codex"
       profile: "implementation"
     - from: "In Progress"
-      to: "Needs Implementation Review"
+      to: "In Review"
       actor: "codex"
       profile: "implementation"
-    - from: "Needs Implementation Review"
+    - from: "In Review"
       to: "Ready to Merge"
       actor: "human"
-    - from: "Needs Implementation Review"
+    - from: "In Review"
       to: "In Progress"
       actor: "human"
 
@@ -131,7 +131,7 @@ profiles:
       description: false
       comment: true
       result: true
-      target_states: ["In Progress", "Needs Implementation Review"]
+      target_states: ["In Progress", "In Review"]
 ```
 
 ### `Config.Schema`
@@ -197,7 +197,7 @@ Codex 子进程启动时需要收紧环境变量继承：
 Prompt 需要按 profile 生成，而不是一个通用 prompt 覆盖所有阶段：
 
 - refinement prompt：读取 detail/activity，细化需求，更新 description/comment，进入 `Needs Refinement Review`。
-- implementation prompt：读取 detail/activity，准备 worktree，测试、实现、验证、推分支、comment，进入 `Needs Implementation Review`。
+- implementation prompt：读取 detail/activity，准备 worktree，测试、实现、验证、推分支、comment，进入 `In Review`。
 - merge prompt：只在 merge profile 中使用，处理受控 merge 和完成状态。
 
 所有 prompt 都必须包含相同原则：
@@ -222,7 +222,7 @@ repo-local `linear` skill 需要从 raw GraphQL 操作迁移到受限 tools：
 
 默认规则：
 
-- 人可以从 review 状态打回到前一个 agent-work 状态，例如 `Needs Refinement Review -> Refining` 或 `Needs Implementation Review -> In Progress`。
+- 人可以从 review 状态打回到前一个 agent-work 状态，例如 `Needs Refinement Review -> Refining` 或 `In Review -> In Progress`。
 - 人也可以把 `Ready` 打回 `Refining`，表示已确认需求需要重新细化。
 - 人可以把 `Ready to Merge` 打回 `In Progress`，表示验收后仍发现实现问题。
 - Codex 不能只根据 Linear state 自动假设任务已经准备好；必须读取最近人工评论、描述变更和自身上一条 `[codex]` 评论。
@@ -311,7 +311,7 @@ repo-local `linear` skill 需要从 raw GraphQL 操作迁移到受限 tools：
       "description": false,
       "comment": true,
       "result": true,
-      "target_states": ["Needs Implementation Review"]
+      "target_states": ["In Review"]
     }
   }
 }
@@ -354,7 +354,7 @@ repo-local `linear` skill 需要从 raw GraphQL 操作迁移到受限 tools：
 - 只能更新当前 run 绑定的 issue。
 - 后端按当前 profile 决定允许字段：
   - `refinement`：允许 `description`、`comment`、`target_state = Needs Refinement Review`，不允许 `result`。
-  - `implementation`：允许 `comment`、`result`、`target_state = Needs Implementation Review`，默认不允许改 `description`。
+  - `implementation`：允许 `comment`、`result`、`target_state = In Review`，默认不允许改 `description`。
   - `merge`：允许 merge result、comment 和受控 terminal transition，默认不允许改需求 detail。
 - 后端必须基于 workflow 状态机校验 `target_state`。
 - 如果包含 `target_state`，后端应同时校验必要前置条件，例如已 comment、已更新 detail、已推送 branch 或已记录验证结果。
@@ -372,7 +372,7 @@ Backlog
   -> Needs Refinement Review
   -> Ready
   -> In Progress
-  -> Needs Implementation Review
+  -> In Review
   -> Ready to Merge
   -> Merging
   -> Done
@@ -382,13 +382,13 @@ Codex 可请求的典型流转：
 
 - `Refining -> Needs Refinement Review`
 - `Ready -> In Progress`
-- `In Progress -> Needs Implementation Review`
+- `In Progress -> In Review`
 - `Ready to Merge -> Merging`
 
 人工确认状态：
 
 - `Needs Refinement Review`
-- `Needs Implementation Review`
+- `In Review`
 
 这些状态由人流转，Symphony 不应自动派发 agent。
 
@@ -400,7 +400,7 @@ Codex 可请求的典型流转：
   "issue": {
     "id": "linear issue id",
     "identifier": "MT-123",
-    "state": "Needs Implementation Review"
+    "state": "In Review"
   },
   "comment": {
     "id": "comment id",

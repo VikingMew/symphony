@@ -300,10 +300,12 @@ tracker:
   terminal_states: ["Done", "Canceled", "Duplicate"]
 workspace:
   root: ~/code/symphony-workspaces
+  initialize_timeout_ms: 60000
 project:
   repository_url: "<your-repo-url>"
   default_branch: "main"
   checkout_depth: 1
+  source_strategy: "clone"
   setup_commands: []
   cleanup_commands: []
 agent:
@@ -351,6 +353,7 @@ project:
   repository_url: "git@github.com:your-org/your-rust-repo.git"
   default_branch: "main"
   checkout_depth: 1
+  source_strategy: "clone"
   setup_commands:
     - cargo fetch
   cleanup_commands: []
@@ -382,11 +385,19 @@ Notes:
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - `workspace.root` is the Symphony workspace root. Symphony creates one issue directory under it
-  and checks out the project repository inside that issue workspace.
-- Prefer `project.repository_url`, `project.setup_commands`, and `project.cleanup_commands` for
-  normal checkout/bootstrap. Explicit hooks are still supported and take precedence.
+  and prepares the project source inside that issue workspace.
+- Project Settings own repository source preparation. `source_strategy: "clone"` is the portable
+  default. `source_strategy: "worktree"` auto-clones a centralized base repo cache when missing,
+  then creates a clean per-issue Git worktree under the configured worktree root.
+- Prefer `project.repository_url`, `project.source_strategy`, `project.setup_commands`, and
+  `project.cleanup_commands` for normal source/bootstrap. Custom `hooks.after_create` runs after
+  source preparation and project setup; it should not be used to express clone or worktree setup.
+- `workspace.initialize_timeout_ms` controls project source preparation and project setup commands,
+  including clone/worktree initialization. It defaults to `60000` and is edited in Settings /
+  Workflow / Bootstrap.
 - `hooks.before_run`, `hooks.after_run`, and `hooks.before_remove` are also supported. Hook timeout
-  is controlled by `hooks.timeout_ms` and defaults to `60000`.
+  is controlled by `hooks.timeout_ms` and defaults to `60000`; it does not control project
+  initialization.
 - If a project hook or setup command needs `mise exec`, trust the repo config and fetch project
   dependencies during setup before invoking `mise` later from other hooks.
 - Linear authentication always reads the runtime `LINEAR_API_KEY` environment variable. Do not put
@@ -402,6 +413,7 @@ tracker:
   project_slug: "linear-project-slug"
 workspace:
   root: $SYMPHONY_WORKSPACE_ROOT
+  initialize_timeout_ms: 60000
 hooks:
   after_create: |
     git clone --depth 1 "$SOURCE_REPO_URL" .

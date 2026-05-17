@@ -1213,7 +1213,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
     Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
-    Application.put_env(:symphony_elixir, :rollback_linear_state, "Needs Implementation Review")
+    Application.put_env(:symphony_elixir, :rollback_linear_state, "In Review")
 
     orchestrator_name = Module.concat(__MODULE__, :ForceStopSkipRollbackOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
