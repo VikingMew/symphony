@@ -912,7 +912,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                     <td><%= version.active %></td>
                     <td class="mono"><%= fmt_dt(version.inserted_at) %></td>
                     <td>
-                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id}>Restore workflow settings</button>
+                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id} phx-disable-with="Restoring...">Restore workflow settings</button>
                     </td>
                   </tr>
                 </tbody>
@@ -1066,7 +1066,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                     <td><%= version.active %></td>
                     <td class="mono"><%= fmt_dt(version.inserted_at) %></td>
                     <td>
-                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id}>Restore agent settings</button>
+                      <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id} phx-disable-with="Restoring...">Restore agent settings</button>
                     </td>
                   </tr>
                 </tbody>

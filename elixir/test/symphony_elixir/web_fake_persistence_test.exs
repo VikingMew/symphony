@@ -566,6 +566,74 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "git@github.com:org/renamed.git"
   end
 
+  test "settings save controls show saving feedback and saved notices" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, project_view, project_html} = live(build_conn(), "/settings/projects")
+    assert project_html =~ ~s(phx-disable-with="Saving...")
+    assert project_html =~ "Save project"
+    assert project_html =~ "Add project"
+
+    project_saved_html =
+      project_view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: %{
+          "id" => "fake-project-id",
+          "name" => "Saved Project",
+          "slug" => "fake",
+          "linear_project_slug" => "saved-linear",
+          "repository_url" => "git@github.com:org/saved.git",
+          "default_branch" => "main",
+          "enabled" => "true"
+        }
+      )
+      |> render_submit()
+
+    assert project_saved_html =~ "workflow-save-toast-success"
+    assert project_saved_html =~ "Project settings saved"
+
+    {:ok, workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
+    assert workflow_html =~ ~s(phx-disable-with="Saving...")
+    assert workflow_html =~ "Save workflow version"
+
+    workflow_saved_html =
+      workflow_view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_submit()
+
+    assert workflow_saved_html =~ "workflow-save-toast-success"
+    assert workflow_saved_html =~ "Workflow settings saved"
+    refute workflow_saved_html =~ "Validation failed"
+
+    {:ok, agent_view, agent_html} = live(build_conn(), "/settings/agents")
+    assert agent_html =~ ~s(phx-disable-with="Saving...")
+    assert agent_html =~ "Save agent settings"
+
+    agent_saved_html =
+      agent_view
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: %{
+          "prompt_body" => "Saved shared base prompt.",
+          "profiles" => %{
+            "implementation" => %{
+              "prompt_template" => "Saved implementation profile prompt."
+            }
+          }
+        }
+      )
+      |> render_submit()
+
+    assert agent_saved_html =~ "workflow-save-toast-success"
+    assert agent_saved_html =~ "Agent settings saved"
+    refute agent_saved_html =~ "Validation failed"
+
+    {:ok, _runtime_view, runtime_html} = live(build_conn(), "/settings/runtime")
+    refute runtime_html =~ "Save workflow version"
+    refute runtime_html =~ "Save agent settings"
+    refute runtime_html =~ "Save project"
+  end
+
   test "settings pages show separate version histories" do
     refute Process.whereis(SymphonyElixir.Repo)
 
@@ -582,12 +650,14 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert workflow_html =~ "web_workflow_settings"
     refute workflow_html =~ "manual_import"
     assert workflow_html =~ "Restore workflow settings"
+    assert workflow_html =~ ~s(phx-disable-with="Restoring...")
     refute workflow_html =~ "web_agent_settings"
     refute workflow_html =~ "Restore agent settings"
 
     {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
     assert agents_html =~ "web_agent_settings"
     assert agents_html =~ "Restore agent settings"
+    assert agents_html =~ ~s(phx-disable-with="Restoring...")
     refute agents_html =~ "web_workflow_settings"
     refute agents_html =~ "manual_import"
     refute agents_html =~ "Restore workflow settings"
