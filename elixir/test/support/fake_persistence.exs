@@ -52,6 +52,22 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def put_default_project_attrs!(attrs) when is_map(attrs) do
+    ensure_started()
+
+    Agent.update(@name, fn state ->
+      [project | rest] = state.projects
+
+      runtime_attrs =
+        attrs
+        |> atomize_project_attrs()
+        |> Map.drop([:name, :slug, :description, :enabled])
+
+      updated = Map.merge(project, runtime_attrs)
+      Map.put(state, :projects, [updated | rest])
+    end)
+  end
+
   def fail_next_import_workflow!(reason) do
     ensure_started()
     Agent.update(@name, &Map.put(&1, :next_import_workflow_error, reason))
@@ -251,10 +267,67 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def workflow_to_loaded(version) do
     {:ok, workflow} = SymphonyElixir.Workflow.parse_content(version.raw_workflow_md)
+    project = project_for_version(version)
 
     workflow
+    |> Map.update!(:config, &apply_project_runtime_settings(&1, project))
     |> Map.put(:workflow_version_id, version.id)
     |> Map.put(:project_id, version.project_id)
+  end
+
+  defp project_for_version(version) do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      Enum.find(state.projects, &(Map.get(&1, :id) == version.project_id)) || hd(state.projects)
+    end)
+  end
+
+  defp apply_project_runtime_settings(config, nil), do: config
+
+  defp apply_project_runtime_settings(config, project) do
+    config
+    |> put_in_path(["tracker", "project_slug"], Map.get(project, :linear_project_slug))
+    |> update_project_config(project)
+  end
+
+  defp update_project_config(config, project) do
+    existing = Map.get(config, "project", %{})
+
+    project_config =
+      existing
+      |> put_project_value("repository_url", Map.get(project, :repository_url))
+      |> put_project_value("default_branch", Map.get(project, :default_branch) || "main")
+      |> put_project_value("checkout_depth", Map.get(project, :checkout_depth) || 1)
+      |> put_project_value("source_strategy", Map.get(project, :source_strategy) || "clone")
+      |> put_project_value("worktree_fetch", Map.get(project, :worktree_fetch) != false)
+      |> put_project_value("worktree_cleanup", Map.get(project, :worktree_cleanup) != false)
+
+    Map.put(config, "project", project_config)
+  end
+
+  defp put_project_value(config, key, value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: Map.delete(config, key), else: Map.put(config, key, value)
+  end
+
+  defp put_project_value(config, key, nil), do: Map.delete(config, key)
+  defp put_project_value(config, key, value), do: Map.put(config, key, value)
+
+  defp put_in_path(config, path, value) do
+    case is_nil(value) or (is_binary(value) and String.trim(value) == "") do
+      true -> delete_in_path(config, path)
+      false -> put_in(config, Enum.map(path, &Access.key(&1, %{})), value)
+    end
+  end
+
+  defp delete_in_path(config, [key]), do: Map.delete(config, key)
+
+  defp delete_in_path(config, [key | rest]) do
+    case Map.get(config, key) do
+      nested when is_map(nested) -> Map.put(config, key, delete_in_path(nested, rest))
+      _ -> config
+    end
   end
 
   def worker_heartbeat_interval_seconds, do: 10
@@ -333,8 +406,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
           default_branch: "main",
           checkout_depth: 1,
           source_strategy: "clone",
-          worktree_base_path: nil,
-          worktree_root: nil,
           worktree_fetch: true,
           worktree_cleanup: true,
           description: nil,
@@ -381,8 +452,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       default_branch: project_attr(attrs, :default_branch, "main"),
       checkout_depth: project_attr(attrs, :checkout_depth, 1),
       source_strategy: project_attr(attrs, :source_strategy, "clone"),
-      worktree_base_path: project_attr(attrs, :worktree_base_path),
-      worktree_root: project_attr(attrs, :worktree_root),
       worktree_fetch: project_attr(attrs, :worktree_fetch, true),
       worktree_cleanup: project_attr(attrs, :worktree_cleanup, true),
       description: project_attr(attrs, :description),

@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Config.Schema do
   @type t :: %__MODULE__{}
 
   @linear_state_name_max_length 25
+  @codex_approval_policies ["untrusted", "on-failure", "on-request", "granular", "never"]
 
   defmodule StringOrMap do
     @moduledoc false
@@ -93,14 +94,24 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      field(:repository_base_root, :string)
+      field(:worktree_base_root, :string)
       field(:initialize_timeout_ms, :integer, default: 60_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root, :initialize_timeout_ms], empty_values: [])
+      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms], empty_values: [])
+      |> validate_optional_non_blank(:repository_base_root)
+      |> validate_optional_non_blank(:worktree_base_root)
       |> validate_number(:initialize_timeout_ms, greater_than: 0)
+    end
+
+    defp validate_optional_non_blank(changeset, field) do
+      validate_change(changeset, field, fn ^field, value ->
+        if is_binary(value) and String.trim(value) == "", do: [{field, "must not be blank"}], else: []
+      end)
     end
   end
 
@@ -115,8 +126,6 @@ defmodule SymphonyElixir.Config.Schema do
       field(:default_branch, :string, default: "main")
       field(:checkout_depth, :integer, default: 1)
       field(:source_strategy, :string, default: "clone")
-      field(:worktree_base_path, :string)
-      field(:worktree_root, :string)
       field(:worktree_fetch, :boolean, default: true)
       field(:worktree_cleanup, :boolean, default: true)
       field(:setup_commands, {:array, :string}, default: [])
@@ -133,8 +142,6 @@ defmodule SymphonyElixir.Config.Schema do
           :default_branch,
           :checkout_depth,
           :source_strategy,
-          :worktree_base_path,
-          :worktree_root,
           :worktree_fetch,
           :worktree_cleanup,
           :setup_commands,
@@ -144,8 +151,6 @@ defmodule SymphonyElixir.Config.Schema do
       )
       |> validate_optional_non_blank(:repository_url)
       |> validate_optional_non_blank(:default_branch)
-      |> validate_optional_non_blank(:worktree_base_path)
-      |> validate_optional_non_blank(:worktree_root)
       |> validate_number(:checkout_depth, greater_than: 0)
       |> validate_inclusion(:source_strategy, ["clone", "worktree"])
       |> validate_command_list(:setup_commands)
@@ -229,16 +234,9 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:command, :string, default: "codex app-server")
+      field(:pre_start_commands, {:array, :string}, default: [])
 
-      field(:approval_policy, StringOrMap,
-        default: %{
-          "reject" => %{
-            "sandbox_approval" => true,
-            "rules" => true,
-            "mcp_elicitations" => true
-          }
-        }
-      )
+      field(:approval_policy, StringOrMap, default: "never")
 
       field(:thread_sandbox, :string, default: "workspace-write")
       field(:turn_sandbox_policy, :map)
@@ -254,6 +252,7 @@ defmodule SymphonyElixir.Config.Schema do
         attrs,
         [
           :command,
+          :pre_start_commands,
           :approval_policy,
           :thread_sandbox,
           :turn_sandbox_policy,
@@ -264,10 +263,37 @@ defmodule SymphonyElixir.Config.Schema do
         empty_values: []
       )
       |> validate_required([:command])
+      |> validate_command_list(:pre_start_commands)
+      |> normalize_approval_policy()
+      |> validate_inclusion(
+        :approval_policy,
+        SymphonyElixir.Config.Schema.codex_approval_policies()
+      )
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
     end
+
+    defp normalize_approval_policy(changeset) do
+      approval_policy =
+        changeset
+        |> get_field(:approval_policy)
+        |> SymphonyElixir.Config.Schema.normalize_codex_approval_policy()
+
+      put_change(changeset, :approval_policy, approval_policy)
+    end
+
+    defp validate_command_list(changeset, field) do
+      validate_change(changeset, field, fn ^field, commands ->
+        Enum.flat_map(commands || [], &command_error(field, &1))
+      end)
+    end
+
+    defp command_error(field, command) when is_binary(command) do
+      if String.trim(command) == "", do: [{field, "commands must not be blank"}], else: []
+    end
+
+    defp command_error(field, _command), do: [{field, "commands must be strings"}]
   end
 
   defmodule Hooks do
@@ -460,6 +486,31 @@ defmodule SymphonyElixir.Config.Schema do
   def workflow_allowed_updates(_settings, _profile), do: %{}
 
   @doc false
+  @spec codex_approval_policies() :: [String.t()]
+  def codex_approval_policies, do: @codex_approval_policies
+
+  @doc false
+  @spec normalize_codex_approval_policy(term()) :: String.t()
+  def normalize_codex_approval_policy(nil), do: "never"
+  def normalize_codex_approval_policy(""), do: "never"
+
+  def normalize_codex_approval_policy(value) when is_binary(value) do
+    String.trim(value)
+  end
+
+  def normalize_codex_approval_policy(value) when is_map(value) do
+    normalized = normalize_keys(value)
+
+    if Map.has_key?(normalized, "reject") do
+      "never"
+    else
+      "__invalid_map__"
+    end
+  end
+
+  def normalize_codex_approval_policy(_value), do: "__invalid__"
+
+  @doc false
   @spec generated_project_bootstrap_commands(%__MODULE__{}) :: String.t() | nil
   def generated_project_bootstrap_commands(%__MODULE__{project: %Project{} = project}) do
     commands =
@@ -620,12 +671,14 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces"))
+      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
+        repository_base_root: resolve_optional_path_value(settings.workspace.repository_base_root),
+        worktree_base_root: resolve_optional_path_value(settings.workspace.worktree_base_root)
     }
 
     codex = %{
       settings.codex
-      | approval_policy: normalize_keys(settings.codex.approval_policy),
+      | approval_policy: normalize_codex_approval_policy(settings.codex.approval_policy),
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
@@ -1101,6 +1154,18 @@ defmodule SymphonyElixir.Config.Schema do
         path
     end
   end
+
+  defp resolve_path_value(_value, default), do: default
+
+  defp resolve_optional_path_value(value) when is_binary(value) do
+    case normalize_path_token(value) do
+      :missing -> nil
+      "" -> nil
+      path -> path
+    end
+  end
+
+  defp resolve_optional_path_value(_value), do: nil
 
   defp resolve_env_value(value, fallback) when is_binary(value) do
     case env_reference_name(value) do

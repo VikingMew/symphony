@@ -12,7 +12,7 @@ defmodule SymphonyElixir.Workflow do
 
   @workflow_config_file_names ["workflow.yml", "workflow.yaml"]
   @profiles_config_file_names ["profiles.yml", "profiles.yaml"]
-  @setup_prompt "Create a workflow from the Web UI to start running agents."
+  @setup_message "Create a workflow from the Web UI to start running agents."
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
@@ -39,6 +39,7 @@ defmodule SymphonyElixir.Workflow do
           required(:prompt) => String.t(),
           required(:prompt_template) => String.t(),
           optional(:project_id) => term(),
+          optional(:setup_message) => String.t(),
           optional(:setup_required) => boolean(),
           optional(:workflow_version_id) => term()
         }
@@ -82,14 +83,57 @@ defmodule SymphonyElixir.Workflow do
         "polling" => %{"interval_ms" => 30_000},
         "server" => %{"host" => "127.0.0.1", "port" => port},
         "agent" => %{"max_concurrent_agents" => 1, "max_turns" => 20},
-        "codex" => %{"command" => "codex app-server", "thread_sandbox" => "workspace-write"},
+        "codex" => %{
+          "command" => "codex app-server",
+          "pre_start_commands" => [],
+          "approval_policy" => "never",
+          "thread_sandbox" => "workspace-write"
+        },
         "workflow" => Schema.default_workflow_policy(),
         "profiles" => Schema.default_profiles()
       },
-      prompt: @setup_prompt,
-      prompt_template: @setup_prompt,
+      prompt: "",
+      prompt_template: "",
+      setup_message: @setup_message,
       setup_required: true
     }
+  end
+
+  @spec parse_split_package(String.t(), String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
+  def parse_split_package(workflow_yaml, profiles_yaml) when is_binary(workflow_yaml) and is_binary(profiles_yaml) do
+    with {:ok, workflow_config} <- parse_workflow_yaml(workflow_yaml),
+         {:ok, profile_package} <- parse_profiles_yaml(profiles_yaml) do
+      prompt = profile_package.base_prompt |> normalize_base_prompt() |> to_prompt_body()
+
+      config =
+        workflow_config
+        |> Map.delete("profiles")
+        |> Map.put("profiles", profile_package.profiles)
+
+      {:ok,
+       %{
+         config: config,
+         prompt: prompt,
+         prompt_template: prompt
+       }}
+    end
+  end
+
+  @spec parse_workflow_yaml(String.t()) :: {:ok, map()} | {:error, term()}
+  def parse_workflow_yaml(workflow_yaml) when is_binary(workflow_yaml) do
+    yaml_string_to_map(workflow_yaml, "workflow.yml")
+  end
+
+  @spec parse_profiles_yaml(String.t()) :: {:ok, map()} | {:error, term()}
+  def parse_profiles_yaml(profiles_yaml) when is_binary(profiles_yaml) do
+    profiles_string_to_package(profiles_yaml, "profiles.yml")
+  end
+
+  @spec parse_settings_yaml(String.t()) :: {:ok, {:workflow, map()} | {:profiles, map()}} | {:error, term()}
+  def parse_settings_yaml(yaml) when is_binary(yaml) do
+    with {:ok, decoded} <- yaml_string_to_map(yaml, "settings import") do
+      settings_yaml_package(decoded)
+    end
   end
 
   @spec parse_content(String.t()) :: {:ok, loaded_workflow()} | {:error, term()}
@@ -259,12 +303,22 @@ defmodule SymphonyElixir.Workflow do
   end
 
   defp yaml_file_to_map(path) do
-    with {:ok, content} <- File.read(path),
-         {:ok, decoded} <- YamlElixir.read_from_string(content) do
-      if is_map(decoded), do: {:ok, decoded}, else: {:error, {:workflow_yaml_not_a_map, path}}
-    else
-      {:error, %YamlElixir.ParsingError{} = reason} -> {:error, {:workflow_parse_error, reason}}
+    case File.read(path) do
+      {:ok, content} -> yaml_string_to_map(content, path)
       {:error, reason} -> {:error, {:missing_workflow_file, path, reason}}
+    end
+  end
+
+  defp yaml_string_to_map(content, label) when is_binary(content) do
+    case YamlElixir.read_from_string(content) do
+      {:ok, decoded} ->
+        if is_map(decoded), do: {:ok, decoded}, else: {:error, {:workflow_yaml_not_a_map, label}}
+
+      {:error, %YamlElixir.ParsingError{} = reason} ->
+        {:error, {:workflow_parse_error, reason}}
+
+      {:error, reason} ->
+        {:error, {:workflow_parse_error, reason}}
     end
   end
 
@@ -274,9 +328,16 @@ defmodule SymphonyElixir.Workflow do
         {:ok, %{profiles: %{}, base_prompt: nil}}
 
       path ->
-        with {:ok, decoded} <- yaml_file_to_map(path) do
-          normalize_profiles_file(decoded, path)
+        case File.read(path) do
+          {:ok, content} -> profiles_string_to_package(content, path)
+          {:error, reason} -> {:error, {:missing_workflow_file, path, reason}}
         end
+    end
+  end
+
+  defp profiles_string_to_package(content, label) when is_binary(content) do
+    with {:ok, decoded} <- yaml_string_to_map(content, label) do
+      normalize_profiles_file(decoded, label)
     end
   end
 
@@ -288,6 +349,20 @@ defmodule SymphonyElixir.Workflow do
   defp normalize_profiles_file(%{"profiles" => _profiles}, path), do: {:error, {:profiles_yaml_profiles_not_a_map, path}}
 
   defp normalize_profiles_file(_package, path), do: {:error, {:profiles_yaml_missing_profiles, path}}
+
+  defp settings_yaml_package(decoded) do
+    if profiles_yaml?(decoded), do: settings_profiles_package(decoded), else: {:ok, {:workflow, decoded}}
+  end
+
+  defp settings_profiles_package(decoded) do
+    with {:ok, profile_package} <- normalize_profiles_file(decoded, "profiles.yml") do
+      {:ok, {:profiles, profile_package}}
+    end
+  end
+
+  defp profiles_yaml?(decoded) when is_map(decoded) do
+    Map.has_key?(decoded, "profiles") or Map.has_key?(decoded, "base_prompt")
+  end
 
   defp normalize_base_prompt(prompt) when is_binary(prompt), do: prompt
   defp normalize_base_prompt(_prompt), do: nil

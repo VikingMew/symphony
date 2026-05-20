@@ -113,6 +113,38 @@ defmodule SymphonyElixirWeb.AdminLive do
     """
   end
 
+  attr(:notice, :any, default: nil)
+
+  @spec settings_import_panel(map()) :: Phoenix.LiveView.Rendered.t()
+  def settings_import_panel(assigns) do
+    ~H"""
+    <section class="workflow-form-section settings-import-panel">
+      <div class="workflow-form-header settings-action-row">
+        <div>
+          <h3>Import Settings Package</h3>
+          <p class="workflow-help-copy">Import workflow.yml or profiles.yml into this structured draft. Symphony detects the file type from YAML fields. Import does not save or activate until you press Save.</p>
+        </div>
+        <span class="status-badge status-info">draft only</span>
+      </div>
+
+      <%= if @notice do %>
+        <aside class={["workflow-save-toast", "workflow-save-toast-#{@notice.level}"]} role="status" aria-live="polite">
+          <strong><%= @notice.title %></strong>
+          <span><%= @notice.message %></span>
+        </aside>
+      <% end %>
+
+      <form class="workflow-form settings-import-form" phx-submit="import_settings_package">
+        <label>
+          <span class="metric-label">YAML</span>
+          <textarea class="workflow-textbox workflow-textbox-medium" name="import[yaml]" rows="7" placeholder="Paste workflow.yml or profiles.yml"></textarea>
+        </label>
+        <button class="subtle-button" type="submit" phx-disable-with="Importing...">Import</button>
+      </form>
+    </section>
+    """
+  end
+
   attr(:discovery, :any, required: true)
 
   @spec linear_project_discovery(map()) :: Phoenix.LiveView.Rendered.t()
@@ -320,12 +352,14 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:linear_discovery_message, nil)
      |> assign(:route_params, params)
      |> assign(:workflow_diagnostics_notice, nil)
+     |> assign(:workflow_import_notice, nil)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_field_errors, %{})
      |> assign(:workflow_check_targets, [])
      |> assign(:workflow_validation_error, nil)
      |> assign(:workflow_validation_visible?, false)
      |> assign(:workflow_form_valid?, false)
+     |> assign(:workflow_form_dirty?, false)
      |> assign(:workflow_form_summary, %{})
      |> refresh()}
   end
@@ -366,7 +400,35 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_validation_visible?, true)
      |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, true)
      |> assign_workflow_validation(draft)}
+  end
+
+  @impl true
+  def handle_event("import_settings_package", %{"import" => params}, socket) do
+    yaml = Map.get(params, "yaml", "")
+
+    socket =
+      with :ok <- require_import_content(yaml),
+           {:ok, label, draft} <- import_settings_draft(yaml, socket.assigns.workflow_form) do
+        socket
+        |> put_flash(:info, "#{label} imported into draft. Review and save to activate it.")
+        |> assign_import_notice(:success, "#{label} imported into draft", "Review validation, then save to create an active database workflow version.")
+        |> assign(:workflow_save_notice, nil)
+        |> assign(:workflow_validation_visible?, true)
+        |> assign(:workflow_form, draft)
+        |> assign(:workflow_form_dirty?, true)
+        |> assign_workflow_validation(draft)
+      else
+        {:error, reason} ->
+          message = import_error_message(reason)
+
+          socket
+          |> put_flash(:error, "Workflow package import failed: #{message}")
+          |> assign_import_notice(:error, "Package import failed", message)
+      end
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -387,6 +449,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign(:workflow_validation_visible?, true)
         |> assign(:workflow_form, draft)
+        |> assign(:workflow_form_dirty?, false)
         |> assign_workflow_validation(draft)
         |> refresh()
       else
@@ -396,6 +459,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> assign_save_notice(:info, "#{settings_section_label(section)} already up to date", "No changes to save.")
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
+          |> assign(:workflow_form_dirty?, false)
           |> assign_workflow_validation(draft)
 
         {:error, message} when is_binary(message) ->
@@ -404,6 +468,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> assign_save_notice(:error, "#{settings_section_label(section)} save failed", "Fix highlighted fields before saving.")
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_form, draft)
+          |> assign(:workflow_form_dirty?, true)
           |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
           |> assign(:workflow_validation_error, nil)
           |> assign(:workflow_form_valid?, false)
@@ -417,6 +482,7 @@ defmodule SymphonyElixirWeb.AdminLive do
           |> assign(:workflow_validation_visible?, true)
           |> assign(:workflow_field_errors, %{})
           |> assign(:workflow_form, draft)
+          |> assign(:workflow_form_dirty?, true)
       end
 
     {:noreply, socket}
@@ -436,11 +502,15 @@ defmodule SymphonyElixirWeb.AdminLive do
     socket =
       case result do
         :unchanged ->
+          _ = WorkflowStore.force_reload()
+
           socket
           |> put_flash(:info, "Project settings already up to date.")
           |> assign_save_notice(:info, "Project settings already up to date", "No changes to save.")
 
         {:ok, project} ->
+          _ = WorkflowStore.force_reload()
+
           socket
           |> put_flash(:info, "Project settings saved.")
           |> assign_save_notice(:success, "Project settings saved", "#{project.name} is available in Settings.")
@@ -479,6 +549,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign(:workflow_diagnostics_notice, "#{settings_section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
         |> assign(:workflow_validation_visible?, true)
         |> assign(:workflow_form, draft)
+        |> assign(:workflow_form_dirty?, false)
         |> assign_workflow_validation(draft)
         |> refresh()
       else
@@ -516,6 +587,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_validation_visible?, true)
      |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, true)
      |> assign_workflow_validation(draft)}
   end
 
@@ -806,8 +878,6 @@ defmodule SymphonyElixirWeb.AdminLive do
                         <option value="worktree" selected={project_value(project, :source_strategy) == "worktree"}>worktree</option>
                       </select>
                     </label>
-                    <label class="settings-field"><span class="metric-label">Worktree base path</span><input name="project[worktree_base_path]" value={project_value(project, :worktree_base_path)} /></label>
-                    <label class="settings-field"><span class="metric-label">Worktree root</span><input name="project[worktree_root]" value={project_value(project, :worktree_root)} /></label>
                     <div class="workflow-checkbox-row">
                       <input type="hidden" name="project[worktree_fetch]" value="false" />
                       <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked={project_value(project, :worktree_fetch) != false} /> Fetch before worktree</label>
@@ -842,8 +912,6 @@ defmodule SymphonyElixirWeb.AdminLive do
                       <option value="worktree">worktree</option>
                     </select>
                   </label>
-                  <label class="settings-field"><span class="metric-label">Worktree base path</span><input name="project[worktree_base_path]" /></label>
-                  <label class="settings-field"><span class="metric-label">Worktree root</span><input name="project[worktree_root]" /></label>
                   <div class="workflow-checkbox-row">
                     <input type="hidden" name="project[worktree_fetch]" value="false" />
                     <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked /> Fetch before worktree</label>
@@ -919,6 +987,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <span><%= @workflow_save_notice.message %></span>
               </aside>
             <% end %>
+            <.settings_import_panel notice={@workflow_import_notice} />
 
             <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form" novalidate>
               <div class="workflow-form-header">
@@ -977,7 +1046,14 @@ defmodule SymphonyElixirWeb.AdminLive do
 
                 <section class="workflow-form-section">
                   <h3>Runtime</h3>
-                  <label><span class="metric-label">Workspace root</span><input name="workflow[workspace_root]" value={@workflow_form["workspace_root"]} /></label>
+                  <label><span class="metric-label">Clone workspace root</span><input name="workflow[workspace_root]" value={@workflow_form["workspace_root"]} /></label>
+                  <label><span class="metric-label">Repository base root</span><input name="workflow[workspace_repository_base_root]" value={@workflow_form["workspace_repository_base_root"]} placeholder="Defaults to clone workspace root/repositories" /></label>
+                  <label><span class="metric-label">Worktree base root</span><input name="workflow[workspace_worktree_base_root]" value={@workflow_form["workspace_worktree_base_root"]} placeholder="Defaults to clone workspace root/worktrees" /></label>
+                  <div class="settings-derived-preview">
+                    <span class="metric-label">Derived paths</span>
+                    <code><%= workspace_repository_preview(@workflow_form, @projects) %></code>
+                    <code><%= workspace_worktree_preview(@workflow_form) %></code>
+                  </div>
                   <label>
                     <span class="metric-label">Polling interval ms</span>
                     <input id={workflow_field_id("polling_interval_ms")} class={workflow_field_class(@workflow_field_errors, "polling_interval_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "polling_interval_ms")} type="number" min="1" name="workflow[polling_interval_ms]" value={@workflow_form["polling_interval_ms"]} />
@@ -998,6 +1074,16 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <section class="workflow-form-section">
                   <h3>Codex</h3>
                   <label><span class="metric-label">Command</span><input name="workflow[codex_command]" value={@workflow_form["codex_command"]} /></label>
+                  <label>
+                    <span class="metric-label">Pre-start commands</span>
+                    <textarea class="workflow-textbox workflow-textbox-compact" name="workflow[codex_pre_start_commands]" rows="4" placeholder="source ~/.nvs/nvs.sh&#10;nvs use 22 &gt;/dev/null"><%= @workflow_form["codex_pre_start_commands"] %></textarea>
+                  </label>
+                  <label>
+                    <span class="metric-label">Approval policy</span>
+                    <select name="workflow[codex_approval_policy]">
+                      <option :for={policy <- codex_approval_policy_options()} value={policy} selected={@workflow_form["codex_approval_policy"] == policy}><%= policy %></option>
+                    </select>
+                  </label>
                   <label><span class="metric-label">Thread sandbox</span><input name="workflow[codex_thread_sandbox]" value={@workflow_form["codex_thread_sandbox"]} /></label>
                 </section>
               </div>
@@ -1268,7 +1354,8 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp refresh(socket) do
     active = persistence().active_workflow_version()
     runtime = runtime_workflow()
-    {workflow_form, workflow_setup_required} = workflow_form(active, runtime)
+    {loaded_workflow_form, workflow_setup_required} = workflow_form(active, runtime)
+    workflow_form = refreshed_workflow_form(socket, loaded_workflow_form)
     default_project = default_project()
 
     configuration_items = configuration_missing_items(workflow_setup_required, default_project)
@@ -1298,6 +1385,14 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign_detail_data()
   end
 
+  defp refreshed_workflow_form(socket, loaded_workflow_form) do
+    if Map.get(socket.assigns, :workflow_form_dirty?, false) do
+      Map.get(socket.assigns, :workflow_form, loaded_workflow_form)
+    else
+      loaded_workflow_form
+    end
+  end
+
   defp nav_current(action) when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime], do: :settings
   defp nav_current(action), do: action
 
@@ -1306,6 +1401,8 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp settings_tab(:settings_workflow), do: :workflow
   defp settings_tab(:settings_agents), do: :agents
   defp settings_tab(:settings_runtime), do: :runtime
+
+  defp codex_approval_policy_options, do: Config.Schema.codex_approval_policies()
 
   defp default_project do
     case persistence().default_project() do
@@ -1489,8 +1586,6 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Map.put("project_default_branch", project_value(project, :default_branch) || "main")
     |> Map.put("project_checkout_depth", to_string(project_value(project, :checkout_depth) || 1))
     |> Map.put("project_source_strategy", project_value(project, :source_strategy) || "clone")
-    |> Map.put("project_worktree_base_path", project_value(project, :worktree_base_path) || "")
-    |> Map.put("project_worktree_root", project_value(project, :worktree_root) || "")
     |> Map.put("project_worktree_fetch", boolean_string(project_value(project, :worktree_fetch), true))
     |> Map.put("project_worktree_cleanup", boolean_string(project_value(project, :worktree_cleanup), true))
   end
@@ -1504,8 +1599,6 @@ defmodule SymphonyElixirWeb.AdminLive do
       default_branch: blank_as_nil(Map.get(params, "default_branch")) || "main",
       checkout_depth: parse_project_checkout_depth(Map.get(params, "checkout_depth")),
       source_strategy: Map.get(params, "source_strategy", "clone"),
-      worktree_base_path: blank_as_nil(Map.get(params, "worktree_base_path")),
-      worktree_root: blank_as_nil(Map.get(params, "worktree_root")),
       worktree_fetch: truthy_param?(Map.get(params, "worktree_fetch", "true")),
       worktree_cleanup: truthy_param?(Map.get(params, "worktree_cleanup", "true")),
       description: blank_as_nil(Map.get(params, "description")),
@@ -1529,6 +1622,45 @@ defmodule SymphonyElixirWeb.AdminLive do
     end)
   end
 
+  defp workspace_repository_preview(form, projects) do
+    root = shared_repository_base_root(form)
+    project = Enum.find(projects, &project_value(&1, :enabled)) || List.first(projects)
+    cache_name = project_cache_name(project)
+    Path.join(root, cache_name)
+  end
+
+  defp workspace_worktree_preview(form) do
+    form
+    |> shared_worktree_base_root()
+    |> Path.join("CCR-5")
+  end
+
+  defp shared_repository_base_root(form) do
+    case Map.get(form, "workspace_repository_base_root") do
+      value when is_binary(value) and value != "" -> value
+      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "repositories")
+    end
+  end
+
+  defp shared_worktree_base_root(form) do
+    case Map.get(form, "workspace_worktree_base_root") do
+      value when is_binary(value) and value != "" -> value
+      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "worktrees")
+    end
+  end
+
+  defp project_cache_name(nil), do: "project-<hash>"
+
+  defp project_cache_name(project) do
+    source = "#{project_value(project, :repository_url) || "project"}:#{project_value(project, :default_branch) || "main"}"
+    digest = :crypto.hash(:sha256, source) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+    "#{safe_path_segment(Path.basename(project_value(project, :repository_url) || "project", ".git"))}-#{digest}"
+  end
+
+  defp safe_path_segment(value) do
+    String.replace(value || "project", ~r/[^a-zA-Z0-9._-]/, "_")
+  end
+
   defp project_compare_fields do
     [
       :name,
@@ -1538,8 +1670,6 @@ defmodule SymphonyElixirWeb.AdminLive do
       :default_branch,
       :checkout_depth,
       :source_strategy,
-      :worktree_base_path,
-      :worktree_root,
       :worktree_fetch,
       :worktree_cleanup,
       :description,
@@ -1870,6 +2000,51 @@ defmodule SymphonyElixirWeb.AdminLive do
     kind, reason -> {:error, {kind, reason}}
   end
 
+  defp require_import_content(yaml) do
+    if blank?(yaml), do: {:error, "Paste workflow.yml or profiles.yml before importing."}, else: :ok
+  end
+
+  defp import_settings_draft(yaml, current) do
+    with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml) do
+      do_import_settings_draft(parsed, current)
+    end
+  end
+
+  defp do_import_settings_draft({:workflow, workflow_config}, current) do
+    current_config = draft_config_or_base(current)
+
+    loaded = %{
+      config:
+        workflow_config
+        |> Map.delete("profiles")
+        |> Map.put("profiles", Map.get(current_config, "profiles", %{})),
+      prompt: Map.get(current, "prompt_body", "")
+    }
+
+    {:ok, "workflow.yml", WorkflowForm.from_loaded(loaded)}
+  end
+
+  defp do_import_settings_draft({:profiles, profile_package}, current) do
+    current_config = draft_config_or_base(current)
+
+    loaded = %{
+      config: Map.put(current_config, "profiles", Map.get(profile_package, :profiles, %{})),
+      prompt: Map.get(profile_package, :base_prompt) || ""
+    }
+
+    {:ok, "profiles.yml", WorkflowForm.from_loaded(loaded)}
+  end
+
+  defp draft_config_or_base(current) do
+    case WorkflowForm.to_config(current) do
+      {:ok, config} -> config
+      {:error, _reason} -> Map.get(current, "_base_config", %{})
+    end
+  end
+
+  defp import_error_message(message) when is_binary(message), do: message
+  defp import_error_message(reason), do: inspect(reason)
+
   defp workflow_change_status(raw, socket) do
     case Map.get(socket.assigns, :active_workflow_version) do
       nil ->
@@ -1901,6 +2076,14 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp assign_save_notice(socket, level, title, message) do
     assign(socket, :workflow_save_notice, %{
+      level: level,
+      title: title,
+      message: message
+    })
+  end
+
+  defp assign_import_notice(socket, level, title, message) do
+    assign(socket, :workflow_import_notice, %{
       level: level,
       title: title,
       message: message

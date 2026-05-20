@@ -29,17 +29,19 @@ defmodule SymphonyElixir.WorkflowForm do
       "project_default_branch" => get_string(display_config, ["project", "default_branch"], "main"),
       "project_checkout_depth" => get_integer_string(display_config, ["project", "checkout_depth"], 1),
       "project_source_strategy" => get_string(display_config, ["project", "source_strategy"], "clone"),
-      "project_worktree_base_path" => get_string(display_config, ["project", "worktree_base_path"], ""),
-      "project_worktree_root" => get_string(display_config, ["project", "worktree_root"], ""),
       "project_worktree_fetch" => get_boolean_string(display_config, ["project", "worktree_fetch"], true),
       "project_worktree_cleanup" => get_boolean_string(display_config, ["project", "worktree_cleanup"], true),
       "project_setup_commands" => get_list_text(display_config, ["project", "setup_commands"]),
       "project_cleanup_commands" => get_list_text(display_config, ["project", "cleanup_commands"]),
       "workspace_root" => get_string(display_config, ["workspace", "root"], "/tmp/symphony-workspaces"),
+      "workspace_repository_base_root" => get_string(display_config, ["workspace", "repository_base_root"], ""),
+      "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"], ""),
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
       "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
       "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
+      "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
+      "codex_approval_policy" => get_codex_approval_policy(display_config),
       "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"], "workspace-write"),
       "hook_after_create" => get_string(display_config, ["hooks", "after_create"], ""),
       "hook_before_run" => get_string(display_config, ["hooks", "before_run"], ""),
@@ -98,10 +100,14 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["polling", "interval_ms"], polling_interval_ms)
         |> put_project(draft, checkout_depth)
         |> put_path(["workspace", "root"], Map.get(draft, "workspace_root", ""))
+        |> put_optional_path(["workspace", "repository_base_root"], Map.get(draft, "workspace_repository_base_root", ""))
+        |> put_optional_path(["workspace", "worktree_base_root"], Map.get(draft, "workspace_worktree_base_root", ""))
         |> put_path(["workspace", "initialize_timeout_ms"], initialize_timeout_ms)
         |> put_path(["agent", "max_concurrent_agents"], max_agents)
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
+        |> put_path(["codex", "pre_start_commands"], lines(Map.get(draft, "codex_pre_start_commands", "")))
+        |> put_path(["codex", "approval_policy"], Map.get(draft, "codex_approval_policy", "never"))
         |> put_path(["codex", "thread_sandbox"], Map.get(draft, "codex_thread_sandbox", ""))
         |> put_path(["hooks"], hooks_config(draft, hook_timeout_ms))
         |> put_path(["profiles"], profiles_config(draft))
@@ -121,6 +127,12 @@ defmodule SymphonyElixir.WorkflowForm do
       {"agent_max_turns", "Max turns"},
       {"hook_timeout_ms", "Hook timeout"}
     ]
+  end
+
+  defp get_codex_approval_policy(config) do
+    config
+    |> get_in(["codex", "approval_policy"])
+    |> Schema.normalize_codex_approval_policy()
   end
 
   @spec summary(draft()) :: map()
@@ -296,8 +308,6 @@ defmodule SymphonyElixir.WorkflowForm do
     |> put_optional_path(["project", "default_branch"], Map.get(draft, "project_default_branch", ""))
     |> put_path(["project", "checkout_depth"], checkout_depth)
     |> put_path(["project", "source_strategy"], Map.get(draft, "project_source_strategy", "clone"))
-    |> put_optional_path(["project", "worktree_base_path"], Map.get(draft, "project_worktree_base_path", ""))
-    |> put_optional_path(["project", "worktree_root"], Map.get(draft, "project_worktree_root", ""))
     |> put_path(["project", "worktree_fetch"], truthy?(Map.get(draft, "project_worktree_fetch", "true")))
     |> put_path(["project", "worktree_cleanup"], truthy?(Map.get(draft, "project_worktree_cleanup", "true")))
     |> put_path(["project", "setup_commands"], lines(Map.get(draft, "project_setup_commands", "")))

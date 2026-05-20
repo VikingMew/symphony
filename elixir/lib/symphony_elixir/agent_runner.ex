@@ -66,17 +66,19 @@ defmodule SymphonyElixir.AgentRunner do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
     emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
 
-    case Workspace.create_for_issue(issue, worker_host) do
+    workspace_opts = [progress_recipient: codex_update_recipient]
+
+    case Workspace.create_for_issue(issue, worker_host, workspace_opts) do
       {:ok, workspace} ->
         emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{workspace: workspace})
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
 
         try do
-          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
+          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host, workspace_opts) do
             run_profile(workspace, issue, codex_update_recipient, opts, worker_host)
           end
         after
-          Workspace.run_after_run_hook(workspace, issue, worker_host)
+          Workspace.run_after_run_hook(workspace, issue, worker_host, workspace_opts)
         end
 
       {:error, reason} ->

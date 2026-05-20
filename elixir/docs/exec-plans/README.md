@@ -86,6 +86,14 @@ Plans should focus on product and engineering intent rather than full implementa
 92. [092-agent-exit-result-classification.md](completed/092-agent-exit-result-classification.md)
 93. [093-settings-save-only-when-dirty.md](completed/093-settings-save-only-when-dirty.md)
 94. [094-worktree-bootstrap-timeout-and-stall-boundary.md](completed/094-worktree-bootstrap-timeout-and-stall-boundary.md)
+95. [095-session-history-system-event-presentation.md](completed/095-session-history-system-event-presentation.md)
+96. [096-workspace-source-root-layout.md](completed/096-workspace-source-root-layout.md)
+97. [097-setup-required-prompt-not-user-config.md](completed/097-setup-required-prompt-not-user-config.md)
+98. [098-settings-split-package-import.md](completed/098-settings-split-package-import.md)
+99. [099-test-suite-layer-decoupling.md](completed/099-test-suite-layer-decoupling.md)
+100. [100-agent-start-master-sync.md](completed/100-agent-start-master-sync.md)
+101. [101-codex-pre-start-commands.md](completed/101-codex-pre-start-commands.md)
+102. [102-remove-hidden-codex-reject-approval-policy.md](completed/102-remove-hidden-codex-reject-approval-policy.md)
 
 ## Plan Guidelines
 
@@ -110,4 +118,4 @@ When implementation starts, keep the plan current. If the implementation discove
 
 ## Active Plans
 
-None.
+- [103 Run Session Event History Query](active/103-run-session-event-history-query.md)

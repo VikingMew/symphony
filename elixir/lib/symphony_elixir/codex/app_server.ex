@@ -26,7 +26,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @type session :: %{
           port: port(),
           metadata: map(),
-          approval_policy: String.t() | map(),
+          approval_policy: String.t(),
           auto_approve_requests: boolean(),
           thread_sandbox: String.t(),
           turn_sandbox_policy: map(),
@@ -162,26 +162,11 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
     expanded_workspace = Path.expand(workspace)
-    expanded_root = Path.expand(Config.settings!().workspace.root)
-    expanded_root_prefix = expanded_root <> "/"
+    roots = workspace_allowed_roots()
 
     with {:ok, canonical_workspace} <- PathSafety.canonicalize(expanded_workspace),
-         {:ok, canonical_root} <- PathSafety.canonicalize(expanded_root) do
-      canonical_root_prefix = canonical_root <> "/"
-
-      cond do
-        canonical_workspace == canonical_root ->
-          {:error, {:invalid_workspace_cwd, :workspace_root, canonical_workspace}}
-
-        String.starts_with?(canonical_workspace <> "/", canonical_root_prefix) ->
-          {:ok, canonical_workspace}
-
-        String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
-          {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
-
-        true ->
-          {:error, {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
-      end
+         {:ok, canonical_roots} <- canonical_workspace_roots(roots) do
+      validate_workspace_against_roots(canonical_workspace, expanded_workspace, canonical_roots)
     else
       {:error, {:path_canonicalize_failed, path, reason}} ->
         {:error, {:invalid_workspace_cwd, :path_unreadable, path, reason}}
@@ -202,6 +187,58 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
+  defp workspace_allowed_roots do
+    workspace = Config.settings!().workspace
+
+    [
+      workspace.root,
+      workspace.worktree_base_root
+    ]
+    |> Enum.reject(&blank?/1)
+    |> Enum.map(&Path.expand/1)
+    |> Enum.uniq()
+  end
+
+  defp canonical_workspace_roots(roots) do
+    roots
+    |> Enum.reduce_while({:ok, []}, fn root, {:ok, canonical_roots} ->
+      case PathSafety.canonicalize(root) do
+        {:ok, canonical_root} -> {:cont, {:ok, [{root, canonical_root} | canonical_roots]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, canonical_roots} -> {:ok, Enum.reverse(canonical_roots)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp validate_workspace_against_roots(canonical_workspace, expanded_workspace, roots) do
+    exact_root = Enum.find(roots, fn {_expanded_root, canonical_root} -> canonical_workspace == canonical_root end)
+    matching_root = Enum.find(roots, fn {_expanded_root, canonical_root} -> under_root?(canonical_workspace, canonical_root) end)
+    symlink_root = Enum.find(roots, fn {expanded_root, _canonical_root} -> under_root?(expanded_workspace, expanded_root) end)
+
+    cond do
+      exact_root ->
+        {:error, {:invalid_workspace_cwd, :workspace_root, canonical_workspace}}
+
+      matching_root ->
+        {:ok, canonical_workspace}
+
+      symlink_root ->
+        {_expanded_root, canonical_root} = symlink_root
+        {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
+
+      true ->
+        {_expanded_root, canonical_root} = List.first(roots)
+        {:error, {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
+    end
+  end
+
+  defp under_root?(path, root), do: String.starts_with?(path <> "/", root <> "/")
+
+  defp blank?(value), do: not is_binary(value) or String.trim(value) == ""
+
   defp start_port(workspace, nil) do
     executable = System.find_executable("bash")
 
@@ -215,7 +252,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+            args: [~c"-lc", String.to_charlist(local_launch_command())],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -236,10 +273,49 @@ defmodule SymphonyElixir.Codex.AppServer do
       RuntimeProxy.remote_exports(),
       unset_sensitive_env_command(),
       "cd #{shell_escape(workspace)}",
-      "exec #{Config.settings!().codex.command}"
+      codex_launch_command()
     ]
     |> List.flatten()
     |> Enum.join(" && ")
+  end
+
+  defp local_launch_command do
+    codex_launch_command()
+  end
+
+  defp codex_launch_command do
+    codex = Config.settings!().codex
+
+    [
+      pre_start_script(codex.pre_start_commands),
+      codex_command_script(codex.command)
+    ]
+    |> List.flatten()
+    |> Enum.reject(&blank?/1)
+    |> Enum.join("\n")
+  end
+
+  defp codex_command_script(command) when is_binary(command) do
+    if shell_control_command?(command), do: command, else: "exec #{command}"
+  end
+
+  defp shell_control_command?(command) do
+    String.contains?(command, ["\n", ";", "&&", "||"])
+  end
+
+  defp pre_start_script(commands) do
+    commands
+    |> List.wrap()
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.with_index(1)
+    |> Enum.map(fn {command, index} ->
+      [
+        "__symphony_codex_pre_start_index=#{index}",
+        "#{command} || { __symphony_codex_pre_start_status=$?; printf '%s\\n' #{shell_escape("Symphony Codex pre-start command #{index} failed. See Settings / Workflow / Codex / Pre-start commands.")} >&2; exit $__symphony_codex_pre_start_status; }"
+      ]
+    end)
+    |> List.flatten()
   end
 
   defp maybe_put_proxy_env(port_opts) do
@@ -471,8 +547,30 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp startup_reason(reason), do: reason
 
   defp startup_hint({:port_exit, 127}), do: "Command not found or shell initialization failed before codex app-server became ready."
+
+  defp startup_hint({:port_exit, _status}), do: "Codex startup failed before the session handshake completed. Check Settings / Workflow / Codex / Pre-start commands and Command."
+
+  defp startup_hint({:response_error, error}) do
+    error
+    |> response_error_message()
+    |> approval_policy_error?()
+    |> case do
+      true -> "Codex rejected approvalPolicy. Open Settings / Workflow / Codex / Approval policy and choose one of: untrusted, on-failure, on-request, granular, never."
+      false -> "Codex app-server startup failed before the session handshake completed."
+    end
+  end
+
   defp startup_hint(:response_timeout), do: "Codex app-server did not respond before codex.read_timeout_ms; increase read_timeout_ms or reduce shell startup work."
   defp startup_hint(_reason), do: "Codex app-server startup failed before the session handshake completed."
+
+  defp response_error_message(%{"message" => message}) when is_binary(message), do: message
+  defp response_error_message(%{message: message}) when is_binary(message), do: message
+  defp response_error_message(error), do: inspect(error)
+
+  defp approval_policy_error?(message) do
+    String.contains?(message, "approvalPolicy") or
+      (String.contains?(message, "unknown variant") and String.contains?(message, "reject"))
+  end
 
   defp append_startup_output(output, chunk) do
     text = chunk |> to_string() |> String.trim()

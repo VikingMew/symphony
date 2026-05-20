@@ -21,7 +21,8 @@ defmodule SymphonyElixir.Config do
   """
 
   @type codex_runtime_settings :: %{
-          approval_policy: String.t() | map(),
+          pre_start_commands: [String.t()],
+          approval_policy: String.t(),
           thread_sandbox: String.t(),
           turn_sandbox_policy: map()
         }

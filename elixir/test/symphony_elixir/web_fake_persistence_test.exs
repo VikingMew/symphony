@@ -280,6 +280,123 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert edited_html =~ "Hook timeout must be a positive integer"
   end
 
+  test "agent settings setup-required page does not expose setup prompt as base prompt" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/settings/agents")
+
+    assert html =~ "Base Prompt"
+    assert html =~ ~s(name="workflow[prompt_body]")
+    refute html =~ "Create a workflow from the Web UI to start running agents."
+  end
+
+  test "settings import package populates structured agent draft before save" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _agents_view, agents_html} = live(build_conn(), "/settings/agents")
+    refute agents_html =~ "Import Settings Package"
+    refute agents_html =~ ~s(name="import[yaml]")
+
+    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    assert html =~ "Import Settings Package"
+    refute html =~ ~s(name="import[kind]")
+    assert html =~ ~s(name="import[yaml]")
+    assert html =~ ">Import</button>"
+
+    workflow_imported_html =
+      view
+      |> form("form[phx-submit='import_settings_package']",
+        import: %{
+          "yaml" => split_workflow_yaml()
+        }
+      )
+      |> render_submit()
+
+    assert workflow_imported_html =~ "workflow.yml imported into draft"
+
+    profiles_imported_html =
+      view
+      |> form("form[phx-submit='import_settings_package']",
+        import: %{
+          "yaml" => split_profiles_yaml()
+        }
+      )
+      |> render_submit()
+
+    assert profiles_imported_html =~ "profiles.yml imported into draft"
+
+    saved_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_submit()
+
+    assert saved_html =~ "Workflow settings saved"
+
+    {:ok, _agents_view, imported_agents_html} = live(build_conn(), "/settings/agents")
+    assert imported_agents_html =~ "Imported base prompt."
+    assert imported_agents_html =~ "Imported implementation prompt."
+    assert imported_agents_html =~ "Save agent settings"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ "Imported base prompt."
+    assert raw =~ "Imported implementation prompt."
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert loaded_workflow.prompt == "Imported base prompt."
+    assert get_in(loaded_workflow.config, ["profiles", "implementation", "prompt", "template"]) == "Imported implementation prompt."
+  end
+
+  test "settings import profiles package populates unsaved agent draft" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+
+    imported_html =
+      view
+      |> form("form[phx-submit='import_settings_package']",
+        import: %{
+          "yaml" => split_profiles_yaml()
+        }
+      )
+      |> render_submit()
+
+    assert imported_html =~ "profiles.yml imported into draft"
+
+    agents_draft_html = render_patch(view, "/settings/agents")
+    assert agents_draft_html =~ "Imported base prompt."
+    assert agents_draft_html =~ "Imported implementation prompt."
+  end
+
+  test "settings import package reports parse errors without saving" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+
+    html =
+      view
+      |> form("form[phx-submit='import_settings_package']",
+        import: %{
+          "yaml" => "workflow: ["
+        }
+      )
+      |> render_submit()
+
+    assert html =~ "Package import failed"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> true
+             _ -> false
+           end)
+  end
+
   test "workflow page does not report project-owned Linear slug errors" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
@@ -439,6 +556,9 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Lifecycle Hooks"
     assert html =~ "Initialize timeout ms"
     assert html =~ "Hook timeout ms"
+    assert html =~ "Approval policy"
+    assert html =~ ~s(name="workflow[codex_approval_policy]")
+    assert html =~ ~s(value="never")
     assert html =~ ~s(phx-disable-with="Saving...")
     refute html =~ "Raw workflow source"
     refute html =~ "workflow[tracker_kind]"
@@ -475,6 +595,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert raw =~ "/tmp/structured-workspaces"
     assert raw =~ "git@github.com:org/repo.git"
     assert raw =~ ~s(project_slug: "project")
+    assert raw =~ ~s(approval_policy: "never")
     refute raw =~ "api_key"
     assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
     assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
@@ -588,8 +709,6 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           "default_branch" => "develop",
           "checkout_depth" => "3",
           "source_strategy" => "worktree",
-          "worktree_base_path" => "/tmp/symphony-cache",
-          "worktree_root" => "/tmp/symphony-worktrees",
           "worktree_fetch" => "true",
           "worktree_cleanup" => "false",
           "enabled" => "true"
@@ -605,8 +724,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              {:create_project, attrs} ->
                attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git" and
                  attrs.checkout_depth == 3 and attrs.source_strategy == "worktree" and
-                 attrs.worktree_base_path == "/tmp/symphony-cache" and
-                 attrs.worktree_root == "/tmp/symphony-worktrees" and attrs.worktree_fetch == true and
+                 attrs.worktree_fetch == true and
                  attrs.worktree_cleanup == false
 
              _ ->
@@ -625,8 +743,6 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           "default_branch" => "main",
           "checkout_depth" => "1",
           "source_strategy" => "clone",
-          "worktree_base_path" => "",
-          "worktree_root" => "",
           "enabled" => "true"
         }
       )
@@ -634,6 +750,47 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     assert html =~ "Renamed Project"
     assert html =~ "git@github.com:org/renamed.git"
+  end
+
+  test "project settings save refreshes runtime project configuration" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    raw = workflow_raw!(workflow_form_params())
+    active = workflow_version("active-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow_versions([active], active)
+
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+
+    _html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: %{
+          "id" => "fake-project-id",
+          "name" => "Fake Project",
+          "slug" => "fake",
+          "linear_project_slug" => "runtime-linear",
+          "repository_url" => "git@github.com:org/runtime.git",
+          "default_branch" => "master",
+          "checkout_depth" => "1",
+          "source_strategy" => "worktree",
+          "worktree_fetch" => "true",
+          "worktree_cleanup" => "true",
+          "description" => "",
+          "enabled" => "true"
+        }
+      )
+      |> render_submit()
+
+    assert {:ok, %{workflow: workflow}} = WorkflowStore.current_with_source()
+
+    assert get_in(workflow.config, ["tracker", "project_slug"]) == "runtime-linear"
+    assert get_in(workflow.config, ["project", "repository_url"]) == "git@github.com:org/runtime.git"
+    assert get_in(workflow.config, ["project", "default_branch"]) == "master"
+    assert get_in(workflow.config, ["project", "source_strategy"]) == "worktree"
+    refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_base_path")
+    refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root")
   end
 
   test "settings save controls show saving feedback and saved notices" do
@@ -765,8 +922,6 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
           "default_branch" => "main",
           "checkout_depth" => "1",
           "source_strategy" => "clone",
-          "worktree_base_path" => "",
-          "worktree_root" => "",
           "worktree_fetch" => "true",
           "worktree_cleanup" => "true",
           "description" => "",
@@ -1311,6 +1466,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "agent_max_concurrent_agents" => "1",
       "agent_max_turns" => "20",
       "codex_command" => "codex app-server",
+      "codex_pre_start_commands" => "",
+      "codex_approval_policy" => "never",
       "codex_thread_sandbox" => "workspace-write",
       "hook_after_create" => "",
       "hook_before_run" => "",
@@ -1328,6 +1485,59 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     |> Map.delete("project_repository_url")
     |> Map.delete("project_default_branch")
     |> Map.delete("project_checkout_depth")
+  end
+
+  defp split_workflow_yaml do
+    """
+    tracker:
+      kind: linear
+      endpoint: "https://api.linear.app/graphql"
+      project_slug: "project"
+      active_states: ["Ready", "In Progress"]
+      terminal_states: ["Done"]
+    polling:
+      interval_ms: 30000
+    project:
+      repository_url: "git@github.com:org/imported.git"
+      default_branch: "main"
+      checkout_depth: 1
+      setup_commands: []
+      cleanup_commands: []
+    workspace:
+      root: "/tmp/imported-workspaces"
+    agent:
+      max_concurrent_agents: 1
+      max_turns: 20
+    codex:
+      command: "codex app-server"
+      approval_policy: "never"
+      thread_sandbox: "workspace-write"
+    server:
+      host: "127.0.0.1"
+      port: 4000
+    workflow:
+      states:
+        Ready:
+          profile: implementation
+        In Progress:
+          profile: implementation
+      human_review_states: ["In Review"]
+      allowed_transitions:
+        - {from: Ready, to: In Progress, actor: codex, profile: implementation}
+    """
+  end
+
+  defp split_profiles_yaml do
+    """
+    base_prompt: |
+      Imported base prompt.
+    profiles:
+      implementation:
+        name: "Implementation"
+        executor: {type: codex_agent}
+        prompt: {mode: extend, template: "Imported implementation prompt."}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Review"]}
+    """
   end
 
   defp workflow_raw!(params) do

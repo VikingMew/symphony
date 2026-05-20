@@ -277,6 +277,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                         <% else %>
                           <ol class="session-history-list">
                             <li :for={event <- entry.session_history}>
+                              <span class={history_source_badge_class(Map.get(event, :source))}><%= history_source_label(Map.get(event, :source)) %></span>
                               <span class={history_badge_class(event.severity)}><%= event.label %></span>
                               <span class="mono numeric"><%= event.at || "n/a" %></span>
                               <span class="muted"><%= event.detail || to_string(event.event || "") %></span>
@@ -426,6 +427,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp history_badge_class(:error), do: "status-badge status-danger"
   defp history_badge_class(:warning), do: "status-badge status-warning"
   defp history_badge_class(_severity), do: "status-badge status-info"
+
+  defp history_source_badge_class(:system), do: "status-badge"
+  defp history_source_badge_class("system"), do: "status-badge"
+  defp history_source_badge_class(:linear), do: "status-badge status-accent"
+  defp history_source_badge_class("linear"), do: "status-badge status-accent"
+  defp history_source_badge_class(_source), do: "status-badge status-info"
+
+  defp history_source_label(nil), do: "agent"
+  defp history_source_label(source), do: source |> to_string() |> String.replace("_", " ")
 
   defp session_history_key(entry) do
     cond do

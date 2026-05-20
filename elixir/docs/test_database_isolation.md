@@ -18,11 +18,11 @@ If a future adapter-compatibility job is added, it must be explicit and non-defa
 
 `test/test_helper.exs` enforces this before the application starts:
 
-- the configured test Repo database must not equal the development database path;
-- the configured test Repo database must not be named `symphony.db`;
-- the configured test Repo database must live under the system temporary directory.
+- `:start_repo` is set to `false`;
+- `:persistence_module` is set to `SymphonyElixir.TestSupport.FakePersistence`;
+- no default test helper reads the configured Repo database path, starts Repo, or runs migrations.
 
-The application supervisor also skips `SymphonyElixir.Repo` in `MIX_ENV=test`.
+The application supervisor also skips `SymphonyElixir.Repo` in `MIX_ENV=test`. The default suite has a boundary test that asserts Repo is not running and no Symphony-named SQLite/DB files were created under the system temporary directory. Browser or OS cache `.db` files under the same temp root are ignored because they are not Symphony test artifacts.
 
 ## Runtime Guard
 
@@ -44,7 +44,7 @@ Do not add direct `Repo` setup to default tests. If a test needs persistence beh
 Before and after running the test suite:
 
 ```bash
-ls symphony.db symphony.db-shm symphony.db-wal
+find "$(elixir -e 'IO.write(System.tmp_dir!())')" -iname '*symphony*.db' -o -iname '*symphony*.sqlite'
 ```
 
-All three files should be absent in the project directory after `mix test`.
+No Symphony test database files should appear after `mix test`. The production/development database is only used by explicit app startup or migration commands, not by the default test suite.

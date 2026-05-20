@@ -24,6 +24,8 @@ Elixir / Phoenix Web Service
 
 另一个关键原则是：当前仍处于 alpha 阶段，开发时不保留历史兼容路径。产品方向变化后，应直接删除旧 route、旧 source label、旧 schema alias、旧文件 fallback、旧 fixture 和旧测试断言；除非某个 execplan 明确把一次性数据迁移列为交付物，否则不要为了过去的配置格式在 runtime、UI 或测试里保留隐藏兼容层。测试应该固定当前公开契约，而不是证明旧行为仍然可用。
 
+同一原则也适用于外部协议字段。Codex app-server 的 `approvalPolicy` 只使用当前协议支持的字符串枚举；历史遗留的结构化 `reject` approval policy 不属于公开配置契约，不能作为隐藏默认值继续存在。旧数据如需修正，应在 alpha 阶段按当前默认值重写或拒绝，而不是长期保留兼容分支。
+
 ### 1.1 文档状态标注约定
 
 本文同时记录当前实现、阶段目标和长期方向。为了避免长期目标被误读为已经完成，后续维护时必须显式标注当前代码是否对齐：
@@ -258,7 +260,7 @@ Settings 页面长期应提供几个互相一致的 tab/入口：
   workflow routing、human review states、allowed transitions 等共享区域编辑。project repository 和 Linear project slug 不在这里编辑。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy。
 - `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
-- 文件上传导入：上传 split package，解析后进入同一套结构化模型，显示校验结果；后续补齐
+- Split package 导入：导入 split package，解析后进入同一套结构化模型，显示校验结果；当前可先通过一个 YAML 输入逐个粘贴 `workflow.yml` 或 `profiles.yml` 内容进入 draft，并根据顶层 `profiles` / `base_prompt` 字段自动识别 package 类型，后续补齐文件上传
   与当前 active version 的 diff。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
 这些入口必须写入同一个 workflow version 模型。导入文件写入 DB version；导出文件来自 DB version；运行时只读取 DB active version，避免 UI 配置、文件配置和运行时配置分裂。

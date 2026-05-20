@@ -163,6 +163,14 @@ elixir/workflow.yml
 elixir/profiles.yml
 ```
 
+空数据库第一次配置时，在 Settings 的 Workflow 页面使用 `Import Settings Package`
+入口，逐个粘贴 `workflow.yml` 或 `profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
+顶层字段自动识别 package 类型：包含 `profiles` 或 `base_prompt` 的文档按 `profiles.yml` 导入，其余
+有效 workflow mapping 按 `workflow.yml` 导入。导入只填充页面上的 draft，不会立即激活运行时；确认校验提示后，
+再点 Save 创建第一版 active database workflow version。
+setup-required 页面里的提示文案只是系统状态提示，不是 base prompt。正确的 base prompt 来自
+`profiles.yml` 的 `base_prompt`。
+
 `workflow.yml` 里最少需要确认这些字段：
 
 ```yaml
@@ -180,6 +188,7 @@ project:
   setup_commands: []
   cleanup_commands: []
 codex:
+  pre_start_commands: []
   command: codex app-server
 workflow:
   states:
@@ -259,10 +268,27 @@ workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动
 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 
 如果同一个本地机器会同时处理很多同仓库任务，可以在 Project Settings 里把 source strategy 设为
-`worktree`。第一次运行时，Symphony 会自动把 `project.repository_url` clone 到集中式 base repo
-cache；之后每个 issue 会从这个 base repo 创建独立 git worktree。可选字段包括
-`worktree_base_path`、`worktree_root`、`worktree_fetch` 和 `worktree_cleanup`。这些都属于 Project
-Settings，不应该写进 `hooks.after_create` 或 `hooks.before_run`。
+`worktree`。长期路径模型见 `docs/workspace_source_layout.zh-CN.md`：共享 Workspace/Runtime Settings
+应分别配置 repository base root 和 worktree base root。Project Settings 只配置 repository URL、
+default branch、checkout depth、source strategy 等项目自身信息。Symphony 会把 `project.repository_url` clone/fetch 到
+`repository_base_root / repo_cache_name`，再为每个 issue 创建
+`worktree_base_root / issue_identifier`。clone/worktree 命令不应该写进 `hooks.after_create` 或
+`hooks.before_run`。如果启用了 Fetch before worktree，每次 agent start 都会先 fetch 配置的
+`project.default_branch`，并把托管 base repository 的本地默认分支更新到 `origin/<default_branch>`，
+然后再创建 issue worktree。
+
+如果 Codex 不在默认 PATH 中，使用 `codex.pre_start_commands`，不要把这些命令写进 lifecycle hook。
+这些命令和最终 `codex.command` 在同一个 shell 里执行，因此 `source ~/.nvs/nvs.sh`、
+`nvs use 22 >/dev/null`、`export PATH="$HOME/.local/bin:$PATH"` 这类环境准备会影响后续
+`codex app-server`：
+
+```yaml
+codex:
+  pre_start_commands:
+    - source ~/.nvs/nvs.sh
+    - nvs use 22 >/dev/null
+  command: codex app-server
+```
 
 Rust 项目可以这样写 bootstrap：
 
@@ -301,6 +327,11 @@ hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认�
 Web UI 的 `/settings/workflow` tab 管理 workflow/routing，`/settings/agents` tab 管理 base
 prompt 和 profiles。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
 prompt 来源。
+
+`codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
+`reject` map。当前支持值是 `untrusted`、`on-failure`、`on-request`、`granular` 和
+`never`，默认值为 `never`。这个字段在 `/settings/workflow` 的 Codex 区域可见；如果
+Codex 在启动握手阶段拒绝 `approvalPolicy`，错误会指向该设置项。
 
 当前默认 Linear 状态流是：
 

@@ -76,6 +76,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       identifier: issue.identifier,
       issue: issue,
       session_id: nil,
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
       turn_count: 0,
       last_codex_message: nil,
       last_codex_timestamp: nil,
@@ -183,6 +187,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       identifier: issue.identifier,
       issue: issue,
       session_id: nil,
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
       turn_count: 0,
       last_codex_message: nil,
       last_codex_timestamp: nil,
@@ -214,6 +222,66 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert history_event.detail == "agent message streaming: I’m checking (3 fragments)"
     assert history_event.metadata.coalesced_event_count == 3
     assert history_event.metadata.coalesced_text == "I’m checking"
+  end
+
+  test "orchestrator records coalesced system progress in session history" do
+    issue_id = "issue-system-progress"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-SYSTEM",
+      title: "System progress test",
+      description: "Show clone progress",
+      state: "Ready",
+      url: "https://example.org/issues/MT-SYSTEM"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :SystemProgressOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:system_worker_update, issue_id, %{source: :system, phase: "workspace_bootstrap", operation: "git_clone", status: "running", detail: "Cloning base repository: Receiving objects: 8%"}})
+    send(pid, {:system_worker_update, issue_id, %{source: :system, phase: "workspace_bootstrap", operation: "git_clone", status: "running", detail: "Cloning base repository: Receiving objects: 9%"}})
+
+    assert %{running: [snapshot_entry]} = GenServer.call(pid, :snapshot)
+    assert snapshot_entry.session_history_total_count == 2
+    assert [history_event] = snapshot_entry.session_history
+    assert history_event.event == :system_progress
+    assert history_event.source == :system
+    assert history_event.label == "Git clone"
+    assert history_event.detail == "Cloning base repository: Receiving objects: 9%"
+    assert history_event.metadata.coalesced_event_count == 2
   end
 
   test "orchestrator does not coalesce streaming notifications across lifecycle events" do

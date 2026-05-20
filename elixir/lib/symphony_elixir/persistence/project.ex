@@ -17,8 +17,6 @@ defmodule SymphonyElixir.Persistence.Project do
     field(:default_branch, :string, default: "main")
     field(:checkout_depth, :integer, default: 1)
     field(:source_strategy, :string, default: "clone")
-    field(:worktree_base_path, :string)
-    field(:worktree_root, :string)
     field(:worktree_fetch, :boolean, default: true)
     field(:worktree_cleanup, :boolean, default: true)
     field(:description, :string)
@@ -37,8 +35,6 @@ defmodule SymphonyElixir.Persistence.Project do
       :default_branch,
       :checkout_depth,
       :source_strategy,
-      :worktree_base_path,
-      :worktree_root,
       :worktree_fetch,
       :worktree_cleanup,
       :description,

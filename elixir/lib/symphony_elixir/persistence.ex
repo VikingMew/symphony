@@ -116,13 +116,86 @@ defmodule SymphonyElixir.Persistence do
 
   @spec workflow_to_loaded(WorkflowVersion.t()) :: Workflow.loaded_workflow()
   def workflow_to_loaded(%WorkflowVersion{} = version) do
+    config =
+      version.yaml_config
+      |> Kernel.||(%{})
+      |> apply_project_runtime_settings(version.project_id)
+
     %{
-      config: version.yaml_config || %{},
+      config: config,
       prompt: version.prompt_body || "",
       prompt_template: version.prompt_body || "",
       workflow_version_id: version.id,
       project_id: version.project_id
     }
+  end
+
+  defp apply_project_runtime_settings(config, project_id) when is_map(config) do
+    case project_for_runtime(project_id) do
+      %Project{} = project ->
+        config
+        |> put_in_path(["tracker", "project_slug"], project.linear_project_slug)
+        |> update_project_config(project)
+
+      _ ->
+        config
+    end
+  end
+
+  defp project_for_runtime(project_id) when is_binary(project_id) do
+    if repo_available?(), do: Repo.get(Project, project_id), else: nil
+  rescue
+    _error -> nil
+  end
+
+  defp project_for_runtime(_project_id) do
+    case default_project() do
+      {:ok, project} -> project
+      _ -> nil
+    end
+  end
+
+  defp update_project_config(config, %Project{} = project) do
+    existing = Map.get(config, "project", %{})
+
+    project_config =
+      existing
+      |> put_project_value("repository_url", project.repository_url)
+      |> put_project_value("default_branch", project.default_branch || "main")
+      |> put_project_value("checkout_depth", project.checkout_depth || 1)
+      |> put_project_value("source_strategy", project.source_strategy || "clone")
+      |> put_project_value("worktree_fetch", project.worktree_fetch != false)
+      |> put_project_value("worktree_cleanup", project.worktree_cleanup != false)
+
+    Map.put(config, "project", project_config)
+  end
+
+  defp put_project_value(config, key, value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: Map.delete(config, key), else: Map.put(config, key, value)
+  end
+
+  defp put_project_value(config, key, nil), do: Map.delete(config, key)
+  defp put_project_value(config, key, value), do: Map.put(config, key, value)
+
+  defp put_in_path(config, path, value) do
+    put_in_path(config, path, value, [nil])
+  end
+
+  defp put_in_path(config, path, value, delete_values) do
+    case value in delete_values or (is_binary(value) and String.trim(value) == "") do
+      true -> delete_in_path(config, path)
+      false -> put_in(config, Enum.map(path, &Access.key(&1, %{})), value)
+    end
+  end
+
+  defp delete_in_path(config, [key]), do: Map.delete(config, key)
+
+  defp delete_in_path(config, [key | rest]) do
+    case Map.get(config, key) do
+      nested when is_map(nested) -> Map.put(config, key, delete_in_path(nested, rest))
+      _ -> config
+    end
   end
 
   @spec export_workflow(WorkflowVersion.t()) :: String.t()

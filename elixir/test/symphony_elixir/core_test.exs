@@ -104,7 +104,8 @@ defmodule SymphonyElixir.CoreTest do
       project_repository_url: "git@example.com:org/repo.git"
     )
 
-    assert :ok = Config.validate!()
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "codex.approval_policy"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_thread_sandbox: "unsafe-ish",
@@ -2447,16 +2448,8 @@ defmodule SymphonyElixir.CoreTest do
                  |> String.trim_leading("JSON:")
                  |> Jason.decode!()
                  |> then(fn payload ->
-                   expected_approval_policy = %{
-                     "reject" => %{
-                       "sandbox_approval" => true,
-                       "rules" => true,
-                       "mcp_elicitations" => true
-                     }
-                   }
-
                    payload["method"] == "thread/start" &&
-                     get_in(payload, ["params", "approvalPolicy"]) == expected_approval_policy &&
+                     get_in(payload, ["params", "approvalPolicy"]) == "never" &&
                      get_in(payload, ["params", "sandbox"]) == "workspace-write" &&
                      get_in(payload, ["params", "cwd"]) == canonical_workspace
                  end)
@@ -2480,17 +2473,9 @@ defmodule SymphonyElixir.CoreTest do
                  |> String.trim_leading("JSON:")
                  |> Jason.decode!()
                  |> then(fn payload ->
-                   expected_approval_policy = %{
-                     "reject" => %{
-                       "sandbox_approval" => true,
-                       "rules" => true,
-                       "mcp_elicitations" => true
-                     }
-                   }
-
                    payload["method"] == "turn/start" &&
                      get_in(payload, ["params", "cwd"]) == canonical_workspace &&
-                     get_in(payload, ["params", "approvalPolicy"]) == expected_approval_policy &&
+                     get_in(payload, ["params", "approvalPolicy"]) == "never" &&
                      get_in(payload, ["params", "sandboxPolicy"]) == expected_turn_sandbox_policy
                  end)
                else

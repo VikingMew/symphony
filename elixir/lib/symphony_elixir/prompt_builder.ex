@@ -144,6 +144,10 @@ defmodule SymphonyElixir.PromptBuilder do
 
   defp target_states_text(_allowed_updates), do: "the profile's allowed target states"
 
+  defp prompt_template!({:ok, %{setup_required: true} = workflow}) do
+    Map.get(workflow, :setup_message) || "Create a workflow from the Web UI to start running agents."
+  end
+
   defp prompt_template!({:ok, %{prompt_template: prompt}}), do: default_prompt(prompt)
 
   defp parse_template!(prompt) when is_binary(prompt) do

@@ -270,7 +270,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert diagnostics.probes.teams.detail == "Skipped because setup is not complete."
   end
 
-  test "database workflow source controls diagnostics project slug through fake persistence" do
+  test "database project settings control diagnostics project slug through fake persistence" do
     previous_source = Application.get_env(:symphony_elixir, :workflow_source)
 
     on_exit(fn -> restore_app_env(:workflow_source, previous_source) end)
@@ -281,7 +281,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       kind: linear
       endpoint: "https://api.linear.app/graphql"
       api_key: "token"
-      project_slug: "db-project"
+      project_slug: "stale-workflow-project"
       active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
@@ -304,6 +304,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     FakePersistence.reset!()
+    FakePersistence.put_default_project_attrs!(%{linear_project_slug: "db-project"})
     {:ok, project} = FakePersistence.default_project()
     assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "web_workflow_settings")
     Application.put_env(:symphony_elixir, :workflow_source, :database)

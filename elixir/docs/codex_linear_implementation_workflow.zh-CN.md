@@ -133,6 +133,8 @@ Workspace Manager 为 issue 准备独立 workspace 或 git worktree。
 推荐规则：
 
 - workspace 路径由 issue identifier 派生，稳定且可审计。
+- worktree 模式下，base repository path 由 repository base root 和 repo cache name 派生；issue worktree path 由 worktree base root 和 issue identifier 派生。详细规则见 `workspace_source_layout.zh-CN.md`。
+- 每次 agent run 创建 issue worktree 前，托管 base repository 会按 project `default_branch` fetch 并更新本地 base branch，避免 agent 从旧 commit 启动。
 - 不删除用户未提交改动。
 - 创建或复用 feature branch。
 - branch 名优先使用 Linear `branchName`，否则使用规范化 fallback，例如 `codex/MT-123-short-title`。

@@ -54,6 +54,153 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
+  test "app server runs pre-start commands in the same shell before codex command" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-pre-start-path-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-PRESTART")
+      fake_bin = Path.join(test_root, "bin")
+      codex_binary = Path.join(fake_bin, "fake-codex")
+      trace_file = Path.join(test_root, "codex-pre-start.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        restore_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+      File.mkdir_p!(fake_bin)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-pre-start.trace}"
+      printf 'PATH:%s\\n' "$PATH" >> "$trace_file"
+      count=0
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-prestart"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-prestart"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "fake-codex app-server",
+        codex_pre_start_commands: ["export PATH=#{fake_bin}:$PATH"]
+      )
+
+      issue = %Issue{
+        id: "issue-prestart",
+        identifier: "MT-PRESTART",
+        title: "Use pre-start PATH",
+        description: "Ensure pre-start commands prepare Codex shell",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-PRESTART",
+        labels: ["backend"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Run with prepared PATH", issue)
+      assert File.read!(trace_file) =~ "PATH:#{fake_bin}:"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server pre-start command failure stops before launching codex" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-pre-start-failure-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-PRESTART-FAIL")
+      marker_file = Path.join(test_root, "codex-started")
+      File.mkdir_p!(workspace)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "printf started > #{marker_file}; sleep 1",
+        codex_pre_start_commands: ["printf preparing", "false"]
+      )
+
+      assert {:error, {:codex_startup_failed, details}} = AppServer.start_session(workspace)
+      assert details.reason == :port_exit
+      assert details.output =~ "Symphony Codex pre-start command 2 failed"
+      assert details.hint =~ "Settings / Workflow / Codex / Pre-start commands"
+      refute File.exists?(marker_file)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server startup approval policy response error points to workflow settings" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-approval-policy-error-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-APPROVAL")
+      codex_binary = Path.join(test_root, "fake-codex")
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      while IFS= read -r _line; do
+        printf '%s\\n' '{"id":1,"error":{"code":-32600,"message":"Invalid request: unknown variant `reject`, expected one of `untrusted`, `on-failure`, `on-request`, `granular`, `never`"}}'
+        exit 0
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_read_timeout_ms: 500
+      )
+
+      assert {:error, {:codex_startup_failed, details}} = AppServer.start_session(workspace)
+      assert details.reason == :response_error
+      assert details.stage == :initialize
+      assert details.response_error["message"] =~ "unknown variant `reject`"
+      assert details.hint =~ "Settings / Workflow / Codex / Approval policy"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server rejects the workspace root and paths outside workspace root" do
     test_root =
       Path.join(
@@ -474,7 +621,7 @@ defmodule SymphonyElixir.AppServerTest do
     end
   end
 
-  test "app server fails when command execution approval is required under safer defaults" do
+  test "app server fails when command execution approval is required by approval policy" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -515,7 +662,8 @@ defmodule SymphonyElixir.AppServerTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        codex_command: "#{codex_binary} app-server"
+        codex_command: "#{codex_binary} app-server",
+        codex_approval_policy: "on-request"
       )
 
       issue = %Issue{
@@ -1554,7 +1702,8 @@ defmodule SymphonyElixir.AppServerTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: "/remote/workspaces",
-        codex_command: "fake-remote-codex app-server"
+        codex_command: "fake-remote-codex app-server",
+        codex_pre_start_commands: ["export PATH=/remote/bin:$PATH"]
       )
 
       issue = %Issue{
@@ -1582,8 +1731,8 @@ defmodule SymphonyElixir.AppServerTest do
       assert argv_line =~ "-T -p 2200 worker-01 bash -lc"
       assert argv_line =~ "cd "
       assert argv_line =~ remote_workspace
-      assert argv_line =~ "exec "
-      assert argv_line =~ "fake-remote-codex app-server"
+      assert trace =~ "export PATH=/remote/bin:$PATH"
+      assert trace =~ "exec fake-remote-codex app-server"
 
       expected_turn_policy = %{
         "type" => "workspaceWrite",

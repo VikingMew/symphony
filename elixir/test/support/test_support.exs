@@ -85,10 +85,26 @@ defmodule SymphonyElixir.TestSupport do
   defp seed_fake_active_workflow(workflow_path) do
     if Application.get_env(:symphony_elixir, :persistence_module) == FakePersistence do
       {:ok, loaded} = Workflow.load(workflow_path)
+      FakePersistence.put_default_project_attrs!(project_attrs_from_workflow_config(loaded.config))
       raw = Workflow.to_markdown(loaded.config, loaded.prompt)
       {:ok, project} = FakePersistence.default_project()
       {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
     end
+  end
+
+  defp project_attrs_from_workflow_config(config) when is_map(config) do
+    project = Map.get(config, "project", %{})
+    tracker = Map.get(config, "tracker", %{})
+
+    %{
+      linear_project_slug: Map.get(tracker, "project_slug"),
+      repository_url: Map.get(project, "repository_url"),
+      default_branch: Map.get(project, "default_branch", "main"),
+      checkout_depth: Map.get(project, "checkout_depth", 1),
+      source_strategy: Map.get(project, "source_strategy", "clone"),
+      worktree_fetch: Map.get(project, "worktree_fetch", true),
+      worktree_cleanup: Map.get(project, "worktree_cleanup", true)
+    }
   end
 
   def restore_env(key, nil), do: System.delete_env(key)
@@ -168,7 +184,8 @@ defmodule SymphonyElixir.TestSupport do
           max_retry_backoff_ms: 300_000,
           max_concurrent_agents_by_state: %{},
           codex_command: "codex app-server",
-          codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
+          codex_pre_start_commands: [],
+          codex_approval_policy: "never",
           codex_thread_sandbox: "workspace-write",
           codex_turn_sandbox_policy: nil,
           codex_turn_timeout_ms: 3_600_000,
@@ -200,6 +217,8 @@ defmodule SymphonyElixir.TestSupport do
     tracker_terminal_states = Keyword.get(config, :tracker_terminal_states)
     poll_interval_ms = Keyword.get(config, :poll_interval_ms)
     workspace_root = Keyword.get(config, :workspace_root)
+    workspace_repository_base_root = Keyword.get(config, :workspace_repository_base_root)
+    workspace_worktree_base_root = Keyword.get(config, :workspace_worktree_base_root)
     initialize_timeout_ms = Keyword.get(config, :initialize_timeout_ms)
     project_config = project_config(config)
     worker_ssh_hosts = Keyword.get(config, :worker_ssh_hosts)
@@ -209,6 +228,7 @@ defmodule SymphonyElixir.TestSupport do
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
     codex_command = Keyword.get(config, :codex_command)
+    codex_pre_start_commands = Keyword.get(config, :codex_pre_start_commands)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
     codex_thread_sandbox = Keyword.get(config, :codex_thread_sandbox)
     codex_turn_sandbox_policy = Keyword.get(config, :codex_turn_sandbox_policy)
@@ -244,6 +264,8 @@ defmodule SymphonyElixir.TestSupport do
         "  interval_ms: #{yaml_value(poll_interval_ms)}",
         "workspace:",
         "  root: #{yaml_value(workspace_root)}",
+        "  repository_base_root: #{yaml_value(workspace_repository_base_root)}",
+        "  worktree_base_root: #{yaml_value(workspace_worktree_base_root)}",
         "  initialize_timeout_ms: #{yaml_value(initialize_timeout_ms)}",
         project_yaml(project_config),
         worker_yaml(worker_ssh_hosts, worker_max_concurrent_agents_per_host),
@@ -254,6 +276,7 @@ defmodule SymphonyElixir.TestSupport do
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",
+        "  pre_start_commands: #{yaml_value(codex_pre_start_commands)}",
         "  approval_policy: #{yaml_value(codex_approval_policy)}",
         "  thread_sandbox: #{yaml_value(codex_thread_sandbox)}",
         "  turn_sandbox_policy: #{yaml_value(codex_turn_sandbox_policy)}",
@@ -287,8 +310,6 @@ defmodule SymphonyElixir.TestSupport do
       default_branch: Keyword.get(config, :project_default_branch),
       checkout_depth: Keyword.get(config, :project_checkout_depth),
       source_strategy: Keyword.get(config, :project_source_strategy),
-      worktree_base_path: Keyword.get(config, :project_worktree_base_path),
-      worktree_root: Keyword.get(config, :project_worktree_root),
       worktree_fetch: Keyword.get(config, :project_worktree_fetch),
       worktree_cleanup: Keyword.get(config, :project_worktree_cleanup),
       setup_commands: Keyword.get(config, :project_setup_commands),
@@ -301,8 +322,6 @@ defmodule SymphonyElixir.TestSupport do
          default_branch: _default_branch,
          checkout_depth: _checkout_depth,
          source_strategy: nil,
-         worktree_base_path: nil,
-         worktree_root: nil,
          worktree_fetch: nil,
          worktree_cleanup: nil,
          setup_commands: [],
@@ -317,8 +336,6 @@ defmodule SymphonyElixir.TestSupport do
       "  default_branch: #{yaml_value(project.default_branch)}",
       "  checkout_depth: #{yaml_value(project.checkout_depth)}",
       "  source_strategy: #{yaml_value(project.source_strategy)}",
-      "  worktree_base_path: #{yaml_value(project.worktree_base_path)}",
-      "  worktree_root: #{yaml_value(project.worktree_root)}",
       "  worktree_fetch: #{yaml_value(project.worktree_fetch)}",
       "  worktree_cleanup: #{yaml_value(project.worktree_cleanup)}",
       "  setup_commands: #{yaml_value(project.setup_commands)}",

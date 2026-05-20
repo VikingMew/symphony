@@ -191,6 +191,20 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  def handle_info({:system_worker_update, issue_id, update}, %{running: running} = state)
+      when is_binary(issue_id) and is_map(update) do
+    case Map.get(running, issue_id) do
+      nil ->
+        {:noreply, state}
+
+      running_entry ->
+        updated_running_entry = append_system_history(running_entry, update)
+
+        notify_dashboard()
+        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+    end
+  end
+
   def handle_info(
         {:codex_worker_update, issue_id, %{event: _, timestamp: _} = update},
         %{running: running} = state
@@ -1636,6 +1650,48 @@ defmodule SymphonyElixir.Orchestrator do
     append_session_history(running_entry, event, codex_history_label(event), codex_history_metadata(update))
   end
 
+  defp append_system_history(running_entry, update) when is_map(running_entry) and is_map(update) do
+    metadata =
+      update
+      |> Map.put_new(:source, :system)
+      |> Map.put_new(:severity, system_update_severity(update))
+
+    append_coalescible_session_history(
+      running_entry,
+      :system_progress,
+      system_history_label(update),
+      metadata,
+      system_history_key(metadata)
+    )
+  end
+
+  defp system_update_severity(%{status: status}) when status in [:failed, "failed"], do: :error
+  defp system_update_severity(%{status: status}) when status in [:warning, "warning"], do: :warning
+  defp system_update_severity(_update), do: :info
+
+  defp system_history_label(%{operation: operation}) when is_binary(operation) do
+    operation
+    |> String.replace("hook:", "")
+    |> String.replace("_", " ")
+    |> String.capitalize()
+  end
+
+  defp system_history_label(%{phase: phase}) when is_binary(phase) do
+    phase
+    |> String.replace("_", " ")
+    |> String.capitalize()
+  end
+
+  defp system_history_label(_update), do: "System"
+
+  defp system_history_key(metadata) do
+    [
+      Map.get(metadata, :source),
+      Map.get(metadata, :phase),
+      Map.get(metadata, :operation)
+    ]
+  end
+
   defp codex_history_metadata(update) do
     %{
       session_id: Map.get(update, :session_id),
@@ -1854,25 +1910,82 @@ defmodule SymphonyElixir.Orchestrator do
     |> Map.put(:session_history_total_count, Map.get(running_entry, :session_history_total_count, length(history)) + 1)
   end
 
+  defp append_coalescible_session_history(running_entry, event, label, metadata, coalescing_key) when is_map(running_entry) do
+    metadata = Map.put(metadata, :coalescing_key, coalescing_key)
+    history = Map.get(running_entry, :session_history, [])
+    total_count = Map.get(running_entry, :session_history_total_count, length(history)) + 1
+    next = session_history_event(event, label, metadata)
+
+    case history do
+      [] ->
+        running_entry
+        |> Map.put(:session_history, [next])
+        |> Map.put(:session_history_total_count, total_count)
+
+      _ ->
+        {last, rest_reversed} = pop_last_history_event(history)
+
+        if coalescible_session_history?(last, event, coalescing_key) do
+          updated_last =
+            next
+            |> Map.put(:at, Map.get(last, :at))
+            |> Map.put(:metadata, merge_coalesced_metadata(Map.get(last, :metadata, %{}), Map.get(next, :metadata, %{})))
+
+          running_entry
+          |> Map.put(:session_history, Enum.take(Enum.reverse(rest_reversed) ++ [updated_last], -@session_history_limit))
+          |> Map.put(:session_history_total_count, total_count)
+        else
+          running_entry
+          |> Map.put(:session_history, Enum.take(history ++ [next], -@session_history_limit))
+          |> Map.put(:session_history_total_count, total_count)
+        end
+    end
+  end
+
+  defp coalescible_session_history?(%{event: event, metadata: metadata}, event, coalescing_key) when is_map(metadata) do
+    Map.get(metadata, :coalescing_key) == coalescing_key
+  end
+
+  defp coalescible_session_history?(_last, _event, _coalescing_key), do: false
+
+  defp merge_coalesced_metadata(existing, next) do
+    existing
+    |> Map.merge(next)
+    |> Map.put(:coalesced_event_count, Map.get(existing, :coalesced_event_count, 1) + 1)
+    |> Map.put(:coalesced_last_at, DateTime.utc_now())
+  end
+
   defp session_history_event(event, label, metadata) do
     %{
       at: DateTime.utc_now(),
       event: event,
       label: label,
       detail: history_detail(event, metadata),
-      severity: history_severity(event),
+      severity: history_severity(event, metadata),
+      source: history_source(event, metadata),
       metadata: sanitize_history_metadata(metadata)
     }
   end
 
   defp history_detail(:workspace_ready, %{workspace_path: path}) when is_binary(path), do: path
   defp history_detail(:run_started, %{state: state}) when is_binary(state), do: "Started from #{state}"
+  defp history_detail(:linear_state_transition, %{from_state: from_state, to_state: to_state}) when is_binary(from_state) and is_binary(to_state), do: "#{from_state} -> #{to_state}"
+  defp history_detail(:system_progress, %{detail: detail}) when is_binary(detail), do: detail
   defp history_detail(_event, %{message: message}), do: StatusDashboard.humanize_codex_message(message)
   defp history_detail(event, _metadata), do: to_string(event)
 
-  defp history_severity(event) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
-  defp history_severity(event) when event in [:approval_required, :turn_input_required], do: :warning
-  defp history_severity(_event), do: :info
+  defp history_source(_event, %{source: source}) when is_atom(source), do: source
+  defp history_source(_event, %{source: source}) when is_binary(source), do: source
+  defp history_source(:linear_state_transition, _metadata), do: :linear
+  defp history_source(:system_progress, _metadata), do: :system
+  defp history_source(:run_started, _metadata), do: :system
+  defp history_source(:workspace_ready, _metadata), do: :system
+  defp history_source(_event, _metadata), do: :agent
+
+  defp history_severity(:system_progress, %{severity: severity}) when severity in [:info, :warning, :error], do: severity
+  defp history_severity(event, _metadata) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
+  defp history_severity(event, _metadata) when event in [:approval_required, :turn_input_required], do: :warning
+  defp history_severity(_event, _metadata), do: :info
 
   defp sanitize_history_metadata(metadata) when is_map(metadata) do
     metadata

@@ -100,23 +100,32 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
         project_repository_url: source_repo,
         project_default_branch: "main",
         project_source_strategy: "worktree",
-        project_worktree_base_path: base_path,
-        project_worktree_root: worktree_root,
+        workspace_repository_base_root: base_path,
+        workspace_worktree_base_root: worktree_root,
         project_setup_commands: ["printf setup > setup.txt"],
         hook_after_create: "printf after > after.txt"
       )
 
       assert {:ok, first_workspace} = Workspace.create_for_issue("WT-1")
       assert String.ends_with?(first_workspace, "/worktrees/WT-1")
-      assert File.read!(Path.join(base_path, "README.md")) == "worktree source\n"
+      assert File.read!(Path.join(repository_cache_path(base_path, source_repo, "main"), "README.md")) == "worktree source\n"
       assert File.read!(Path.join(first_workspace, "README.md")) == "worktree source\n"
       assert File.read!(Path.join(first_workspace, "setup.txt")) == "setup"
       assert File.read!(Path.join(first_workspace, "after.txt")) == "after"
       assert File.exists?(Path.join(first_workspace, ".git"))
 
+      File.write!(Path.join(source_repo, "README.md"), "worktree source updated\n")
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "update default branch"])
+
       assert {:ok, second_workspace} = Workspace.create_for_issue("WT-2")
       assert String.ends_with?(second_workspace, "/worktrees/WT-2")
-      assert File.read!(Path.join(second_workspace, "README.md")) == "worktree source\n"
+      assert File.read!(Path.join(second_workspace, "README.md")) == "worktree source updated\n"
+
+      base_repo = repository_cache_path(base_path, source_repo, "main")
+      {source_head, 0} = System.cmd("git", ["-C", source_repo, "rev-parse", "main"])
+      {base_head, 0} = System.cmd("git", ["-C", base_repo, "rev-parse", "main"])
+      assert String.trim(base_head) == String.trim(source_head)
     after
       File.rm_rf(test_root)
     end
@@ -143,20 +152,63 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       System.cmd("git", ["-C", source_repo, "add", "README.md"])
       System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
 
-      File.mkdir_p!(base_path)
-      File.write!(Path.join(base_path, "not-a-git-repo"), "")
+      invalid_base_path = repository_cache_path(base_path, source_repo, "main")
+      File.mkdir_p!(invalid_base_path)
+      File.write!(Path.join(invalid_base_path, "not-a-git-repo"), "")
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
         project_repository_url: source_repo,
         project_default_branch: "main",
         project_source_strategy: "worktree",
-        project_worktree_base_path: base_path,
-        project_worktree_root: worktree_root
+        workspace_repository_base_root: base_path,
+        workspace_worktree_base_root: worktree_root
       )
 
-      assert {:error, {:invalid_worktree_base_repo, ^base_path}} = Workspace.create_for_issue("WT-BAD")
+      assert {:error, {:invalid_worktree_base_repo, ^invalid_base_path}} = Workspace.create_for_issue("WT-BAD")
       refute File.exists?(Path.join([worktree_root, "WT-BAD", ".git"]))
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "worktree source strategy replaces empty stale base directory tree" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-empty-stale-base-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      source_repo = Path.join(test_root, "source")
+      workspace_root = Path.join(test_root, "workspaces")
+      base_path = Path.join([test_root, "cache", "base"])
+      worktree_root = Path.join(test_root, "worktrees")
+
+      File.mkdir_p!(source_repo)
+      File.write!(Path.join(source_repo, "README.md"), "worktree source\n")
+      System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+      System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      stale_base_path = repository_cache_path(base_path, source_repo, "main")
+      File.mkdir_p!(Path.join(stale_base_path, "WT-STALE"))
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: source_repo,
+        project_default_branch: "main",
+        project_source_strategy: "worktree",
+        workspace_repository_base_root: base_path,
+        workspace_worktree_base_root: worktree_root
+      )
+
+      assert {:ok, workspace} = Workspace.create_for_issue("WT-STALE")
+      assert String.ends_with?(workspace, "/worktrees/WT-STALE")
+      assert File.read!(Path.join(stale_base_path, "README.md")) == "worktree source\n"
+      assert File.read!(Path.join(workspace, "README.md")) == "worktree source\n"
     after
       File.rm_rf(test_root)
     end
@@ -508,8 +560,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
         project_repository_url: "git@example.com:org/repo.git",
         project_default_branch: "main",
         project_source_strategy: "worktree",
-        project_worktree_base_path: base_path,
-        project_worktree_root: worktree_root
+        workspace_repository_base_root: base_path,
+        workspace_worktree_base_root: worktree_root
       )
 
       assert {:error, {:workspace_hook_timeout, "project_bootstrap", 50, details}} =
@@ -517,6 +569,61 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       assert details.elapsed_ms >= 50
       assert details.recent_output =~ "Receiving objects: fake slow clone"
+    after
+      System.put_env("PATH", previous_path)
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "worktree bootstrap streams clone progress to progress recipient before command exits" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-worktree-progress-#{System.unique_integer([:positive])}"
+      )
+
+    previous_path = System.get_env("PATH") || ""
+
+    try do
+      fake_bin = Path.join(test_root, "bin")
+      File.mkdir_p!(fake_bin)
+
+      fake_git = Path.join(fake_bin, "git")
+
+      File.write!(fake_git, """
+      #!/bin/sh
+      echo "Receiving objects: 9% (32/355), 7.09 MiB | 23.00 KiB/s"
+      sleep 1
+      exit 0
+      """)
+
+      File.chmod!(fake_git, 0o755)
+      System.put_env("PATH", fake_bin <> ":" <> previous_path)
+
+      workspace_root = Path.join(test_root, "workspaces")
+      base_path = Path.join([test_root, "cache", "base"])
+      worktree_root = Path.join(test_root, "worktrees")
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        initialize_timeout_ms: 50,
+        project_repository_url: "git@example.com:org/repo.git",
+        project_default_branch: "main",
+        project_source_strategy: "worktree",
+        workspace_repository_base_root: base_path,
+        workspace_worktree_base_root: worktree_root
+      )
+
+      issue = %{id: "issue-worktree-progress", identifier: "WT-PROGRESS"}
+      parent = self()
+      task = Task.async(fn -> Workspace.create_for_issue(issue, nil, progress_recipient: parent) end)
+
+      assert {:ok, progress} = receive_system_progress("issue-worktree-progress", "git_clone")
+      assert progress.operation == "git_clone"
+      assert progress.status == "running"
+      assert progress.detail =~ "Receiving objects: 9%"
+
+      assert {:error, {:workspace_hook_timeout, "project_bootstrap", 50, _details}} = Task.await(task, 2_000)
     after
       System.put_env("PATH", previous_path)
       File.rm_rf(test_root)
@@ -1162,15 +1269,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
-
-    assert config.codex.approval_policy == %{
-             "reject" => %{
-               "sandbox_approval" => true,
-               "rules" => true,
-               "mcp_elicitations" => true
-             }
-           }
-
+    assert config.codex.pre_start_commands == []
+    assert config.codex.approval_policy == "never"
     assert config.codex.thread_sandbox == "workspace-write"
 
     assert {:ok, canonical_default_workspace_root} =
@@ -1190,11 +1290,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.stall_timeout_ms == 300_000
 
     write_workflow_file!(Workflow.workflow_file_path(),
-      codex_command: "codex --config 'model=\"gpt-5.5\"' app-server"
+      codex_command: "codex --config 'model=\"gpt-5.5\"' app-server",
+      codex_pre_start_commands: ["source ~/.nvs/nvs.sh", "nvs use 22 >/dev/null"]
     )
 
     assert Config.settings!().codex.command ==
              "codex --config 'model=\"gpt-5.5\"' app-server"
+
+    assert Config.settings!().codex.pre_start_commands == [
+             "source ~/.nvs/nvs.sh",
+             "nvs use 22 >/dev/null"
+           ]
 
     explicit_root =
       Path.join(
@@ -1279,7 +1385,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     System.put_env("LINEAR_API_KEY", "token")
     assert :ok = Config.validate!()
-    assert Config.settings!().codex.approval_policy == ""
+    assert Config.settings!().codex.approval_policy == "never"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_thread_sandbox: "",
@@ -1311,7 +1417,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
-      codex_approval_policy: "future-policy",
+      codex_approval_policy: "future-policy"
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "codex.approval_policy"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       codex_thread_sandbox: "future-sandbox",
       codex_turn_sandbox_policy: %{
         type: "futureSandbox",
@@ -1320,9 +1433,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     )
 
     config = Config.settings!()
-    assert config.codex.approval_policy == "future-policy"
     assert config.codex.thread_sandbox == "future-sandbox"
-
     assert :ok = Config.validate!()
 
     assert Config.codex_turn_sandbox_policy() == %{
@@ -1481,9 +1592,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert settings.tracker.api_key == "fallback-linear-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
 
-    assert settings.codex.approval_policy == %{
-             "reject" => %{"sandbox_approval" => true}
-           }
+    assert settings.codex.approval_policy == "never"
 
     System.delete_env("LINEAR_API_KEY")
 
@@ -1794,5 +1903,27 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       Process.sleep(20)
       wait_until(fun, attempts - 1)
     end
+  end
+
+  defp receive_system_progress(issue_id, operation) do
+    receive do
+      {:system_worker_update, ^issue_id, %{operation: ^operation, status: "running"} = update} ->
+        {:ok, update}
+
+      {:system_worker_update, ^issue_id, _update} ->
+        receive_system_progress(issue_id, operation)
+    after
+      1_000 -> :timeout
+    end
+  end
+
+  defp repository_cache_path(base_root, repository_url, branch) do
+    source = "#{repository_url}:#{branch}"
+    digest = :crypto.hash(:sha256, source) |> Base.encode16(case: :lower) |> binary_part(0, 12)
+    Path.join(base_root, "#{safe_identifier(Path.basename(repository_url, ".git"))}-#{digest}")
+  end
+
+  defp safe_identifier(identifier) do
+    String.replace(identifier || "project", ~r/[^a-zA-Z0-9._-]/, "_")
   end
 end
