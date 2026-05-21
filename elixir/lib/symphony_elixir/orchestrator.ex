@@ -7,7 +7,17 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, PersistenceProvider, RunLifecycle, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{
+    AgentRunner,
+    Codex.Update,
+    Config,
+    PersistenceProvider,
+    RunLifecycle,
+    StatusDashboard,
+    Tracker,
+    Workspace
+  }
+
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -41,6 +51,7 @@ defmodule SymphonyElixir.Orchestrator do
       retry_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil,
+      codex_rate_limit_observation: nil,
       last_config_error: nil,
       listening?: false
     ]
@@ -70,7 +81,8 @@ defmodule SymphonyElixir.Orchestrator do
             tick_timer_ref: nil,
             tick_token: nil,
             codex_totals: @empty_codex_totals,
-            codex_rate_limits: nil
+            codex_rate_limits: nil,
+            codex_rate_limit_observation: nil
           }
           |> schedule_tick(config.polling.interval_ms)
 
@@ -86,6 +98,7 @@ defmodule SymphonyElixir.Orchestrator do
             tick_token: nil,
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
+            codex_rate_limit_observation: nil,
             last_config_error: reason,
             listening?: false
           }
@@ -1379,6 +1392,7 @@ defmodule SymphonyElixir.Orchestrator do
        retrying: retrying,
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
+       rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
        config_error: config_error_payload(state.last_config_error),
        polling: %{
          listening?: state.listening? == true,
@@ -1545,82 +1559,8 @@ defmodule SymphonyElixir.Orchestrator do
     _ -> 0
   end
 
-  defp integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
-    token_delta = extract_token_delta(running_entry, update)
-    codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
-    codex_output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
-    codex_total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
-    codex_app_server_pid = Map.get(running_entry, :codex_app_server_pid)
-    last_reported_input = Map.get(running_entry, :codex_last_reported_input_tokens, 0)
-    last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
-    last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
-    turn_count = Map.get(running_entry, :turn_count, 0)
-
-    updated_entry =
-      Map.merge(running_entry, %{
-        last_codex_timestamp: timestamp,
-        last_codex_message: summarize_codex_update(update),
-        session_id: session_id_for_update(running_entry.session_id, update),
-        last_codex_event: event,
-        codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
-        codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
-        codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
-        codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
-        codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
-        codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
-        codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
-        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
-      })
-      |> append_codex_history(update)
-
-    {
-      updated_entry,
-      token_delta
-    }
-  end
-
-  defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})
-       when is_binary(pid),
-       do: pid
-
-  defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid})
-       when is_integer(pid),
-       do: Integer.to_string(pid)
-
-  defp codex_app_server_pid_for_update(_existing, %{codex_app_server_pid: pid}) when is_list(pid),
-    do: to_string(pid)
-
-  defp codex_app_server_pid_for_update(existing, _update), do: existing
-
-  defp session_id_for_update(_existing, %{session_id: session_id}) when is_binary(session_id),
-    do: session_id
-
-  defp session_id_for_update(existing, _update), do: existing
-
-  defp turn_count_for_update(existing_count, existing_session_id, %{
-         event: :session_started,
-         session_id: session_id
-       })
-       when is_integer(existing_count) and is_binary(session_id) do
-    if session_id == existing_session_id do
-      existing_count
-    else
-      existing_count + 1
-    end
-  end
-
-  defp turn_count_for_update(existing_count, _existing_session_id, _update)
-       when is_integer(existing_count),
-       do: existing_count
-
-  defp turn_count_for_update(_existing_count, _existing_session_id, _update), do: 0
-
-  defp summarize_codex_update(update) do
-    %{
-      event: update[:event],
-      message: update[:payload] || update[:raw],
-      timestamp: update[:timestamp]
-    }
+  defp integrate_codex_update(running_entry, %{event: _event, timestamp: _timestamp} = update) do
+    Update.integrate(running_entry, update, history_limit: @session_history_limit)
   end
 
   defp initial_session_history(%Issue{} = issue, attempt, worker_host) do
@@ -1633,22 +1573,6 @@ defmodule SymphonyElixir.Orchestrator do
         worker_host: worker_host
       })
     ]
-  end
-
-  defp append_codex_history(running_entry, %{event: :notification} = update) when is_map(running_entry) do
-    metadata = codex_history_metadata(update)
-
-    case streaming_agent_message_fragment(update) do
-      {:ok, fragment, key} ->
-        append_streaming_agent_message_history(running_entry, fragment, key, metadata)
-
-      :error ->
-        append_session_history(running_entry, :notification, codex_history_label(:notification), metadata)
-    end
-  end
-
-  defp append_codex_history(running_entry, %{event: event} = update) when is_map(running_entry) do
-    append_session_history(running_entry, event, codex_history_label(event), codex_history_metadata(update))
   end
 
   defp append_system_history(running_entry, update) when is_map(running_entry) and is_map(update) do
@@ -1693,180 +1617,6 @@ defmodule SymphonyElixir.Orchestrator do
     ]
   end
 
-  defp codex_history_metadata(update) do
-    %{
-      session_id: Map.get(update, :session_id),
-      message: summarize_codex_update(update)
-    }
-  end
-
-  defp append_streaming_agent_message_history(running_entry, fragment, coalescing_key, metadata) do
-    history = Map.get(running_entry, :session_history, [])
-    total_count = Map.get(running_entry, :session_history_total_count, length(history)) + 1
-
-    case history do
-      [] ->
-        running_entry
-        |> Map.put(:session_history, [streaming_agent_message_event(fragment, coalescing_key, metadata)])
-        |> Map.put(:session_history_total_count, total_count)
-
-      _ ->
-        {last, rest_reversed} = pop_last_history_event(history)
-
-        if coalescible_streaming_agent_message?(last, coalescing_key) do
-          updated_last = coalesce_streaming_agent_message(last, fragment, metadata)
-
-          running_entry
-          |> Map.put(:session_history, Enum.take(Enum.reverse(rest_reversed) ++ [updated_last], -@session_history_limit))
-          |> Map.put(:session_history_total_count, total_count)
-        else
-          next_history = history ++ [streaming_agent_message_event(fragment, coalescing_key, metadata)]
-
-          running_entry
-          |> Map.put(:session_history, Enum.take(next_history, -@session_history_limit))
-          |> Map.put(:session_history_total_count, total_count)
-        end
-    end
-  end
-
-  defp pop_last_history_event(history) do
-    [last | rest_reversed] = Enum.reverse(history)
-    {last, rest_reversed}
-  end
-
-  defp streaming_agent_message_event(fragment, coalescing_key, metadata) do
-    metadata =
-      metadata
-      |> Map.put(:coalescing_key, coalescing_key)
-      |> Map.put(:coalesced_event_count, 1)
-      |> Map.put(:coalesced_text, fragment)
-      |> Map.put(:coalesced_last_at, DateTime.utc_now())
-
-    session_history_event(:notification, codex_history_label(:notification), metadata)
-    |> Map.put(:detail, streaming_agent_message_detail(fragment, 1))
-  end
-
-  defp coalescible_streaming_agent_message?(%{event: :notification, metadata: metadata}, coalescing_key)
-       when is_map(metadata) do
-    Map.get(metadata, :coalescing_key) == coalescing_key
-  end
-
-  defp coalescible_streaming_agent_message?(_event, _coalescing_key), do: false
-
-  defp coalesce_streaming_agent_message(last, fragment, metadata) do
-    existing_metadata = Map.get(last, :metadata, %{})
-    text = smart_join_streaming_fragment(Map.get(existing_metadata, :coalesced_text, ""), fragment)
-    count = Map.get(existing_metadata, :coalesced_event_count, 1) + 1
-
-    merged_metadata =
-      existing_metadata
-      |> Map.merge(metadata)
-      |> Map.put(:coalesced_event_count, count)
-      |> Map.put(:coalesced_text, text)
-      |> Map.put(:coalesced_last_at, DateTime.utc_now())
-
-    last
-    |> Map.put(:detail, streaming_agent_message_detail(text, count))
-    |> Map.put(:metadata, sanitize_history_metadata(merged_metadata))
-  end
-
-  defp streaming_agent_message_detail(text, 1), do: "agent message streaming: #{text}"
-  defp streaming_agent_message_detail(text, count), do: "agent message streaming: #{text} (#{count} fragments)"
-
-  defp streaming_agent_message_fragment(%{payload: payload} = update) when is_map(payload) do
-    method = SymphonyElixir.Payload.get_any(payload, ["method", :method])
-
-    if agent_message_streaming_method?(method) do
-      case extract_streaming_delta(payload) do
-        fragment when is_binary(fragment) and fragment != "" ->
-          {:ok, fragment, streaming_agent_message_key(update, payload, method)}
-
-        _ ->
-          :error
-      end
-    else
-      :error
-    end
-  end
-
-  defp streaming_agent_message_fragment(_update), do: :error
-
-  defp agent_message_streaming_method?(method)
-       when method in [
-              "item/agentMessage/delta",
-              "codex/event/agent_message_delta",
-              "codex/event/agent_message_content_delta"
-            ],
-       do: true
-
-  defp agent_message_streaming_method?(_method), do: false
-
-  defp streaming_agent_message_key(update, payload, method) do
-    item_id =
-      SymphonyElixir.Payload.get_path(payload, ["params", "id"]) ||
-        SymphonyElixir.Payload.get_path(payload, [:params, :id]) ||
-        SymphonyElixir.Payload.get_path(payload, ["params", "itemId"]) ||
-        SymphonyElixir.Payload.get_path(payload, [:params, :itemId]) ||
-        SymphonyElixir.Payload.get_path(payload, ["params", "msg", "id"]) ||
-        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :id])
-
-    [Map.get(update, :session_id), method, item_id]
-    |> Enum.reject(&is_nil/1)
-    |> Enum.join(":")
-  end
-
-  defp extract_streaming_delta(payload) do
-    [
-      ["params", "delta"],
-      [:params, :delta],
-      ["params", "msg", "delta"],
-      [:params, :msg, :delta],
-      ["params", "msg", "payload", "delta"],
-      [:params, :msg, :payload, :delta],
-      ["params", "msg", "payload", "text"],
-      [:params, :msg, :payload, :text],
-      ["params", "msg", "payload", "content"],
-      [:params, :msg, :payload, :content]
-    ]
-    |> Enum.find_value(fn path ->
-      payload
-      |> SymphonyElixir.Payload.get_path(path)
-      |> normalize_streaming_delta()
-    end)
-  end
-
-  defp normalize_streaming_delta(value) when is_binary(value) do
-    value = String.trim(value)
-    if value == "", do: nil, else: value
-  end
-
-  defp normalize_streaming_delta(_value), do: nil
-
-  defp smart_join_streaming_fragment("", fragment), do: fragment
-
-  defp smart_join_streaming_fragment(text, fragment) when is_binary(text) and is_binary(fragment) do
-    cond do
-      String.starts_with?(fragment, [" ", "\n", "\t"]) ->
-        text <> fragment
-
-      String.starts_with?(fragment, [".", ",", ":", ";", "?", "!", ")", "]", "}", "'", "\"", "’"]) ->
-        text <> fragment
-
-      String.ends_with?(text, ["(", "[", "{", "\"", "'", "“"]) ->
-        text <> fragment
-
-      true ->
-        text <> " " <> fragment
-    end
-  end
-
-  defp codex_history_label(event) do
-    event
-    |> to_string()
-    |> String.replace("_", " ")
-    |> String.capitalize()
-  end
-
   defp append_session_history(running_entry, event, label, metadata) when is_map(running_entry) do
     history = Map.get(running_entry, :session_history, [])
     next = session_history_event(event, label, metadata)
@@ -1906,6 +1656,11 @@ defmodule SymphonyElixir.Orchestrator do
           |> Map.put(:session_history_total_count, total_count)
         end
     end
+  end
+
+  defp pop_last_history_event(history) do
+    [last | rest_reversed] = Enum.reverse(history)
+    {last, rest_reversed}
   end
 
   defp coalescible_session_history?(%{event: event, metadata: metadata}, event, coalescing_key) when is_map(metadata) do
@@ -2066,12 +1821,16 @@ defmodule SymphonyElixir.Orchestrator do
   defp apply_codex_token_delta(state, _token_delta), do: state
 
   defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
-    case extract_rate_limits(update) do
+    case Update.rate_limits(update) do
       %{} = rate_limits ->
-        %{state | codex_rate_limits: rate_limits}
+        %{state | codex_rate_limits: rate_limits, codex_rate_limit_observation: %{status: :parsed, at: DateTime.utc_now()}}
 
       _ ->
-        state
+        if Update.rate_limit_update_event?(update) do
+          %{state | codex_rate_limit_observation: %{status: :unrecognized, at: DateTime.utc_now(), event: Map.get(update, :event)}}
+        else
+          state
+        end
     end
   end
 
@@ -2093,297 +1852,11 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp extract_token_delta(running_entry, %{event: _, timestamp: _} = update) do
-    running_entry = running_entry || %{}
-    usage = extract_token_usage(update)
-
-    {
-      compute_token_delta(
-        running_entry,
-        :input,
-        usage,
-        :codex_last_reported_input_tokens
-      ),
-      compute_token_delta(
-        running_entry,
-        :output,
-        usage,
-        :codex_last_reported_output_tokens
-      ),
-      compute_token_delta(
-        running_entry,
-        :total,
-        usage,
-        :codex_last_reported_total_tokens
-      )
-    }
-    |> Tuple.to_list()
-    |> then(fn [input, output, total] ->
-      %{
-        input_tokens: input.delta,
-        output_tokens: output.delta,
-        total_tokens: total.delta,
-        input_reported: input.reported,
-        output_reported: output.reported,
-        total_reported: total.reported
-      }
-    end)
-  end
-
-  defp compute_token_delta(running_entry, token_key, usage, reported_key) do
-    next_total = get_token_usage(usage, token_key)
-    prev_reported = Map.get(running_entry, reported_key, 0)
-
-    delta =
-      if is_integer(next_total) and next_total >= prev_reported do
-        next_total - prev_reported
-      else
-        0
-      end
-
-    %{
-      delta: max(delta, 0),
-      reported: if(is_integer(next_total), do: next_total, else: prev_reported)
-    }
-  end
-
-  defp extract_token_usage(update) do
-    payloads = [
-      update[:usage],
-      Map.get(update, "usage"),
-      Map.get(update, :usage),
-      update[:payload],
-      Map.get(update, "payload"),
-      update
-    ]
-
-    Enum.find_value(payloads, &absolute_token_usage_from_payload/1) ||
-      Enum.find_value(payloads, &turn_completed_usage_from_payload/1) ||
-      %{}
-  end
-
-  defp extract_rate_limits(update) do
-    rate_limits_from_payload(update[:rate_limits]) ||
-      rate_limits_from_payload(Map.get(update, "rate_limits")) ||
-      rate_limits_from_payload(Map.get(update, :rate_limits)) ||
-      rate_limits_from_payload(update[:payload]) ||
-      rate_limits_from_payload(Map.get(update, "payload")) ||
-      rate_limits_from_payload(update)
-  end
-
-  defp absolute_token_usage_from_payload(payload) when is_map(payload) do
-    absolute_paths = [
-      ["params", "msg", "payload", "info", "total_token_usage"],
-      [:params, :msg, :payload, :info, :total_token_usage],
-      ["params", "msg", "info", "total_token_usage"],
-      [:params, :msg, :info, :total_token_usage],
-      ["params", "tokenUsage", "total"],
-      [:params, :tokenUsage, :total],
-      ["tokenUsage", "total"],
-      [:tokenUsage, :total]
-    ]
-
-    explicit_map_at_paths(payload, absolute_paths)
-  end
-
-  defp absolute_token_usage_from_payload(_payload), do: nil
-
-  defp turn_completed_usage_from_payload(payload) when is_map(payload) do
-    method = SymphonyElixir.Payload.get_any(payload, ["method", :method])
-
-    if method in ["turn/completed", :turn_completed] do
-      direct =
-        SymphonyElixir.Payload.get_any(payload, ["usage", :usage]) ||
-          SymphonyElixir.Payload.get_path(payload, ["params", "usage"]) ||
-          SymphonyElixir.Payload.get_path(payload, [:params, :usage])
-
-      if is_map(direct) and integer_token_map?(direct), do: direct
-    end
-  end
-
-  defp turn_completed_usage_from_payload(_payload), do: nil
-
-  defp rate_limits_from_payload(payload) when is_map(payload) do
-    direct = SymphonyElixir.Payload.get_any(payload, ["rate_limits", :rate_limits])
-
-    cond do
-      rate_limits_map?(direct) ->
-        direct
-
-      rate_limits_map?(payload) ->
-        payload
-
-      true ->
-        rate_limit_payloads(payload)
-    end
-  end
-
-  defp rate_limits_from_payload(payload) when is_list(payload) do
-    rate_limit_payloads(payload)
-  end
-
-  defp rate_limits_from_payload(_payload), do: nil
-
-  defp rate_limit_payloads(payload) when is_map(payload) do
-    Map.values(payload)
-    |> Enum.reduce_while(nil, fn
-      value, nil ->
-        case rate_limits_from_payload(value) do
-          nil -> {:cont, nil}
-          rate_limits -> {:halt, rate_limits}
-        end
-
-      _value, result ->
-        {:halt, result}
-    end)
-  end
-
-  defp rate_limit_payloads(payload) when is_list(payload) do
-    payload
-    |> Enum.reduce_while(nil, fn
-      value, nil ->
-        case rate_limits_from_payload(value) do
-          nil -> {:cont, nil}
-          rate_limits -> {:halt, rate_limits}
-        end
-
-      _value, result ->
-        {:halt, result}
-    end)
-  end
-
-  defp rate_limits_map?(payload) when is_map(payload) do
-    limit_id =
-      SymphonyElixir.Payload.get_any(payload, [
-        "limit_id",
-        :limit_id,
-        "limit_name",
-        :limit_name
-      ])
-
-    has_buckets =
-      Enum.any?(
-        ["primary", :primary, "secondary", :secondary, "credits", :credits],
-        &Map.has_key?(payload, &1)
-      )
-
-    !is_nil(limit_id) and has_buckets
-  end
-
-  defp rate_limits_map?(_payload), do: false
-
-  defp explicit_map_at_paths(payload, paths) when is_map(payload) and is_list(paths) do
-    Enum.find_value(paths, fn path ->
-      value = SymphonyElixir.Payload.get_path(payload, path)
-
-      if is_map(value) and integer_token_map?(value), do: value
-    end)
-  end
-
-  defp explicit_map_at_paths(_payload, _paths), do: nil
-
-  defp integer_token_map?(payload) do
-    token_fields = [
-      :input_tokens,
-      :output_tokens,
-      :total_tokens,
-      :prompt_tokens,
-      :completion_tokens,
-      :inputTokens,
-      :outputTokens,
-      :totalTokens,
-      :promptTokens,
-      :completionTokens,
-      "input_tokens",
-      "output_tokens",
-      "total_tokens",
-      "prompt_tokens",
-      "completion_tokens",
-      "inputTokens",
-      "outputTokens",
-      "totalTokens",
-      "promptTokens",
-      "completionTokens"
-    ]
-
-    token_fields
-    |> Enum.any?(fn field ->
-      value = payload_get(payload, field)
-      !is_nil(integer_like(value))
-    end)
-  end
-
-  defp get_token_usage(usage, :input),
-    do:
-      payload_get(usage, [
-        "input_tokens",
-        "prompt_tokens",
-        :input_tokens,
-        :prompt_tokens,
-        :input,
-        "promptTokens",
-        :promptTokens,
-        "inputTokens",
-        :inputTokens
-      ])
-
-  defp get_token_usage(usage, :output),
-    do:
-      payload_get(usage, [
-        "output_tokens",
-        "completion_tokens",
-        :output_tokens,
-        :completion_tokens,
-        :output,
-        :completion,
-        "outputTokens",
-        :outputTokens,
-        "completionTokens",
-        :completionTokens
-      ])
-
-  defp get_token_usage(usage, :total),
-    do:
-      payload_get(usage, [
-        "total_tokens",
-        "total",
-        :total_tokens,
-        :total,
-        "totalTokens",
-        :totalTokens
-      ])
-
-  defp payload_get(payload, fields) when is_list(fields) do
-    Enum.find_value(fields, fn field -> map_integer_value(payload, field) end)
-  end
-
-  defp payload_get(payload, field), do: map_integer_value(payload, field)
-
-  defp map_integer_value(payload, field) do
-    if is_map(payload) do
-      value = Map.get(payload, field)
-      integer_like(value)
-    else
-      nil
-    end
-  end
-
   defp running_seconds(%DateTime{} = started_at, %DateTime{} = now) do
     max(0, DateTime.diff(now, started_at, :second))
   end
 
   defp running_seconds(_started_at, _now), do: 0
-
-  defp integer_like(value) when is_integer(value) and value >= 0, do: value
-
-  defp integer_like(value) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {num, _} when num >= 0 -> num
-      _ -> nil
-    end
-  end
-
-  defp integer_like(_value), do: nil
 
   defp persist_polled_issues(issues) when is_list(issues) do
     if persistence_enabled?() do
@@ -2540,7 +2013,7 @@ defmodule SymphonyElixir.Orchestrator do
     persist_event(
       "codex.update",
       Map.get(running_entry, :identifier),
-      %{event: Map.get(update, :event), message: Map.get(update, :message)},
+      Update.event_payload(update),
       Map.get(running_entry, :run_id)
     )
   end

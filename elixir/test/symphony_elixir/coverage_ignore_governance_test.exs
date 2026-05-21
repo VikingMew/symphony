@@ -19,8 +19,14 @@ defmodule SymphonyElixir.CoverageIgnoreGovernanceTest do
       assert group.category in @allowed_categories
       assert is_binary(group.remove_when)
       assert String.trim(group.remove_when) != ""
+      assert is_map(group.exit_slices)
       assert is_list(group.modules)
       assert group.modules != []
+
+      for module <- group.modules do
+        assert is_binary(Map.fetch!(group.exit_slices, module))
+        assert String.trim(Map.fetch!(group.exit_slices, module)) != ""
+      end
     end
   end
 
@@ -36,5 +42,6 @@ defmodule SymphonyElixir.CoverageIgnoreGovernanceTest do
     refute SymphonyElixir.StateName in ignore_modules
     refute SymphonyElixir.Text in ignore_modules
     refute SymphonyElixir.NumberFormat in ignore_modules
+    refute SymphonyElixir.Codex.DynamicTool in ignore_modules
   end
 end

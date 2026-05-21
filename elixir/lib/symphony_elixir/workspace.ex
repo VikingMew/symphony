@@ -4,7 +4,8 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, SSH}
+  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, SSH, WorkspaceCleanupPolicy}
+  alias SymphonyElixir.Workspace.SourcePreparation
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
   @hook_recent_output_bytes 4_096
@@ -56,6 +57,12 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp ensure_workspace(workspace, worker_host) when is_binary(worker_host) do
+    with :ok <- WorkspaceCleanupPolicy.validate_remote_delete(workspace, Config.settings!().workspace.root) do
+      do_ensure_remote_workspace(workspace, worker_host)
+    end
+  end
+
+  defp do_ensure_remote_workspace(workspace, worker_host) do
     script =
       [
         "set -eu",
@@ -81,9 +88,11 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp create_workspace(workspace) do
-    File.rm_rf!(workspace)
-    File.mkdir_p!(workspace)
-    {:ok, workspace, true}
+    with :ok <- validate_cleanup_delete(workspace, [workspace_root()]) do
+      File.rm_rf!(workspace)
+      File.mkdir_p!(workspace)
+      {:ok, workspace, true}
+    end
   end
 
   @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
@@ -93,14 +102,13 @@ defmodule SymphonyElixir.Workspace do
   def remove(workspace, nil) do
     case File.exists?(workspace) do
       true ->
-        case validate_workspace_path(workspace, nil) do
-          :ok ->
-            maybe_run_before_remove_hook(workspace, nil)
-            maybe_remove_project_worktree(workspace)
-            File.rm_rf(workspace)
-
-          {:error, reason} ->
-            {:error, reason, ""}
+        with :ok <- validate_workspace_path(workspace, nil),
+             :ok <- validate_cleanup_delete(workspace, [workspace_root()]) do
+          maybe_run_before_remove_hook(workspace, nil)
+          maybe_remove_project_worktree(workspace)
+          File.rm_rf(workspace)
+        else
+          {:error, reason} -> {:error, reason, ""}
         end
 
       false ->
@@ -109,21 +117,27 @@ defmodule SymphonyElixir.Workspace do
   end
 
   def remove(workspace, worker_host) when is_binary(worker_host) do
-    maybe_run_before_remove_hook(workspace, worker_host)
+    case WorkspaceCleanupPolicy.validate_remote_delete(workspace, Config.settings!().workspace.root) do
+      :ok ->
+        maybe_run_before_remove_hook(workspace, worker_host)
 
-    script =
-      [
-        remote_shell_assign("workspace", workspace),
-        "rm -rf \"$workspace\""
-      ]
-      |> Enum.join("\n")
+        script =
+          [
+            remote_shell_assign("workspace", workspace),
+            "rm -rf \"$workspace\""
+          ]
+          |> Enum.join("\n")
 
-    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
-      {:ok, {_output, 0}} ->
-        {:ok, []}
+        case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
+          {:ok, {_output, 0}} ->
+            {:ok, []}
 
-      {:ok, {output, status}} ->
-        {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
+          {:ok, {output, status}} ->
+            {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
+
+          {:error, reason} ->
+            {:error, reason, ""}
+        end
 
       {:error, reason} ->
         {:error, reason, ""}
@@ -210,7 +224,7 @@ defmodule SymphonyElixir.Workspace do
     settings = Config.settings!()
 
     case settings.project.source_strategy do
-      "worktree" -> worktree_base_root(settings)
+      "worktree" -> SourcePreparation.worktree_base_root(settings)
       _clone -> settings.workspace.root
     end
   end
@@ -301,7 +315,7 @@ defmodule SymphonyElixir.Workspace do
     timeout_ms = settings.workspace.initialize_timeout_ms
     started_at = System.monotonic_time(:millisecond)
     base_path = repository_cache_path(settings)
-    branch = "symphony/#{safe_identifier(issue_context.issue_identifier)}"
+    branch = SourcePreparation.worktree_branch(issue_context.issue_identifier)
 
     Logger.info("Preparing project worktree #{issue_log_context(issue_context)} base=#{base_path} workspace=#{workspace}")
     log_phase("workspace_bootstrap", :started, issue_context, workspace, nil)
@@ -372,8 +386,10 @@ defmodule SymphonyElixir.Workspace do
         {:error, :missing_project_repository_url}
 
       File.exists?(base_path) and empty_directory_tree?(base_path) ->
-        File.rm_rf!(base_path)
-        clone_worktree_base(project, base_path, timeout_ms, opts, issue_context)
+        with :ok <- validate_cleanup_delete(base_path, [SourcePreparation.repository_base_root(Config.settings!())]) do
+          File.rm_rf!(base_path)
+          clone_worktree_base(project, base_path, timeout_ms, opts, issue_context)
+        end
 
       File.exists?(base_path) and not empty_directory?(base_path) ->
         {:error, {:invalid_worktree_base_repo, base_path}}
@@ -466,31 +482,36 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp cleanup_stale_worktree(base_path, workspace, _project, timeout_ms, opts, issue_context) do
-    _ =
-      run_git(
-        base_path,
-        ["worktree", "remove", "--force", workspace],
-        timeout_ms,
-        progress_callback(
-          opts,
-          issue_context,
-          "workspace_bootstrap",
-          "worktree_remove",
-          "Removing stale worktree"
+    worktree_root = SourcePreparation.worktree_base_root(Config.settings!())
+
+    with :ok <-
+           validate_cleanup_delete(workspace, [worktree_root], protected_paths: [base_path]) do
+      _ =
+        run_git(
+          base_path,
+          ["worktree", "remove", "--force", workspace],
+          timeout_ms,
+          progress_callback(
+            opts,
+            issue_context,
+            "workspace_bootstrap",
+            "worktree_remove",
+            "Removing stale worktree"
+          )
         )
-      )
 
-    _ =
-      run_git(
-        base_path,
-        ["worktree", "prune"],
-        timeout_ms,
-        progress_callback(opts, issue_context, "workspace_bootstrap", "worktree_prune", "Pruning stale worktrees")
-      )
+      _ =
+        run_git(
+          base_path,
+          ["worktree", "prune"],
+          timeout_ms,
+          progress_callback(opts, issue_context, "workspace_bootstrap", "worktree_prune", "Pruning stale worktrees")
+        )
 
-    File.rm_rf!(workspace)
-    File.mkdir_p!(Path.dirname(workspace))
-    :ok
+      File.rm_rf!(workspace)
+      File.mkdir_p!(Path.dirname(workspace))
+      :ok
+    end
   end
 
   defp add_worktree(base_path, workspace, branch, default_branch, timeout_ms, opts, issue_context) do
@@ -545,49 +566,19 @@ defmodule SymphonyElixir.Workspace do
     _error -> false
   end
 
-  defp repository_cache_path(settings) do
-    settings
-    |> repository_base_root()
-    |> Path.join(repository_cache_key(settings.project))
-    |> Path.expand()
-  end
-
-  defp repository_base_root(settings) do
-    case settings.workspace.repository_base_root do
-      root when is_binary(root) and root != "" -> root
-      _ -> Path.join(settings.workspace.root, "repositories")
-    end
-  end
-
-  defp worktree_base_root(settings) do
-    case settings.workspace.worktree_base_root do
-      root when is_binary(root) and root != "" -> root
-      _ -> Path.join(settings.workspace.root, "worktrees")
-    end
-  end
-
-  defp repository_cache_key(project) do
-    source = "#{project.repository_url || "project"}:#{project.default_branch || "main"}"
-    digest = :crypto.hash(:sha256, source) |> Base.encode16(case: :lower) |> binary_part(0, 12)
-    "#{safe_identifier(project_slug(project))}-#{digest}"
-  end
-
-  defp project_slug(project) do
-    project
-    |> Map.get(:repository_url)
-    |> case do
-      url when is_binary(url) and url != "" -> Path.basename(url, ".git")
-      _ -> "project"
-    end
-  end
+  defp repository_cache_path(settings), do: SourcePreparation.repository_cache_path(settings)
 
   defp maybe_remove_project_worktree(workspace) do
     settings = Config.settings!()
 
     if settings.project.source_strategy == "worktree" do
       base_path = repository_cache_path(settings)
+      worktree_root = SourcePreparation.worktree_base_root(settings)
 
-      if git_repo?(base_path) do
+      delete_allowed? =
+        validate_cleanup_delete(workspace, [worktree_root], protected_paths: [base_path]) == :ok
+
+      if git_repo?(base_path) and delete_allowed? do
         _ = run_git(base_path, ["worktree", "remove", "--force", workspace])
         _ = run_git(base_path, ["worktree", "prune"])
       end
@@ -596,6 +587,11 @@ defmodule SymphonyElixir.Workspace do
     :ok
   rescue
     _error -> :ok
+  end
+
+  defp validate_cleanup_delete(path, roots, opts \\ []) do
+    protected_paths = Keyword.get(opts, :protected_paths, [])
+    WorkspaceCleanupPolicy.validate_local_delete(path, roots: roots, protected_paths: protected_paths)
   end
 
   defp run_git(cwd, args) do

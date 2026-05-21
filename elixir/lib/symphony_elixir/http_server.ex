@@ -68,13 +68,15 @@ defmodule SymphonyElixir.HttpServer do
   defp raw_server_value(key) do
     with {:ok, %{config: config}} <- Workflow.current(),
          server when is_map(server) <- SymphonyElixir.Payload.get_any(config, ["server", :server]) do
-      SymphonyElixir.Payload.get_any(server, [key, String.to_existing_atom(key)])
+      SymphonyElixir.Payload.get_any(server, [key, server_key(key)])
     else
       _ -> nil
     end
-  rescue
-    ArgumentError -> nil
   end
+
+  defp server_key("host"), do: :host
+  defp server_key("port"), do: :port
+  defp server_key(_key), do: :__unknown_server_key__
 
   @spec bound_port(term()) :: non_neg_integer() | nil
   def bound_port(_server \\ __MODULE__) do

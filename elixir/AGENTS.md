@@ -11,9 +11,9 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 ## Codebase-Specific Conventions
 
-- File-backed runtime config is loaded as a workflow package via `SymphonyElixir.Workflow` and
-  `SymphonyElixir.Config`: `workflow.yml` for runtime/routing and `profiles.yml` for agent profiles
-  plus the shared base prompt.
+- Runtime config is loaded from the active SQLite workflow version and should be accessed through
+  `SymphonyElixir.Config`. `workflow.yml` and `profiles.yml` are split package import/export
+  artifacts and examples, not the live runtime source.
 - Keep the implementation aligned with [`../SPEC.md`](../SPEC.md) where practical.
   - The implementation may be a superset of the spec.
   - The implementation must not conflict with the spec.

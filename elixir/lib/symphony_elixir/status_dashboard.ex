@@ -141,8 +141,13 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp raw_value(map, key) do
-    Map.get(map, key) || Map.get(map, String.to_atom(key))
+    SymphonyElixir.Payload.get_any(map, [key, observability_key(key)])
   end
+
+  defp observability_key("dashboard_enabled"), do: :dashboard_enabled
+  defp observability_key("refresh_ms"), do: :refresh_ms
+  defp observability_key("render_interval_ms"), do: :render_interval_ms
+  defp observability_key(_key), do: :__unknown_observability_key__
 
   defp schedule_tick(refresh_ms, true), do: Process.send_after(self(), :tick, refresh_ms)
   defp schedule_tick(_refresh_ms, false), do: :ok

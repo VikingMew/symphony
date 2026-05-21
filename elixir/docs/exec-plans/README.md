@@ -121,6 +121,18 @@ Plans should focus on product and engineering intent rather than full implementa
 114. [114-coverage-ignore-exit-governance.md](completed/114-coverage-ignore-exit-governance.md)
 115. [115-test-yaml-fixture-builder.md](completed/115-test-yaml-fixture-builder.md)
 116. [116-readable-run-detail-session-history.md](completed/116-readable-run-detail-session-history.md)
+117. [117-worktree-merge-base-branch-checkout.md](completed/117-worktree-merge-base-branch-checkout.md)
+118. [118-run-detail-codex-history-signal.md](completed/118-run-detail-codex-history-signal.md)
+119. [119-agents-runtime-source-doc-drift.md](completed/119-agents-runtime-source-doc-drift.md)
+120. [120-legacy-workflow-compatibility-boundary.md](completed/120-legacy-workflow-compatibility-boundary.md)
+121. [121-dynamic-atom-conversion-cleanup.md](completed/121-dynamic-atom-conversion-cleanup.md)
+122. [122-workspace-cleanup-policy-boundary.md](completed/122-workspace-cleanup-policy-boundary.md)
+123. [123-coverage-ignore-exit-slices.md](completed/123-coverage-ignore-exit-slices.md)
+124. [124-settings-workflow-domain-boundaries.md](completed/124-settings-workflow-domain-boundaries.md)
+125. [125-app-server-startup-boundary.md](completed/125-app-server-startup-boundary.md)
+126. [126-execplan-completion-evidence-governance.md](completed/126-execplan-completion-evidence-governance.md)
+127. [127-orchestrator-codex-update-boundary.md](completed/127-orchestrator-codex-update-boundary.md)
+128. [128-workspace-git-worktree-preparation-boundary.md](completed/128-workspace-git-worktree-preparation-boundary.md)
 
 ## Intentional Numbering Gaps
 
@@ -158,6 +170,21 @@ When implementation starts, keep the plan current. If the implementation discove
 
 `Completion Deviations` should be present even before work starts. Leave it as `None yet` until implementation begins, then record any meaningful difference between the plan and the delivered code.
 
+### Completion Evidence
+
+Before moving a plan to `completed/`, update `Verification` with the evidence that matches the plan's user-visible risk:
+
+- Pure domain or parser work should list the focused unit tests and any broader regression command that was run.
+- UI, Settings, run-detail, session-history, diagnostics, logging, and other operator-facing work should include rendered evidence: LiveView/browser output, realistic fixtures, screenshot verification, or an equivalent end-to-end assertion that proves the page/log answers the operator question.
+- Runtime process work should include realistic failure/success shapes, not only happy-path helpers.
+- If a high-priority acceptance criterion is intentionally left unmet, `Completion Deviations` must name the gap and link an active follow-up execplan that owns it.
+
+This is partly review policy rather than a fully mechanical check. `mix exec_plans.check` catches structure and index consistency; reviewers are responsible for rejecting completed plans whose evidence is too narrow for their stated acceptance criteria.
+
 ## Active Plans
 
 None.
+129. [129-rate-limit-observability-fallback.md](active/129-rate-limit-observability-fallback.md)
+130. [130-dashboard-linear-status-signal.md](active/130-dashboard-linear-status-signal.md)
+131. [131-worker-page-centralized-mode-explanation.md](active/131-worker-page-centralized-mode-explanation.md)
+132. [132-settings-import-review-page.md](active/132-settings-import-review-page.md)

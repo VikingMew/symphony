@@ -39,6 +39,7 @@ defmodule SymphonyElixir.MixProject do
           %{
             required(:category) => String.t(),
             required(:remove_when) => String.t(),
+            required(:exit_slices) => %{required(module()) => String.t()},
             required(:modules) => [module()]
           }
         ]
@@ -47,6 +48,21 @@ defmodule SymphonyElixir.MixProject do
       %{
         category: "protocol/process boundary",
         remove_when: "smaller injected boundaries make per-line coverage meaningful",
+        exit_slices: %{
+          SymphonyElixir.Config => "split runtime settings loading from process/env access, then count the pure loader",
+          SymphonyElixir.DatabaseSetup => "move migration/bootstrap orchestration behind a command boundary and keep schema checks covered elsewhere",
+          SymphonyElixir.Linear.Client => "extract GraphQL query construction and response decoding into counted pure modules",
+          SymphonyElixir.SpecsCheck => "extract spec file parsing and validation into a counted module",
+          SymphonyElixir.Orchestrator => "continue moving retry, run lifecycle, and state-machine policies into counted helpers",
+          SymphonyElixir.Orchestrator.State => "cover through extracted state transition helpers before counting the process shell",
+          SymphonyElixir.AgentRunner => "extract agent exit classification and workspace/codex sequencing into counted helpers",
+          SymphonyElixir.CLI => "cover option parsing separately from booting the supervision tree",
+          SymphonyElixir.Codex.AppServer => "extract startup command building, sandbox normalization, and response classification",
+          SymphonyElixir.HttpServer => "extract config resolution and endpoint host/port parsing",
+          SymphonyElixir.LogFile => "extract file path and formatter behavior from logger side effects",
+          SymphonyElixir.Workspace => "extract source strategy, cleanup policy, and hook command behavior before counting the process boundary",
+          Mix.Tasks.Symphony.Build => "keep as a Mix shell until release build packaging has a deterministic fake"
+        },
         modules: [
           SymphonyElixir.Config,
           SymphonyElixir.DatabaseSetup,
@@ -57,7 +73,6 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.AgentRunner,
           SymphonyElixir.CLI,
           SymphonyElixir.Codex.AppServer,
-          SymphonyElixir.Codex.DynamicTool,
           SymphonyElixir.HttpServer,
           SymphonyElixir.LogFile,
           SymphonyElixir.Workspace,
@@ -67,6 +82,23 @@ defmodule SymphonyElixir.MixProject do
       %{
         category: "storage boundary",
         remove_when: "context-level storage tests cover each schema/context public contract",
+        exit_slices: %{
+          SymphonyElixir.Persistence => "count after repository functions are tested through adapter contracts instead of real DB setup",
+          SymphonyElixir.Persistence.AgentTurn => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.EventRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.IssueRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.Project => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.RunRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.TaskLease => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.TaskRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.TrackerConfig => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.User => "count with password/hash schema tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.Worker => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.WorkerSession => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.WorkflowVersion => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.WorkspaceRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Repo => "permanent framework adapter shell unless a DB integration target is reintroduced"
+        },
         modules: [
           SymphonyElixir.Persistence,
           SymphonyElixir.Persistence.AgentTurn,
@@ -88,6 +120,20 @@ defmodule SymphonyElixir.MixProject do
       %{
         category: "presentation shell",
         remove_when: "LiveView/controller/component tests cover each module's own rendering contract",
+        exit_slices: %{
+          SymphonyElixir.StatusDashboard => "extract snapshot formatting and display policy into counted helpers before counting the process loop",
+          SymphonyElixirWeb.DashboardLive => "count when dashboard rendering is split from live process callbacks",
+          SymphonyElixirWeb.AdminLive => "count as settings/domain helpers are extracted from the large LiveView",
+          SymphonyElixirWeb.Endpoint => "permanent Phoenix endpoint shell",
+          SymphonyElixirWeb.ErrorHTML => "count after focused error rendering assertions are added",
+          SymphonyElixirWeb.ErrorJSON => "count after focused JSON error rendering assertions are added",
+          SymphonyElixirWeb.Layouts => "count after layout rendering assertions are added",
+          SymphonyElixirWeb.ObservabilityApiController => "count after controller response tests cover each branch",
+          SymphonyElixirWeb.StaticAssetController => "count after static asset response tests cover cache and not-found branches",
+          SymphonyElixirWeb.StaticAssets => "count after asset lookup helpers are isolated",
+          SymphonyElixirWeb.Router => "permanent Phoenix router shell unless route helpers become hand-written logic",
+          SymphonyElixirWeb.Router.Helpers => "permanent Phoenix helper shell"
+        },
         modules: [
           SymphonyElixir.StatusDashboard,
           SymphonyElixirWeb.DashboardLive,

@@ -9,8 +9,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     Config,
     PersistenceProvider,
     RunHistory,
-    Workflow,
     WorkflowForm,
+    WorkflowSettingsPackage,
     WorkflowStore,
     WorkflowValidator
   }
@@ -418,8 +418,8 @@ defmodule SymphonyElixirWeb.AdminLive do
     yaml = Map.get(params, "yaml", "")
 
     socket =
-      with :ok <- require_import_content(yaml),
-           {:ok, label, draft} <- import_settings_draft(yaml, socket.assigns.workflow_form) do
+      with :ok <- WorkflowSettingsPackage.require_import_content(yaml),
+           {:ok, label, draft} <- WorkflowSettingsPackage.import_draft(yaml, socket.assigns.workflow_form) do
         socket
         |> put_flash(:info, "#{label} imported into draft. Review and save to activate it.")
         |> assign_import_notice(:success, "#{label} imported into draft", "Review validation, then save to create an active database workflow version.")
@@ -430,7 +430,7 @@ defmodule SymphonyElixirWeb.AdminLive do
         |> assign_workflow_validation(draft)
       else
         {:error, reason} ->
-          message = import_error_message(reason)
+          message = WorkflowSettingsPackage.import_error_message(reason)
 
           socket
           |> put_flash(:error, "Workflow package import failed: #{message}")
@@ -545,7 +545,7 @@ defmodule SymphonyElixirWeb.AdminLive do
       with %{} = version <- version,
            raw when is_binary(raw) <- persistence().export_workflow(version),
            {:ok, history_draft} <- WorkflowForm.from_raw(raw),
-           draft <- restore_settings_section(section, socket.assigns.workflow_form, history_draft),
+           draft <- WorkflowSettingsPackage.restore_section(section, socket.assigns.workflow_form, history_draft),
            draft <- apply_project_settings(draft, socket.assigns.default_project),
            {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
            {:ok, project} <- persistence().default_project(),
@@ -697,11 +697,22 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <tr><th>Status</th><td><span class={status_class(@run_detail.run.status)}><%= @run_detail.run.status %></span></td></tr>
                   <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
                   <tr><th>Worker</th><td><%= Map.get(@run_detail.run, :worker_host) || "local" %></td></tr>
-                  <tr><th>Workspace</th><td class="mono"><%= @run_detail.run.workspace_path || "n/a" %></td></tr>
+                  <tr><th>Workspace</th><td class="mono"><%= Map.get(@run_detail.run, :workspace_path) || "n/a" %></td></tr>
                   <tr><th>Started</th><td class="mono"><%= fmt_dt(@run_detail.run.started_at) %></td></tr>
                   <tr><th>Finished</th><td class="mono"><%= fmt_dt(@run_detail.run.finished_at) %></td></tr>
                   <tr><th>Duration</th><td><%= fmt_duration(@run_detail.run.started_at, @run_detail.run.finished_at) %></td></tr>
-                  <tr><th>Failure</th><td><%= @run_detail.run.failure_reason || "n/a" %></td></tr>
+                  <tr><th>Failure</th><td><%= Map.get(@run_detail.run, :failure_reason) || "n/a" %></td></tr>
+                </tbody>
+              </table>
+
+              <h2 class="section-title">Run Summary</h2>
+              <table class="data-table">
+                <tbody>
+                  <tr><th>Outcome</th><td><%= @run_detail.summary.outcome %></td></tr>
+                  <tr><th>Last Codex signal</th><td><%= @run_detail.summary.last_codex_detail || "No useful Codex signal recorded." %></td></tr>
+                  <tr><th>Highlights</th><td><%= list_summary(@run_detail.summary.highlights) %></td></tr>
+                  <tr><th>Blockers</th><td><%= list_summary(@run_detail.summary.blockers) %></td></tr>
+                  <tr><th>Sessions</th><td><%= list_summary(@run_detail.summary.sessions) %></td></tr>
                 </tbody>
               </table>
 
@@ -714,7 +725,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
               <h2 class="section-title">Agent Turns</h2>
               <%= if @run_detail.turns == [] do %>
-                <p class="empty-state">No agent turns recorded.</p>
+                <p class="empty-state">No structured agent turns recorded. Session history below is the source of truth for this run.</p>
               <% else %>
                 <table class="data-table">
                   <thead><tr><th>Turn</th><th>Status</th><th>Started</th><th>Finished</th><th>Summary</th></tr></thead>
@@ -753,7 +764,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </table>
               <% end %>
 
-              <h2 class="section-title">Events</h2>
+              <h2 class="section-title">Raw Events</h2>
               <.event_table events={@run_detail.events} />
             <% else %>
               <p class="empty-state">Run not found.</p>
@@ -1581,11 +1592,14 @@ defmodule SymphonyElixirWeb.AdminLive do
         _ -> nil
       end
 
+    session_history = if(run, do: RunHistory.list_run_session_events(persistence(), run.id, limit: 100), else: [])
+
     assign(socket, :run_detail, %{
       run: run,
       workflow_version: workflow_version,
       turns: if(run, do: persistence().list_agent_turns_for_run(run.id), else: []),
-      session_history: if(run, do: RunHistory.list_run_session_events(persistence(), run.id, limit: 100), else: []),
+      session_history: session_history,
+      summary: RunHistory.summarize(run, session_history),
       events: if(run, do: persistence().list_events(run_id: run.id, limit: 100), else: [])
     })
   end
@@ -1600,7 +1614,16 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp assign_detail_data(socket) do
     socket
-    |> assign_new(:run_detail, fn -> %{run: nil, workflow_version: nil, turns: [], session_history: [], events: []} end)
+    |> assign_new(:run_detail, fn ->
+      %{
+        run: nil,
+        workflow_version: nil,
+        turns: [],
+        session_history: [],
+        summary: RunHistory.summarize(nil, []),
+        events: []
+      }
+    end)
     |> assign_new(:issue_detail, fn -> %{issue: nil, runs: [], events: []} end)
   end
 
@@ -1767,18 +1790,6 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp changeset_or_reason(reason), do: inspect(reason)
 
   defp truthy_param?(value), do: to_string(value) == "true"
-
-  defp restore_settings_section(:agents, current, history) do
-    current
-    |> Map.put("prompt_body", Map.get(history, "prompt_body", ""))
-    |> Map.put("profiles", Map.get(history, "profiles", %{}))
-  end
-
-  defp restore_settings_section(_workflow, current, history) do
-    history
-    |> Map.put("prompt_body", Map.get(current, "prompt_body", ""))
-    |> Map.put("profiles", Map.get(current, "profiles", %{}))
-  end
 
   defp append_empty_transition(draft) do
     transitions =
@@ -2054,51 +2065,6 @@ defmodule SymphonyElixirWeb.AdminLive do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  defp require_import_content(yaml) do
-    if blank?(yaml), do: {:error, "Paste workflow.yml or profiles.yml before importing."}, else: :ok
-  end
-
-  defp import_settings_draft(yaml, current) do
-    with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml) do
-      do_import_settings_draft(parsed, current)
-    end
-  end
-
-  defp do_import_settings_draft({:workflow, workflow_config}, current) do
-    current_config = draft_config_or_base(current)
-
-    loaded = %{
-      config:
-        workflow_config
-        |> Map.delete("profiles")
-        |> Map.put("profiles", Map.get(current_config, "profiles", %{})),
-      prompt: Map.get(current, "prompt_body", "")
-    }
-
-    {:ok, "workflow.yml", WorkflowForm.from_loaded(loaded)}
-  end
-
-  defp do_import_settings_draft({:profiles, profile_package}, current) do
-    current_config = draft_config_or_base(current)
-
-    loaded = %{
-      config: Map.put(current_config, "profiles", Map.get(profile_package, :profiles, %{})),
-      prompt: Map.get(profile_package, :base_prompt) || ""
-    }
-
-    {:ok, "profiles.yml", WorkflowForm.from_loaded(loaded)}
-  end
-
-  defp draft_config_or_base(current) do
-    case WorkflowForm.to_config(current) do
-      {:ok, config} -> config
-      {:error, _reason} -> Map.get(current, "_base_config", %{})
-    end
-  end
-
-  defp import_error_message(message) when is_binary(message), do: message
-  defp import_error_message(reason), do: inspect(reason)
-
   defp workflow_change_status(raw, socket) do
     case Map.get(socket.assigns, :active_workflow_version) do
       nil ->
@@ -2107,24 +2073,7 @@ defmodule SymphonyElixirWeb.AdminLive do
       version ->
         current_raw = persistence().export_workflow(version)
 
-        if canonical_workflow_equal?(current_raw, raw), do: :unchanged, else: :changed
-    end
-  end
-
-  defp canonical_workflow_equal?(left_raw, right_raw) do
-    with {:ok, left} <- canonical_workflow(left_raw),
-         {:ok, right} <- canonical_workflow(right_raw) do
-      left == right
-    else
-      _ -> left_raw == right_raw
-    end
-  end
-
-  defp canonical_workflow(raw) do
-    with {:ok, workflow} <- Workflow.parse_content(raw),
-         draft <- WorkflowForm.from_loaded(workflow),
-         {:ok, config} <- WorkflowForm.to_config(draft) do
-      {:ok, %{config: config, prompt: Map.get(draft, "prompt_body", "")}}
+        if WorkflowSettingsPackage.changed?(current_raw, raw), do: :changed, else: :unchanged
     end
   end
 
@@ -2214,6 +2163,9 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   defp fmt_duration(_started_at, _finished_at), do: "running"
+
+  defp list_summary([]), do: "n/a"
+  defp list_summary(values) when is_list(values), do: Enum.join(values, " | ")
 
   defp workflow_version_summary(version) do
     [

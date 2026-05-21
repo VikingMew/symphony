@@ -79,7 +79,7 @@ defmodule SymphonyElixir.GitTest do
     assert_receive {:git, "/repo", ["checkout", "-B", "feature/local"], 300_000}
   end
 
-  test "merge branch fetches checks out merges and optionally pushes" do
+  test "merge branch uses remote base ref without checking out local base branch" do
     test_pid = self()
 
     runner = fn workspace, args, timeout ->
@@ -87,10 +87,12 @@ defmodule SymphonyElixir.GitTest do
 
       case args do
         ["ls-remote", "--heads", "origin", "feature/merge"] -> {"abc refs/heads/feature/merge\n", 0}
+        ["ls-remote", "--heads", "origin", "main"] -> {"abc refs/heads/main\n", 0}
         ["fetch", "origin", "feature/merge"] -> {"", 0}
-        ["checkout", "main"] -> {"", 0}
+        ["fetch", "origin", "main"] -> {"", 0}
+        ["checkout", "--detach", "origin/main"] -> {"", 0}
         ["merge", "--no-edit", "origin/feature/merge"] -> {"merged", 0}
-        ["push", "origin", "main"] -> {"pushed", 0}
+        ["push", "origin", "HEAD:refs/heads/main"] -> {"pushed", 0}
         ["ls-remote", "--heads", "origin", "feature/missing"] -> {"", 0}
       end
     end
@@ -106,9 +108,70 @@ defmodule SymphonyElixir.GitTest do
              Git.merge_branch("/repo", "feature/missing", base_branch: "main", runner: runner)
 
     assert_receive {:git, "/repo", ["fetch", "origin", "feature/merge"], 300_000}
-    assert_receive {:git, "/repo", ["checkout", "main"], 300_000}
+    assert_receive {:git, "/repo", ["fetch", "origin", "main"], 300_000}
+    assert_receive {:git, "/repo", ["checkout", "--detach", "origin/main"], 300_000}
     assert_receive {:git, "/repo", ["merge", "--no-edit", "origin/feature/merge"], 300_000}
-    assert_receive {:git, "/repo", ["push", "origin", "main"], 300_000}
+    assert_receive {:git, "/repo", ["push", "origin", "HEAD:refs/heads/main"], 300_000}
+    refute_received {:git, "/repo", ["checkout", "main"], 300_000}
+  end
+
+  test "merge branch fails before merge when remote base branch is missing" do
+    test_pid = self()
+
+    runner = fn workspace, args, timeout ->
+      send(test_pid, {:git, workspace, args, timeout})
+
+      case args do
+        ["ls-remote", "--heads", "origin", "feature/merge"] -> {"abc refs/heads/feature/merge\n", 0}
+        ["ls-remote", "--heads", "origin", "release/missing"] -> {"", 0}
+      end
+    end
+
+    assert {:error, {:remote_base_branch_not_found, "release/missing"}} =
+             Git.merge_branch("/repo", "feature/merge",
+               base_branch: "release/missing",
+               runner: runner
+             )
+
+    assert_receive {:git, "/repo", ["ls-remote", "--heads", "origin", "feature/merge"], 300_000}
+    assert_receive {:git, "/repo", ["ls-remote", "--heads", "origin", "release/missing"], 300_000}
+    refute_receive {:git, "/repo", ["fetch", "origin", "feature/merge"], 300_000}
+  end
+
+  test "merge branch works in a git worktree when base branch is checked out by base repo" do
+    root = Path.join(System.tmp_dir!(), "symphony-git-worktree-merge-#{System.unique_integer([:positive])}")
+    source = Path.join(root, "source")
+    base = Path.join(root, "base")
+    workspace = Path.join(root, "worktree")
+
+    try do
+      File.mkdir_p!(source)
+      File.write!(Path.join(source, "README.md"), "base\n")
+      git!(source, ["init", "-b", "master"])
+      git!(source, ["config", "user.name", "Test User"])
+      git!(source, ["config", "user.email", "test@example.com"])
+      git!(source, ["add", "README.md"])
+      git!(source, ["commit", "-m", "base"])
+      git!(source, ["checkout", "-b", "feature/linear"])
+      File.write!(Path.join(source, "feature.txt"), "feature\n")
+      git!(source, ["add", "feature.txt"])
+      git!(source, ["commit", "-m", "feature"])
+      git!(source, ["checkout", "master"])
+
+      System.cmd("git", ["clone", source, base])
+      git!(base, ["worktree", "add", "-B", "merge-worktree", workspace, "origin/master"])
+
+      assert {:ok, output} = Git.merge_branch(workspace, "feature/linear", base_branch: "master")
+      assert output =~ "feature.txt"
+      assert File.read!(Path.join(workspace, "feature.txt")) == "feature\n"
+
+      {base_branch, 0} = System.cmd("git", ["-C", base, "branch", "--show-current"])
+      {workspace_branch, 0} = System.cmd("git", ["-C", workspace, "branch", "--show-current"])
+      assert String.trim(base_branch) == "master"
+      assert String.trim(workspace_branch) == ""
+    after
+      File.rm_rf(root)
+    end
   end
 
   test "real git command boundary reports success failure and timeout" do
@@ -129,6 +192,13 @@ defmodule SymphonyElixir.GitTest do
                Git.run(workspace, ["-c", "alias.slow=!sleep 1", "slow"], timeout_ms: 1)
     after
       File.rm_rf(workspace)
+    end
+  end
+
+  defp git!(workspace, args) do
+    case System.cmd("git", ["-C", workspace | args], stderr_to_stdout: true) do
+      {_output, 0} -> :ok
+      {output, status} -> flunk("git #{Enum.join(args, " ")} failed with #{status}: #{output}")
     end
   end
 end

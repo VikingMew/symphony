@@ -103,6 +103,38 @@ defmodule SymphonyElixir.RunHistoryTest do
     assert startup_failed.detail =~ "unknown variant reject"
   end
 
+  test "humanizes improved persisted codex payload shape with payload fallback" do
+    [tool_call] =
+      RunHistory.from_events([
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "notification",
+            "message" => %{"method" => "item/tool/call", "params" => %{"tool" => "linear_task_read"}},
+            "session_id" => "thread-1"
+          },
+          occurred_at: ~U[2026-05-21 00:00:01Z]
+        }
+      ])
+
+    assert tool_call.detail == "dynamic tool call requested (linear_task_read)"
+    assert tool_call.operation == "item/tool/call"
+    refute tool_call.low_signal
+  end
+
+  test "coalesces repeated legacy empty codex notifications" do
+    [empty] =
+      RunHistory.from_events([
+        %{event_type: "codex.update", payload: %{"event" => "notification", "message" => nil}, occurred_at: ~U[2026-05-21 00:00:01Z]},
+        %{event_type: "codex.update", payload: %{"event" => "notification", "message" => nil}, occurred_at: ~U[2026-05-21 00:00:02Z]},
+        %{event_type: "codex.update", payload: %{"event" => "notification", "message" => nil}, occurred_at: ~U[2026-05-21 00:00:03Z]}
+      ])
+
+    assert empty.low_signal
+    assert empty.detail == "3 empty Codex notifications; detailed payload was not persisted"
+    assert empty.metadata["_coalesced_count"] == 3
+  end
+
   test "coalesces adjacent persisted agent message fragments" do
     [message] =
       RunHistory.from_events([
@@ -166,5 +198,30 @@ defmodule SymphonyElixir.RunHistoryTest do
              detail: "",
              metadata: %{}
            } = RunHistory.from_event(%{})
+  end
+
+  test "summarizes useful run history signals" do
+    history =
+      RunHistory.from_events([
+        %{
+          event_type: "codex.update",
+          payload: %{"event" => "notification", "message" => %{"method" => "item/tool/call", "params" => %{"tool" => "linear_task_read"}}, "session_id" => "thread-1"},
+          occurred_at: ~U[2026-05-21 00:00:01Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{"event" => "turn_input_required", "message" => %{"method" => "turn/input_required"}},
+          occurred_at: ~U[2026-05-21 00:00:02Z]
+        }
+      ])
+
+    summary = RunHistory.summarize(%{status: "failed", attempt: 2, failure_reason: "needs input"}, history)
+
+    assert summary.outcome == "failed attempt 2"
+    assert summary.last_codex_detail == "turn blocked: waiting for user input"
+    assert "dynamic tool call requested (linear_task_read)" in summary.highlights
+    assert "needs input" in summary.blockers
+    assert "turn blocked: waiting for user input" in summary.blockers
+    assert summary.sessions == ["thread-1"]
   end
 end

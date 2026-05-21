@@ -1571,7 +1571,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
            ]
   end
 
-  test "schema parse normalizes policy keys and reads token only from LINEAR_API_KEY" do
+  test "schema parse reads token only from LINEAR_API_KEY" do
     missing_workspace_env = "SYMP_MISSING_WORKSPACE_#{System.unique_integer([:positive])}"
     empty_secret_env = "SYMP_EMPTY_SECRET_#{System.unique_integer([:positive])}"
 
@@ -1592,15 +1592,11 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert {:ok, settings} =
              Schema.parse(%{
                tracker: %{api_key: "$#{empty_secret_env}"},
-               workspace: %{root: "$#{missing_workspace_env}"},
-               codex: %{approval_policy: %{reject: %{sandbox_approval: true}}}
+               workspace: %{root: "$#{missing_workspace_env}"}
              })
 
     assert settings.tracker.api_key == "fallback-linear-token"
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
-
-    assert settings.codex.approval_policy == "never"
-
     System.delete_env("LINEAR_API_KEY")
 
     assert {:ok, settings} =
@@ -1611,6 +1607,15 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert settings.tracker.api_key == nil
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
+  end
+
+  test "schema parse rejects legacy codex approval policy maps" do
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               codex: %{approval_policy: %{reject: %{sandbox_approval: true}}}
+             })
+
+    assert message =~ "codex.approval_policy"
   end
 
   test "schema rejects Linear state names longer than Linear allows" do

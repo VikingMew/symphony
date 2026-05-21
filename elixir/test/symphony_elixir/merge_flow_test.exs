@@ -82,7 +82,7 @@ defmodule SymphonyElixir.MergeFlowTest do
     assert result["success"]
   end
 
-  test "merge executor reads Linear branchName and runs backend git merge without push by default" do
+  test "merge executor reads Linear branchName and merges against remote base without push by default" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git"
     )
@@ -101,8 +101,10 @@ defmodule SymphonyElixir.MergeFlowTest do
 
       case args do
         ["ls-remote", "--heads", "origin", "feature/ccr-3"] -> {"abc refs/heads/feature/ccr-3\n", 0}
+        ["ls-remote", "--heads", "origin", "main"] -> {"abc refs/heads/main\n", 0}
         ["fetch", "origin", "feature/ccr-3"] -> {"", 0}
-        ["checkout", "main"] -> {"", 0}
+        ["fetch", "origin", "main"] -> {"", 0}
+        ["checkout", "--detach", "origin/main"] -> {"", 0}
         ["merge", "--no-edit", "origin/feature/ccr-3"] -> {"merged", 0}
       end
     end
@@ -122,9 +124,50 @@ defmodule SymphonyElixir.MergeFlowTest do
     assert_receive {:transition, "Merging", "Done"}
     assert_receive {:git, "/tmp/workspace", ["ls-remote", "--heads", "origin", "feature/ccr-3"]}
     assert_receive {:git, "/tmp/workspace", ["fetch", "origin", "feature/ccr-3"]}
-    assert_receive {:git, "/tmp/workspace", ["checkout", "main"]}
+    assert_receive {:git, "/tmp/workspace", ["ls-remote", "--heads", "origin", "main"]}
+    assert_receive {:git, "/tmp/workspace", ["fetch", "origin", "main"]}
+    assert_receive {:git, "/tmp/workspace", ["checkout", "--detach", "origin/main"]}
     assert_receive {:git, "/tmp/workspace", ["merge", "--no-edit", "origin/feature/ccr-3"]}
     refute_receive {:git, "/tmp/workspace", ["push", "origin", "main"]}
+    refute_receive {:git, "/tmp/workspace", ["checkout", "main"]}
+  end
+
+  test "merge executor supports configured master base without local branch checkout" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
+      project_default_branch: "master"
+    )
+
+    issue = %Issue{
+      id: "issue-merge-master",
+      identifier: "MT-MERGE-MASTER",
+      state: "Ready to Merge",
+      branch_name: "feature/ccr-3"
+    }
+
+    test_pid = self()
+
+    runner = fn workspace, args, _timeout_ms ->
+      send(test_pid, {:git, workspace, args})
+
+      case args do
+        ["ls-remote", "--heads", "origin", "feature/ccr-3"] -> {"abc refs/heads/feature/ccr-3\n", 0}
+        ["ls-remote", "--heads", "origin", "master"] -> {"abc refs/heads/master\n", 0}
+        ["fetch", "origin", "feature/ccr-3"] -> {"", 0}
+        ["fetch", "origin", "master"] -> {"", 0}
+        ["checkout", "--detach", "origin/master"] -> {"", 0}
+        ["merge", "--no-edit", "origin/feature/ccr-3"] -> {"merged", 0}
+      end
+    end
+
+    assert :ok =
+             MergeExecutor.run("/tmp/workspace", issue,
+               git_opts: [runner: runner],
+               merge_state_transitioner: fn _issue, _target -> :ok end
+             )
+
+    assert_receive {:git, "/tmp/workspace", ["checkout", "--detach", "origin/master"]}
+    refute_receive {:git, "/tmp/workspace", ["checkout", "master"]}
   end
 
   test "agent runner dispatches merge profile to backend executor without starting Codex" do

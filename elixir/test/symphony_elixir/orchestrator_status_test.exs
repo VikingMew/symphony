@@ -157,6 +157,76 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert snapshot_entry.session_history_total_count == 3
   end
 
+  test "orchestrator persists codex update payload or raw when message is absent" do
+    issue_id = "issue-persist-codex"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-PERSIST-CODEX",
+      title: "Persist codex",
+      state: "In Progress"
+    }
+
+    pid = Process.whereis(Orchestrator)
+    initial_state = :sys.get_state(pid)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: :sys.replace_state(pid, fn _ -> initial_state end)
+    end)
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      run_id: "run-persist-codex",
+      session_id: nil,
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: DateTime.utc_now()
+    }
+
+    state_with_issue =
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+
+    :sys.replace_state(pid, fn _ -> state_with_issue end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :notification,
+         payload: %{
+           "method" => "item/tool/call",
+           "params" => %{"tool" => "linear_task_read", "api_token" => "secret-token"}
+         },
+         raw: "Authorization: Bearer secret-token",
+         session_id: "thread-persist",
+         timestamp: now
+       }}
+    )
+
+    _snapshot = GenServer.call(pid, :snapshot)
+
+    [event] = FakePersistence.list_events(run_id: "run-persist-codex", event_type: "codex.update")
+    assert event.payload.event == :notification
+    assert event.payload.message["method"] == "item/tool/call"
+    assert event.payload.message["params"]["api_token"] == "[REDACTED]"
+    assert event.payload.debug.raw == "Authorization: [REDACTED]"
+    assert event.payload.session_id == "thread-persist"
+    assert event.payload.timestamp == DateTime.to_iso8601(now)
+  end
+
   test "orchestrator coalesces adjacent streaming agent message notifications" do
     issue_id = "issue-streaming-history"
 

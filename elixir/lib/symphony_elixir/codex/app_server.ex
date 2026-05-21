@@ -4,14 +4,13 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, RuntimeProxy, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Codex.Startup, Config, PathSafety, RuntimeProxy, SSH}
 
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
   @port_line_bytes 1_048_576
   @max_stream_log_bytes 1_000
-  @startup_output_max_bytes 4_096
   @non_interactive_tool_input_answer "This is a non-interactive session. Operator input is unavailable."
   @sensitive_codex_env_names ~w(
     LINEAR_API_KEY
@@ -284,38 +283,9 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp codex_launch_command do
-    codex = Config.settings!().codex
-
-    [
-      pre_start_script(codex.pre_start_commands),
-      codex_command_script(codex.command)
-    ]
-    |> List.flatten()
-    |> Enum.reject(&blank?/1)
-    |> Enum.join("\n")
-  end
-
-  defp codex_command_script(command) when is_binary(command) do
-    if shell_control_command?(command), do: command, else: "exec #{command}"
-  end
-
-  defp shell_control_command?(command) do
-    String.contains?(command, ["\n", ";", "&&", "||"])
-  end
-
-  defp pre_start_script(commands) do
-    commands
-    |> List.wrap()
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.with_index(1)
-    |> Enum.map(fn {command, index} ->
-      [
-        "__symphony_codex_pre_start_index=#{index}",
-        "#{command} || { __symphony_codex_pre_start_status=$?; printf '%s\\n' #{SymphonyElixir.Shell.escape("Symphony Codex pre-start command #{index} failed. See Settings / Workflow / Codex / Pre-start commands.")} >&2; exit $__symphony_codex_pre_start_status; }"
-      ]
-    end)
-    |> List.flatten()
+    Config.settings!().codex
+    |> Map.from_struct()
+    |> Startup.launch_command()
   end
 
   defp maybe_put_proxy_env(port_opts) do
@@ -481,11 +451,11 @@ defmodule SymphonyElixir.Codex.AppServer do
         )
 
       {^port, {:exit_status, status}} ->
-        {:error, startup_failure({:port_exit, status}, stage, context, output, timeout_ms)}
+        {:error, Startup.failure({:port_exit, status}, stage, context, output, timeout_ms)}
     after
       timeout_ms ->
         output = append_startup_output(output, pending_line)
-        {:error, startup_failure(:response_timeout, stage, context, output, timeout_ms)}
+        {:error, Startup.failure(:response_timeout, stage, context, output, timeout_ms)}
     end
   end
 
@@ -497,10 +467,10 @@ defmodule SymphonyElixir.Codex.AppServer do
         {:ok, result}
 
       {:ok, %{"id" => ^request_id, "error" => error}} ->
-        {:error, startup_failure({:response_error, error}, stage, context, output, timeout_ms)}
+        {:error, Startup.failure({:response_error, error}, stage, context, output, timeout_ms)}
 
       {:ok, %{"id" => ^request_id} = payload} ->
-        {:error, startup_failure({:response_error, payload}, stage, context, output, timeout_ms)}
+        {:error, Startup.failure({:response_error, payload}, stage, context, output, timeout_ms)}
 
       {:ok, _payload} ->
         with_timeout_startup_response(port, request_id, timeout_ms, "", output, stage, context)
@@ -520,85 +490,8 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp startup_failure(reason, stage, context, output, timeout_ms) do
-    base = %{
-      reason: startup_reason(reason),
-      stage: stage,
-      command: Map.get(context, :command),
-      workspace: Map.get(context, :workspace),
-      worker_host: Map.get(context, :worker_host) || "local",
-      output: sanitize_startup_output(output),
-      hint: startup_hint(reason),
-      timeout_ms: timeout_ms
-    }
-
-    details =
-      case reason do
-        {:port_exit, status} -> Map.put(base, :exit_status, status)
-        {:response_error, error} -> Map.put(base, :response_error, error)
-        _ -> base
-      end
-
-    {:codex_startup_failed, details}
-  end
-
-  defp startup_reason({:port_exit, _status}), do: :port_exit
-  defp startup_reason({:response_error, _error}), do: :response_error
-  defp startup_reason(reason), do: reason
-
-  defp startup_hint({:port_exit, 127}), do: "Command not found or shell initialization failed before codex app-server became ready."
-
-  defp startup_hint({:port_exit, _status}), do: "Codex startup failed before the session handshake completed. Check Settings / Workflow / Codex / Pre-start commands and Command."
-
-  defp startup_hint({:response_error, error}) do
-    error
-    |> response_error_message()
-    |> approval_policy_error?()
-    |> case do
-      true -> "Codex rejected approvalPolicy. Open Settings / Workflow / Codex / Approval policy and choose one of: untrusted, on-failure, on-request, granular, never."
-      false -> "Codex app-server startup failed before the session handshake completed."
-    end
-  end
-
-  defp startup_hint(:response_timeout), do: "Codex app-server did not respond before codex.read_timeout_ms; increase read_timeout_ms or reduce shell startup work."
-  defp startup_hint(_reason), do: "Codex app-server startup failed before the session handshake completed."
-
-  defp response_error_message(%{"message" => message}) when is_binary(message), do: message
-  defp response_error_message(%{message: message}) when is_binary(message), do: message
-  defp response_error_message(error), do: inspect(error)
-
-  defp approval_policy_error?(message) do
-    String.contains?(message, "approvalPolicy") or
-      (String.contains?(message, "unknown variant") and String.contains?(message, "reject"))
-  end
-
   defp append_startup_output(output, chunk) do
-    text = chunk |> to_string() |> String.trim()
-
-    cond do
-      text == "" ->
-        output
-
-      output == "" ->
-        truncate_startup_output(text)
-
-      true ->
-        truncate_startup_output(output <> "\n" <> text)
-    end
-  end
-
-  defp truncate_startup_output(output) do
-    if String.length(output) > @startup_output_max_bytes do
-      String.slice(output, 0, @startup_output_max_bytes) <> "... (truncated)"
-    else
-      output
-    end
-  end
-
-  defp sanitize_startup_output(output) when is_binary(output) do
-    output
-    |> SymphonyElixir.Redaction.sensitive_env_values(@sensitive_codex_env_names)
-    |> SymphonyElixir.Redaction.credentials()
+    Startup.append_output(output, chunk)
   end
 
   defp receive_loop(port, on_message, timeout_ms, pending_line, tool_executor, auto_approve_requests) do

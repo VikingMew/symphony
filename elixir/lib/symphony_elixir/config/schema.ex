@@ -499,13 +499,7 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   def normalize_codex_approval_policy(value) when is_map(value) do
-    normalized = normalize_keys(value)
-
-    if Map.has_key?(normalized, "reject") do
-      "never"
-    else
-      "__invalid_map__"
-    end
+    if map_size(value) == 0, do: "never", else: "__invalid_map__"
   end
 
   def normalize_codex_approval_policy(_value), do: "__invalid__"

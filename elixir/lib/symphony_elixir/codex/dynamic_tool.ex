@@ -255,7 +255,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp normalize_update_arguments(_arguments), do: {:error, :invalid_arguments}
 
   defp put_optional_string(payload, arguments, field) do
-    case Map.get(arguments, field, Map.get(arguments, String.to_atom(field))) do
+    case SymphonyElixir.Payload.get_any(arguments, [field, argument_key(field)]) do
       nil ->
         payload
 
@@ -268,7 +268,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp put_optional_map(payload, arguments, field) do
-    case Map.get(arguments, field, Map.get(arguments, String.to_atom(field))) do
+    case SymphonyElixir.Payload.get_any(arguments, [field, argument_key(field)]) do
       nil ->
         payload
 
@@ -279,6 +279,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         throw({:invalid_field, field})
     end
   end
+
+  defp argument_key("description"), do: :description
+  defp argument_key("comment"), do: :comment
+  defp argument_key("target_state"), do: :target_state
+  defp argument_key("result"), do: :result
+  defp argument_key("references"), do: :references
+  defp argument_key(_field), do: :__unknown_dynamic_tool_argument__
 
   defp default_task_reader(payload, opts) do
     with {:ok, issue_id} <- issue_id_from_opts(opts),

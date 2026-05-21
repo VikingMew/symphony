@@ -8,6 +8,14 @@ defmodule SymphonyElixir.RunHistory do
   @default_limit 100
   @max_payload_chars 800
 
+  @type summary :: %{
+          outcome: String.t(),
+          last_codex_detail: String.t() | nil,
+          highlights: [String.t()],
+          blockers: [String.t()],
+          sessions: [String.t()]
+        }
+
   @spec list_run_session_events(module(), String.t(), keyword()) :: [map()]
   def list_run_session_events(persistence, run_id, opts \\ [])
       when is_atom(persistence) and is_binary(run_id) do
@@ -15,7 +23,7 @@ defmodule SymphonyElixir.RunHistory do
 
     persistence.list_events(run_id: run_id, limit: limit, order: :asc)
     |> Enum.map(&from_event/1)
-    |> coalesce_streaming_rows()
+    |> coalesce_rows()
   end
 
   @spec from_events([term()]) :: [map()]
@@ -23,24 +31,41 @@ defmodule SymphonyElixir.RunHistory do
     events
     |> Enum.sort_by(&event_time_sort_key/1)
     |> Enum.map(&from_event/1)
-    |> coalesce_streaming_rows()
+    |> coalesce_rows()
   end
 
   @spec from_event(term()) :: map()
   def from_event(event) do
     type = event_type(event)
     payload = event_payload(event)
+    detail = detail(type, payload)
 
     %{
       at: event_time(event),
       event: type,
       label: label(type, payload),
-      detail: detail(type, payload),
+      detail: detail,
       severity: severity(type, payload),
       source: source(type, payload),
       phase: payload_value(payload, ["phase", :phase]),
-      operation: payload_value(payload, ["operation", :operation, "hook", :hook, "hook_name", :hook_name]),
+      operation:
+        payload_value(payload, ["operation", :operation, "hook", :hook, "hook_name", :hook_name]) ||
+          codex_operation(type, payload),
+      low_signal: low_signal?(type, payload, detail),
       metadata: bounded_payload(payload)
+    }
+  end
+
+  @spec summarize(map() | nil, [map()]) :: summary()
+  def summarize(run, history) when is_list(history) do
+    useful = Enum.reject(history, &Map.get(&1, :low_signal, false))
+
+    %{
+      outcome: run_outcome(run),
+      last_codex_detail: last_codex_detail(useful),
+      highlights: useful |> Enum.filter(&highlight?/1) |> Enum.map(& &1.detail) |> Enum.uniq() |> Enum.take(5),
+      blockers: blockers(run, useful),
+      sessions: session_ids(history)
     }
   end
 
@@ -95,7 +120,7 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
-  defp detail("codex.update", payload), do: codex_update_detail(payload) || "codex.update"
+  defp detail("codex.update", payload), do: codex_update_detail(payload) || empty_codex_detail(payload) || "codex.update"
 
   defp detail(type, payload) do
     payload_value(payload, ["detail", :detail]) ||
@@ -135,6 +160,17 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
+  defp empty_codex_detail(payload) do
+    if empty_codex_notification?(payload) do
+      "Empty Codex notification; detailed payload was not persisted"
+    end
+  end
+
+  defp empty_codex_notification?(payload) do
+    payload |> payload_value(["event", :event]) |> normalize_codex_event_name() == "notification" and
+      is_nil(payload_value(payload, ["message", :message]))
+  end
+
   defp append_response_error_context(detail, message) do
     response_message =
       Payload.get_path(message, [:response_error, "message"]) ||
@@ -150,12 +186,27 @@ defmodule SymphonyElixir.RunHistory do
   defp normalize_codex_event(value) when is_atom(value), do: value
 
   defp normalize_codex_event(value) when is_binary(value) do
-    String.to_existing_atom(value)
-  rescue
-    ArgumentError -> value
+    Map.get(codex_event_atoms(), value, value)
   end
 
   defp normalize_codex_event(value), do: value
+
+  defp codex_event_atoms do
+    %{
+      "session_started" => :session_started,
+      "turn_input_required" => :turn_input_required,
+      "approval_auto_approved" => :approval_auto_approved,
+      "tool_input_auto_answered" => :tool_input_auto_answered,
+      "tool_call_completed" => :tool_call_completed,
+      "tool_call_failed" => :tool_call_failed,
+      "unsupported_tool_call" => :unsupported_tool_call,
+      "turn_ended_with_error" => :turn_ended_with_error,
+      "startup_failed" => :startup_failed,
+      "turn_failed" => :turn_failed,
+      "turn_cancelled" => :turn_cancelled,
+      "malformed" => :malformed
+    }
+  end
 
   defp normalize_codex_event_name(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_codex_event_name(value) when is_binary(value), do: value
@@ -174,6 +225,8 @@ defmodule SymphonyElixir.RunHistory do
     cond do
       type in ["run.failed", "workspace.hook_failed"] -> :error
       type in ["run.stopped"] -> :warning
+      codex_event(payload) in ["startup_failed", "turn_ended_with_error", "turn_failed"] -> :error
+      codex_event(payload) in ["approval_required", "turn_input_required"] -> :warning
       payload_value(payload, ["status", :status]) in ["failed", "error"] -> :error
       payload_value(payload, ["severity", :severity]) in [:warning, "warning"] -> :warning
       payload_value(payload, ["severity", :severity]) in [:error, "error"] -> :error
@@ -190,6 +243,8 @@ defmodule SymphonyElixir.RunHistory do
         true -> :agent
       end
   end
+
+  defp codex_event(payload), do: payload |> payload_value(["event", :event]) |> normalize_codex_event_name()
 
   defp bounded_payload(payload) when is_map(payload) do
     payload
@@ -223,21 +278,35 @@ defmodule SymphonyElixir.RunHistory do
 
   defp blank?(value), do: StateName.blank_string?(value) or (not is_binary(value) and SymphonyElixir.Text.blankish?(value))
 
-  defp coalesce_streaming_rows(rows) do
+  defp codex_operation("codex.update", payload) do
+    message = payload_value(payload, ["message", :message])
+
+    Payload.get_any(message || %{}, ["method", :method]) ||
+      Payload.get_path(message || %{}, ["params", "tool"]) ||
+      Payload.get_path(message || %{}, [:params, :tool]) ||
+      payload_value(payload, ["event", :event])
+  end
+
+  defp codex_operation(_type, _payload), do: nil
+
+  defp low_signal?("codex.update", payload, _detail), do: empty_codex_notification?(payload)
+  defp low_signal?(_type, _payload, _detail), do: false
+
+  defp coalesce_rows(rows) do
     rows
-    |> Enum.reduce([], &coalesce_streaming_row/2)
+    |> Enum.reduce([], &coalesce_row/2)
     |> Enum.reverse()
   end
 
-  defp coalesce_streaming_row(row, [previous | rest]) do
-    if coalescible_streaming_rows?(previous, row) do
-      [merge_streaming_rows(previous, row) | rest]
-    else
-      [row, previous | rest]
+  defp coalesce_row(row, [previous | rest]) do
+    cond do
+      coalescible_streaming_rows?(previous, row) -> [merge_streaming_rows(previous, row) | rest]
+      coalescible_low_signal_rows?(previous, row) -> [merge_low_signal_rows(previous, row) | rest]
+      true -> [row, previous | rest]
     end
   end
 
-  defp coalesce_streaming_row(row, []), do: [row]
+  defp coalesce_row(row, []), do: [row]
 
   defp coalescible_streaming_rows?(left, right) do
     left.event == right.event and
@@ -282,4 +351,64 @@ defmodule SymphonyElixir.RunHistory do
   end
 
   defp stream_fragment(_detail), do: ""
+
+  defp coalescible_low_signal_rows?(left, right) do
+    Map.get(left, :low_signal, false) and
+      Map.get(right, :low_signal, false) and
+      left.event == right.event and
+      left.label == right.label
+  end
+
+  defp merge_low_signal_rows(left, right) do
+    count = Map.get(left.metadata, "_coalesced_count", 1) + 1
+
+    %{
+      left
+      | at: right.at || left.at,
+        detail: "#{count} empty Codex notifications; detailed payload was not persisted",
+        metadata: Map.put(left.metadata, "_coalesced_count", count)
+    }
+  end
+
+  defp run_outcome(nil), do: "n/a"
+  defp run_outcome(run), do: "#{Map.get(run, :status, "unknown")} attempt #{Map.get(run, :attempt, "n/a")}"
+
+  defp last_codex_detail(history) do
+    history
+    |> Enum.reverse()
+    |> Enum.find_value(fn row ->
+      if row.source == :agent and is_binary(row.detail) and row.detail not in ["", "codex.update"], do: row.detail
+    end)
+  end
+
+  defp highlight?(row) do
+    detail = to_string(row.detail || "")
+    String.contains?(detail, ["tool", "command", "session completed", "turn completed", "agent message"])
+  end
+
+  defp blockers(run, history) do
+    run_failure =
+      case run && Map.get(run, :failure_reason) do
+        reason when is_binary(reason) and reason != "" -> [reason]
+        _ -> []
+      end
+
+    history_failures =
+      history
+      |> Enum.filter(&(&1.severity in [:warning, :error]))
+      |> Enum.map(& &1.detail)
+      |> Enum.reject(&blank?/1)
+
+    (run_failure ++ history_failures)
+    |> Enum.uniq()
+    |> Enum.take(5)
+  end
+
+  defp session_ids(history) do
+    history
+    |> Enum.map(fn row -> Payload.get_any(row.metadata, ["session_id", :session_id]) end)
+    |> Enum.filter(&is_binary/1)
+    |> Enum.uniq()
+    |> Enum.take(5)
+  end
 end

@@ -535,6 +535,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, _view, run_html} = live(build_conn(), "/runs/run-1")
     assert run_html =~ "Run Detail"
     assert run_html =~ "MT-1"
+    assert run_html =~ "Run Summary"
+    assert run_html =~ "Last Codex signal"
     assert run_html =~ "Workflow Version"
     assert run_html =~ "ID: workflow-1"
     assert run_html =~ "Version: 7"
@@ -559,6 +561,61 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, _view, filtered_events_html} = live(build_conn(), "/events?issue_identifier=MT-MISSING")
     assert filtered_events_html =~ "No events recorded"
     refute filtered_events_html =~ "run.failed"
+  end
+
+  test "run detail summarizes codex history when no structured agent turns exist" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    now = DateTime.utc_now()
+
+    FakePersistence.put_runs([
+      %{
+        id: "run-codex-history",
+        issue_identifier: "MT-CODEX-HISTORY",
+        workspace_path: "/tmp/workspaces/MT-CODEX-HISTORY",
+        status: "completed",
+        attempt: 1,
+        started_at: now,
+        finished_at: now
+      }
+    ])
+
+    FakePersistence.put_events([
+      %{run_id: "run-codex-history", issue_identifier: "MT-CODEX-HISTORY", event_type: "codex.update", payload: %{"event" => "notification", "message" => nil}, occurred_at: now},
+      %{run_id: "run-codex-history", issue_identifier: "MT-CODEX-HISTORY", event_type: "codex.update", payload: %{"event" => "notification", "message" => nil}, occurred_at: now},
+      %{
+        run_id: "run-codex-history",
+        issue_identifier: "MT-CODEX-HISTORY",
+        event_type: "codex.update",
+        payload: %{
+          "event" => "notification",
+          "message" => %{"method" => "item/tool/call", "params" => %{"tool" => "linear_task_read"}},
+          "session_id" => "thread-history"
+        },
+        occurred_at: now
+      },
+      %{
+        run_id: "run-codex-history",
+        issue_identifier: "MT-CODEX-HISTORY",
+        event_type: "codex.update",
+        payload: %{
+          "event" => "notification",
+          "message" => %{"method" => "item/agentMessage/delta", "params" => %{"delta" => "Finished the task."}},
+          "session_id" => "thread-history"
+        },
+        occurred_at: now
+      }
+    ])
+
+    {:ok, _view, html} = live(build_conn(), "/runs/run-codex-history")
+
+    assert html =~ "No structured agent turns recorded. Session history below is the source of truth for this run."
+    assert html =~ "dynamic tool call requested (linear_task_read)"
+    assert html =~ "agent message streaming: Finished the task."
+    assert html =~ "2 empty Codex notifications; detailed payload was not persisted"
+    assert html =~ "thread-history"
+    refute html =~ "No agent turns recorded."
   end
 
   test "workflow page saves structured draft through fake persistence without Repo" do
