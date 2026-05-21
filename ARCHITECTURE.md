@@ -59,7 +59,7 @@ flowchart TD
     extworker[External Worker] -->|register / claim / heartbeat / events| workerapi
 
     codex -->|read/write files, run tests, git| issuews
-    codex -->|linear_graphql tool| linear
+    codex -->|restricted task tools| linear
     codex -->|branches, commits, PRs| github[GitHub]
 
     orchestrator --> state[Runtime State]
@@ -200,9 +200,9 @@ Locations:
 - `elixir/lib/symphony_elixir/codex/app_server.ex`
 - `elixir/lib/symphony_elixir/codex/dynamic_tool.ex`
 
-This layer launches and communicates with Codex App Server. It also exposes a client-side
-`linear_graphql` dynamic tool so repository skills can make raw Linear GraphQL calls during agent
-sessions.
+This layer launches and communicates with Codex App Server. It exposes restricted task-scoped
+Linear tools (`linear_task_read` and `linear_task_update`) to Codex. Raw Linear GraphQL remains an
+internal Symphony backend/client implementation detail and is not a Codex-visible workflow tool.
 
 ### 6.9 Observability
 
