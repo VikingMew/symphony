@@ -443,9 +443,7 @@ defmodule SymphonyElixir.AgentRunner do
   defp worker_host_for_log(worker_host), do: worker_host
 
   defp normalize_issue_state(state_name) when is_binary(state_name) do
-    state_name
-    |> String.trim()
-    |> String.downcase()
+    SymphonyElixir.StateName.normalize(state_name)
   end
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do

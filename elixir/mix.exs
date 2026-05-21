@@ -12,50 +12,7 @@ defmodule SymphonyElixir.MixProject do
         summary: [
           threshold: 85
         ],
-        ignore_modules: [
-          SymphonyElixir.Config,
-          SymphonyElixir.DatabaseSetup,
-          SymphonyElixir.Linear.Client,
-          SymphonyElixir.SpecsCheck,
-          SymphonyElixir.Orchestrator,
-          SymphonyElixir.Orchestrator.State,
-          SymphonyElixir.AgentRunner,
-          SymphonyElixir.CLI,
-          SymphonyElixir.Codex.AppServer,
-          SymphonyElixir.Codex.DynamicTool,
-          SymphonyElixir.HttpServer,
-          SymphonyElixir.StatusDashboard,
-          SymphonyElixir.LogFile,
-          SymphonyElixir.Persistence,
-          SymphonyElixir.Persistence.AgentTurn,
-          SymphonyElixir.Persistence.EventRecord,
-          SymphonyElixir.Persistence.IssueRecord,
-          SymphonyElixir.Persistence.Project,
-          SymphonyElixir.Persistence.RunRecord,
-          SymphonyElixir.Persistence.TaskLease,
-          SymphonyElixir.Persistence.TaskRecord,
-          SymphonyElixir.Persistence.TrackerConfig,
-          SymphonyElixir.Persistence.User,
-          SymphonyElixir.Persistence.Worker,
-          SymphonyElixir.Persistence.WorkerSession,
-          SymphonyElixir.Persistence.WorkflowVersion,
-          SymphonyElixir.Persistence.WorkspaceRecord,
-          SymphonyElixir.Repo,
-          SymphonyElixir.Workspace,
-          Mix.Tasks.Symphony.Build,
-          SymphonyElixirWeb.DashboardLive,
-          SymphonyElixirWeb.AdminLive,
-          SymphonyElixirWeb.Endpoint,
-          SymphonyElixirWeb.ErrorHTML,
-          SymphonyElixirWeb.ErrorJSON,
-          SymphonyElixirWeb.Layouts,
-          SymphonyElixirWeb.ObservabilityApiController,
-          SymphonyElixirWeb.Presenter,
-          SymphonyElixirWeb.StaticAssetController,
-          SymphonyElixirWeb.StaticAssets,
-          SymphonyElixirWeb.Router,
-          SymphonyElixirWeb.Router.Helpers
-        ]
+        ignore_modules: coverage_ignore_modules()
       ],
       test_ignore_filters: [
         "test/support/database_isolation.exs",
@@ -76,6 +33,82 @@ defmodule SymphonyElixir.MixProject do
       mod: {SymphonyElixir.Application, []},
       extra_applications: [:logger, :crypto]
     ]
+  end
+
+  @spec coverage_ignore_groups() :: [
+          %{
+            required(:category) => String.t(),
+            required(:remove_when) => String.t(),
+            required(:modules) => [module()]
+          }
+        ]
+  def coverage_ignore_groups do
+    [
+      %{
+        category: "protocol/process boundary",
+        remove_when: "smaller injected boundaries make per-line coverage meaningful",
+        modules: [
+          SymphonyElixir.Config,
+          SymphonyElixir.DatabaseSetup,
+          SymphonyElixir.Linear.Client,
+          SymphonyElixir.SpecsCheck,
+          SymphonyElixir.Orchestrator,
+          SymphonyElixir.Orchestrator.State,
+          SymphonyElixir.AgentRunner,
+          SymphonyElixir.CLI,
+          SymphonyElixir.Codex.AppServer,
+          SymphonyElixir.Codex.DynamicTool,
+          SymphonyElixir.HttpServer,
+          SymphonyElixir.LogFile,
+          SymphonyElixir.Workspace,
+          Mix.Tasks.Symphony.Build
+        ]
+      },
+      %{
+        category: "storage boundary",
+        remove_when: "context-level storage tests cover each schema/context public contract",
+        modules: [
+          SymphonyElixir.Persistence,
+          SymphonyElixir.Persistence.AgentTurn,
+          SymphonyElixir.Persistence.EventRecord,
+          SymphonyElixir.Persistence.IssueRecord,
+          SymphonyElixir.Persistence.Project,
+          SymphonyElixir.Persistence.RunRecord,
+          SymphonyElixir.Persistence.TaskLease,
+          SymphonyElixir.Persistence.TaskRecord,
+          SymphonyElixir.Persistence.TrackerConfig,
+          SymphonyElixir.Persistence.User,
+          SymphonyElixir.Persistence.Worker,
+          SymphonyElixir.Persistence.WorkerSession,
+          SymphonyElixir.Persistence.WorkflowVersion,
+          SymphonyElixir.Persistence.WorkspaceRecord,
+          SymphonyElixir.Repo
+        ]
+      },
+      %{
+        category: "presentation shell",
+        remove_when: "LiveView/controller/component tests cover each module's own rendering contract",
+        modules: [
+          SymphonyElixir.StatusDashboard,
+          SymphonyElixirWeb.DashboardLive,
+          SymphonyElixirWeb.AdminLive,
+          SymphonyElixirWeb.Endpoint,
+          SymphonyElixirWeb.ErrorHTML,
+          SymphonyElixirWeb.ErrorJSON,
+          SymphonyElixirWeb.Layouts,
+          SymphonyElixirWeb.ObservabilityApiController,
+          SymphonyElixirWeb.StaticAssetController,
+          SymphonyElixirWeb.StaticAssets,
+          SymphonyElixirWeb.Router,
+          SymphonyElixirWeb.Router.Helpers
+        ]
+      }
+    ]
+  end
+
+  defp coverage_ignore_modules do
+    coverage_ignore_groups()
+    |> Enum.flat_map(& &1.modules)
   end
 
   # Run "mix help deps" to learn about dependencies.
@@ -103,7 +136,7 @@ defmodule SymphonyElixir.MixProject do
     [
       setup: ["deps.get"],
       build: ["symphony.build"],
-      lint: ["specs.check", "credo --strict"]
+      lint: ["exec_plans.check", "specs.check", "credo --strict"]
     ]
   end
 end

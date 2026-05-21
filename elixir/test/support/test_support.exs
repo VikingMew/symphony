@@ -1,7 +1,114 @@
+defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
+  @moduledoc false
+
+  def workflow_package_yaml(config) when is_map(config), do: yaml_document(config)
+
+  def profiles_package_yaml(profiles, prompt) do
+    "base_prompt: |\n" <> indent_block(prompt) <> "\nprofiles: #{yaml_value(profiles)}\n"
+  end
+
+  def settings_workflow_yaml do
+    workflow_package_yaml(%{
+      "tracker" => %{
+        "kind" => "linear",
+        "endpoint" => "https://api.linear.app/graphql",
+        "project_slug" => "project",
+        "active_states" => ["Ready", "In Progress"],
+        "terminal_states" => ["Done"]
+      },
+      "polling" => %{"interval_ms" => 30_000},
+      "project" => %{
+        "repository_url" => "git@github.com:org/imported.git",
+        "default_branch" => "main",
+        "checkout_depth" => 1,
+        "setup_commands" => [],
+        "cleanup_commands" => []
+      },
+      "workspace" => %{"root" => "/tmp/imported-workspaces"},
+      "agent" => %{"max_concurrent_agents" => 1, "max_turns" => 20},
+      "codex" => %{
+        "command" => "codex app-server",
+        "approval_policy" => "never",
+        "thread_sandbox" => "workspace-write"
+      },
+      "server" => %{"host" => "127.0.0.1", "port" => 4000},
+      "workflow" => %{
+        "states" => %{
+          "Ready" => %{"profile" => "implementation"},
+          "In Progress" => %{"profile" => "implementation"}
+        },
+        "human_review_states" => ["In Review"],
+        "allowed_transitions" => [
+          %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"}
+        ]
+      }
+    })
+  end
+
+  def settings_profiles_yaml do
+    profiles_package_yaml(
+      %{
+        "implementation" => %{
+          "name" => "Implementation",
+          "executor" => %{"type" => "codex_agent"},
+          "prompt" => %{"mode" => "extend", "template" => "Imported implementation prompt."},
+          "allowed_updates" => %{
+            "description" => false,
+            "comment" => true,
+            "result" => true,
+            "target_states" => ["In Review"]
+          }
+        }
+      },
+      "Imported base prompt."
+    )
+  end
+
+  def yaml_document(config) do
+    config
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map_join("\n", fn {key, value} -> "#{key}: #{yaml_value(value)}" end)
+    |> Kernel.<>("\n")
+  end
+
+  def yaml_value(value) when is_binary(value) do
+    escaped =
+      value
+      |> String.replace("\\", "\\\\")
+      |> String.replace("\n", "\\n")
+      |> String.replace("\"", "\\\"")
+
+    "\"" <> escaped <> "\""
+  end
+
+  def yaml_value(value) when is_integer(value), do: to_string(value)
+  def yaml_value(true), do: "true"
+  def yaml_value(false), do: "false"
+  def yaml_value(nil), do: "null"
+
+  def yaml_value(value) when is_list(value) do
+    "[" <> Enum.map_join(value, ", ", &yaml_value/1) <> "]"
+  end
+
+  def yaml_value(value) when is_map(value) do
+    value
+    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
+    |> Enum.map_join(", ", fn {key, nested} -> "#{key}: #{yaml_value(nested)}" end)
+    |> then(&"{#{&1}}")
+  end
+
+  defp indent_block(prompt) do
+    prompt
+    |> String.split("\n", trim: false)
+    |> Enum.map_join("\n", &("  " <> &1))
+  end
+end
+
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.{Workflow, WorkflowStore}
 
   defmacro __using__(_opts) do
@@ -67,8 +174,8 @@ defmodule SymphonyElixir.TestSupport do
     profiles_path = Path.join(Path.dirname(workflow_path), "profiles.yml")
 
     File.mkdir_p!(Path.dirname(workflow_path))
-    File.write!(workflow_path, yaml_document(workflow_config))
-    File.write!(profiles_path, profiles_document(profiles, loaded.prompt))
+    File.write!(workflow_path, WorkflowFixtures.workflow_package_yaml(workflow_config))
+    File.write!(profiles_path, WorkflowFixtures.profiles_package_yaml(profiles, loaded.prompt))
     seed_fake_active_workflow(workflow_path)
 
     if Process.whereis(WorkflowStore) do
@@ -114,23 +221,6 @@ defmodule SymphonyElixir.TestSupport do
     if Path.basename(path) in ["workflow.yml", "workflow.yaml"],
       do: path,
       else: Path.join(Path.dirname(path), "workflow.yml")
-  end
-
-  defp profiles_document(profiles, prompt) do
-    "base_prompt: |\n" <> indent_block(prompt) <> "\nprofiles: #{yaml_value(profiles)}\n"
-  end
-
-  defp yaml_document(config) do
-    config
-    |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
-    |> Enum.map_join("\n", fn {key, value} -> "#{key}: #{yaml_value(value)}" end)
-    |> Kernel.<>("\n")
-  end
-
-  defp indent_block(prompt) do
-    prompt
-    |> String.split("\n", trim: false)
-    |> Enum.map_join("\n", &("  " <> &1))
   end
 
   def stop_default_http_server do

@@ -149,9 +149,14 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
-  def list_runs(_opts \\ []) do
+  def list_runs(opts \\ []) do
     ensure_started()
-    Agent.get(@name, & &1.runs)
+
+    Agent.get(@name, fn state ->
+      state.runs
+      |> filter_eq(:status, Keyword.get(opts, :status))
+      |> Enum.take(Keyword.get(opts, :limit, length(state.runs)))
+    end)
   end
 
   def list_events(opts \\ []) do
@@ -162,6 +167,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       |> filter_eq(:issue_identifier, Keyword.get(opts, :issue_identifier))
       |> filter_eq(:run_id, Keyword.get(opts, :run_id))
       |> filter_eq(:event_type, Keyword.get(opts, :event_type))
+      |> sort_events(Keyword.get(opts, :order))
+      |> Enum.take(Keyword.get(opts, :limit, length(state.events)))
     end)
   end
 
@@ -233,11 +240,48 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     {:ok, task}
   end
 
-  def repo_available?, do: false
+  def repo_available? do
+    :symphony_elixir
+    |> Application.get_env(:fake_persistence, [])
+    |> Keyword.get(:repo_available?, false)
+  end
 
   def get_run(id) do
     ensure_started()
     Agent.get(@name, fn state -> Enum.find(state.runs, &(Map.get(&1, :id) == id)) end)
+  end
+
+  def update_run(run, attrs) when is_map(run) and is_map(attrs) do
+    ensure_started()
+    id = Map.get(run, :id)
+
+    Agent.get_and_update(@name, fn state ->
+      updated = Map.merge(run, atomize_keys(attrs))
+      runs = Enum.map(state.runs, &replace_run(&1, id, updated))
+
+      {{:ok, updated}, state |> record_call({:update_run, run, attrs}) |> Map.put(:runs, runs)}
+    end)
+  end
+
+  defp replace_run(existing, id, updated) do
+    if Map.get(existing, :id) == id, do: updated, else: existing
+  end
+
+  def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) do
+    case get_run(run_id) do
+      nil ->
+        {:error, :not_found}
+
+      run ->
+        update_run(
+          run,
+          SymphonyElixir.RunLifecycle.terminal_attrs(
+            status,
+            failure_reason,
+            Keyword.get(opts, :finished_at, DateTime.utc_now())
+          )
+        )
+    end
   end
 
   def get_workflow_version(id) do
@@ -468,5 +512,23 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   defp filter_eq(values, key, expected) do
     Enum.filter(values, &(Map.get(&1, key) == expected))
+  end
+
+  defp sort_events(events, :asc), do: Enum.sort_by(events, &event_time_sort_key/1)
+  defp sort_events(events, "asc"), do: Enum.sort_by(events, &event_time_sort_key/1)
+  defp sort_events(events, _order), do: events
+
+  defp event_time_sort_key(event) do
+    case Map.get(event, :occurred_at) do
+      %DateTime{} = dt -> DateTime.to_unix(dt, :microsecond)
+      _ -> 0
+    end
+  end
+
+  defp atomize_keys(attrs) do
+    Map.new(attrs, fn
+      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      pair -> pair
+    end)
   end
 end

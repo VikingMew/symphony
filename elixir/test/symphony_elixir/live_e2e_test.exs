@@ -381,7 +381,7 @@ defmodule SymphonyElixir.LiveE2ETest do
        when is_binary(worker_host) and is_binary(workspace_path) and is_binary(result_file) do
     remote_result_path = Path.join(workspace_path, result_file)
 
-    case SSH.run(worker_host, "cat #{shell_escape(remote_result_path)}", stderr_to_stdout: true) do
+    case SSH.run(worker_host, "cat #{SymphonyElixir.Shell.escape(remote_result_path)}", stderr_to_stdout: true) do
       {:ok, {output, 0}} ->
         output
 
@@ -391,10 +391,6 @@ defmodule SymphonyElixir.LiveE2ETest do
       {:error, reason} ->
         flunk("failed to read remote result from #{worker_host}:#{remote_result_path}: #{inspect(reason)}")
     end
-  end
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 
   defp run_live_issue_flow!(backend) when backend in [:local, :ssh] do
@@ -595,7 +591,7 @@ defmodule SymphonyElixir.LiveE2ETest do
   defp cleanup_remote_test_root(test_root, ssh_worker_hosts)
        when is_binary(test_root) and is_list(ssh_worker_hosts) do
     Enum.each(ssh_worker_hosts, fn worker_host ->
-      _ = SSH.run(worker_host, "rm -rf #{shell_escape(test_root)}", stderr_to_stdout: true)
+      _ = SSH.run(worker_host, "rm -rf #{SymphonyElixir.Shell.escape(test_root)}", stderr_to_stdout: true)
     end)
   end
 

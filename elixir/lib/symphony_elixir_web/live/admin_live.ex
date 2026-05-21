@@ -5,7 +5,16 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixir.{Config, PersistenceProvider, Workflow, WorkflowForm, WorkflowStore, WorkflowValidator}
+  alias SymphonyElixir.{
+    Config,
+    PersistenceProvider,
+    RunHistory,
+    Workflow,
+    WorkflowForm,
+    WorkflowStore,
+    WorkflowValidator
+  }
+
   alias SymphonyElixir.Linear.{Discovery, StateFixes, WorkflowStateValidator}
 
   @workflow_settings_source "web_workflow_settings"
@@ -718,6 +727,23 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </table>
               <% end %>
 
+              <h2 class="section-title">Session History</h2>
+              <%= if @run_detail.session_history == [] do %>
+                <p class="empty-state">No session history recorded for this run.</p>
+              <% else %>
+                <table class="data-table">
+                  <thead><tr><th>Time</th><th>Source</th><th>Event</th><th>Detail</th></tr></thead>
+                  <tbody>
+                    <tr :for={event <- @run_detail.session_history}>
+                      <td class="mono"><%= fmt_dt(event.at) %></td>
+                      <td><span class={status_class(to_string(event.severity || :info))}><%= event.source || "n/a" %></span></td>
+                      <td><%= event.label %></td>
+                      <td><%= event.detail || "n/a" %></td>
+                    </tr>
+                  </tbody>
+                </table>
+              <% end %>
+
               <h2 class="section-title">Events</h2>
               <.event_table events={@run_detail.events} />
             <% else %>
@@ -1084,7 +1110,26 @@ defmodule SymphonyElixirWeb.AdminLive do
                       <option :for={policy <- codex_approval_policy_options()} value={policy} selected={@workflow_form["codex_approval_policy"] == policy}><%= policy %></option>
                     </select>
                   </label>
-                  <label><span class="metric-label">Thread sandbox</span><input name="workflow[codex_thread_sandbox]" value={@workflow_form["codex_thread_sandbox"]} /></label>
+                  <label>
+                    <span class="metric-label">Thread sandbox</span>
+                    <input name="workflow[codex_thread_sandbox]" value={@workflow_form["codex_thread_sandbox"]} />
+                    <span class="settings-help">Thread startup policy. Turn sandbox below controls per-turn file and network access.</span>
+                  </label>
+                  <label>
+                    <span class="metric-label">Turn sandbox</span>
+                    <select name="workflow[codex_turn_sandbox_preset]">
+                      <option value="workspace_write_no_network" selected={@workflow_form["codex_turn_sandbox_preset"] == "workspace_write_no_network"}>Workspace write, no network</option>
+                      <option value="workspace_write_network" selected={@workflow_form["codex_turn_sandbox_preset"] == "workspace_write_network"}>Workspace write, network enabled</option>
+                      <option value="danger_full_access" selected={@workflow_form["codex_turn_sandbox_preset"] == "danger_full_access"}>Danger full access</option>
+                      <option value="custom" selected={@workflow_form["codex_turn_sandbox_preset"] == "custom"}>Custom JSON</option>
+                    </select>
+                    <span class="settings-help">This is sent as Codex turn/start sandboxPolicy. Use network enabled or danger full access when agent turns must push or fetch.</span>
+                  </label>
+                  <label>
+                    <span class="metric-label">Custom turn sandbox JSON</span>
+                    <textarea id={workflow_field_id("codex_turn_sandbox_json")} class={["workflow-textbox workflow-textbox-compact", workflow_field_class(@workflow_field_errors, "codex_turn_sandbox_json")]} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "codex_turn_sandbox_json")} name="workflow[codex_turn_sandbox_json]" rows="6" placeholder={~s({"type":"workspaceWrite","networkAccess":true})}><%= @workflow_form["codex_turn_sandbox_json"] %></textarea>
+                    <.workflow_field_error field="codex_turn_sandbox_json" errors={@workflow_field_errors} />
+                  </label>
                 </section>
               </div>
 
@@ -1513,11 +1558,10 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   defp blank_as_nil(value) do
-    value = String.trim(to_string(value || ""))
-    if value == "", do: nil, else: value
+    SymphonyElixir.Text.blank_as_nil(value)
   end
 
-  defp blank?(value), do: is_nil(blank_as_nil(value))
+  defp blank?(value), do: SymphonyElixir.Text.blankish?(value)
 
   defp assign_detail_data(%{assigns: %{live_action: :run_detail, route_params: %{"id" => id}}} = socket) do
     run = persistence().get_run(id)
@@ -1532,6 +1576,7 @@ defmodule SymphonyElixirWeb.AdminLive do
       run: run,
       workflow_version: workflow_version,
       turns: if(run, do: persistence().list_agent_turns_for_run(run.id), else: []),
+      session_history: if(run, do: RunHistory.list_run_session_events(persistence(), run.id, limit: 100), else: []),
       events: if(run, do: persistence().list_events(run_id: run.id, limit: 100), else: [])
     })
   end
@@ -1546,7 +1591,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp assign_detail_data(socket) do
     socket
-    |> assign_new(:run_detail, fn -> %{run: nil, workflow_version: nil, turns: [], events: []} end)
+    |> assign_new(:run_detail, fn -> %{run: nil, workflow_version: nil, turns: [], session_history: [], events: []} end)
     |> assign_new(:issue_detail, fn -> %{issue: nil, runs: [], events: []} end)
   end
 

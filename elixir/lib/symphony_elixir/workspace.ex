@@ -617,7 +617,7 @@ defmodule SymphonyElixir.Workspace do
 
   defp run_git(cwd, args, timeout_ms, on_output) when is_integer(timeout_ms) and timeout_ms > 0 do
     executable = System.find_executable("git") || "git"
-    command = shell_escape(executable) <> " " <> Enum.map_join(args, " ", &shell_escape/1)
+    command = SymphonyElixir.Shell.escape(executable) <> " " <> Enum.map_join(args, " ", &SymphonyElixir.Shell.escape/1)
 
     command
     |> run_local_hook_command(cwd, timeout_ms, on_output)
@@ -708,7 +708,7 @@ defmodule SymphonyElixir.Workspace do
   defp ignore_hook_failure(:ok), do: :ok
   defp ignore_hook_failure({:error, _reason}), do: :ok
 
-  defp blank?(value), do: String.trim(to_string(value || "")) == ""
+  defp blank?(value), do: SymphonyElixir.Text.blankish?(value)
 
   defp run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_override_ms \\ nil, opts \\ [])
 
@@ -770,7 +770,7 @@ defmodule SymphonyElixir.Workspace do
       worker_host: worker_host_for_log(worker_host)
     })
 
-    case run_remote_command(worker_host, "cd #{shell_escape(workspace)} && #{command}", timeout_ms) do
+    case run_remote_command(worker_host, "cd #{SymphonyElixir.Shell.escape(workspace)} && #{command}", timeout_ms) do
       {:ok, {output, status}} ->
         handle_hook_command_result(
           {output, status},
@@ -1060,22 +1060,7 @@ defmodule SymphonyElixir.Workspace do
   defp emit_system_progress(_opts, _issue_context, _metadata), do: :ok
 
   defp sanitize_hook_output_for_log(output, max_bytes \\ 2_048) do
-    binary_output = IO.iodata_to_binary(output)
-    binary_output = scrub_sensitive_output(binary_output)
-
-    case byte_size(binary_output) <= max_bytes do
-      true ->
-        binary_output
-
-      false ->
-        binary_part(binary_output, 0, max_bytes) <> "... (truncated)"
-    end
-  end
-
-  defp scrub_sensitive_output(output) do
-    output
-    |> String.replace(~r/(?i)(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s,;]+/, "\\1[REDACTED]")
-    |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+/, "\\1[REDACTED]")
+    SymphonyElixir.Redaction.bounded(output, max_bytes)
   end
 
   defp log_workspace_command_start("project_bootstrap", issue_context, workspace, nil) do
@@ -1211,7 +1196,7 @@ defmodule SymphonyElixir.Workspace do
   defp remote_shell_assign(variable_name, raw_path)
        when is_binary(variable_name) and is_binary(raw_path) do
     [
-      "#{variable_name}=#{shell_escape(raw_path)}",
+      "#{variable_name}=#{SymphonyElixir.Shell.escape(raw_path)}",
       "case \"$#{variable_name}\" in",
       "  '~') #{variable_name}=\"$HOME\" ;;",
       "  '~/'*) " <> variable_name <> "=\"$HOME/${" <> variable_name <> "#~/}\" ;;",
@@ -1258,10 +1243,6 @@ defmodule SymphonyElixir.Workspace do
         Task.shutdown(task, :brutal_kill)
         {:error, {:workspace_hook_timeout, "remote_command", timeout_ms}}
     end
-  end
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 
   defp worker_host_for_log(nil), do: "local"

@@ -309,7 +309,7 @@ defmodule SymphonyElixir.Linear.Discovery do
   defp terminal_state?(state), do: normalize_state(state) in ["canceled", "cancelled", "closed", "done", "duplicate"]
   defp review_state?(state), do: String.contains?(normalize_state(state), "review")
 
-  defp normalize_state(state) when is_binary(state), do: state |> String.trim() |> String.downcase()
+  defp normalize_state(state) when is_binary(state), do: SymphonyElixir.StateName.normalize(state)
   defp normalize_state(_state), do: ""
 
   defp display_value(value) when is_binary(value) do
@@ -319,5 +319,5 @@ defmodule SymphonyElixir.Linear.Discovery do
 
   defp display_value(_value), do: "n/a"
 
-  defp blank?(value), do: not is_binary(value) or String.trim(value) == ""
+  defp blank?(value), do: SymphonyElixir.Text.blank?(value)
 end

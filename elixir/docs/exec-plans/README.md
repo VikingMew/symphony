@@ -78,6 +78,19 @@ Plans should focus on product and engineering intent rather than full implementa
 71. [071-codex-mcp-elicitation-hard-stop.md](completed/071-codex-mcp-elicitation-hard-stop.md)
 72. [072-expose-workflow-state-parameters.md](completed/072-expose-workflow-state-parameters.md)
 73. [073-merge-branch-from-linear-branchname.md](completed/073-merge-branch-from-linear-branchname.md)
+74. [074-fixed-workflow-textbox-sizes.md](completed/074-fixed-workflow-textbox-sizes.md)
+75. [075-agent-settings-tab-split-workflow-files.md](completed/075-agent-settings-tab-split-workflow-files.md)
+76. [076-profile-owned-base-prompt.md](completed/076-profile-owned-base-prompt.md)
+77. [077-settings-tabs-consolidation.md](completed/077-settings-tabs-consolidation.md)
+78. [078-remove-cli-guardrails-ack-flag.md](completed/078-remove-cli-guardrails-ack-flag.md)
+79. [079-cli-database-path-and-no-workflow-arg.md](completed/079-cli-database-path-and-no-workflow-arg.md)
+80. [080-db-only-runtime-workflow-source.md](completed/080-db-only-runtime-workflow-source.md)
+81. [081-user-friendly-settings-layout.md](completed/081-user-friendly-settings-layout.md)
+82. [082-fix-settings-agents-responsive-field-layout.md](completed/082-fix-settings-agents-responsive-field-layout.md)
+83. [083-settings-section-version-history.md](completed/083-settings-section-version-history.md)
+84. [084-project-settings-multiple-projects.md](completed/084-project-settings-multiple-projects.md)
+85. [085-linear-discovery-assistant.md](completed/085-linear-discovery-assistant.md)
+86. [086-linear-token-env-only.md](completed/086-linear-token-env-only.md)
 87. [087-linear-discovery-settings-placement.md](completed/087-linear-discovery-settings-placement.md)
 88. [088-shared-linear-discovery-settings-state.md](completed/088-shared-linear-discovery-settings-state.md)
 89. [089-settings-check-field-highlighting.md](completed/089-settings-check-field-highlighting.md)
@@ -94,8 +107,36 @@ Plans should focus on product and engineering intent rather than full implementa
 100. [100-agent-start-master-sync.md](completed/100-agent-start-master-sync.md)
 101. [101-codex-pre-start-commands.md](completed/101-codex-pre-start-commands.md)
 102. [102-remove-hidden-codex-reject-approval-policy.md](completed/102-remove-hidden-codex-reject-approval-policy.md)
+103. [103-run-session-event-history-query.md](completed/103-run-session-event-history-query.md)
+104. [104-project-fragment-audit-and-consistency-debt.md](completed/104-project-fragment-audit-and-consistency-debt.md)
+105. [105-large-module-boundary-refactor.md](completed/105-large-module-boundary-refactor.md)
+106. [106-coverage-ignore-list-governance.md](completed/106-coverage-ignore-list-governance.md)
+107. [107-codex-environment-inheritance-contract.md](completed/107-codex-environment-inheritance-contract.md)
+108. [108-run-finished-at-persistence.md](completed/108-run-finished-at-persistence.md)
+109. [109-redundant-code-and-plan-numbering-audit.md](completed/109-redundant-code-and-plan-numbering-audit.md)
+110. [110-codex-turn-sandbox-policy-settings-ui.md](completed/110-codex-turn-sandbox-policy-settings-ui.md)
+111. [111-follow-up-audit-after-helper-extractions.md](completed/111-follow-up-audit-after-helper-extractions.md)
+112. [112-helper-migration-completion.md](completed/112-helper-migration-completion.md)
+113. [113-large-module-boundary-follow-up.md](completed/113-large-module-boundary-follow-up.md)
+114. [114-coverage-ignore-exit-governance.md](completed/114-coverage-ignore-exit-governance.md)
+115. [115-test-yaml-fixture-builder.md](completed/115-test-yaml-fixture-builder.md)
+
+## Intentional Numbering Gaps
+
+- `043`: intentionally absent historical gap. Do not reuse this number for a new plan.
 
 ## Plan Guidelines
+
+Every plan must be registered in exactly one lifecycle section:
+
+- Active plans live under `docs/exec-plans/active/` and must be listed in `Active Plans`.
+- Completed plans live under `docs/exec-plans/completed/` and must be listed in `Completed Plans`.
+- Do not leave plan files unlisted, duplicated across both sections, or stored outside these two
+  locations.
+
+Run `mix exec_plans.check` before committing plan changes. It fails when plan files are unlisted,
+listed in the wrong lifecycle section, duplicated by number, stored outside `active/` or
+`completed/`, or when numbering gaps are not documented.
 
 Each plan should include:
 
@@ -118,4 +159,5 @@ When implementation starts, keep the plan current. If the implementation discove
 
 ## Active Plans
 
-- [103 Run Session Event History Query](active/103-run-session-event-history-query.md)
+None.
+5. [116-readable-run-detail-session-history.md](active/116-readable-run-detail-session-history.md)

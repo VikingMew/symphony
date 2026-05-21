@@ -419,7 +419,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   @spec normalize_issue_state(String.t()) :: String.t()
   def normalize_issue_state(state_name) when is_binary(state_name) do
-    String.downcase(state_name)
+    SymphonyElixir.StateName.normalize(state_name)
   end
 
   @doc false
@@ -608,7 +608,7 @@ defmodule SymphonyElixir.Config.Schema do
       ])
       |> maybe_append_clone_depth(project.checkout_depth)
       |> maybe_append_clone_branch(project.default_branch)
-      |> Kernel.++([shell_escape(project.repository_url), "."])
+      |> Kernel.++([SymphonyElixir.Shell.escape(project.repository_url), "."])
 
     commands ++ [Enum.join(clone_parts, " ")]
   end
@@ -617,7 +617,7 @@ defmodule SymphonyElixir.Config.Schema do
     if ssh_repository_url?(repository_url) do
       parts ++
         [
-          "GIT_SSH_COMMAND=#{shell_escape("ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new")}"
+          "GIT_SSH_COMMAND=#{SymphonyElixir.Shell.escape("ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new")}"
         ]
     else
       parts
@@ -637,14 +637,10 @@ defmodule SymphonyElixir.Config.Schema do
   defp maybe_append_clone_depth(parts, _depth), do: parts
 
   defp maybe_append_clone_branch(parts, branch) when is_binary(branch) and branch != "" do
-    parts ++ ["--branch", shell_escape(branch)]
+    parts ++ ["--branch", SymphonyElixir.Shell.escape(branch)]
   end
 
   defp maybe_append_clone_branch(parts, _branch), do: parts
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
-  end
 
   defp changeset(attrs) do
     %__MODULE__{}

@@ -333,6 +333,12 @@ prompt 来源。
 `never`，默认值为 `never`。这个字段在 `/settings/workflow` 的 Codex 区域可见；如果
 Codex 在启动握手阶段拒绝 `approvalPolicy`，错误会指向该设置项。
 
+`codex.thread_sandbox` 和 `codex.turn_sandbox_policy` 是两个不同设置。前者用于 Codex
+thread 启动，后者会作为每次 `turn/start` 的 `sandboxPolicy` 发送，实际影响 agent turn
+是否能做网络操作，例如 `git push` 或 fetch。需要让 agent turn 访问网络时，在
+`/settings/workflow` 的 Codex 区域把 Turn sandbox 设为 workspace write with network 或
+danger full access；保留未来 Codex sandbox 形状时使用 custom JSON。
+
 当前默认 Linear 状态流是：
 
 ```text

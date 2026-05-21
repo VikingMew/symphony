@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Persistence do
   import Ecto.Query
 
   alias SymphonyElixir.Repo
-  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.{RunLifecycle, Workflow}
 
   alias SymphonyElixir.Persistence.{
     AgentTurn,
@@ -305,6 +305,15 @@ defmodule SymphonyElixir.Persistence do
   @spec update_run(RunRecord.t(), map()) :: {:ok, RunRecord.t()} | {:error, Ecto.Changeset.t()}
   def update_run(%RunRecord{} = run, attrs), do: run |> RunRecord.changeset(attrs) |> Repo.update()
 
+  @spec finish_run(String.t(), String.t(), String.t() | nil, keyword()) ::
+          {:ok, RunRecord.t()} | {:error, term()}
+  def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) when is_binary(run_id) and is_binary(status) do
+    with true <- repo_available?() || {:error, :repo_unavailable},
+         %RunRecord{} = run <- Repo.get(RunRecord, run_id) || {:error, :not_found} do
+      update_run(run, RunLifecycle.terminal_attrs(status, failure_reason, Keyword.get(opts, :finished_at, DateTime.utc_now())))
+    end
+  end
+
   @spec get_run(String.t()) :: RunRecord.t() | nil
   def get_run(id) when is_binary(id) do
     if repo_available?(), do: Repo.get(RunRecord, id)
@@ -370,7 +379,11 @@ defmodule SymphonyElixir.Persistence do
     limit = Keyword.get(opts, :limit, 100)
 
     if repo_available?() do
-      Repo.all(from(r in RunRecord, order_by: [desc: r.inserted_at], limit: ^limit))
+      RunRecord
+      |> maybe_filter_run_status(Keyword.get(opts, :status))
+      |> order_by([r], desc: r.inserted_at)
+      |> limit(^limit)
+      |> Repo.all()
     else
       []
     end
@@ -385,13 +398,23 @@ defmodule SymphonyElixir.Persistence do
       |> maybe_filter_event_issue(Keyword.get(opts, :issue_identifier))
       |> maybe_filter_event_run(Keyword.get(opts, :run_id))
       |> maybe_filter_event_type(Keyword.get(opts, :event_type))
-      |> order_by([e], desc: e.occurred_at)
+      |> order_events(Keyword.get(opts, :order, :desc))
       |> limit(^limit)
       |> Repo.all()
     else
       []
     end
   end
+
+  defp maybe_filter_run_status(query, status) when is_binary(status) and status != "" do
+    where(query, [r], r.status == ^status)
+  end
+
+  defp maybe_filter_run_status(query, _status), do: query
+
+  defp order_events(query, :asc), do: order_by(query, [e], asc: e.occurred_at)
+  defp order_events(query, "asc"), do: order_by(query, [e], asc: e.occurred_at)
+  defp order_events(query, _order), do: order_by(query, [e], desc: e.occurred_at)
 
   defp maybe_filter_event_issue(query, issue_identifier) when is_binary(issue_identifier) and issue_identifier != "" do
     where(query, [e], e.issue_identifier == ^issue_identifier)
@@ -826,33 +849,21 @@ defmodule SymphonyElixir.Persistence do
   end
 
   defp transition_task_from_event!(task, event_type) do
-    attrs =
-      case event_type do
-        "task.accepted" -> %{status: "running", started_at: task.started_at || DateTime.utc_now()}
-        "task.completed" -> %{status: "completed", finished_at: DateTime.utc_now()}
-        "task.failed" -> %{status: "failed", finished_at: DateTime.utc_now()}
-        "task.cancelled" -> %{status: "cancelled", finished_at: DateTime.utc_now()}
-        _ -> %{}
-      end
+    now = DateTime.utc_now()
+    attrs = RunLifecycle.task_event_attrs(event_type, now)
+    attrs = if event_type == "task.accepted" and task.started_at, do: %{attrs | started_at: task.started_at}, else: attrs
 
     if attrs != %{} do
       updated_task = task |> TaskRecord.changeset(attrs) |> Repo.update!()
-      transition_run_from_task_event!(updated_task, event_type)
+      transition_run_from_task_event!(updated_task, event_type, now)
       release_lease_for_terminal_event!(updated_task, event_type)
     end
   end
 
-  defp transition_run_from_task_event!(%TaskRecord{run_id: nil}, _event_type), do: :ok
+  defp transition_run_from_task_event!(%TaskRecord{run_id: nil}, _event_type, _now), do: :ok
 
-  defp transition_run_from_task_event!(%TaskRecord{} = task, event_type) do
-    attrs =
-      case event_type do
-        "task.accepted" -> %{status: "running"}
-        "task.completed" -> %{status: "completed", finished_at: DateTime.utc_now()}
-        "task.failed" -> %{status: "failed", finished_at: DateTime.utc_now()}
-        "task.cancelled" -> %{status: "cancelled", finished_at: DateTime.utc_now()}
-        _ -> %{}
-      end
+  defp transition_run_from_task_event!(%TaskRecord{} = task, event_type, now) do
+    attrs = RunLifecycle.run_event_attrs(event_type, now)
 
     if attrs == %{} do
       :ok

@@ -119,7 +119,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp raw_observability_config do
     with {:ok, %{config: config}} <- Workflow.current(),
          observability when is_map(observability) <-
-           Map.get(config, "observability") || Map.get(config, :observability) do
+           SymphonyElixir.Payload.get_any(config, ["observability", :observability]) do
       observability
     else
       _ -> %{}
@@ -256,32 +256,6 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp format_count(value) when is_integer(value) do
-    value
-    |> Integer.to_string()
-    |> group_thousands()
-  end
-
-  defp group_thousands(value) when is_binary(value) do
-    sign = if String.starts_with?(value, "-"), do: "-", else: ""
-    unsigned = if sign == "", do: value, else: String.slice(value, 1, String.length(value) - 1)
-
-    unsigned
-    |> String.reverse()
-    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
-    |> String.reverse()
-    |> prepend(sign)
-  end
-
-  defp prepend("", value), do: value
-  defp prepend(prefix, value), do: prefix <> value
-
-  defp map_value(map, keys) when is_map(map) and is_list(keys) do
-    Enum.find_value(keys, &Map.get(map, &1))
-  end
-
-  defp map_value(_map, _keys), do: nil
-
   @doc false
   @spec humanize_codex_message(term()) :: String.t()
   def humanize_codex_message(nil), do: "no codex message yet"
@@ -310,7 +284,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp summarize_message(message), do: humanize_codex_message(message)
 
   defp humanize_codex_event(:session_started, _message, payload) do
-    session_id = map_value(payload, ["session_id", :session_id])
+    session_id = SymphonyElixir.Payload.get_any(payload, ["session_id", :session_id])
 
     if is_binary(session_id) do
       "session started (#{session_id})"
@@ -320,7 +294,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp humanize_codex_event(:turn_input_required, _message, payload) do
-    case map_value(payload, ["method", :method]) do
+    case SymphonyElixir.Payload.get_any(payload, ["method", :method]) do
       method when method in ["mcpServer/elicitation/request", "mcp/elicitation/request"] ->
         humanize_mcp_elicitation(payload)
 
@@ -331,11 +305,11 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_event(:approval_auto_approved, message, payload) do
     method =
-      map_value(payload, ["method", :method]) ||
-        map_path(message, ["payload", "method"]) ||
-        map_path(message, [:payload, :method])
+      SymphonyElixir.Payload.get_any(payload, ["method", :method]) ||
+        SymphonyElixir.Payload.get_path(message, ["payload", "method"]) ||
+        SymphonyElixir.Payload.get_path(message, [:payload, :method])
 
-    decision = map_value(message, ["decision", :decision])
+    decision = SymphonyElixir.Payload.get_any(message, ["decision", :decision])
 
     base =
       if is_binary(method) do
@@ -348,7 +322,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp humanize_codex_event(:tool_input_auto_answered, message, payload) do
-    answer = map_value(message, ["answer", :answer])
+    answer = SymphonyElixir.Payload.get_any(message, ["answer", :answer])
 
     base =
       case humanize_codex_method("item/tool/requestUserInput", payload) do
@@ -377,24 +351,24 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp unwrap_codex_message_payload(%{} = message) do
     cond do
-      is_binary(map_value(message, ["method", :method])) -> message
-      is_binary(map_value(message, ["session_id", :session_id])) -> message
-      is_binary(map_value(message, ["reason", :reason])) -> message
-      true -> map_value(message, ["payload", :payload]) || message
+      is_binary(SymphonyElixir.Payload.get_any(message, ["method", :method])) -> message
+      is_binary(SymphonyElixir.Payload.get_any(message, ["session_id", :session_id])) -> message
+      is_binary(SymphonyElixir.Payload.get_any(message, ["reason", :reason])) -> message
+      true -> SymphonyElixir.Payload.get_any(message, ["payload", :payload]) || message
     end
   end
 
   defp unwrap_codex_message_payload(message), do: message
 
   defp humanize_codex_payload(%{} = payload) do
-    case map_value(payload, ["method", :method]) do
+    case SymphonyElixir.Payload.get_any(payload, ["method", :method]) do
       method when is_binary(method) ->
         humanize_codex_method(method, payload)
 
       _ ->
         cond do
-          is_binary(map_value(payload, ["session_id", :session_id])) ->
-            "session started (#{map_value(payload, ["session_id", :session_id])})"
+          is_binary(SymphonyElixir.Payload.get_any(payload, ["session_id", :session_id])) ->
+            "session started (#{SymphonyElixir.Payload.get_any(payload, ["session_id", :session_id])})"
 
           match?(%{"error" => _}, payload) ->
             "error: #{format_error_value(Map.get(payload, "error"))}"
@@ -425,14 +399,13 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp sanitize_ansi_and_control_bytes(value) when is_binary(value) do
-    value
-    |> String.replace(~r/\x1B\[[0-9;]*[A-Za-z]/, "")
-    |> String.replace(~r/\x1B./, "")
-    |> String.replace(~r/[\x00-\x1F\x7F]/, "")
+    SymphonyElixir.Redaction.ansi_and_control(value)
   end
 
   defp humanize_codex_method("thread/started", payload) do
-    thread_id = map_path(payload, ["params", "thread", "id"]) || map_path(payload, [:params, :thread, :id])
+    thread_id =
+      SymphonyElixir.Payload.get_path(payload, ["params", "thread", "id"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :thread, :id])
 
     if is_binary(thread_id) do
       "thread started (#{thread_id})"
@@ -442,7 +415,9 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp humanize_codex_method("turn/started", payload) do
-    turn_id = map_path(payload, ["params", "turn", "id"]) || map_path(payload, [:params, :turn, :id])
+    turn_id =
+      SymphonyElixir.Payload.get_path(payload, ["params", "turn", "id"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :turn, :id])
 
     if is_binary(turn_id) do
       "turn started (#{turn_id})"
@@ -453,16 +428,16 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("turn/completed", payload) do
     status =
-      map_path(payload, ["params", "turn", "status"]) ||
-        map_path(payload, [:params, :turn, :status]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "turn", "status"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :turn, :status]) ||
         "completed"
 
     usage =
-      map_path(payload, ["params", "usage"]) ||
-        map_path(payload, [:params, :usage]) ||
-        map_path(payload, ["params", "tokenUsage"]) ||
-        map_path(payload, [:params, :tokenUsage]) ||
-        map_value(payload, ["usage", :usage])
+      SymphonyElixir.Payload.get_path(payload, ["params", "usage"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :usage]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "tokenUsage"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :tokenUsage]) ||
+        SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
 
     usage_suffix =
       case format_usage_counts(usage) do
@@ -475,8 +450,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("turn/failed", payload) do
     error_message =
-      map_path(payload, ["params", "error", "message"]) ||
-        map_path(payload, [:params, :error, :message])
+      SymphonyElixir.Payload.get_path(payload, ["params", "error", "message"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :error, :message])
 
     if is_binary(error_message), do: "turn failed: #{error_message}", else: "turn failed"
   end
@@ -485,8 +460,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("turn/diff/updated", payload) do
     diff =
-      map_path(payload, ["params", "diff"]) ||
-        map_path(payload, [:params, :diff]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "diff"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :diff]) ||
         ""
 
     if is_binary(diff) and diff != "" do
@@ -499,12 +474,12 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("turn/plan/updated", payload) do
     plan_entries =
-      map_path(payload, ["params", "plan"]) ||
-        map_path(payload, [:params, :plan]) ||
-        map_path(payload, ["params", "steps"]) ||
-        map_path(payload, [:params, :steps]) ||
-        map_path(payload, ["params", "items"]) ||
-        map_path(payload, [:params, :items]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "plan"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :plan]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "steps"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :steps]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "items"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :items]) ||
         []
 
     if is_list(plan_entries) do
@@ -516,9 +491,9 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("thread/tokenUsage/updated", payload) do
     usage =
-      map_path(payload, ["params", "tokenUsage", "total"]) ||
-        map_path(payload, [:params, :tokenUsage, :total]) ||
-        map_value(payload, ["usage", :usage])
+      SymphonyElixir.Payload.get_path(payload, ["params", "tokenUsage", "total"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :tokenUsage, :total]) ||
+        SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
 
     case format_usage_counts(usage) do
       nil -> "thread token usage updated"
@@ -561,7 +536,9 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp humanize_codex_method("item/fileChange/requestApproval", payload) do
-    change_count = map_path(payload, ["params", "fileChangeCount"]) || map_path(payload, ["params", "changeCount"])
+    change_count =
+      SymphonyElixir.Payload.get_path(payload, ["params", "fileChangeCount"]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "changeCount"])
 
     if is_integer(change_count) and change_count > 0 do
       "file change approval requested (#{change_count} files)"
@@ -572,10 +549,10 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("item/tool/requestUserInput", payload) do
     question =
-      map_path(payload, ["params", "question"]) ||
-        map_path(payload, ["params", "prompt"]) ||
-        map_path(payload, [:params, :question]) ||
-        map_path(payload, [:params, :prompt])
+      SymphonyElixir.Payload.get_path(payload, ["params", "question"]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "prompt"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :question]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :prompt])
 
     if is_binary(question) and String.trim(question) != "" do
       "tool requires user input: #{inline_text(question)}"
@@ -592,8 +569,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("account/updated", payload) do
     auth_mode =
-      map_path(payload, ["params", "authMode"]) ||
-        map_path(payload, [:params, :authMode]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "authMode"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :authMode]) ||
         "unknown"
 
     "account updated (auth #{auth_mode})"
@@ -601,8 +578,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method("account/rateLimits/updated", payload) do
     rate_limits =
-      map_path(payload, ["params", "rateLimits"]) ||
-        map_path(payload, [:params, :rateLimits])
+      SymphonyElixir.Payload.get_path(payload, ["params", "rateLimits"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :rateLimits])
 
     "rate limits updated: #{format_rate_limits_summary(rate_limits)}"
   end
@@ -625,8 +602,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_method(method, payload) do
     msg_type =
-      map_path(payload, ["params", "msg", "type"]) ||
-        map_path(payload, [:params, :msg, :type])
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "type"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :type])
 
     if is_binary(msg_type) do
       "#{method} (#{msg_type})"
@@ -717,7 +694,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp first_binary_path(payload, paths) do
     Enum.find_value(paths, fn path ->
       payload
-      |> map_path(path)
+      |> SymphonyElixir.Payload.get_path(path)
       |> non_blank_binary()
     end)
   end
@@ -746,21 +723,21 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp dynamic_tool_name(payload) do
-    map_path(payload, ["params", "tool"]) ||
-      map_path(payload, ["params", "name"]) ||
-      map_path(payload, [:params, :tool]) ||
-      map_path(payload, [:params, :name])
+    SymphonyElixir.Payload.get_path(payload, ["params", "tool"]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "name"]) ||
+      SymphonyElixir.Payload.get_path(payload, [:params, :tool]) ||
+      SymphonyElixir.Payload.get_path(payload, [:params, :name])
   end
 
   defp humanize_item_lifecycle(state, payload) do
     item =
-      map_path(payload, ["params", "item"]) ||
-        map_path(payload, [:params, :item]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "item"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :item]) ||
         %{}
 
-    item_type = item |> map_value(["type", :type]) |> humanize_item_type()
-    item_status = map_value(item, ["status", :status])
-    item_id = map_value(item, ["id", :id])
+    item_type = item |> SymphonyElixir.Payload.get_any(["type", :type]) |> humanize_item_type()
+    item_status = SymphonyElixir.Payload.get_any(item, ["status", :status])
+    item_id = SymphonyElixir.Payload.get_any(item, ["id", :id])
 
     details =
       []
@@ -773,13 +750,13 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_wrapper_event("mcp_startup_update", payload) do
     server =
-      map_path(payload, ["params", "msg", "server"]) ||
-        map_path(payload, [:params, :msg, :server]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "server"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :server]) ||
         "mcp"
 
     state =
-      map_path(payload, ["params", "msg", "status", "state"]) ||
-        map_path(payload, [:params, :msg, :status, :state]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "status", "state"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :status, :state]) ||
         "updated"
 
     "mcp startup: #{server} #{state}"
@@ -837,8 +814,8 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_codex_wrapper_event(other, payload) do
     msg_type =
-      map_path(payload, ["params", "msg", "type"]) ||
-        map_path(payload, [:params, :msg, :type])
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "type"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :type])
 
     if is_binary(msg_type) do
       "#{other} (#{msg_type})"
@@ -849,10 +826,10 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_exec_command_begin(payload) do
     command =
-      map_path(payload, ["params", "msg", "command"]) ||
-        map_path(payload, [:params, :msg, :command]) ||
-        map_path(payload, ["params", "msg", "parsed_cmd"]) ||
-        map_path(payload, [:params, :msg, :parsed_cmd])
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "command"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :command]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "msg", "parsed_cmd"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :parsed_cmd])
 
     command = normalize_command(command)
 
@@ -865,10 +842,10 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp humanize_exec_command_end(payload) do
     exit_code =
-      map_path(payload, ["params", "msg", "exit_code"]) ||
-        map_path(payload, [:params, :msg, :exit_code]) ||
-        map_path(payload, ["params", "msg", "exitCode"]) ||
-        map_path(payload, [:params, :msg, :exitCode])
+      SymphonyElixir.Payload.get_path(payload, ["params", "msg", "exit_code"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :exit_code]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "msg", "exitCode"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :exitCode])
 
     if is_integer(exit_code) do
       "command completed (exit #{exit_code})"
@@ -880,7 +857,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_usage_counts(usage) when is_map(usage) do
     input =
       parse_integer(
-        map_value(usage, [
+        SymphonyElixir.Payload.get_any(usage, [
           "input_tokens",
           :input_tokens,
           "prompt_tokens",
@@ -894,7 +871,7 @@ defmodule SymphonyElixir.StatusDashboard do
 
     output =
       parse_integer(
-        map_value(usage, [
+        SymphonyElixir.Payload.get_any(usage, [
           "output_tokens",
           :output_tokens,
           "completion_tokens",
@@ -908,7 +885,7 @@ defmodule SymphonyElixir.StatusDashboard do
 
     total =
       parse_integer(
-        map_value(usage, [
+        SymphonyElixir.Payload.get_any(usage, [
           "total_tokens",
           :total_tokens,
           "total",
@@ -933,13 +910,13 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_usage_counts(_usage), do: nil
 
   defp append_usage_part(parts, _label, value) when not is_integer(value), do: parts
-  defp append_usage_part(parts, label, value), do: parts ++ ["#{label} #{format_count(value)}"]
+  defp append_usage_part(parts, label, value), do: parts ++ ["#{label} #{SymphonyElixir.NumberFormat.grouped_integer(value)}"]
 
   defp format_rate_limits_summary(nil), do: "n/a"
 
   defp format_rate_limits_summary(rate_limits) when is_map(rate_limits) do
-    primary = map_value(rate_limits, ["primary", :primary])
-    secondary = map_value(rate_limits, ["secondary", :secondary])
+    primary = SymphonyElixir.Payload.get_any(rate_limits, ["primary", :primary])
+    secondary = SymphonyElixir.Payload.get_any(rate_limits, ["secondary", :secondary])
 
     primary_text = format_rate_limit_bucket_summary(primary)
     secondary_text = format_rate_limit_bucket_summary(secondary)
@@ -955,8 +932,8 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_rate_limits_summary(_rate_limits), do: "n/a"
 
   defp format_rate_limit_bucket_summary(bucket) when is_map(bucket) do
-    used_percent = map_value(bucket, ["usedPercent", :usedPercent])
-    window_mins = map_value(bucket, ["windowDurationMins", :windowDurationMins])
+    used_percent = SymphonyElixir.Payload.get_any(bucket, ["usedPercent", :usedPercent])
+    window_mins = SymphonyElixir.Payload.get_any(bucket, ["windowDurationMins", :windowDurationMins])
 
     cond do
       is_number(used_percent) and is_integer(window_mins) ->
@@ -977,7 +954,7 @@ defmodule SymphonyElixir.StatusDashboard do
   defp format_error_value(error), do: inspect(error, limit: 10)
 
   defp format_reason(message) when is_map(message) do
-    case map_value(message, ["reason", :reason]) do
+    case SymphonyElixir.Payload.get_any(message, ["reason", :reason]) do
       nil ->
         message
         |> inspect(limit: 10)
@@ -1030,23 +1007,23 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp extract_command(payload) do
     payload
-    |> map_path(["params", "parsedCmd"])
+    |> SymphonyElixir.Payload.get_path(["params", "parsedCmd"])
     |> fallback_command(payload)
     |> normalize_command()
   end
 
   defp fallback_command(nil, payload) do
-    map_path(payload, ["params", "command"]) ||
-      map_path(payload, ["params", "cmd"]) ||
-      map_path(payload, ["params", "argv"]) ||
-      map_path(payload, ["params", "args"])
+    SymphonyElixir.Payload.get_path(payload, ["params", "command"]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "cmd"]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "argv"]) ||
+      SymphonyElixir.Payload.get_path(payload, ["params", "args"])
   end
 
   defp fallback_command(command, _payload), do: command
 
   defp normalize_command(%{} = command) do
-    binary_command = map_value(command, ["parsedCmd", :parsedCmd, "command", :command, "cmd", :cmd])
-    args = map_value(command, ["args", :args, "argv", :argv])
+    binary_command = SymphonyElixir.Payload.get_any(command, ["parsedCmd", :parsedCmd, "command", :command, "cmd", :cmd])
+    args = SymphonyElixir.Payload.get_any(command, ["args", :args, "argv", :argv])
 
     if is_binary(binary_command) and is_list(args) do
       normalize_command([binary_command | args])
@@ -1100,8 +1077,8 @@ defmodule SymphonyElixir.StatusDashboard do
   defp append_if_present(list, _value), do: list
 
   defp wrapper_payload_type(payload) do
-    map_path(payload, ["params", "msg", "payload", "type"]) ||
-      map_path(payload, [:params, :msg, :payload, :type])
+    SymphonyElixir.Payload.get_path(payload, ["params", "msg", "payload", "type"]) ||
+      SymphonyElixir.Payload.get_path(payload, [:params, :msg, :payload, :type])
   end
 
   defp inline_text(text) when is_binary(text) do
@@ -1206,44 +1183,9 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp extract_first_path(payload, paths) do
     Enum.find_value(paths, fn path ->
-      map_path(payload, path)
+      SymphonyElixir.Payload.get_path(payload, path)
     end)
   end
-
-  defp map_path(data, [key | rest]) when is_map(data) do
-    case fetch_map_key(data, key) do
-      {:ok, value} when rest == [] -> value
-      {:ok, value} -> map_path(value, rest)
-      :error -> nil
-    end
-  end
-
-  defp map_path(_data, _path), do: nil
-
-  defp fetch_map_key(map, key) when is_map(map) do
-    case Map.fetch(map, key) do
-      {:ok, value} ->
-        {:ok, value}
-
-      :error ->
-        alternate = alternate_key(key)
-
-        if alternate == key do
-          :error
-        else
-          Map.fetch(map, alternate)
-        end
-    end
-  end
-
-  defp alternate_key(key) when is_binary(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
-  end
-
-  defp alternate_key(key) when is_atom(key), do: Atom.to_string(key)
-  defp alternate_key(key), do: key
 
   defp truncate(value, max) when byte_size(value) > max do
     value |> String.slice(0, max) |> Kernel.<>("...")

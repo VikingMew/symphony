@@ -63,5 +63,7 @@ If behavior/config changes, update docs in the same PR:
 
 - `../README.md` for project concept and goals.
 - `README.md` for Elixir implementation and run instructions.
-- `workflow.yml` and `profiles.yml` for file-backed workflow/config contract
-  changes.
+- `workflow.yml` and `profiles.yml` when the import/export workflow package
+  contract changes. The SQLite active workflow version is the runtime
+  authority; local split package files are examples/import artifacts, not the
+  live runtime source.

@@ -660,10 +660,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp format_reason(reason) do
     reason
     |> inspect(limit: 20, printable_limit: 500)
-    |> String.replace(~r/(Authorization|api[_-]?key|token)(["':=>,\s]+)[^,\]\}\s]+/i, "\\1\\2[REDACTED]")
+    |> SymphonyElixir.Redaction.credentials()
   end
 
-  defp blank?(value) when is_binary(value), do: String.trim(value) == ""
-  defp blank?(nil), do: true
-  defp blank?(_value), do: false
+  defp blank?(value), do: SymphonyElixir.Text.blank?(value)
 end

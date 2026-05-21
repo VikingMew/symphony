@@ -3,8 +3,7 @@ defmodule SymphonyElixir.Config do
   Runtime configuration loaded from the active workflow package.
   """
 
-  alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.{Config.Schema, Text, Workflow}
 
   @default_prompt_template """
   You are working on a Linear issue.
@@ -174,7 +173,7 @@ defmodule SymphonyElixir.Config do
   end
 
   defp validate_project(%{repository_url: repository_url}) do
-    if blank?(repository_url), do: {:error, :missing_project_repository_url}, else: :ok
+    if Text.blank?(repository_url), do: {:error, :missing_project_repository_url}, else: :ok
   end
 
   defp validate_project(_project), do: {:error, :missing_project_repository_url}
@@ -199,13 +198,11 @@ defmodule SymphonyElixir.Config do
 
   defp validate_tracker(tracker) do
     cond do
-      blank?(tracker.endpoint) -> {:error, :missing_linear_endpoint}
-      blank?(tracker.project_slug) -> {:error, :missing_linear_project_slug}
+      Text.blank?(tracker.endpoint) -> {:error, :missing_linear_endpoint}
+      Text.blank?(tracker.project_slug) -> {:error, :missing_linear_project_slug}
       true -> :ok
     end
   end
-
-  defp blank?(value), do: not is_binary(value) or String.trim(value) == ""
 
   defp format_config_error(reason) do
     case reason do

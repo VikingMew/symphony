@@ -34,11 +34,20 @@ Codex app-server
 
 Codex 只能提交结构化意图，不能提交任意 Linear GraphQL 文档。
 
-## 当前状态
+## 历史背景
 
-当前代码里存在 `linear_graphql` dynamic tool。它复用 Symphony 的 Linear 鉴权，让 Codex 可以发起 raw GraphQL 操作。
+早期设计里存在 `linear_graphql` dynamic tool。它复用 Symphony 的 Linear 鉴权，让 Codex 可以发起 raw GraphQL 操作。
 
-这个能力不应继续作为 Codex workflow tool。后续应移除 Codex 可见的 `linear_graphql`，并用下面的窄权限工具替代。Linear 诊断或管理员级操作应走 Symphony 后端/operator 内部路径，而不是通过 workflow 配置给 Codex 开一个 raw API 通道。
+这个能力已经不再作为 Codex workflow tool。Linear 诊断或管理员级操作应走 Symphony 后端/operator 内部路径，而不是通过 workflow 配置给 Codex 开一个 raw API 通道。
+
+## 当前实现
+
+当前 Codex 可见的 Linear 工具是窄权限工具：
+
+- `linear_task_read`
+- `linear_task_update`
+
+Codex 只能读取当前任务上下文并提交经过 Symphony 后端 policy 校验的任务更新；raw GraphQL 仍是后端内部实现细节。
 
 ## 维护的工作流
 
@@ -169,7 +178,7 @@ dispatch matching prompt/tool policy
 
 ### `DynamicTool`
 
-`DynamicTool` 需要移除默认暴露给 Codex 的 raw `linear_graphql`，改为暴露受限工具：
+`DynamicTool` 当前暴露受限工具：
 
 - `linear_task_read`
 - `linear_task_update`
@@ -473,11 +482,11 @@ Codex 可请求的典型流转：
 
 ## 迁移路径
 
-1. 从 Codex 默认 dynamic tools 中移除 `linear_graphql`。
-2. 新增 `linear_task_read`，一次返回 issue detail、comments/activity 和 allowed updates。
-3. 新增 `linear_task_update`，由后端按 profile 校验 description/comment/result/transition。
-4. Codex 启动环境改为敏感变量 denylist 或 allowlist。
-5. 将 repo-local `linear` skill 从 raw GraphQL 操作迁移到 `linear_task_read` / `linear_task_update`。
+1. 已完成：从 Codex 默认 dynamic tools 中移除 `linear_graphql`。
+2. 已完成：新增 `linear_task_read`，一次返回 issue detail、comments/activity 和 allowed updates。
+3. 已完成：新增 `linear_task_update`，由后端按 profile 校验 description/comment/result/transition。
+4. 已完成：Codex 启动环境使用敏感变量过滤，并保留明确支持的 proxy 变量。
+5. 已完成：repo-local `linear` skill 使用 `linear_task_read` / `linear_task_update`。
 
 ## 验收标准
 

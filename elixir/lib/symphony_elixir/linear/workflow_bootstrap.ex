@@ -84,7 +84,7 @@ defmodule SymphonyElixir.Linear.WorkflowBootstrap do
     end
   end
 
-  defp normalize_state(state), do: state |> to_string() |> String.trim() |> String.downcase()
+  defp normalize_state(state), do: SymphonyElixir.StateName.normalize(state)
 
   defp format_reason(reason) do
     reason

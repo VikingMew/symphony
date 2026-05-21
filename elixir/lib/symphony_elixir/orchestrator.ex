@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, PersistenceProvider, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, PersistenceProvider, RunLifecycle, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -60,6 +60,7 @@ defmodule SymphonyElixir.Orchestrator do
       case runtime_config() do
         {:ok, config} ->
           run_terminal_workspace_cleanup()
+          RunLifecycle.close_stale_running_runs(persistence())
 
           %State{
             poll_interval_ms: config.polling.interval_ms,
@@ -293,7 +294,7 @@ defmodule SymphonyElixir.Orchestrator do
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
-    |> tap(fn _state -> persist_run_finished_async(running_entry, "completed", nil) end)
+    |> tap(fn _state -> persist_run_finished(running_entry, "completed", nil) end)
   end
 
   defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
@@ -308,7 +309,7 @@ defmodule SymphonyElixir.Orchestrator do
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
-    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", summary) end)
+    |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
   end
 
   defp handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id) do
@@ -323,7 +324,7 @@ defmodule SymphonyElixir.Orchestrator do
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
-    |> tap(fn _state -> persist_run_finished_async(running_entry, "failed", summary) end)
+    |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
   end
 
   defp agent_exit_summary(:normal, %{agent_result: :ok}), do: "completed"
@@ -807,7 +808,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp normalize_issue_state(state_name) when is_binary(state_name) do
-    String.downcase(String.trim(state_name))
+    SymphonyElixir.StateName.normalize(state_name)
   end
 
   defp terminal_state_set do
@@ -1773,7 +1774,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp streaming_agent_message_detail(text, count), do: "agent message streaming: #{text} (#{count} fragments)"
 
   defp streaming_agent_message_fragment(%{payload: payload} = update) when is_map(payload) do
-    method = map_value(payload, ["method", :method])
+    method = SymphonyElixir.Payload.get_any(payload, ["method", :method])
 
     if agent_message_streaming_method?(method) do
       case extract_streaming_delta(payload) do
@@ -1802,12 +1803,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp streaming_agent_message_key(update, payload, method) do
     item_id =
-      map_path(payload, ["params", "id"]) ||
-        map_path(payload, [:params, :id]) ||
-        map_path(payload, ["params", "itemId"]) ||
-        map_path(payload, [:params, :itemId]) ||
-        map_path(payload, ["params", "msg", "id"]) ||
-        map_path(payload, [:params, :msg, :id])
+      SymphonyElixir.Payload.get_path(payload, ["params", "id"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :id]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "itemId"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :itemId]) ||
+        SymphonyElixir.Payload.get_path(payload, ["params", "msg", "id"]) ||
+        SymphonyElixir.Payload.get_path(payload, [:params, :msg, :id])
 
     [Map.get(update, :session_id), method, item_id]
     |> Enum.reject(&is_nil/1)
@@ -1829,7 +1830,7 @@ defmodule SymphonyElixir.Orchestrator do
     ]
     |> Enum.find_value(fn path ->
       payload
-      |> map_path(path)
+      |> SymphonyElixir.Payload.get_path(path)
       |> normalize_streaming_delta()
     end)
   end
@@ -1857,41 +1858,6 @@ defmodule SymphonyElixir.Orchestrator do
       true ->
         text <> " " <> fragment
     end
-  end
-
-  defp map_value(map, keys) when is_map(map) and is_list(keys) do
-    Enum.find_value(keys, fn key -> Map.get(map, key) end)
-  end
-
-  defp map_value(_map, _keys), do: nil
-
-  defp map_path(data, [key | rest]) when is_map(data) do
-    case fetch_map_key(data, key) do
-      {:ok, value} when rest == [] -> value
-      {:ok, value} -> map_path(value, rest)
-      :error -> nil
-    end
-  end
-
-  defp map_path(_data, _path), do: nil
-
-  defp fetch_map_key(map, key) when is_map(map) do
-    case Map.fetch(map, key) do
-      {:ok, value} ->
-        {:ok, value}
-
-      :error when is_atom(key) ->
-        Map.fetch(map, Atom.to_string(key))
-
-      :error when is_binary(key) ->
-        fetch_existing_atom_key(map, key)
-    end
-  end
-
-  defp fetch_existing_atom_key(map, key) do
-    Map.fetch(map, String.to_existing_atom(key))
-  rescue
-    ArgumentError -> :error
   end
 
   defp codex_history_label(event) do
@@ -2223,14 +2189,13 @@ defmodule SymphonyElixir.Orchestrator do
   defp absolute_token_usage_from_payload(_payload), do: nil
 
   defp turn_completed_usage_from_payload(payload) when is_map(payload) do
-    method = Map.get(payload, "method") || Map.get(payload, :method)
+    method = SymphonyElixir.Payload.get_any(payload, ["method", :method])
 
     if method in ["turn/completed", :turn_completed] do
       direct =
-        Map.get(payload, "usage") ||
-          Map.get(payload, :usage) ||
-          map_at_path(payload, ["params", "usage"]) ||
-          map_at_path(payload, [:params, :usage])
+        SymphonyElixir.Payload.get_any(payload, ["usage", :usage]) ||
+          SymphonyElixir.Payload.get_path(payload, ["params", "usage"]) ||
+          SymphonyElixir.Payload.get_path(payload, [:params, :usage])
 
       if is_map(direct) and integer_token_map?(direct), do: direct
     end
@@ -2239,7 +2204,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp turn_completed_usage_from_payload(_payload), do: nil
 
   defp rate_limits_from_payload(payload) when is_map(payload) do
-    direct = Map.get(payload, "rate_limits") || Map.get(payload, :rate_limits)
+    direct = SymphonyElixir.Payload.get_any(payload, ["rate_limits", :rate_limits])
 
     cond do
       rate_limits_map?(direct) ->
@@ -2289,10 +2254,12 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp rate_limits_map?(payload) when is_map(payload) do
     limit_id =
-      Map.get(payload, "limit_id") ||
-        Map.get(payload, :limit_id) ||
-        Map.get(payload, "limit_name") ||
-        Map.get(payload, :limit_name)
+      SymphonyElixir.Payload.get_any(payload, [
+        "limit_id",
+        :limit_id,
+        "limit_name",
+        :limit_name
+      ])
 
     has_buckets =
       Enum.any?(
@@ -2307,25 +2274,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp explicit_map_at_paths(payload, paths) when is_map(payload) and is_list(paths) do
     Enum.find_value(paths, fn path ->
-      value = map_at_path(payload, path)
+      value = SymphonyElixir.Payload.get_path(payload, path)
 
       if is_map(value) and integer_token_map?(value), do: value
     end)
   end
 
   defp explicit_map_at_paths(_payload, _paths), do: nil
-
-  defp map_at_path(payload, path) when is_map(payload) and is_list(path) do
-    Enum.reduce_while(path, payload, fn key, acc ->
-      if is_map(acc) and Map.has_key?(acc, key) do
-        {:cont, Map.get(acc, key)}
-      else
-        {:halt, nil}
-      end
-    end)
-  end
-
-  defp map_at_path(_payload, _path), do: nil
 
   defp integer_token_map?(payload) do
     token_fields = [
@@ -2543,39 +2498,16 @@ defmodule SymphonyElixir.Orchestrator do
 
     run_id = Map.get(running_entry, :run_id)
 
-    if is_binary(run_id) and persistence().repo_available?() do
-      case persistence().get_run(run_id) do
-        nil ->
-          :ok
+    case RunLifecycle.finish_run(persistence(), run_id, status, failure_reason) do
+      {:ok, _run} ->
+        persist_event("run.#{status}", Map.get(running_entry, :identifier), %{run_id: run_id, failure_reason: failure_reason}, run_id)
 
-        run ->
-          _ =
-            persistence().update_run(run, %{
-              status: status,
-              failure_reason: failure_reason,
-              finished_at: DateTime.utc_now()
-            })
+      :noop ->
+        :ok
 
-          persist_event("run.#{status}", Map.get(running_entry, :identifier), %{run_id: run_id, failure_reason: failure_reason}, run_id)
-      end
+      {:error, _reason} ->
+        :ok
     end
-  rescue
-    _error -> :ok
-  catch
-    :persistence_disabled -> :ok
-  end
-
-  defp persist_run_finished_async(running_entry, status, failure_reason) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
-
-    _ =
-      Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-        persist_run_finished(running_entry, status, failure_reason)
-      end)
-
-    :ok
-  rescue
-    _error -> persist_run_finished(running_entry, status, failure_reason)
   catch
     :persistence_disabled -> :ok
   end

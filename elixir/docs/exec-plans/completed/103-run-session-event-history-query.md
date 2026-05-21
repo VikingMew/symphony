@@ -6,7 +6,7 @@ Support querying the historical session events for a specific run after the run 
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -111,7 +111,7 @@ This plan adds a run-scoped history query boundary that reconstructs/presents hi
 
 ## Completion Deviations
 
-None yet.
+Implemented as `SymphonyElixir.RunHistory`, which maps persisted `events` rows for a single `run_id` into presentation-ready session-history rows and leaves raw `/events` unchanged. Pagination is currently bounded by `limit` and chronological ordering; cursor-style pagination remains a follow-up because the current UI only needs the latest bounded run detail timeline.
 
 ## Dependencies
 

@@ -6,6 +6,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.WorkflowForm
 
   @endpoint SymphonyElixirWeb.Endpoint
@@ -525,6 +526,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert run_html =~ "Run Detail"
     assert run_html =~ "MT-1"
     assert run_html =~ "Workflow Version"
+    assert run_html =~ "Session History"
+    assert run_html =~ "Run failed"
     assert run_html =~ "Turn failed"
     assert run_html =~ "[REDACTED]"
     refute run_html =~ "secret"
@@ -558,6 +561,9 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Hook timeout ms"
     assert html =~ "Approval policy"
     assert html =~ ~s(name="workflow[codex_approval_policy]")
+    assert html =~ "Turn sandbox"
+    assert html =~ ~s(name="workflow[codex_turn_sandbox_preset]")
+    assert html =~ ~s(name="workflow[codex_turn_sandbox_json]")
     assert html =~ ~s(value="never")
     assert html =~ ~s(phx-disable-with="Saving...")
     refute html =~ "Raw workflow source"
@@ -575,6 +581,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     params =
       workflow_page_form_params()
       |> Map.put("workspace_root", "/tmp/structured-workspaces")
+      |> Map.put("codex_turn_sandbox_preset", "danger_full_access")
 
     html =
       view
@@ -596,10 +603,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert raw =~ "git@github.com:org/repo.git"
     assert raw =~ ~s(project_slug: "project")
     assert raw =~ ~s(approval_policy: "never")
+    assert raw =~ ~s(type: "dangerFullAccess")
     refute raw =~ "api_key"
     assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
     assert get_in(loaded_workflow.config, ["tracker", "kind"]) == "linear"
     assert get_in(loaded_workflow.config, ["tracker", "endpoint"]) == "https://api.linear.app/graphql"
+    assert get_in(loaded_workflow.config, ["codex", "turn_sandbox_policy"]) == %{"type" => "dangerFullAccess"}
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
 
@@ -1203,6 +1212,54 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
 
+  test "workflow form preserves and edits codex turn sandbox policy" do
+    draft =
+      WorkflowForm.from_loaded(%{
+        config: %{
+          "tracker" => %{
+            "kind" => "linear",
+            "endpoint" => "https://api.linear.app/graphql",
+            "project_slug" => "project",
+            "active_states" => ["Ready"],
+            "terminal_states" => ["Done"]
+          },
+          "project" => %{"repository_url" => "git@github.com:org/repo.git"},
+          "codex" => %{
+            "command" => "codex app-server",
+            "approval_policy" => "never",
+            "thread_sandbox" => "workspace-write",
+            "turn_sandbox_policy" => %{"type" => "workspaceWrite", "networkAccess" => true}
+          }
+        },
+        prompt: "Sandbox prompt"
+      })
+
+    assert draft["codex_turn_sandbox_preset"] == "workspace_write_network"
+
+    assert {:ok, raw} = WorkflowForm.to_raw(draft)
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert get_in(loaded_workflow.config, ["codex", "turn_sandbox_policy", "networkAccess"]) == true
+
+    edited = Map.put(draft, "codex_turn_sandbox_preset", "danger_full_access")
+    assert {:ok, raw} = WorkflowForm.to_raw(edited)
+    assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
+    assert get_in(loaded_workflow.config, ["codex", "turn_sandbox_policy"]) == %{"type" => "dangerFullAccess"}
+  end
+
+  test "workflow form validates custom codex turn sandbox JSON" do
+    draft =
+      workflow_form_params()
+      |> Map.put("_base_config", %{})
+      |> Map.put("codex_turn_sandbox_preset", "custom")
+      |> Map.put("codex_turn_sandbox_json", "not json")
+
+    assert {:error, "Turn sandbox custom JSON is invalid"} = WorkflowForm.to_raw(draft)
+
+    assert WorkflowForm.field_errors(draft) == %{
+             "codex_turn_sandbox_json" => "Turn sandbox custom JSON is invalid"
+           }
+  end
+
   test "workflow form rejects invalid lifecycle hook timeout" do
     draft =
       workflow_form_params()
@@ -1469,6 +1526,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "codex_pre_start_commands" => "",
       "codex_approval_policy" => "never",
       "codex_thread_sandbox" => "workspace-write",
+      "codex_turn_sandbox_preset" => "workspace_write_no_network",
+      "codex_turn_sandbox_json" => "",
       "hook_after_create" => "",
       "hook_before_run" => "",
       "hook_after_run" => "",
@@ -1488,56 +1547,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   end
 
   defp split_workflow_yaml do
-    """
-    tracker:
-      kind: linear
-      endpoint: "https://api.linear.app/graphql"
-      project_slug: "project"
-      active_states: ["Ready", "In Progress"]
-      terminal_states: ["Done"]
-    polling:
-      interval_ms: 30000
-    project:
-      repository_url: "git@github.com:org/imported.git"
-      default_branch: "main"
-      checkout_depth: 1
-      setup_commands: []
-      cleanup_commands: []
-    workspace:
-      root: "/tmp/imported-workspaces"
-    agent:
-      max_concurrent_agents: 1
-      max_turns: 20
-    codex:
-      command: "codex app-server"
-      approval_policy: "never"
-      thread_sandbox: "workspace-write"
-    server:
-      host: "127.0.0.1"
-      port: 4000
-    workflow:
-      states:
-        Ready:
-          profile: implementation
-        In Progress:
-          profile: implementation
-      human_review_states: ["In Review"]
-      allowed_transitions:
-        - {from: Ready, to: In Progress, actor: codex, profile: implementation}
-    """
+    WorkflowFixtures.settings_workflow_yaml()
   end
 
   defp split_profiles_yaml do
-    """
-    base_prompt: |
-      Imported base prompt.
-    profiles:
-      implementation:
-        name: "Implementation"
-        executor: {type: codex_agent}
-        prompt: {mode: extend, template: "Imported implementation prompt."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Review"]}
-    """
+    WorkflowFixtures.settings_profiles_yaml()
   end
 
   defp workflow_raw!(params) do

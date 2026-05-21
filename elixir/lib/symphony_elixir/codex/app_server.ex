@@ -237,7 +237,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp under_root?(path, root), do: String.starts_with?(path <> "/", root <> "/")
 
-  defp blank?(value), do: not is_binary(value) or String.trim(value) == ""
+  defp blank?(value), do: SymphonyElixir.Text.blank?(value)
 
   defp start_port(workspace, nil) do
     executable = System.find_executable("bash")
@@ -272,7 +272,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     [
       RuntimeProxy.remote_exports(),
       unset_sensitive_env_command(),
-      "cd #{shell_escape(workspace)}",
+      "cd #{SymphonyElixir.Shell.escape(workspace)}",
       codex_launch_command()
     ]
     |> List.flatten()
@@ -312,7 +312,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> Enum.map(fn {command, index} ->
       [
         "__symphony_codex_pre_start_index=#{index}",
-        "#{command} || { __symphony_codex_pre_start_status=$?; printf '%s\\n' #{shell_escape("Symphony Codex pre-start command #{index} failed. See Settings / Workflow / Codex / Pre-start commands.")} >&2; exit $__symphony_codex_pre_start_status; }"
+        "#{command} || { __symphony_codex_pre_start_status=$?; printf '%s\\n' #{SymphonyElixir.Shell.escape("Symphony Codex pre-start command #{index} failed. See Settings / Workflow / Codex / Pre-start commands.")} >&2; exit $__symphony_codex_pre_start_status; }"
       ]
     end)
     |> List.flatten()
@@ -596,14 +596,9 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp sanitize_startup_output(output) when is_binary(output) do
-    @sensitive_codex_env_names
-    |> Enum.reduce(output, fn name, acc ->
-      case System.get_env(name) do
-        value when value not in [nil, ""] -> String.replace(acc, value, "[REDACTED #{name}]")
-        _ -> acc
-      end
-    end)
-    |> String.replace(~r/(Authorization|api[_-]?key|token)(["':=>,\s]+)[^,\]\}\s]+/i, "\\1\\2[REDACTED]")
+    output
+    |> SymphonyElixir.Redaction.sensitive_env_values(@sensitive_codex_env_names)
+    |> SymphonyElixir.Redaction.credentials()
   end
 
   defp receive_loop(port, on_message, timeout_ms, pending_line, tool_executor, auto_approve_requests) do
@@ -1285,7 +1280,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_set_usage(metadata, payload) when is_map(payload) do
-    usage = Map.get(payload, "usage") || Map.get(payload, :usage)
+    usage = SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
 
     if is_map(usage) do
       Map.put(metadata, :usage, usage)
@@ -1296,14 +1291,10 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp maybe_set_usage(metadata, _payload), do: metadata
 
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
-  end
-
   defp default_on_message(_message), do: :ok
 
   defp tool_call_name(params) when is_map(params) do
-    case Map.get(params, "tool") || Map.get(params, :tool) || Map.get(params, "name") || Map.get(params, :name) do
+    case SymphonyElixir.Payload.get_any(params, ["tool", :tool, "name", :name]) do
       name when is_binary(name) ->
         case String.trim(name) do
           "" -> nil
@@ -1318,7 +1309,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp tool_call_name(_params), do: nil
 
   defp tool_call_arguments(params) when is_map(params) do
-    Map.get(params, "arguments") || Map.get(params, :arguments) || %{}
+    SymphonyElixir.Payload.get_any(params, ["arguments", :arguments], %{})
   end
 
   defp tool_call_arguments(_params), do: %{}

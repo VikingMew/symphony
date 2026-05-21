@@ -72,7 +72,7 @@ base_prompt: |
   - `Needs Refinement Review` -> refinement is complete; do not implement. Human must move it to `Ready` or back to `Refining`.
   - `Ready` -> human-approved development queue. Agent may move it to `In Progress` and implement.
   - `In Progress` -> implementation actively underway.
-  - `Needs Implementation Review` -> implementation is complete; do not merge. Human must move it to `Ready`, `In Progress`, or `Ready to Merge`.
+  - `In Review` -> implementation is complete; do not merge. Human must move it to `Ready`, `In Progress`, or `Ready to Merge`.
   - `Ready to Merge` -> human-approved merge queue. Agent may move it to `Merging`.
   - `Merging` -> Symphony backend is merging the Linear `branchName` branch into the configured base branch.
   - `Done` -> terminal state; no further action required.
@@ -85,9 +85,9 @@ base_prompt: |
   - Human moves `Needs Refinement Review` -> `Ready` when refinement is accepted.
   - Human moves `Needs Refinement Review` -> `Refining` when refinement needs another pass.
   - Agent may move `Ready` -> `In Progress` when starting implementation.
-  - Agent moves `In Progress` -> `Needs Implementation Review` only after implementation, validation, and PR handoff are complete.
-  - Human moves `Needs Implementation Review` -> `Ready` or `In Progress` when changes are requested.
-  - Human moves `Needs Implementation Review` -> `Ready to Merge` when implementation is accepted.
+  - Agent moves `In Progress` -> `In Review` only after implementation, validation, and PR handoff are complete.
+  - Human moves `In Review` -> `Ready` or `In Progress` when changes are requested.
+  - Human moves `In Review` -> `Ready to Merge` when implementation is accepted.
   - Symphony may move `Ready to Merge` -> `Merging` when starting the backend merge flow.
   - Agent moves `Merging` -> `Done` only after merge is complete.
   - Human owns all transitions to `Canceled`, `Cancelled`, or `Duplicate`.
@@ -102,7 +102,7 @@ base_prompt: |
      - `Needs Refinement Review` -> do not modify; stop and wait for human review.
      - `Ready` -> move to `In Progress`, then run the implementation flow.
      - `In Progress` -> continue execution flow from current scratchpad comment.
-     - `Needs Implementation Review` -> do not modify; stop and wait for human review.
+     - `In Review` -> do not modify; stop and wait for human review.
      - `Ready to Merge` -> run the backend merge flow, which moves to `Merging` when policy allows.
      - `Merging` -> continue the backend merge flow for the Linear `branchName` branch.
      - `Done`, `Canceled`, `Cancelled`, `Duplicate` -> do nothing and shut down.
@@ -168,7 +168,7 @@ base_prompt: |
   
   ## PR feedback sweep protocol (required)
   
-  When a ticket has an attached PR, run this protocol before moving to `Needs Implementation Review`:
+  When a ticket has an attached PR, run this protocol before moving to `In Review`:
   
   1. Identify the PR number from issue links/attachments.
   2. Gather feedback from all channels:
@@ -187,14 +187,14 @@ base_prompt: |
   Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
   
   - GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-  - Do not move to `Needs Implementation Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-  - If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Needs Implementation Review` with a short blocker brief in the workpad that includes:
+  - Do not move to `In Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
+  - If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `In Review` with a short blocker brief in the workpad that includes:
     - what is missing,
     - why it blocks required acceptance/validation,
     - exact human action needed to unblock.
   - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
   
-  ## Step 3: Execution phase (Ready -> In Progress -> Needs Implementation Review)
+  ## Step 3: Execution phase (Ready -> In Progress -> In Review)
   
   1.  Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff `pull` sync result is already recorded in the workpad before implementation continues.
   2.  If current issue state is `Ready`, move it to `In Progress`; otherwise leave the current state unchanged.
@@ -225,24 +225,24 @@ base_prompt: |
       - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
       - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
       - Do not post any additional completion summary comment.
-  11. Before moving to `Needs Implementation Review`, poll PR feedback and checks:
+  11. Before moving to `In Review`, poll PR feedback and checks:
       - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
       - Run the full PR feedback sweep protocol.
       - Confirm PR checks are passing (green) after the latest changes.
       - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
       - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
       - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-  12. Only then move issue to `Needs Implementation Review`.
-      - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Needs Implementation Review` with the blocker brief and explicit unblock actions.
+  12. Only then move issue to `In Review`.
+      - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `In Review` with the blocker brief and explicit unblock actions.
   13. For `Ready` tickets that already had a PR attached at kickoff:
       - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
       - Ensure branch was pushed with any required updates.
-      - Then move to `Needs Implementation Review`.
+      - Then move to `In Review`.
   
   ## Step 4: Human review gates
   
   1. When the issue is in `Needs Refinement Review`, do not code or change ticket content. Wait for a human to move it to `Ready` or back to `Refining`.
-  2. When the issue is in `Needs Implementation Review`, do not code, push, merge, or change ticket content.
+  2. When the issue is in `In Review`, do not code, push, merge, or change ticket content.
   3. If human review requests changes, the human moves the issue to `Ready` or `In Progress`.
   4. If human review approves implementation, the human moves the issue to `Ready to Merge`.
   
@@ -256,7 +256,7 @@ base_prompt: |
   6. Push only when the merge profile explicitly enables push.
   7. After merge is complete and any configured push succeeds, move the issue to `Done` or the configured success state.
   
-  ## Completion bar before Needs Implementation Review
+  ## Completion bar before In Review
   
   - Step 2/3 checklist is fully complete and accurately reflected in the single workpad comment.
   - Acceptance criteria and required ticket-provided validation items are complete.
@@ -271,7 +271,7 @@ base_prompt: |
   - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
   - For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
   - If issue state is `Backlog`, do not modify it; wait for human to move to `Refining`.
-  - If issue state is `Needs Refinement Review` or `Needs Implementation Review`, do not modify it; wait for human state transition.
+  - If issue state is `Needs Refinement Review` or `In Review`, do not modify it; wait for human state transition.
   - Do not edit the issue body/description for planning or progress tracking.
   - Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.
   - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
@@ -281,7 +281,7 @@ base_prompt: |
     title/description/acceptance criteria, same-project assignment, a `related`
     link to the current issue, and `blockedBy` when the follow-up depends on the
     current issue.
-  - Do not move to `Needs Implementation Review` unless the `Completion bar before Needs Implementation Review` is satisfied.
+  - Do not move to `In Review` unless the `Completion bar before In Review` is satisfied.
   - In human review states, do not make changes; wait and poll.
   - If state is terminal (`Done`, `Canceled`, `Cancelled`, or `Duplicate`), do nothing and shut down.
   - Keep issue text concise, specific, and reviewer-oriented.
@@ -328,7 +328,7 @@ profiles:
       comment: true
       description: false
       result: true
-      target_states: ["In Progress", "Needs Implementation Review"]
+      target_states: ["In Progress", "In Review"]
     executor:
       type: "codex_agent"
     name: "Implementation"

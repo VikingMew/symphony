@@ -41,11 +41,13 @@ Elixir / Phoenix Web Service
 
 - `已落地`：SQLite workflow version、Settings tabbed configuration、结构化 `/settings/workflow` draft form、`/settings/agents` base prompt/profile 编辑、版本保存/激活、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
 - `已落地`：Project source/bootstrap 由 Project Settings 和 Workflow Bootstrap 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；Workflow Bootstrap 拥有 `workspace.initialize_timeout_ms`，用于 clone/worktree 初始化和 project setup 超时。`hooks.timeout_ms` 只控制 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
-- `阶段未到`：运行时完全 DB-only。目标状态下 Orchestrator、diagnostics、Settings 和 agent runner 都只读取 DB active workflow version；本地 split package 文件只作为导入/导出格式存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
+- `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取 DB active workflow version；本地 split package 文件只作为导入/导出格式和示例存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
+- `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
+- `已落地`：中心化 agent run 终态必须持久化 `status`、`finished_at` 和失败原因；Orchestrator 启动时会把上一次 runtime 遗留的 `running` rows 标记为 failed 并写入明确原因，避免 Runs 页面长期显示多个过期 running attempts。
 - `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、diff 审计和页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
-- `部分落地`：`profiles.<id>.executor.type` schema 支持 `codex_agent`、`manual`、`backend_action`、`external_worker`，调度层当前只自动执行 `codex_agent` 状态；manual/backend/external 是路由契约和后续执行器扩展点。
+- `部分落地`：`profiles.<id>.executor.type` schema 支持 `codex_agent`、`manual`、`backend_action`、`external_worker`。当前调度层会自动执行 `codex_agent`，也会把 merge profile 的 `backend_action` 交给后端 merge executor；manual/external 仍是路由契约和后续执行器扩展点。
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、Docker worker 和更强 sandbox runner 仍是后续阶段。
-- `阶段未到`：完整多项目生产路径、每项目独立 tracker/workflow 运行隔离、run detail/issue detail/events/logs 完整页面、secrets metadata 生产化管理、hook 审计事件、完整结构化 workflow diff。
+- `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
 - `文档偏差检查点`：凡是写成“当前已经”或“已支持”的句子，必须能在代码或测试中找到对应实现；否则应改成“目标”、“后续”或“部分落地”。
 
 ## 2. 技术选型结论
@@ -388,10 +390,12 @@ profiles:
 这个契约由 [046 Profile Prompt Mode Clarity](exec-plans/completed/046-profile-prompt-mode-clarity.md) 落地。
 
 现状对齐：profile schema、state -> profile 路由、profile prompt mode、allowed updates 和
-`codex_agent` 执行路径已经落地。`manual`、`backend_action`、`external_worker` 目前主要是配置
-契约和调度过滤依据；Orchestrator 当前只自动领取并执行 `executor.type == "codex_agent"` 的状态。
-因此“merge 可以不是 agent”在当前代码中表现为：把 merge profile 配成非 `codex_agent` 后，Symphony
-不会自动启动 Codex；真正的 backend merge executor 仍属于阶段未到。
+`codex_agent` 执行路径已经落地。`backend_action` 的 merge 路径也已部分落地：
+Orchestrator 会把 `executor.type == "codex_agent"` 和 `executor.type == "backend_action"` 的可执行状态视为可领取状态；
+AgentRunner 对 merge profile 调用 `SymphonyElixir.MergeExecutor` 执行后端 merge。这个能力目前只覆盖受控 merge
+场景，非 merge 的 backend action、`manual` 和 `external_worker` 仍主要是配置契约和后续执行器扩展点。
+因此“merge 可以不是 agent”在当前代码中表现为：merge profile 可以配置为 `backend_action`，由后端 merge executor
+执行，而不是启动 Codex。
 
 ### 阶段 2.1：项目模板和 bootstrap 配置解耦
 

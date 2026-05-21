@@ -136,9 +136,6 @@ defmodule SymphonyElixir.Git do
   defp sanitize_reason(reason), do: reason
 
   defp sanitize_output(output) do
-    output
-    |> to_string()
-    |> String.replace(~r/(?i)(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s,;]+/, "\\1[REDACTED]")
-    |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+/, "\\1[REDACTED]")
+    SymphonyElixir.Redaction.credentials(output)
   end
 end

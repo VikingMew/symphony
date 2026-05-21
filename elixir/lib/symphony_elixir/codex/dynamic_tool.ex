@@ -429,7 +429,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp normalize_state(state), do: state |> to_string() |> String.trim() |> String.downcase()
+  defp normalize_state(state), do: SymphonyElixir.StateName.normalize(state)
 
   defp maybe_update_issue(issue_id, payload, opts) do
     issue_input =

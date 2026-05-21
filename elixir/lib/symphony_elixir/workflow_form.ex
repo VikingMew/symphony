@@ -43,6 +43,8 @@ defmodule SymphonyElixir.WorkflowForm do
       "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
       "codex_approval_policy" => get_codex_approval_policy(display_config),
       "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"], "workspace-write"),
+      "codex_turn_sandbox_preset" => get_codex_turn_sandbox_preset(display_config),
+      "codex_turn_sandbox_json" => get_codex_turn_sandbox_json(display_config),
       "hook_after_create" => get_string(display_config, ["hooks", "after_create"], ""),
       "hook_before_run" => get_string(display_config, ["hooks", "before_run"], ""),
       "hook_after_run" => get_string(display_config, ["hooks", "after_run"], ""),
@@ -78,6 +80,7 @@ defmodule SymphonyElixir.WorkflowForm do
         {:error, message} -> Map.put(errors, key, message)
       end
     end)
+    |> put_turn_sandbox_error(draft)
   end
 
   @spec to_config(draft()) :: {:ok, map()} | {:error, String.t()}
@@ -87,7 +90,8 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
-         {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout") do
+         {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
+         {:ok, turn_sandbox_policy} <- codex_turn_sandbox_policy(draft) do
       config =
         draft
         |> Map.get("_base_config", %{})
@@ -109,6 +113,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["codex", "pre_start_commands"], lines(Map.get(draft, "codex_pre_start_commands", "")))
         |> put_path(["codex", "approval_policy"], Map.get(draft, "codex_approval_policy", "never"))
         |> put_path(["codex", "thread_sandbox"], Map.get(draft, "codex_thread_sandbox", ""))
+        |> put_path(["codex", "turn_sandbox_policy"], turn_sandbox_policy)
         |> put_path(["hooks"], hooks_config(draft, hook_timeout_ms))
         |> put_path(["profiles"], profiles_config(draft))
         |> put_path(["workflow", "states"], workflow_states_config(draft))
@@ -133,6 +138,19 @@ defmodule SymphonyElixir.WorkflowForm do
     config
     |> get_in(["codex", "approval_policy"])
     |> Schema.normalize_codex_approval_policy()
+  end
+
+  defp get_codex_turn_sandbox_preset(config) do
+    config
+    |> get_in(["codex", "turn_sandbox_policy"])
+    |> codex_turn_sandbox_preset()
+  end
+
+  defp get_codex_turn_sandbox_json(config) do
+    case get_in(config, ["codex", "turn_sandbox_policy"]) do
+      policy when is_map(policy) -> Jason.encode!(policy, pretty: true)
+      _ -> ""
+    end
   end
 
   @spec summary(draft()) :: map()
@@ -278,6 +296,56 @@ defmodule SymphonyElixir.WorkflowForm do
     |> put_optional_path(["after_run"], Map.get(draft, "hook_after_run", ""))
     |> put_optional_path(["before_remove"], Map.get(draft, "hook_before_remove", ""))
   end
+
+  defp put_turn_sandbox_error(errors, draft) do
+    case codex_turn_sandbox_policy(draft) do
+      {:ok, _policy} -> errors
+      {:error, message} -> Map.put(errors, "codex_turn_sandbox_json", message)
+    end
+  end
+
+  defp codex_turn_sandbox_policy(draft) do
+    case Map.get(draft, "codex_turn_sandbox_preset", "workspace_write_no_network") do
+      "workspace_write_network" ->
+        {:ok, workspace_write_policy(true)}
+
+      "danger_full_access" ->
+        {:ok, %{"type" => "dangerFullAccess"}}
+
+      "custom" ->
+        decode_custom_turn_sandbox_policy(Map.get(draft, "codex_turn_sandbox_json", ""))
+
+      _ ->
+        {:ok, workspace_write_policy(false)}
+    end
+  end
+
+  defp workspace_write_policy(network_access) do
+    %{
+      "type" => "workspaceWrite",
+      "networkAccess" => network_access,
+      "readOnlyAccess" => %{"type" => "fullAccess"},
+      "excludeTmpdirEnvVar" => false,
+      "excludeSlashTmp" => false
+    }
+  end
+
+  defp decode_custom_turn_sandbox_policy(value) do
+    case Jason.decode(to_string(value || "")) do
+      {:ok, policy} when is_map(policy) -> {:ok, policy}
+      {:ok, _value} -> {:error, "Turn sandbox custom JSON must decode to an object"}
+      {:error, _error} -> {:error, "Turn sandbox custom JSON is invalid"}
+    end
+  end
+
+  defp codex_turn_sandbox_preset(%{"type" => "dangerFullAccess"}), do: "danger_full_access"
+
+  defp codex_turn_sandbox_preset(%{"type" => "workspaceWrite", "networkAccess" => true}),
+    do: "workspace_write_network"
+
+  defp codex_turn_sandbox_preset(%{"type" => "workspaceWrite"}), do: "workspace_write_no_network"
+  defp codex_turn_sandbox_preset(policy) when is_map(policy), do: "custom"
+  defp codex_turn_sandbox_preset(_policy), do: "workspace_write_no_network"
 
   defp hook_count(draft) do
     [

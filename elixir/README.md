@@ -51,7 +51,7 @@ The default Linear workflow is gated by human review between agent phases:
 
 ```text
 Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
-  -> Needs Implementation Review -> Ready to Merge -> Merging -> Done
+  -> In Review -> Ready to Merge -> Merging -> Done
 ```
 
 Only the agent-work states are configured as active states: `Refining`, `Ready`, `In Progress`,
@@ -72,7 +72,7 @@ until a person moves the issue forward.
    - Use the shared Linear discovery helper in Settings to copy the correct project slug and state
      names.
    - When creating a workflow based on this repo, note that it depends on a gated Linear state flow:
-     "Refining", "Needs Refinement Review", "Ready", "In Progress", "Needs Implementation Review",
+     "Refining", "Needs Refinement Review", "Ready", "In Progress", "In Review",
      "Ready to Merge", "Merging", "Done", "Canceled", and "Duplicate". You can customize them in
      Team Settings → Workflow in Linear.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
@@ -370,11 +370,17 @@ Notes:
   a configuration error, so Symphony will not poll Linear or start agent work.
 - If an optional value is missing, defaults are used.
 - Safer Codex defaults are used when policy fields are omitted:
-  - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
+  - `codex.approval_policy` defaults to the Codex app-server string value `never`
   - `codex.thread_sandbox` defaults to `workspace-write`
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
-- Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
+- Supported `codex.approval_policy` values are string enums accepted by the targeted Codex app-server version. Current supported public values are `untrusted`, `on-failure`, `on-request`, `granular`, and `never`; legacy object-form `reject` maps are normalized for compatibility and should not be written into new workflow packages.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
+- `codex.thread_sandbox` controls thread startup. `codex.turn_sandbox_policy` controls each
+  `turn/start` payload and is the setting that affects whether agent turns can perform network
+  work such as `git push` or fetches.
+- Settings / Workflow / Codex exposes common turn sandbox presets: workspace write without
+  network, workspace write with network, danger full access, and custom JSON for future Codex
+  sandbox shapes.
 - When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
   unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
   Symphony validation.
@@ -402,6 +408,10 @@ Notes:
   dependencies during setup before invoking `mise` later from other hooks.
 - Linear authentication always reads the runtime `LINEAR_API_KEY` environment variable. Do not put
   API keys in workflow configuration.
+- Use `codex.pre_start_commands` for local shell setup required before `codex.command`, such as
+  `source ~/.nvs/nvs.sh` or `nvs use 22`. Do not use broad Codex shell-environment inheritance just
+  to find the `codex` executable; Symphony still filters sensitive environment variables at the
+  final launch boundary while preserving documented proxy variables.
 - `tracker.assignee` reads from `LINEAR_ASSIGNEE` when unset or when value is `$LINEAR_ASSIGNEE`.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,

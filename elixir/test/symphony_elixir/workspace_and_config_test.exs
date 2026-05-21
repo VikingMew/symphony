@@ -6,6 +6,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.TestSupport.FakePersistence
 
+  test "bundled split workflow package parses and validates against runtime schema" do
+    workflow_path = Path.expand("../../workflow.yml", __DIR__)
+
+    assert {:ok, loaded} = SymphonyElixir.Workflow.load(workflow_path)
+    assert {:ok, _settings} = Schema.parse(loaded.config)
+  end
+
   test "workspace bootstrap can be implemented in after_create hook" do
     test_root =
       Path.join(

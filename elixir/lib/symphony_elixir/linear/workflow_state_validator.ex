@@ -164,5 +164,5 @@ defmodule SymphonyElixir.Linear.WorkflowStateValidator do
     |> MapSet.new()
   end
 
-  defp normalize_state_name(state), do: state |> to_string() |> String.trim() |> String.downcase()
+  defp normalize_state_name(state), do: SymphonyElixir.StateName.normalize(state)
 end

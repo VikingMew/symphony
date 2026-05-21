@@ -22,7 +22,7 @@ defmodule SymphonyElixir.RuntimeProxy do
   @spec remote_exports() :: [String.t()]
   def remote_exports do
     Enum.map(proxy_env(), fn {name, value} ->
-      "export #{name}=#{shell_escape(value)}"
+      "export #{name}=#{SymphonyElixir.Shell.escape(value)}"
     end)
   end
 
@@ -179,9 +179,5 @@ defmodule SymphonyElixir.RuntimeProxy do
       %URI{userinfo: nil} -> value
       %URI{userinfo: userinfo} -> String.replace(value, userinfo <> "@", "[REDACTED]@", global: false)
     end
-  end
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 end

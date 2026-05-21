@@ -215,5 +215,5 @@ defmodule SymphonyElixir.MergeExecutor do
     _ -> :ok
   end
 
-  defp normalize_state(state), do: state |> to_string() |> String.trim() |> String.downcase()
+  defp normalize_state(state), do: SymphonyElixir.StateName.normalize(state)
 end
