@@ -692,12 +692,15 @@ defmodule SymphonyElixirWeb.AdminLive do
             <%= if @run_detail.run do %>
               <table class="data-table">
                 <tbody>
+                  <tr><th>Run ID</th><td class="mono"><%= @run_detail.run.id %></td></tr>
                   <tr><th>Issue</th><td><a class="issue-link" href={"/issues/#{@run_detail.run.issue_identifier}"}><%= @run_detail.run.issue_identifier %></a></td></tr>
-                  <tr><th>Status</th><td><%= @run_detail.run.status %></td></tr>
+                  <tr><th>Status</th><td><span class={status_class(@run_detail.run.status)}><%= @run_detail.run.status %></span></td></tr>
                   <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
+                  <tr><th>Worker</th><td><%= Map.get(@run_detail.run, :worker_host) || "local" %></td></tr>
                   <tr><th>Workspace</th><td class="mono"><%= @run_detail.run.workspace_path || "n/a" %></td></tr>
                   <tr><th>Started</th><td class="mono"><%= fmt_dt(@run_detail.run.started_at) %></td></tr>
                   <tr><th>Finished</th><td class="mono"><%= fmt_dt(@run_detail.run.finished_at) %></td></tr>
+                  <tr><th>Duration</th><td><%= fmt_duration(@run_detail.run.started_at, @run_detail.run.finished_at) %></td></tr>
                   <tr><th>Failure</th><td><%= @run_detail.run.failure_reason || "n/a" %></td></tr>
                 </tbody>
               </table>
@@ -738,7 +741,13 @@ defmodule SymphonyElixirWeb.AdminLive do
                       <td class="mono"><%= fmt_dt(event.at) %></td>
                       <td><span class={status_class(to_string(event.severity || :info))}><%= event.source || "n/a" %></span></td>
                       <td><%= event.label %></td>
-                      <td><%= event.detail || "n/a" %></td>
+                      <td>
+                        <div><%= event.detail || "n/a" %></div>
+                        <details :if={event.metadata != %{}} class="event-metadata">
+                          <summary>Payload</summary>
+                          <pre class="inline-code-panel"><%= safe_event_payload(event.metadata) %></pre>
+                        </details>
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -2193,17 +2202,28 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp fmt_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp fmt_dt(_), do: "n/a"
 
+  defp fmt_duration(%DateTime{} = started_at, %DateTime{} = finished_at) do
+    elapsed = DateTime.diff(finished_at, started_at, :second)
+
+    cond do
+      elapsed < 0 -> "n/a"
+      elapsed < 60 -> "#{elapsed}s"
+      elapsed < 3_600 -> "#{div(elapsed, 60)}m #{rem(elapsed, 60)}s"
+      true -> "#{div(elapsed, 3_600)}h #{div(rem(elapsed, 3_600), 60)}m"
+    end
+  end
+
+  defp fmt_duration(_started_at, _finished_at), do: "running"
+
   defp workflow_version_summary(version) do
-    inspect(
-      %{
-        id: Map.get(version, :id),
-        version: Map.get(version, :version),
-        source: Map.get(version, :source),
-        active: Map.get(version, :active),
-        inserted_at: Map.get(version, :inserted_at)
-      },
-      pretty: true
-    )
+    [
+      "ID: #{Map.get(version, :id) || "n/a"}",
+      "Version: #{Map.get(version, :version) || "n/a"}",
+      "Source: #{Map.get(version, :source) || "n/a"}",
+      "Active: #{Map.get(version, :active) || false}",
+      "Inserted: #{fmt_dt(Map.get(version, :inserted_at))}"
+    ]
+    |> Enum.join("\n")
   end
 
   defp safe_event_payload(payload) do
@@ -2238,8 +2258,9 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp labels_text(_), do: ""
 
   defp status_class(status) when status in ["completed", "healthy", "online"], do: "status-badge status-success"
+  defp status_class(status) when status in ["info"], do: "status-badge status-info"
   defp status_class(status) when status in ["queued", "pending", "waiting"], do: "status-badge status-accent"
-  defp status_class(status) when status in ["running", "retrying", "leased"], do: "status-badge status-warning"
-  defp status_class(status) when status in ["failed", "offline", "expired"], do: "status-badge status-danger"
+  defp status_class(status) when status in ["running", "retrying", "leased", "warning"], do: "status-badge status-warning"
+  defp status_class(status) when status in ["failed", "offline", "expired", "error"], do: "status-badge status-danger"
   defp status_class(_), do: "status-badge"
 end

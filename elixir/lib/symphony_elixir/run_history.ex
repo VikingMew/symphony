@@ -15,6 +15,7 @@ defmodule SymphonyElixir.RunHistory do
 
     persistence.list_events(run_id: run_id, limit: limit, order: :asc)
     |> Enum.map(&from_event/1)
+    |> coalesce_streaming_rows()
   end
 
   @spec from_events([term()]) :: [map()]
@@ -22,6 +23,7 @@ defmodule SymphonyElixir.RunHistory do
     events
     |> Enum.sort_by(&event_time_sort_key/1)
     |> Enum.map(&from_event/1)
+    |> coalesce_streaming_rows()
   end
 
   @spec from_event(term()) :: map()
@@ -61,6 +63,7 @@ defmodule SymphonyElixir.RunHistory do
   defp label("run.failed", _payload), do: "Run failed"
   defp label("run.stopped", _payload), do: "Run stopped"
   defp label("run.phase", payload), do: "Run phase #{payload_value(payload, ["status", :status]) || "updated"}"
+  defp label("codex.update", payload), do: codex_update_label(payload)
   defp label("workspace.hook_output", payload), do: "Workspace #{payload_value(payload, ["hook", :hook, "hook_name", :hook_name]) || "hook"} output"
   defp label("workspace.hook_completed", payload), do: "Workspace #{payload_value(payload, ["hook", :hook, "hook_name", :hook_name]) || "hook"} completed"
   defp label("workspace.hook_failed", payload), do: "Workspace #{payload_value(payload, ["hook", :hook, "hook_name", :hook_name]) || "hook"} failed"
@@ -92,6 +95,8 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
+  defp detail("codex.update", payload), do: codex_update_detail(payload) || "codex.update"
+
   defp detail(type, payload) do
     payload_value(payload, ["detail", :detail]) ||
       payload_value(payload, ["output", :output, "recent_output", :recent_output]) ||
@@ -104,6 +109,62 @@ defmodule SymphonyElixir.RunHistory do
       nil -> nil
       message -> StatusDashboard.humanize_codex_message(message)
     end
+  end
+
+  defp codex_update_label(payload) do
+    case payload |> payload_value(["event", :event]) |> normalize_codex_event_name() do
+      nil ->
+        "Codex update"
+
+      event_name ->
+        "Codex " <> humanize_token(event_name)
+    end
+  end
+
+  defp codex_update_detail(payload) do
+    event = payload |> payload_value(["event", :event]) |> normalize_codex_event()
+
+    case payload_value(payload, ["message", :message]) do
+      nil ->
+        nil
+
+      message ->
+        message
+        |> then(&StatusDashboard.humanize_codex_message(%{event: event, message: &1}))
+        |> append_response_error_context(message)
+    end
+  end
+
+  defp append_response_error_context(detail, message) do
+    response_message =
+      Payload.get_path(message, [:response_error, "message"]) ||
+        Payload.get_path(message, ["response_error", "message"])
+
+    if is_binary(response_message) and !String.contains?(detail, response_message) do
+      "#{detail}: #{response_message}"
+    else
+      detail
+    end
+  end
+
+  defp normalize_codex_event(value) when is_atom(value), do: value
+
+  defp normalize_codex_event(value) when is_binary(value) do
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> value
+  end
+
+  defp normalize_codex_event(value), do: value
+
+  defp normalize_codex_event_name(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_codex_event_name(value) when is_binary(value), do: value
+  defp normalize_codex_event_name(_value), do: nil
+
+  defp humanize_token(value) do
+    value
+    |> String.replace(".", " ")
+    |> String.replace("_", " ")
   end
 
   defp fallback("", fallback), do: fallback || ""
@@ -161,4 +222,64 @@ defmodule SymphonyElixir.RunHistory do
   defp value(_map, _keys), do: nil
 
   defp blank?(value), do: StateName.blank_string?(value) or (not is_binary(value) and SymphonyElixir.Text.blankish?(value))
+
+  defp coalesce_streaming_rows(rows) do
+    rows
+    |> Enum.reduce([], &coalesce_streaming_row/2)
+    |> Enum.reverse()
+  end
+
+  defp coalesce_streaming_row(row, [previous | rest]) do
+    if coalescible_streaming_rows?(previous, row) do
+      [merge_streaming_rows(previous, row) | rest]
+    else
+      [row, previous | rest]
+    end
+  end
+
+  defp coalesce_streaming_row(row, []), do: [row]
+
+  defp coalescible_streaming_rows?(left, right) do
+    left.event == right.event and
+      left.label == right.label and
+      left.source == right.source and
+      left.operation == right.operation and
+      streaming_agent_detail?(left.detail) and
+      streaming_agent_detail?(right.detail)
+  end
+
+  defp streaming_agent_detail?(detail) when is_binary(detail) do
+    String.contains?(detail, "agent message") and String.contains?(detail, ":")
+  end
+
+  defp streaming_agent_detail?(_detail), do: false
+
+  defp merge_streaming_rows(left, right) do
+    count = Map.get(left.metadata, "_coalesced_count", 1) + 1
+
+    %{
+      left
+      | at: right.at || left.at,
+        detail: merge_streaming_detail(left.detail, right.detail),
+        metadata: Map.put(left.metadata, "_coalesced_count", count)
+    }
+  end
+
+  defp merge_streaming_detail(left, right) do
+    left_fragment = stream_fragment(left)
+    right_fragment = stream_fragment(right)
+
+    ["agent message streaming:", [left_fragment, right_fragment] |> Enum.reject(&blank?/1) |> Enum.join(" ")]
+    |> Enum.join(" ")
+    |> String.slice(0, 400)
+  end
+
+  defp stream_fragment(detail) when is_binary(detail) do
+    detail
+    |> String.replace_prefix("agent message streaming:", "")
+    |> String.replace_prefix("agent message content streaming:", "")
+    |> String.trim_leading()
+  end
+
+  defp stream_fragment(_detail), do: ""
 end

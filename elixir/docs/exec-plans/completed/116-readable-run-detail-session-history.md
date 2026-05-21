@@ -7,7 +7,7 @@ opening raw event payloads or terminal logs.
 
 ## Status
 
-Proposed.
+Completed.
 
 ## Background
 
@@ -108,7 +108,12 @@ answer why the run was blocked or what the agent reported.
 
 ## Completion Deviations
 
-None yet.
+- Implemented bounded per-row payload expansion directly in the run detail session-history table
+  rather than a separate modal or filter panel.
+- Coalescing is intentionally narrow: only adjacent persisted agent-message streaming rows with the
+  same event/source/operation/label are merged. Raw `/events` remains unchanged for audit fidelity.
+- The workflow version context remains compact in the existing code panel, but now renders explicit
+  operator-facing fields instead of an inspected map.
 
 ## Dependencies
 

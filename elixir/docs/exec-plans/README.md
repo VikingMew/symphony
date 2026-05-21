@@ -120,6 +120,7 @@ Plans should focus on product and engineering intent rather than full implementa
 113. [113-large-module-boundary-follow-up.md](completed/113-large-module-boundary-follow-up.md)
 114. [114-coverage-ignore-exit-governance.md](completed/114-coverage-ignore-exit-governance.md)
 115. [115-test-yaml-fixture-builder.md](completed/115-test-yaml-fixture-builder.md)
+116. [116-readable-run-detail-session-history.md](completed/116-readable-run-detail-session-history.md)
 
 ## Intentional Numbering Gaps
 
@@ -160,4 +161,3 @@ When implementation starts, keep the plan current. If the implementation discove
 ## Active Plans
 
 None.
-5. [116-readable-run-detail-session-history.md](active/116-readable-run-detail-session-history.md)

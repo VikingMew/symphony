@@ -519,6 +519,16 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
         event_type: "run.failed",
         payload: %{"api_token" => "secret", "message" => "boom"},
         occurred_at: now
+      },
+      %{
+        run_id: "run-1",
+        issue_identifier: "MT-1",
+        event_type: "codex.update",
+        payload: %{
+          event: :startup_failed,
+          message: %{reason: :response_error, response_error: %{"message" => "unknown variant reject"}}
+        },
+        occurred_at: now
       }
     ])
 
@@ -526,8 +536,13 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert run_html =~ "Run Detail"
     assert run_html =~ "MT-1"
     assert run_html =~ "Workflow Version"
+    assert run_html =~ "ID: workflow-1"
+    assert run_html =~ "Version: 7"
+    refute run_html =~ "active: true"
     assert run_html =~ "Session History"
     assert run_html =~ "Run failed"
+    assert run_html =~ "Codex startup failed"
+    assert run_html =~ "unknown variant reject"
     assert run_html =~ "Turn failed"
     assert run_html =~ "[REDACTED]"
     refute run_html =~ "secret"

@@ -75,6 +75,59 @@ defmodule SymphonyElixir.RunHistoryTest do
     assert codex.label == "Codex event"
   end
 
+  test "transforms persisted codex updates through the codex humanizer" do
+    [input_required, startup_failed] =
+      RunHistory.from_events([
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "turn_input_required",
+            "message" => %{"method" => "turn/input_required", "params" => %{"reason" => "blocked"}}
+          },
+          occurred_at: ~U[2026-05-21 00:00:01Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            event: :startup_failed,
+            message: %{reason: :response_error, response_error: %{"message" => "unknown variant reject"}}
+          },
+          occurred_at: ~U[2026-05-21 00:00:02Z]
+        }
+      ])
+
+    assert input_required.label == "Codex turn input required"
+    assert input_required.detail == "turn blocked: waiting for user input"
+    assert startup_failed.label == "Codex startup failed"
+    assert startup_failed.detail =~ "startup failed"
+    assert startup_failed.detail =~ "unknown variant reject"
+  end
+
+  test "coalesces adjacent persisted agent message fragments" do
+    [message] =
+      RunHistory.from_events([
+        %{
+          event_type: "codex.update",
+          payload: %{
+            event: :notification,
+            message: %{"method" => "item/agentMessage/delta", "params" => %{"delta" => "hello "}}
+          },
+          occurred_at: ~U[2026-05-21 00:00:01Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            event: :notification,
+            message: %{"method" => "item/agentMessage/delta", "params" => %{"delta" => "world"}}
+          },
+          occurred_at: ~U[2026-05-21 00:00:02Z]
+        }
+      ])
+
+    assert message.detail == "agent message streaming: hello world"
+    assert message.metadata["_coalesced_count"] == 2
+  end
+
   test "transforms terminal and Linear transition events" do
     [started, completed, stopped, transition] =
       RunHistory.from_events([

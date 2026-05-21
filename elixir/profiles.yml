@@ -45,7 +45,7 @@ base_prompt: |
   - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
   - Keep ticket metadata current (state, checklist, acceptance criteria, links).
   - Treat a single persistent Linear comment as the source of truth for progress.
-  - Use that single workpad comment for all progress and handoff notes; do not post separate "done"/summary comments.
+  - Use that single workpad comment for ongoing progress. At implementation handoff, also send one concise `linear_task_update` comment containing `Completed`, `Validation`, `Deviations`, and `Blockers` so reviewers can see the final development summary without reading the whole workpad.
   - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
   - When meaningful out-of-scope improvements are discovered during execution,
     file a separate Linear issue instead of expanding scope. The follow-up issue
@@ -222,9 +222,10 @@ base_prompt: |
   10. Update the workpad comment with final checklist status and validation notes.
       - Mark completed plan/acceptance/validation checklist items as checked.
       - Add final handoff notes (commit + validation summary) in the same workpad comment.
+      - Post exactly one final handoff comment via `linear_task_update` before moving to review. It must include `Completed`, `Validation`, `Deviations`, and `Blockers`. Use `None` for empty `Deviations` or `Blockers`.
       - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
       - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
-      - Do not post any additional completion summary comment.
+      - Do not post any additional duplicate completion summary comment.
   11. Before moving to `In Review`, poll PR feedback and checks:
       - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
       - Run the full PR feedback sweep protocol.
@@ -334,7 +335,23 @@ profiles:
     name: "Implementation"
     prompt:
       mode: "extend"
-      template: "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, test, and verify the requested work in the workspace. When ready for review, add the result, relevant references, a concise comment, and request one of the allowed target states.\n"
+      template: |
+        Workflow profile: {{ workflow.profile_name }}
+
+        Before changing code, call `linear_task_read` with `include_activity: true` and read the task detail plus recent comments/activity. Treat human comments as authoritative scope or review feedback. If comments contradict the description, follow the newest explicit human comment and record the interpretation in the workpad before editing code.
+
+        Implement, test, and verify the requested work in the workspace.
+
+        Before requesting review, call `linear_task_update` with:
+        - a concise `comment` containing:
+          - `Completed`: what was implemented;
+          - `Validation`: commands/checks run and their results;
+          - `Deviations`: any planned work not done, behavior that differs from the original request, or `None`;
+          - `Blockers`: remaining blockers, or `None`;
+        - a structured `result` with the same information;
+        - relevant `references` such as branch, commit, PR, or artifact links.
+
+        Only request an allowed target state after the summary/comment, validation, and handoff are complete.
   merge:
     allowed_updates:
       comment: true
