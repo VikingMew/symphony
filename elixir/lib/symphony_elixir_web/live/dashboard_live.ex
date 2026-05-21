@@ -169,17 +169,71 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="metric-value numeric"><%= format_runtime_seconds(total_runtime_seconds(@payload, @now)) %></p>
             <p class="metric-detail">Total Codex runtime across completed and active sessions.</p>
           </article>
+
+          <a class="metric-card dashboard-signal-card" href={@payload.linear_status.href}>
+            <span class={@payload.linear_status.badge_class}><%= @payload.linear_status.label %></span>
+            <p class="metric-detail"><%= @payload.linear_status.detail %></p>
+            <p class="metric-detail">
+              Project <span class="mono"><%= @payload.linear_status.project_slug || "n/a" %></span>
+              <%= if @payload.linear_status.ran_at do %>
+                · <span class="mono numeric"><%= format_time(@payload.linear_status.ran_at) %></span>
+              <% else %>
+                · open diagnostics
+              <% end %>
+            </p>
+          </a>
         </section>
 
         <section class="section-card">
           <div class="section-header">
             <div>
               <h2 class="section-title">Rate limits</h2>
-              <p class="section-copy">Latest upstream rate-limit snapshot, when available.</p>
+              <p class="section-copy"><%= @payload.rate_limit_status.note %></p>
             </div>
+            <span class={rate_limit_badge_class(@payload.rate_limit_status.status)}>
+              <%= rate_limit_status_label(@payload.rate_limit_status.status) %>
+            </span>
           </div>
 
-          <pre class="code-panel"><%= pretty_value(@payload.rate_limits) %></pre>
+          <%= if @payload.rate_limit_status.status == :available do %>
+            <pre class="code-panel"><%= pretty_value(@payload.rate_limit_status.snapshot) %></pre>
+          <% else %>
+            <div class="rate-limit-fallback-grid">
+              <article class="metric-card">
+                <p class="metric-label">Token totals</p>
+                <p class="metric-detail numeric">
+                  Total <%= format_int(@payload.rate_limit_status.token_totals.total_tokens) %>
+                  · In <%= format_int(@payload.rate_limit_status.token_totals.input_tokens) %>
+                  · Out <%= format_int(@payload.rate_limit_status.token_totals.output_tokens) %>
+                </p>
+              </article>
+              <article class="metric-card">
+                <p class="metric-label">Codex evidence</p>
+                <p class="metric-detail">
+                  Last event <span class="mono"><%= @payload.rate_limit_status.last_codex_event || "n/a" %></span>
+                </p>
+                <p class="metric-detail">
+                  <%= @payload.rate_limit_status.last_codex_message || "No Codex update message observed." %>
+                </p>
+                <p class="metric-detail mono numeric"><%= @payload.rate_limit_status.last_codex_timestamp || "n/a" %></p>
+              </article>
+              <article class="metric-card">
+                <p class="metric-label">Active sessions</p>
+                <p class="metric-value numeric"><%= @payload.rate_limit_status.active_sessions %></p>
+                <p class="metric-detail">Running sessions that may produce future Codex updates.</p>
+              </article>
+            </div>
+            <details :if={@payload.rate_limit_status.status == :unrecognized and @payload.rate_limit_status.debug_payload} class="rate-limit-debug-panel">
+              <summary>Raw rate-limit payload</summary>
+              <div class="rate-limit-debug-meta">
+                <span>Source <code><%= rate_limit_debug_source(@payload.rate_limit_status.debug_payload) %></code></span>
+                <span>Method <code><%= rate_limit_debug_method(@payload.rate_limit_status.debug_payload) %></code></span>
+                <span :if={rate_limit_debug_truncated?(@payload.rate_limit_status.debug_payload)} class="status-badge status-warning">truncated</span>
+              </div>
+              <p class="metric-detail"><%= rate_limit_debug_reason(@payload.rate_limit_status.debug_payload) %></p>
+              <pre class="code-panel"><%= rate_limit_debug_payload(@payload.rate_limit_status.debug_payload) %></pre>
+            </details>
+          <% end %>
         </section>
 
         <section class="section-card">
@@ -402,6 +456,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp format_int(_value), do: "n/a"
 
+  defp format_time(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp format_time(value), do: to_string(value)
+
+  defp rate_limit_status_label(:available), do: "available"
+  defp rate_limit_status_label(:unrecognized), do: "unrecognized"
+  defp rate_limit_status_label(_status), do: "not received"
+
+  defp rate_limit_badge_class(:available), do: "status-badge status-success"
+  defp rate_limit_badge_class(:unrecognized), do: "status-badge status-warning"
+  defp rate_limit_badge_class(_status), do: "status-badge status-info"
+
   defp state_badge_class(state) do
     base = "state-badge"
     normalized = state |> to_string() |> String.downcase()
@@ -474,4 +539,24 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   defp pretty_value(nil), do: "n/a"
   defp pretty_value(value), do: inspect(value, pretty: true, limit: :infinity)
+
+  defp rate_limit_debug_source(debug), do: debug_value(debug, :source_path, "n/a")
+  defp rate_limit_debug_method(debug), do: debug_value(debug, :method, "n/a")
+  defp rate_limit_debug_reason(debug), do: debug_value(debug, :reason, "No parser failure reason recorded.")
+  defp rate_limit_debug_truncated?(debug), do: debug_value(debug, :truncated, false) == true
+
+  defp rate_limit_debug_payload(debug) do
+    debug
+    |> debug_value(:payload, nil)
+    |> pretty_value()
+    |> truncate_string(2_000)
+  end
+
+  defp debug_value(debug, key, default) when is_map(debug), do: Map.get(debug, key) || Map.get(debug, to_string(key)) || default
+  defp debug_value(_debug, _key, default), do: default
+
+  defp truncate_string(value, max_bytes) when is_binary(value) and byte_size(value) > max_bytes,
+    do: binary_part(value, 0, max_bytes) <> "... (truncated)"
+
+  defp truncate_string(value, _max_bytes), do: value
 end

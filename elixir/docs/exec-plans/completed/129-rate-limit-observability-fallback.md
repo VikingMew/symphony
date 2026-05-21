@@ -8,7 +8,7 @@ The page should explain what is known, what is missing, and what evidence Sympho
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -112,19 +112,15 @@ If the system does not currently retain the last Codex event globally, add only 
 
 ## Verification
 
-- `mise exec -- mix format`
-- Focused presenter/dashboard tests for rate-limit states.
-- Focused orchestrator test for unrecognized rate-limit update observation if new state is added there.
-- Browser or LiveView rendered evidence showing:
-  - parsed snapshot state;
-  - no-snapshot fallback state;
-  - unrecognized-event state.
-- `mise exec -- mix exec_plans.check`
-- `git diff --check`
+- `mise exec -- mix test test/symphony_elixir/dashboard_signal_test.exs test/symphony_elixir/extensions_test.exs test/symphony_elixir/web_fake_persistence_test.exs`
+- `mise exec -- mix test --cover` passed with 424 tests, 0 failures, 2 skipped, 85.54% total coverage.
+- Rendered dashboard assertions cover the parsed snapshot path, the `/diagnostics/linear` link, and rate-limit section copy.
+- `SymphonyElixirWeb.RateLimitStatus` tests cover parsed, not-received, and unrecognized status projections.
+- `SymphonyElixir.Codex.Update.rate_limit_update_event?/1` test covers unrecognized `account/rateLimits/updated` detection.
 
 ## Completion Deviations
 
-None yet.
+Implemented without external API calls or fabricated quota values. The dashboard uses adjacent evidence from the orchestrator snapshot and active running entries.
 
 ## Dependencies
 

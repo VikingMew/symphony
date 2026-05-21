@@ -21,6 +21,27 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     end
   end
 
+  @spec stage_import(String.t(), WorkflowForm.draft(), keyword()) :: {:ok, map()} | {:error, term()}
+  def stage_import(yaml, current, opts \\ []) do
+    with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml),
+         {:ok, label, draft} <- do_import_draft(parsed, current) do
+      type = package_type(parsed)
+
+      {:ok,
+       %{
+         source: opts |> Keyword.get(:source, :paste) |> to_string(),
+         detected_type: type,
+         label: label,
+         draft: draft,
+         owning_tab: owning_tab(type),
+         affected_areas: affected_areas(current, draft),
+         diff: diff(current, draft),
+         warnings: [],
+         preview: preview(yaml)
+       }}
+    end
+  end
+
   @spec restore_section(:workflow | :agents, WorkflowForm.draft(), WorkflowForm.draft()) :: WorkflowForm.draft()
   def restore_section(:agents, current, history) do
     current
@@ -69,6 +90,63 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
     {:ok, "profiles.yml", WorkflowForm.from_loaded(loaded)}
   end
+
+  defp package_type({type, _package}), do: type
+  defp owning_tab(:profiles), do: :agents
+  defp owning_tab(_type), do: :workflow
+
+  defp affected_areas(current, draft) do
+    current
+    |> diff(draft)
+    |> Enum.map(& &1.area)
+    |> Enum.uniq()
+  end
+
+  defp diff(current, draft) do
+    current_flat = flatten(current)
+    draft_flat = flatten(draft)
+
+    (Map.keys(current_flat) ++ Map.keys(draft_flat))
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.reject(&(Map.get(current_flat, &1) == Map.get(draft_flat, &1)))
+    |> Enum.map(fn path ->
+      %{
+        area: diff_area(path),
+        path: path,
+        before: inspect_for_diff(Map.get(current_flat, path)),
+        after: inspect_for_diff(Map.get(draft_flat, path))
+      }
+    end)
+  end
+
+  defp flatten(value), do: flatten_value(value, [])
+
+  defp flatten_value(%{} = map, path) do
+    Enum.flat_map(map, fn {key, value} -> flatten_value(value, path ++ [to_string(key)]) end)
+    |> Map.new()
+  end
+
+  defp flatten_value(value, path), do: %{Enum.join(path, ".") => value}
+
+  defp diff_area("prompt_body"), do: "Agents"
+  defp diff_area("profiles." <> _rest), do: "Agents"
+  defp diff_area("workspace_" <> _rest), do: "Runtime"
+  defp diff_area("polling_" <> _rest), do: "Runtime"
+  defp diff_area("agent_max_" <> _rest), do: "Runtime"
+  defp diff_area("codex_" <> _rest), do: "Runtime"
+  defp diff_area(_path), do: "Workflow"
+
+  defp inspect_for_diff(nil), do: "n/a"
+  defp inspect_for_diff(value) when is_binary(value), do: truncate(value, 600)
+  defp inspect_for_diff(value), do: value |> inspect(limit: 12) |> truncate(600)
+
+  defp preview(yaml), do: truncate(yaml, 4_000)
+
+  defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit,
+    do: binary_part(value, 0, limit) <> "\n... truncated"
+
+  defp truncate(value, _limit), do: value
 
   defp draft_config_or_base(current) do
     case WorkflowForm.to_config(current) do

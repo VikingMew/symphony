@@ -371,6 +371,28 @@ defmodule SymphonyElixir.ExtensionsTest do
                "seconds_running" => 42.5
              },
              "rate_limits" => %{"primary" => %{"remaining" => 11}},
+             "rate_limit_status" => %{
+               "active_sessions" => 1,
+               "last_codex_event" => "notification",
+               "last_codex_message" => "rendered",
+               "last_codex_timestamp" => nil,
+               "note" => "Upstream Codex rate-limit snapshot received.",
+               "debug_payload" => nil,
+               "observation" => nil,
+               "snapshot" => %{"primary" => %{"remaining" => 11}},
+               "status" => "available",
+               "token_totals" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12, "seconds_running" => 42.5}
+             },
+             "linear_status" => %{
+               "badge_class" => "status-badge status-info",
+               "candidate_count" => nil,
+               "detail" => "Diagnostics have not been run from this dashboard snapshot.",
+               "href" => "/diagnostics/linear",
+               "label" => "Linear unknown",
+               "project_slug" => "project",
+               "ran_at" => nil,
+               "status" => "unknown"
+             },
              "polling" => %{"listening?" => false}
            }
 
@@ -563,6 +585,11 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Force stop all agents"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
+    assert html =~ "Linear unknown"
+    assert html =~ ~s(href="/diagnostics/linear")
+    assert html =~ "Upstream Codex rate-limit snapshot received."
+    assert html =~ "remaining"
+    refute html =~ "Raw rate-limit payload"
     refute html =~ "Event log"
     refute html =~ "log-table"
     refute html =~ "data-runtime-clock="
@@ -611,6 +638,35 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_eventually(fn ->
       render(view) =~ "agent message content streaming: structured update"
     end)
+  end
+
+  test "dashboard renders scrubbed raw rate-limit debug payload only for unrecognized updates" do
+    orchestrator_name = Module.concat(__MODULE__, :RateLimitDebugOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> Map.put(:rate_limits, nil)
+      |> Map.put(:rate_limit_observation, %{
+        status: :unrecognized,
+        debug_payload: %{
+          source_path: "update.payload.params.rateLimits",
+          method: "account/rateLimits/updated",
+          reason: "No recognized shape",
+          payload: [%{"authorization" => "[REDACTED]", "unexpected" => true}],
+          truncated: false
+        }
+      })
+
+    {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, _view, html} = live(build_conn(), "/")
+
+    assert html =~ "Raw rate-limit payload"
+    assert html =~ "update.payload.params.rateLimits"
+    assert html =~ "account/rateLimits/updated"
+    assert html =~ "[REDACTED]"
+    refute html =~ "Bearer"
   end
 
   test "dashboard controls listening status" do

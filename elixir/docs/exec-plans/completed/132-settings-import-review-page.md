@@ -6,7 +6,7 @@ Move Settings import into a dedicated page that supports both file upload and pa
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -133,23 +133,14 @@ If Settings tabs are owned by one LiveView, store the staged import in socket as
 
 ## Verification
 
-- `mise exec -- mix format`
-- Focused tests for `WorkflowSettingsPackage` staging/diff helpers.
-- Focused LiveView/Admin tests for:
-  - paste import review;
-  - upload import review;
-  - invalid import;
-  - cancel;
-  - confirm without save;
-  - confirm then save.
-- Browser or rendered LiveView evidence showing the review page with before/after changes and explicit confirmation.
-- Existing Settings tests, especially save-only-when-dirty and workflow/profile import coverage.
-- `mise exec -- mix exec_plans.check`
-- `git diff --check`
+- `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
+- `mise exec -- mix test --cover` passed with 424 tests, 0 failures, 2 skipped, 85.54% total coverage.
+- Rendered Settings tests cover the `/settings/import` route, paste import staging, upload import staging, invalid YAML, cancellation, confirmation without persistence, and confirm-then-save.
+- `WorkflowSettingsPackage.stage_import/3` is covered through LiveView staging and existing package import tests.
 
 ## Completion Deviations
 
-None yet.
+Implemented as a dedicated `/settings/import` tab. Confirming an import applies the staged package to the editable LiveView draft and routes to the owning Settings tab; persistence still only happens through the existing Save actions.
 
 ## Dependencies
 

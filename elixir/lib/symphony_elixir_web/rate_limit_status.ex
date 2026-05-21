@@ -26,7 +26,8 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
       last_codex_message: last_codex_message(snapshot),
       token_totals: Map.get(snapshot, :codex_totals, %{}),
       active_sessions: snapshot |> Map.get(:running, []) |> length(),
-      observation: observation
+      observation: observation,
+      debug_payload: debug_payload(status, observation)
     }
   end
 
@@ -39,6 +40,12 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
   defp rate_limit_observed?(%{status: :unrecognized}), do: true
   defp rate_limit_observed?(%{"status" => "unrecognized"}), do: true
   defp rate_limit_observed?(_observation), do: false
+
+  defp debug_payload(:unrecognized, observation) when is_map(observation) do
+    Map.get(observation, :debug_payload) || Map.get(observation, "debug_payload")
+  end
+
+  defp debug_payload(_status, _observation), do: nil
 
   defp last_codex_event(snapshot) do
     snapshot

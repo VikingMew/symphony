@@ -300,33 +300,44 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute agents_html =~ "Import Settings Package"
     refute agents_html =~ ~s(name="import[yaml]")
 
-    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    {:ok, view, html} = live(build_conn(), "/settings/import")
     assert html =~ "Import Settings Package"
     refute html =~ ~s(name="import[kind]")
     assert html =~ ~s(name="import[yaml]")
-    assert html =~ ">Import</button>"
+    assert html =~ ">Review import</button>"
 
-    workflow_imported_html =
+    workflow_staged_html =
       view
-      |> form("form[phx-submit='import_settings_package']",
+      |> form("form[phx-submit='stage_settings_import']",
         import: %{
           "yaml" => split_workflow_yaml()
         }
       )
       |> render_submit()
 
-    assert workflow_imported_html =~ "workflow.yml imported into draft"
+    assert workflow_staged_html =~ "workflow.yml staged"
+    assert workflow_staged_html =~ "Detected"
+    assert workflow_staged_html =~ "workflow.yml"
 
-    profiles_imported_html =
+    workflow_imported_html = render_click(view, "confirm_settings_import")
+    assert workflow_imported_html =~ "Draft Configuration"
+
+    render_patch(view, "/settings/import")
+
+    profiles_staged_html =
       view
-      |> form("form[phx-submit='import_settings_package']",
+      |> form("form[phx-submit='stage_settings_import']",
         import: %{
           "yaml" => split_profiles_yaml()
         }
       )
       |> render_submit()
 
-    assert profiles_imported_html =~ "profiles.yml imported into draft"
+    assert profiles_staged_html =~ "profiles.yml staged"
+    profiles_imported_html = render_click(view, "confirm_settings_import")
+    assert profiles_imported_html =~ "Imported base prompt."
+
+    render_patch(view, "/settings/workflow")
 
     saved_html =
       view
@@ -357,18 +368,20 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
-    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
 
-    imported_html =
+    staged_html =
       view
-      |> form("form[phx-submit='import_settings_package']",
+      |> form("form[phx-submit='stage_settings_import']",
         import: %{
           "yaml" => split_profiles_yaml()
         }
       )
       |> render_submit()
 
-    assert imported_html =~ "profiles.yml imported into draft"
+    assert staged_html =~ "profiles.yml staged"
+    imported_html = render_click(view, "confirm_settings_import")
+    assert imported_html =~ "Imported base prompt."
 
     agents_draft_html = render_patch(view, "/settings/agents")
     assert agents_draft_html =~ "Imported base prompt."
@@ -379,11 +392,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
-    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
 
     html =
       view
-      |> form("form[phx-submit='import_settings_package']",
+      |> form("form[phx-submit='stage_settings_import']",
         import: %{
           "yaml" => "workflow: ["
         }
@@ -396,6 +409,36 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              {:import_workflow, _project, _raw, _source} -> true
              _ -> false
            end)
+  end
+
+  test "settings import accepts uploaded package files and can cancel staged changes" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/import")
+    assert html =~ "Upload file"
+
+    upload =
+      file_input(view, "form[phx-submit='stage_settings_import']", :settings_package, [
+        %{
+          name: "profiles.yml",
+          content: split_profiles_yaml(),
+          type: "text/yaml"
+        }
+      ])
+
+    render_upload(upload, "profiles.yml")
+
+    html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => ""})
+      |> render_submit()
+
+    assert html =~ "profiles.yml staged"
+    assert render_click(view, "cancel_settings_import") =~ "Import cancelled"
+
+    agents_html = render_patch(view, "/settings/agents")
+    refute agents_html =~ "Imported base prompt."
   end
 
   test "workflow page does not report project-owned Linear slug errors" do
@@ -474,6 +517,43 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     refute html =~ "Start listening"
     refute html =~ "Stop listening"
     refute html =~ "Force stop all agents"
+  end
+
+  test "workers page explains centralized mode instead of looking empty" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :centralized)
+
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/workers")
+
+    assert html =~ "Worker mode inactive"
+    assert html =~ "Execution mode is"
+    assert html =~ "centralized"
+    assert html =~ "Panel-owned dispatch starts Codex"
+    assert html =~ "Worker-backed mode"
+    assert html =~ "SYMPHONY_EXECUTION_MODE=worker"
+    assert html =~ "Worker-backed mode is inactive"
+  end
+
+  test "workers page keeps worker-mode registry as primary content" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/workers")
+
+    refute html =~ "Worker mode inactive"
+    assert html =~ "Execution mode:"
+    assert html =~ "worker"
+    assert html =~ "No workers are registered. Worker-backed execution expects compatible workers"
   end
 
   test "run detail, issue detail, and events pages render persisted observability data" do
@@ -561,6 +641,72 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, _view, filtered_events_html} = live(build_conn(), "/events?issue_identifier=MT-MISSING")
     assert filtered_events_html =~ "No events recorded"
     refute filtered_events_html =~ "run.failed"
+  end
+
+  test "events page normalizes filters and hides low-signal codex notifications" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    now = DateTime.utc_now()
+
+    FakePersistence.put_events([
+      %{
+        id: "event-empty-1",
+        run_id: "run-events",
+        issue_identifier: "MT-EVT",
+        event_type: "codex.update",
+        payload: %{"event" => "notification", "message" => nil},
+        occurred_at: now
+      },
+      %{
+        id: "event-empty-2",
+        run_id: "run-events",
+        issue_identifier: "MT-EVT",
+        event_type: "codex.update",
+        payload: %{"event" => "notification", "message" => nil},
+        occurred_at: now
+      },
+      %{
+        id: "event-run-failed",
+        run_id: "run-events",
+        issue_identifier: "MT-EVT",
+        event_type: "run.failed",
+        payload: %{"failure_reason" => "workspace timeout", "api_token" => "secret"},
+        occurred_at: now
+      },
+      %{
+        id: "event-linear",
+        run_id: "run-events",
+        issue_identifier: "MT-EVT",
+        event_type: "linear.state_transition",
+        payload: %{"from_state" => "In Progress", "to_state" => "Review"},
+        occurred_at: now
+      }
+    ])
+
+    {:ok, _view, html} = live(build_conn(), "/events")
+
+    assert html =~ "Low-signal rows hidden"
+    assert html =~ "2 empty Codex notification rows are hidden"
+    assert html =~ "run.failed"
+    assert html =~ "workspace timeout"
+    assert html =~ ~s(href="/issues/MT-EVT")
+    assert html =~ ~s(href="/runs/run-events")
+    assert html =~ "Raw payload"
+    assert html =~ "[REDACTED]"
+    refute html =~ "secret"
+    refute html =~ "Empty Codex notification; detailed payload was not persisted"
+
+    {:ok, _view, revealed_html} = live(build_conn(), "/events?hide_low_signal=false")
+    assert revealed_html =~ "Empty Codex notification; detailed payload was not persisted"
+
+    {:ok, _view, error_html} = live(build_conn(), "/events?severity=error")
+    assert error_html =~ "run.failed"
+    refute error_html =~ "Linear state moved In Progress"
+
+    {:ok, _view, linear_html} = live(build_conn(), "/events?source=linear")
+    assert linear_html =~ "Linear state moved In Progress -&gt; Review"
+    refute linear_html =~ "run.failed"
   end
 
   test "run detail summarizes codex history when no structured agent turns exist" do
@@ -703,6 +849,13 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert html =~ "Identity"
     assert html =~ "Execution"
     assert html =~ "Prompt"
+    assert html =~ "Base prompt"
+    assert html =~ "Profile templates"
+    assert html =~ "Prompt warnings"
+    assert html =~ "template chars"
+    assert html =~ "effective chars"
+    assert html =~ "Base Prompt used"
+    assert html =~ "Preview effective prompt"
     assert html =~ "Updates"
     assert html =~ "Routing"
     assert html =~ ~s(class="workflow-textbox workflow-textbox-prompt")

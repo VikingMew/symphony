@@ -7,7 +7,9 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   alias SymphonyElixir.{
     Config,
+    EventPresenter,
     PersistenceProvider,
+    ProfilePromptSummary,
     RunHistory,
     WorkflowForm,
     WorkflowSettingsPackage,
@@ -52,7 +54,8 @@ defmodule SymphonyElixirWeb.AdminLive do
         {:projects, "Projects", "/settings/projects"},
         {:workflow, "Workflow", "/settings/workflow"},
         {:agents, "Agents", "/settings/agents"},
-        {:runtime, "Runtime", "/settings/runtime"}
+        {:runtime, "Runtime", "/settings/runtime"},
+        {:import, "Import", "/settings/import"}
       ])
 
     ~H"""
@@ -362,6 +365,8 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:route_params, params)
      |> assign(:workflow_diagnostics_notice, nil)
      |> assign(:workflow_import_notice, nil)
+     |> assign(:settings_import_yaml, "")
+     |> assign(:settings_import_stage, nil)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_field_errors, %{})
      |> assign(:workflow_check_targets, [])
@@ -370,6 +375,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_form_valid?, false)
      |> assign(:workflow_form_dirty?, false)
      |> assign(:workflow_form_summary, %{})
+     |> allow_upload(:settings_package, accept: :any, max_entries: 1, max_file_size: 128_000)
      |> refresh()}
   end
 
@@ -414,30 +420,67 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
-  def handle_event("import_settings_package", %{"import" => params}, socket) do
-    yaml = Map.get(params, "yaml", "")
+  def handle_event("validate_settings_import_upload", _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_event("stage_settings_import", %{"import" => params}, socket) do
+    pasted = Map.get(params, "yaml", "")
+    yaml = import_upload_content(socket) || pasted
+    source = import_source(socket, pasted)
 
     socket =
       with :ok <- WorkflowSettingsPackage.require_import_content(yaml),
-           {:ok, label, draft} <- WorkflowSettingsPackage.import_draft(yaml, socket.assigns.workflow_form) do
+           {:ok, stage} <- WorkflowSettingsPackage.stage_import(yaml, socket.assigns.workflow_form, source: source) do
         socket
-        |> put_flash(:info, "#{label} imported into draft. Review and save to activate it.")
-        |> assign_import_notice(:success, "#{label} imported into draft", "Review validation, then save to create an active database workflow version.")
-        |> assign(:workflow_save_notice, nil)
-        |> assign(:workflow_validation_visible?, true)
-        |> assign(:workflow_form, draft)
-        |> assign(:workflow_form_dirty?, true)
-        |> assign_workflow_validation(draft)
+        |> put_flash(:info, "#{stage.label} staged for review.")
+        |> assign_import_notice(
+          :success,
+          "#{stage.label} staged",
+          "Review the detected changes, then confirm to update the editable Settings draft."
+        )
+        |> assign(:settings_import_yaml, yaml)
+        |> assign(:settings_import_stage, stage)
       else
         {:error, reason} ->
           message = WorkflowSettingsPackage.import_error_message(reason)
 
           socket
-          |> put_flash(:error, "Workflow package import failed: #{message}")
+          |> put_flash(:error, "Settings package import failed: #{message}")
           |> assign_import_notice(:error, "Package import failed", message)
+          |> assign(:settings_import_stage, nil)
       end
 
     {:noreply, socket}
+  end
+
+  @impl true
+  def handle_event("confirm_settings_import", _params, socket) do
+    case socket.assigns.settings_import_stage do
+      %{draft: draft, label: label, owning_tab: owning_tab} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "#{label} applied to the editable draft. Save #{settings_section_label(owning_tab)} to activate it.")
+         |> assign_import_notice(:success, "#{label} applied to draft", "Runtime configuration is unchanged until you save.")
+         |> assign(:workflow_save_notice, nil)
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, true)
+         |> assign(:settings_import_stage, nil)
+         |> assign_workflow_validation(draft)
+         |> push_patch(to: settings_tab_path(owning_tab))}
+
+      _stage ->
+        {:noreply, assign_import_notice(socket, :error, "No staged import", "Paste or upload a settings package before confirming.")}
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_settings_import", _params, socket) do
+    {:noreply,
+     socket
+     |> assign(:settings_import_stage, nil)
+     |> assign(:settings_import_yaml, "")
+     |> assign_import_notice(:info, "Import cancelled", "The editable Settings draft was not changed.")}
   end
 
   @impl true
@@ -804,23 +847,126 @@ defmodule SymphonyElixirWeb.AdminLive do
         <% :events -> %>
           <section class="section-card">
             <h1 class="section-title">Events</h1>
-            <p class="section-copy">Persisted Symphony events. Payloads are bounded and scrubbed before display.</p>
+            <p class="section-copy">Persisted Symphony events. Summaries are normalized for troubleshooting; raw payloads remain bounded and scrubbed.</p>
+            <%= if @hidden_low_signal_event_count > 0 do %>
+              <aside class="setup-guidance-card" role="status" aria-live="polite">
+                <h3>Low-signal rows hidden</h3>
+                <p><%= @hidden_low_signal_event_count %> empty Codex notification rows are hidden in this view. Set Hide low signal to false to reveal them.</p>
+              </aside>
+            <% end %>
             <form class="workflow-import-form" method="get" action="/events">
               <label><span class="metric-label">Issue</span><input name="issue_identifier" value={@event_filters.issue_identifier} /></label>
               <label><span class="metric-label">Run ID</span><input name="run_id" value={@event_filters.run_id} /></label>
               <label><span class="metric-label">Event type</span><input name="event_type" value={@event_filters.event_type} /></label>
+              <label>
+                <span class="metric-label">Severity</span>
+                <select name="severity">
+                  <option value="" selected={@event_filters.severity == ""}>all</option>
+                  <option value="error" selected={@event_filters.severity == "error"}>error</option>
+                  <option value="warning" selected={@event_filters.severity == "warning"}>warning</option>
+                  <option value="info" selected={@event_filters.severity == "info"}>info</option>
+                </select>
+              </label>
+              <label>
+                <span class="metric-label">Source</span>
+                <select name="source">
+                  <option value="" selected={@event_filters.source == ""}>all</option>
+                  <option value="system" selected={@event_filters.source == "system"}>system</option>
+                  <option value="agent" selected={@event_filters.source == "agent"}>agent</option>
+                  <option value="linear" selected={@event_filters.source == "linear"}>linear</option>
+                  <option value="workspace" selected={@event_filters.source == "workspace"}>workspace</option>
+                  <option value="worker" selected={@event_filters.source == "worker"}>worker</option>
+                </select>
+              </label>
+              <label>
+                <span class="metric-label">Hide low signal</span>
+                <select name="hide_low_signal">
+                  <option value="true" selected={@event_filters.hide_low_signal != "false"}>true</option>
+                  <option value="false" selected={@event_filters.hide_low_signal == "false"}>false</option>
+                </select>
+              </label>
               <label><span class="metric-label">Limit</span><input type="number" min="1" max="500" name="limit" value={@event_filters.limit} /></label>
               <button class="subtle-button" type="submit">Apply filters</button>
             </form>
-            <.event_table events={@events} />
+            <div class="button-row">
+              <a class="subtle-button" href="/events?severity=error">Errors only</a>
+              <a class="subtle-button" href="/events?source=workspace">Workspace</a>
+              <a class="subtle-button" href="/events?source=linear">Linear</a>
+              <a class="subtle-button" href="/events?source=agent&hide_low_signal=false">Codex raw</a>
+            </div>
+
+            <%= if @event_rows == [] do %>
+              <p class="empty-state">No events recorded.</p>
+            <% else %>
+              <table class="data-table events-table">
+                <thead><tr><th>Time</th><th>Issue</th><th>Run</th><th>Source</th><th>Severity</th><th>Type</th><th>Summary</th><th>Raw</th></tr></thead>
+                <tbody>
+                  <tr :for={event <- @event_rows}>
+                    <td class="mono"><%= fmt_dt(event.occurred_at) %></td>
+                    <td>
+                      <a :if={event.issue_identifier} class="issue-link" href={"/issues/#{event.issue_identifier}"}><%= event.issue_identifier %></a>
+                      <span :if={is_nil(event.issue_identifier)} class="muted">n/a</span>
+                    </td>
+                    <td>
+                      <a :if={event.run_id} class="issue-link mono" href={"/runs/#{event.run_id}"}><%= event.run_id %></a>
+                      <span :if={is_nil(event.run_id)} class="muted">n/a</span>
+                    </td>
+                    <td><span class="status-badge status-info"><%= event.source %></span></td>
+                    <td><span class={status_class(to_string(event.severity))}><%= event.severity %></span></td>
+                    <td><a class="issue-link" href={"/events?event_type=#{event.event_type}"}><%= event.event_type %></a></td>
+                    <td>
+                      <div class="detail-stack">
+                        <strong><%= event.summary %></strong>
+                        <span class="muted"><%= event.detail %></span>
+                        <span :if={event.low_signal?} class="status-badge">low signal</span>
+                      </div>
+                    </td>
+                    <td>
+                      <details>
+                        <summary>Raw payload</summary>
+                        <pre class="inline-code-panel"><%= safe_event_payload(event.raw_payload) %></pre>
+                      </details>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            <% end %>
           </section>
 
         <% :workers -> %>
+          <%= if @execution_mode == :centralized do %>
+            <section class="section-card">
+              <div class="section-header">
+                <div>
+                  <h1 class="section-title">Worker mode inactive</h1>
+                  <p class="section-copy">
+                    Execution mode is <span class="status-badge status-info">centralized</span>. Issues are dispatched directly by the panel; Codex runs locally unless centralized SSH worker hosts are configured.
+                  </p>
+                </div>
+              </div>
+              <div class="metric-grid worker-mode-grid">
+                <article class="metric-card">
+                  <p class="metric-label">Current path</p>
+                  <p class="metric-detail">Panel-owned dispatch starts Codex without queueing HTTP worker-backed tasks.</p>
+                </article>
+                <article class="metric-card">
+                  <p class="metric-label">Worker-backed mode</p>
+                  <p class="metric-detail">Set <span class="mono">SYMPHONY_EXECUTION_MODE=worker</span>, configure the worker API token/protocol, then run compatible external workers.</p>
+                </article>
+                <article class="metric-card">
+                  <p class="metric-label">Registered workers</p>
+                  <p class="metric-value numeric"><%= length(@workers) %></p>
+                  <p class="metric-detail">Historical registrations are shown below as inactive context in centralized mode.</p>
+                </article>
+              </div>
+            </section>
+          <% end %>
+
           <section class="section-card">
             <h1 class="section-title">Workers</h1>
             <p class="metric-label">Execution mode: <span class="status-badge status-info"><%= @execution_mode %></span></p>
             <%= if @workers == [] do %>
-              <p class="empty-state">No workers are registered. Centralized execution remains supported and does not require workers.</p>
+              <p class="empty-state"><%= worker_empty_message(@execution_mode) %></p>
             <% else %>
               <table class="data-table">
                 <thead><tr><th>Name</th><th>Status</th><th>Labels</th><th>Last Seen</th></tr></thead>
@@ -858,7 +1004,7 @@ defmodule SymphonyElixirWeb.AdminLive do
             <% end %>
           </section>
 
-        <% action when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime] -> %>
+        <% action when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime, :settings_import] -> %>
           <section class="section-card settings-header-card">
             <h1 class="section-title">Settings</h1>
             <p class="metric-label">Configure projects, workflow routing, agent profiles, and runtime settings.</p>
@@ -975,6 +1121,84 @@ defmodule SymphonyElixirWeb.AdminLive do
             </section>
           </section>
 
+            <% :import -> %>
+          <section class="section-card settings-content-card">
+            <div class="section-header">
+              <div>
+                <h2 class="section-title">Import Settings Package</h2>
+                <p class="section-copy">Paste or upload workflow.yml or profiles.yml. Import is staged for review before it changes the editable draft, and runtime configuration is unchanged until the normal Save flow.</p>
+              </div>
+              <span class="status-badge status-info">staged review</span>
+            </div>
+
+            <%= if @workflow_import_notice do %>
+              <aside class={["workflow-save-toast", "workflow-save-toast-#{@workflow_import_notice.level}"]} role="status" aria-live="polite">
+                <strong><%= @workflow_import_notice.title %></strong>
+                <span><%= @workflow_import_notice.message %></span>
+              </aside>
+            <% end %>
+
+            <form class="workflow-form settings-editor-form" phx-submit="stage_settings_import" phx-change="validate_settings_import_upload">
+              <section class="workflow-form-section">
+                <h3>Source</h3>
+                <label>
+                  <span class="metric-label">Paste YAML</span>
+                  <textarea class="workflow-textbox workflow-textbox-medium" name="import[yaml]" rows="8" placeholder="Paste workflow.yml or profiles.yml"><%= @settings_import_yaml %></textarea>
+                </label>
+                <label>
+                  <span class="metric-label">Upload file</span>
+                  <.live_file_input upload={@uploads.settings_package} />
+                </label>
+                <button class="subtle-button" type="submit" phx-disable-with="Reviewing...">Review import</button>
+              </section>
+            </form>
+
+            <%= if @settings_import_stage do %>
+              <section class="workflow-form-section settings-import-review">
+                <div class="workflow-form-header settings-action-row">
+                  <div>
+                    <h3>Review staged import</h3>
+                    <p class="workflow-help-copy">
+                      Detected <span class="mono"><%= @settings_import_stage.label %></span>.
+                      Affects <%= Enum.join(@settings_import_stage.affected_areas, ", ") %>.
+                    </p>
+                  </div>
+                  <span class="status-badge status-info"><%= @settings_import_stage.source %></span>
+                </div>
+                <div class="workflow-summary-grid">
+                  <p><span class="metric-label">Package type</span><strong><%= @settings_import_stage.detected_type %></strong></p>
+                  <p><span class="metric-label">Changes</span><strong><%= length(@settings_import_stage.diff) %></strong></p>
+                  <p><span class="metric-label">Next page</span><strong><%= settings_tab_label(@settings_import_stage.owning_tab) %></strong></p>
+                </div>
+                <%= if @settings_import_stage.diff == [] do %>
+                  <p class="empty-state">No draft changes detected.</p>
+                <% else %>
+                  <div class="table-wrap">
+                    <table class="data-table settings-import-diff-table">
+                      <thead><tr><th>Area</th><th>Field</th><th>Before</th><th>After</th></tr></thead>
+                      <tbody>
+                        <tr :for={change <- @settings_import_stage.diff}>
+                          <td><span class="status-badge status-info"><%= change.area %></span></td>
+                          <td class="mono"><%= change.path %></td>
+                          <td><pre class="inline-code-panel"><%= change.before %></pre></td>
+                          <td><pre class="inline-code-panel"><%= change.after %></pre></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                <% end %>
+                <details>
+                  <summary>Raw source preview</summary>
+                  <pre class="code-panel"><%= @settings_import_stage.preview %></pre>
+                </details>
+                <div class="button-row">
+                  <button type="button" class="subtle-button" phx-click="confirm_settings_import" phx-disable-with="Applying...">Confirm import to draft</button>
+                  <button type="button" class="subtle-button" phx-click="cancel_settings_import">Cancel</button>
+                </div>
+              </section>
+            <% end %>
+          </section>
+
             <% :workflow -> %>
           <section class="section-card">
             <h2 class="section-title">Workflow</h2>
@@ -1033,8 +1257,6 @@ defmodule SymphonyElixirWeb.AdminLive do
                 <span><%= @workflow_save_notice.message %></span>
               </aside>
             <% end %>
-            <.settings_import_panel notice={@workflow_import_notice} />
-
             <form class="workflow-form" phx-change="validate_workflow_form" phx-submit="save_workflow_form" novalidate>
               <div class="workflow-form-header">
                 <div>
@@ -1261,7 +1483,10 @@ defmodule SymphonyElixirWeb.AdminLive do
               <div class="workflow-summary-grid">
                 <p><span class="metric-label">Profiles</span><strong><%= @workflow_form_summary.profiles %></strong></p>
                 <p><span class="metric-label">Routed states</span><strong><%= @workflow_form_summary.routed_states %></strong></p>
-                <p><span class="metric-label">Prompt</span><strong><%= @workflow_form_summary.prompt_chars %> chars</strong></p>
+                <% prompt_page_summary = profile_prompt_page_summary(@workflow_form) %>
+                <p><span class="metric-label">Base prompt</span><strong><%= prompt_page_summary.base_chars %> chars</strong></p>
+                <p><span class="metric-label">Profile templates</span><strong><%= prompt_page_summary.profiles_with_templates %></strong></p>
+                <p><span class="metric-label">Prompt warnings</span><strong><%= prompt_page_summary.profiles_with_warnings %></strong></p>
               </div>
 
               <section class="workflow-form-section agent-prompt-editor">
@@ -1287,6 +1512,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </div>
                 <div class="workflow-profile-grid">
                   <article :for={{profile_id, profile} <- profile_entries(@workflow_form)} class={settings_check_class(@workflow_check_targets, :agents, :profile_panel, profile_id, "workflow-profile-panel")}>
+                    <% prompt_summary = profile_prompt_summary(@workflow_form, profile_id, profile) %>
                     <header class="workflow-profile-header">
                       <div>
                         <h4 class={settings_check_title_class(@workflow_check_targets, :agents, :profile_panel, profile_id)}><%= profile["name"] || profile_id %></h4>
@@ -1324,6 +1550,19 @@ defmodule SymphonyElixirWeb.AdminLive do
 
                       <section class="profile-field-group profile-field-group-prompt">
                         <h5>Prompt</h5>
+                        <div class="profile-prompt-guidance">
+                          <div class="profile-prompt-metrics">
+                            <span><strong><%= prompt_summary.template_chars %></strong> template chars</span>
+                            <span><strong><%= format_prompt_chars(prompt_summary.effective_chars) %></strong> effective chars</span>
+                            <span><%= if prompt_summary.uses_base_prompt?, do: "Base Prompt used", else: "Base Prompt not used" %></span>
+                          </div>
+                          <p class="metric-detail"><%= prompt_summary.composition %></p>
+                          <p :if={prompt_summary.warning} class="error-copy"><%= prompt_summary.warning %></p>
+                          <details class="profile-prompt-preview">
+                            <summary>Preview effective prompt</summary>
+                            <pre class="inline-code-panel"><%= truncate(prompt_summary.preview, 1_200) %></pre>
+                          </details>
+                        </div>
                         <div class="profile-prompt-layout">
                           <div class={settings_check_class(@workflow_check_targets, :agents, :profile_prompt_mode, profile_id, "agent-field profile-prompt-mode-field")}>
                             <label class={settings_check_title_class(@workflow_check_targets, :agents, :profile_prompt_mode, profile_id, "agent-field-label")} for={"profile-#{profile_id}-prompt-mode"}>Prompt mode</label>
@@ -1432,6 +1671,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:runs, persistence().list_runs(limit: 100))
     |> assign(:events, event_list(socket))
     |> assign(:event_filters, event_filters(socket))
+    |> assign_event_rows()
     |> assign(:workers, persistence().list_workers(limit: 100))
     |> assign(:worker_sessions, persistence().list_worker_sessions(limit: 100))
     |> assign(:tasks, persistence().list_tasks(limit: 100))
@@ -1458,7 +1698,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     end
   end
 
-  defp nav_current(action) when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime], do: :settings
+  defp nav_current(action) when action in [:settings, :settings_projects, :settings_workflow, :settings_agents, :settings_runtime, :settings_import], do: :settings
   defp nav_current(action), do: action
 
   defp settings_tab(:settings), do: :projects
@@ -1466,6 +1706,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp settings_tab(:settings_workflow), do: :workflow
   defp settings_tab(:settings_agents), do: :agents
   defp settings_tab(:settings_runtime), do: :runtime
+  defp settings_tab(:settings_import), do: :import
 
   defp codex_approval_policy_options, do: Config.Schema.codex_approval_policies()
 
@@ -1561,11 +1802,29 @@ defmodule SymphonyElixirWeb.AdminLive do
     )
   end
 
+  defp assign_event_rows(socket) do
+    filters = socket.assigns.event_filters
+
+    rows =
+      EventPresenter.rows(socket.assigns.events,
+        hide_low_signal?: filters.hide_low_signal != "false",
+        severity: blank_as_nil(filters.severity),
+        source: blank_as_nil(filters.source)
+      )
+
+    socket
+    |> assign(:event_rows, rows.visible)
+    |> assign(:hidden_low_signal_event_count, rows.hidden_low_signal_count)
+  end
+
   defp event_filters(%{assigns: %{route_params: params}}) do
     %{
       issue_identifier: Map.get(params, "issue_identifier", ""),
       run_id: Map.get(params, "run_id", ""),
       event_type: Map.get(params, "event_type", ""),
+      severity: Map.get(params, "severity", ""),
+      source: Map.get(params, "source", ""),
+      hide_low_signal: Map.get(params, "hide_low_signal", "true"),
       limit: parse_limit(Map.get(params, "limit", "100"))
     }
   end
@@ -2007,12 +2266,14 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp settings_tab_label(:workflow), do: "Workflow"
   defp settings_tab_label(:agents), do: "Agents"
   defp settings_tab_label(:runtime), do: "Runtime"
+  defp settings_tab_label(:import), do: "Import"
   defp settings_tab_label(tab), do: to_string(tab)
 
   defp settings_tab_path(:projects), do: "/settings/projects"
   defp settings_tab_path(:workflow), do: "/settings/workflow"
   defp settings_tab_path(:agents), do: "/settings/agents"
   defp settings_tab_path(:runtime), do: "/settings/runtime"
+  defp settings_tab_path(:import), do: "/settings/import"
   defp settings_tab_path(_tab), do: "/settings"
 
   defp project_field_class(items, title) do
@@ -2052,6 +2313,31 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp linear_workflow_state_check(_draft, _discovery), do: :unavailable
 
   defp persistence, do: PersistenceProvider.module()
+
+  defp worker_empty_message(:centralized), do: "Worker-backed mode is inactive. Centralized execution does not require registered workers."
+  defp worker_empty_message("centralized"), do: worker_empty_message(:centralized)
+  defp worker_empty_message(_mode), do: "No workers are registered. Worker-backed execution expects compatible workers to register through the worker API."
+
+  defp import_upload_content(socket) do
+    case uploaded_entries(socket, :settings_package) do
+      {[_entry | _], _in_progress} ->
+        socket
+        |> consume_uploaded_entries(:settings_package, fn %{path: path}, _entry ->
+          {:ok, File.read!(path)}
+        end)
+        |> List.first()
+
+      _entries ->
+        nil
+    end
+  end
+
+  defp import_source(socket, pasted) do
+    case uploaded_entries(socket, :settings_package) do
+      {[_entry | _], _in_progress} -> :upload
+      _entries -> if blank?(pasted), do: :unknown, else: :paste
+    end
+  end
 
   defp orchestrator do
     SymphonyElixirWeb.Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
@@ -2111,6 +2397,17 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Map.get("profiles", %{})
     |> Enum.sort_by(fn {profile_id, _profile} -> profile_id end)
   end
+
+  defp profile_prompt_page_summary(form) do
+    ProfilePromptSummary.page_summary(Map.get(form, "prompt_body", ""), Map.get(form, "profiles", %{}))
+  end
+
+  defp profile_prompt_summary(form, profile_id, profile) do
+    ProfilePromptSummary.profile_summary(Map.get(form, "prompt_body", ""), profile_id, profile)
+  end
+
+  defp format_prompt_chars(nil), do: "n/a"
+  defp format_prompt_chars(chars), do: "#{chars}"
 
   defp workflow_state_entries(form) do
     form
@@ -2189,7 +2486,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     Map.new(payload, fn {key, value} ->
       key_string = to_string(key)
 
-      if String.contains?(String.downcase(key_string), ["token", "secret", "authorization", "api_key"]) do
+      if String.contains?(String.downcase(key_string), ["token", "secret", "authorization", "api_key", "cookie"]) do
         {key, "[REDACTED]"}
       else
         {key, scrub_payload(value)}

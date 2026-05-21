@@ -439,6 +439,49 @@ pre,
   padding: 1rem 1.05rem 1.1rem;
 }
 
+.dashboard-signal-card {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--ink);
+}
+
+.dashboard-signal-card:hover {
+  color: var(--ink);
+  border-color: var(--color-primary-border);
+}
+
+.rate-limit-fallback-grid,
+.worker-mode-grid {
+  display: grid;
+  gap: 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 1rem;
+}
+
+.rate-limit-debug-panel {
+  margin-top: 1rem;
+}
+
+.rate-limit-debug-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.75rem 0;
+}
+
+.events-table td {
+  vertical-align: top;
+}
+
+.settings-import-review {
+  display: grid;
+  gap: 1rem;
+}
+
+.settings-import-diff-table {
+  min-width: 920px;
+}
+
 .metric-label {
   margin: 0;
   color: var(--muted);
@@ -986,6 +1029,32 @@ a:focus-visible {
   gap: 0.85rem;
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
+}
+
+.profile-prompt-guidance {
+  display: grid;
+  gap: 0.45rem;
+  margin-bottom: 0.85rem;
+}
+
+.profile-prompt-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.profile-prompt-metrics span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.profile-prompt-preview {
+  margin-top: 0.2rem;
 }
 
 .profile-prompt-mode-field {

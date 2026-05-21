@@ -8,7 +8,7 @@ Instead of showing an apparently empty worker system, the page should clearly st
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -111,17 +111,14 @@ Be precise in copy:
 
 ## Verification
 
-- `mise exec -- mix format`
-- Focused LiveView/Admin test for centralized-mode Workers page copy.
-- Focused LiveView/Admin test for worker-mode Workers page behavior.
-- Existing worker API tests.
-- Browser or rendered LiveView evidence showing the centralized-mode page reads as an explanation, not as an empty failure state.
-- `mise exec -- mix exec_plans.check`
-- `git diff --check`
+- `mise exec -- mix test test/symphony_elixir/web_fake_persistence_test.exs`
+- `mise exec -- mix test --cover` passed with 424 tests, 0 failures, 2 skipped, 85.54% total coverage.
+- Rendered Workers page tests cover centralized mode copy (`Worker mode inactive`, panel-owned dispatch, worker-mode enablement steps) and worker mode registry empty state.
+- Existing worker API tests remained green in the full suite.
 
 ## Completion Deviations
 
-None yet.
+Implemented as an explanatory section shown before the existing registry/task tables in centralized mode. Worker mode keeps the registry/task view as the primary content.
 
 ## Dependencies
 

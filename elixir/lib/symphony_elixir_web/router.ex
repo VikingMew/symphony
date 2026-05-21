@@ -57,6 +57,7 @@ defmodule SymphonyElixirWeb.Router do
     live("/settings/workflow", AdminLive, :settings_workflow)
     live("/settings/agents", AdminLive, :settings_agents)
     live("/settings/runtime", AdminLive, :settings_runtime)
+    live("/settings/import", AdminLive, :settings_import)
   end
 
   scope "/", SymphonyElixirWeb do

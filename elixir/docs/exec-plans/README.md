@@ -133,6 +133,13 @@ Plans should focus on product and engineering intent rather than full implementa
 126. [126-execplan-completion-evidence-governance.md](completed/126-execplan-completion-evidence-governance.md)
 127. [127-orchestrator-codex-update-boundary.md](completed/127-orchestrator-codex-update-boundary.md)
 128. [128-workspace-git-worktree-preparation-boundary.md](completed/128-workspace-git-worktree-preparation-boundary.md)
+129. [129-rate-limit-observability-fallback.md](completed/129-rate-limit-observability-fallback.md)
+130. [130-dashboard-linear-status-signal.md](completed/130-dashboard-linear-status-signal.md)
+131. [131-worker-page-centralized-mode-explanation.md](completed/131-worker-page-centralized-mode-explanation.md)
+132. [132-settings-import-review-page.md](completed/132-settings-import-review-page.md)
+133. [133-events-page-signal-and-filtering.md](completed/133-events-page-signal-and-filtering.md)
+134. [134-rate-limit-unrecognized-payload-debug.md](completed/134-rate-limit-unrecognized-payload-debug.md)
+135. [135-profile-prompt-guidance.md](completed/135-profile-prompt-guidance.md)
 
 ## Intentional Numbering Gaps
 
@@ -184,7 +191,3 @@ This is partly review policy rather than a fully mechanical check. `mix exec_pla
 ## Active Plans
 
 None.
-129. [129-rate-limit-observability-fallback.md](active/129-rate-limit-observability-fallback.md)
-130. [130-dashboard-linear-status-signal.md](active/130-dashboard-linear-status-signal.md)
-131. [131-worker-page-centralized-mode-explanation.md](active/131-worker-page-centralized-mode-explanation.md)
-132. [132-settings-import-review-page.md](active/132-settings-import-review-page.md)

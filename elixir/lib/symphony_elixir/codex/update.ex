@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Codex.Update do
   alias SymphonyElixir.{Payload, Redaction, StatusDashboard}
 
   @default_history_limit 100
+  @debug_payload_string_limit 500
+  @debug_payload_inspect_limit 2_000
 
   @spec integrate(map(), map(), keyword()) :: {map(), map()}
   def integrate(running_entry, %{event: event, timestamp: timestamp} = update, opts \\ []) when is_map(running_entry) do
@@ -99,6 +101,30 @@ defmodule SymphonyElixir.Codex.Update do
   end
 
   def rate_limit_update_event?(_update), do: false
+
+  @spec rate_limit_debug_payload(map()) :: map()
+  def rate_limit_debug_payload(update) when is_map(update) do
+    candidate = rate_limit_debug_candidate(update)
+    payload = bound_debug_payload(candidate.value)
+
+    %{
+      source_path: candidate.path,
+      method: candidate.method,
+      reason: "No recognized limit_id/primary/secondary/credits rate-limit shape was found.",
+      payload: payload.value,
+      truncated: payload.truncated
+    }
+  end
+
+  def rate_limit_debug_payload(_update) do
+    %{
+      source_path: "update",
+      method: nil,
+      reason: "No recognized limit_id/primary/secondary/credits rate-limit shape was found.",
+      payload: nil,
+      truncated: false
+    }
+  end
 
   defp app_server_pid_for_update(_existing, %{codex_app_server_pid: pid}) when is_binary(pid), do: pid
   defp app_server_pid_for_update(_existing, %{codex_app_server_pid: pid}) when is_integer(pid), do: Integer.to_string(pid)
@@ -359,6 +385,62 @@ defmodule SymphonyElixir.Codex.Update do
 
   defp payload_method(_payload), do: nil
 
+  defp rate_limit_debug_candidate(update) do
+    candidates = [
+      {"update.payload.params.msg.payload", Payload.get_path(update, [["payload", :payload], ["params", :params], ["msg", :msg], ["payload", :payload]])},
+      {"update.payload.params.rateLimits", Payload.get_path(update, [["payload", :payload], ["params", :params], ["rateLimits", :rateLimits]])},
+      {"update.payload.params.rate_limits", Payload.get_path(update, [["payload", :payload], ["params", :params], ["rate_limits", :rate_limits]])},
+      {"update.payload.params", Payload.get_path(update, [["payload", :payload], ["params", :params]])},
+      {"update.payload", Map.get(update, :payload) || Map.get(update, "payload")},
+      {"update.raw", Map.get(update, :raw) || Map.get(update, "raw")},
+      {"update", update}
+    ]
+
+    {path, value} = Enum.find(candidates, fn {_path, value} -> not is_nil(value) end) || {"update", update}
+
+    %{
+      path: path,
+      value: value,
+      method: payload_method(Map.get(update, :payload) || Map.get(update, "payload") || value)
+    }
+  end
+
+  defp bound_debug_payload(value) do
+    scrubbed = scrub_debug_value(value)
+    inspected = inspect(scrubbed, limit: :infinity, printable_limit: :infinity)
+    inspect_truncated? = byte_size(inspected) > @debug_payload_inspect_limit
+
+    %{value: scrubbed, truncated: inspect_truncated? or debug_value_truncated?(scrubbed)}
+  end
+
+  defp scrub_debug_payload(%{} = payload) do
+    Map.new(payload, fn {key, value} ->
+      if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub_debug_value(value)}
+    end)
+  end
+
+  defp scrub_debug_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp scrub_debug_value(value) when is_map(value), do: scrub_debug_payload(value)
+  defp scrub_debug_value(value) when is_list(value), do: Enum.map(value, &scrub_debug_value/1)
+
+  defp scrub_debug_value(value) when is_binary(value) do
+    value
+    |> Redaction.credentials()
+    |> truncate_debug_string()
+  end
+
+  defp scrub_debug_value(value), do: value
+
+  defp truncate_debug_string(value) when byte_size(value) > @debug_payload_string_limit,
+    do: binary_part(value, 0, @debug_payload_string_limit) <> "... (truncated)"
+
+  defp truncate_debug_string(value), do: value
+
+  defp debug_value_truncated?(value) when is_binary(value), do: String.ends_with?(value, "... (truncated)")
+  defp debug_value_truncated?(value) when is_map(value), do: Enum.any?(value, fn {_key, nested} -> debug_value_truncated?(nested) end)
+  defp debug_value_truncated?(value) when is_list(value), do: Enum.any?(value, &debug_value_truncated?/1)
+  defp debug_value_truncated?(_value), do: false
+
   defp rate_limits_from_payload(payload) when is_map(payload) do
     direct = Payload.get_any(payload, ["rate_limits", :rate_limits])
 
@@ -491,5 +573,5 @@ defmodule SymphonyElixir.Codex.Update do
   defp scrub_persisted_value(value), do: value
   defp truncate_persisted_string(value) when byte_size(value) > 1_000, do: binary_part(value, 0, 1_000) <> "... (truncated)"
   defp truncate_persisted_string(value), do: value
-  defp sensitive_key?(key), do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key"])
+  defp sensitive_key?(key), do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
 end

@@ -1823,11 +1823,23 @@ defmodule SymphonyElixir.Orchestrator do
   defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
     case Update.rate_limits(update) do
       %{} = rate_limits ->
-        %{state | codex_rate_limits: rate_limits, codex_rate_limit_observation: %{status: :parsed, at: DateTime.utc_now()}}
+        %{
+          state
+          | codex_rate_limits: rate_limits,
+            codex_rate_limit_observation: %{status: :parsed, at: DateTime.utc_now()}
+        }
 
       _ ->
         if Update.rate_limit_update_event?(update) do
-          %{state | codex_rate_limit_observation: %{status: :unrecognized, at: DateTime.utc_now(), event: Map.get(update, :event)}}
+          %{
+            state
+            | codex_rate_limit_observation: %{
+                status: :unrecognized,
+                at: DateTime.utc_now(),
+                event: Map.get(update, :event),
+                debug_payload: Update.rate_limit_debug_payload(update)
+              }
+          }
         else
           state
         end

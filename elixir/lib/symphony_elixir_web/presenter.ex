@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.Presenter do
   """
 
   alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixirWeb.{LinearStatusSignal, RateLimitStatus}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -21,6 +22,8 @@ defmodule SymphonyElixirWeb.Presenter do
           retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
           codex_totals: snapshot.codex_totals,
           rate_limits: snapshot.rate_limits,
+          rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
+          linear_status: LinearStatusSignal.unknown(),
           polling: Map.get(snapshot, :polling, %{listening?: false})
         }
 
