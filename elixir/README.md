@@ -373,7 +373,7 @@ Notes:
   - `codex.approval_policy` defaults to the Codex app-server string value `never`
   - `codex.thread_sandbox` defaults to `workspace-write`
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
-- Supported `codex.approval_policy` values are string enums accepted by the targeted Codex app-server version. Current supported public values are `untrusted`, `on-failure`, `on-request`, `granular`, and `never`; legacy object-form `reject` maps are normalized for compatibility and should not be written into new workflow packages.
+- Supported `codex.approval_policy` values are string enums accepted by the targeted Codex app-server version. Current supported public values are `untrusted`, `on-failure`, `on-request`, `granular`, and `never`. Object-form approval policy maps such as legacy `reject` payloads are not public workflow package syntax and are rejected before runtime.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
 - `codex.thread_sandbox` controls thread startup. `codex.turn_sandbox_policy` controls each
   `turn/start` payload and is the setting that affects whether agent turns can perform network

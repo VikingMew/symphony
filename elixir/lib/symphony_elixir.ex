@@ -28,6 +28,7 @@ defmodule SymphonyElixir.Application do
         repo_child(),
         {Phoenix.PubSub, name: SymphonyElixir.PubSub},
         {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
+        SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
         SymphonyElixir.Orchestrator,
         SymphonyElixir.HttpServer,

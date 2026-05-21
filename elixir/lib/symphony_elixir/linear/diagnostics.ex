@@ -4,56 +4,12 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   """
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.{Linear.Client, Linear.Issue, Linear.WorkflowStateValidator, PersistenceProvider, WorkflowStore}
+  alias SymphonyElixir.Linear.{Client, Diagnostics.Probes, Health}
+  alias SymphonyElixir.{PersistenceProvider, WorkflowStore}
   require Logger
-
-  @viewer_query """
-  query SymphonyLinearDiagnosticsViewer {
-    viewer {
-      id
-      name
-      email
-    }
-  }
-  """
 
   @linear_tracker_kind "linear"
   @linear_endpoint "https://api.linear.app/graphql"
-
-  @teams_query """
-  query SymphonyLinearDiagnosticsTeams {
-    teams(first: 100) {
-      nodes {
-        id
-        name
-      }
-    }
-  }
-  """
-
-  @project_query """
-  query SymphonyLinearDiagnosticsProject($projectSlug: String!) {
-    projects(filter: {slugId: {eq: $projectSlug}}, first: 1) {
-      nodes {
-        id
-        name
-        slugId
-        url
-        teams {
-          nodes {
-            id
-            name
-            states(first: 100) {
-              nodes {
-                name
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  """
 
   @type probe_status :: :ok | :warning | :error | :skipped
   @type probe :: %{
@@ -129,23 +85,12 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp run_linear_probes(config, settings, runtime_source, client) do
-    tracker = settings.tracker
-    api_probe = api_probe(client)
-    teams_probe = teams_probe(client)
-    project_probe = project_probe(client, tracker.project_slug)
-    states_probe = states_probe(project_probe, settings)
-    {candidate_probe, issues} = candidate_probe(client)
+    %{probes: probes, issues: issues} = Probes.run(settings, client)
 
     %{
       config: config,
       runtime_source: runtime_source,
-      probes: %{
-        api: api_probe,
-        teams: teams_probe,
-        project: project_probe,
-        states: states_probe,
-        candidates: candidate_probe
-      },
+      probes: probes,
       issues: issues
     }
   end
@@ -166,6 +111,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     |> Map.put(:run_id, context.run_id)
     |> Map.put(:ran_at, context.ran_at)
     |> Map.put(:log, log)
+    |> tap(&Health.observe_diagnostics/1)
   end
 
   defp config_error_result(reason, runtime_source) do
@@ -285,129 +231,14 @@ defmodule SymphonyElixir.Linear.Diagnostics do
       config: config,
       runtime_source: runtime_source,
       probes: %{
-        api: api_probe(client),
-        teams: teams_probe(client),
+        api: Probes.api_probe(client),
+        teams: Probes.teams_probe(client),
         project: probe(:error, "Project slug", "Linear project slug is missing."),
         states: probe(:skipped, "Workflow states", "Skipped because project slug is missing."),
         candidates: probe(:skipped, "Candidate issues", "Skipped because project slug is missing.")
       },
       issues: []
     }
-  end
-
-  defp api_probe(client) do
-    case client.graphql(@viewer_query, %{}, operation_name: "SymphonyLinearDiagnosticsViewer") do
-      {:ok, %{"data" => %{"viewer" => viewer}}} when is_map(viewer) ->
-        probe(:ok, "Linear API", "Linear API token authenticated successfully.", %{
-          viewer: %{
-            id: display_value(viewer["id"]),
-            name: display_value(viewer["name"]),
-            email: display_value(viewer["email"])
-          }
-        })
-
-      {:ok, %{"errors" => errors}} ->
-        probe(:error, "Linear API", "Linear GraphQL returned errors.", %{errors: sanitize_errors(errors)})
-
-      {:ok, _body} ->
-        probe(:error, "Linear API", "Linear API returned an unexpected viewer payload.")
-
-      {:error, reason} ->
-        failed_graphql_probe("Linear API", "Linear API probe failed", reason)
-    end
-  end
-
-  defp teams_probe(client) do
-    case client.graphql(@teams_query, %{}, operation_name: "SymphonyLinearDiagnosticsTeams") do
-      {:ok, %{"data" => %{"teams" => %{"nodes" => teams}}}} when is_list(teams) ->
-        normalized_teams = Enum.map(teams, &normalize_team_summary/1)
-        count = length(normalized_teams)
-
-        probe(:ok, "Linear teams", "Fetched #{count} visible Linear team(s).", %{
-          teams: normalized_teams,
-          team_count: count
-        })
-
-      {:ok, %{"errors" => errors}} ->
-        probe(:error, "Linear teams", "Linear GraphQL returned errors.", %{errors: sanitize_errors(errors)})
-
-      {:ok, _body} ->
-        probe(:error, "Linear teams", "Linear API returned an unexpected teams payload.")
-
-      {:error, reason} ->
-        failed_graphql_probe("Linear teams", "Linear teams probe failed", reason)
-    end
-  end
-
-  defp project_probe(client, project_slug) do
-    variables = %{projectSlug: project_slug}
-
-    case client.graphql(@project_query, variables, operation_name: "SymphonyLinearDiagnosticsProject") do
-      {:ok, %{"data" => %{"projects" => %{"nodes" => [project | _]}}}} when is_map(project) ->
-        probe(:ok, "Project slug", "Project slug resolved.", %{
-          project: normalize_project(project),
-          state_names: project_state_names(project)
-        })
-
-      {:ok, %{"data" => %{"projects" => %{"nodes" => []}}}} ->
-        probe(:error, "Project slug", "No Linear project matched slug #{inspect(project_slug)}.")
-
-      {:ok, %{"errors" => errors}} ->
-        probe(:error, "Project slug", "Linear GraphQL returned errors.", %{errors: sanitize_errors(errors)})
-
-      {:ok, _body} ->
-        probe(:error, "Project slug", "Linear API returned an unexpected project payload.")
-
-      {:error, reason} ->
-        failed_graphql_probe("Project slug", "Project slug probe failed", reason, %{
-          operation: "SymphonyLinearDiagnosticsProject",
-          project_slug: project_slug
-        })
-    end
-  end
-
-  defp states_probe(%{status: :ok, data: %{state_names: state_names}}, settings) do
-    validation = WorkflowStateValidator.validate(settings, state_names)
-    tracker = settings.tracker
-    workflow = settings.workflow
-
-    data =
-      validation
-      |> Map.merge(%{
-        active: tracker.active_states || [],
-        terminal: tracker.terminal_states || [],
-        human_review_states: Map.get(workflow, "human_review_states", []),
-        missing_active: validation.missing.active_states,
-        missing_terminal: validation.missing.terminal_states
-      })
-
-    if validation.status == :ok do
-      probe(:ok, "Workflow states", "All configured workflow states exist in Linear.", data)
-    else
-      probe(
-        :error,
-        "Workflow states",
-        "Missing Linear states: #{Enum.join(validation.missing_states, ", ")}. Open Settings / Workflow to rename references, or create the missing Linear statuses.",
-        data
-      )
-    end
-  end
-
-  defp states_probe(_project_probe, _settings) do
-    probe(:skipped, "Workflow states", "Skipped because project slug did not resolve.")
-  end
-
-  defp candidate_probe(client) do
-    case client.fetch_candidate_issues() do
-      {:ok, issues} ->
-        normalized_issues = Enum.map(issues, &normalize_issue/1)
-        count = length(normalized_issues)
-        detail = candidate_detail(count)
-        {probe(:ok, "Candidate issues", detail, %{issue_count: count}), normalized_issues}
-
-      {:error, reason} ->
-        {probe(:error, "Candidate issues", "Candidate issue fetch failed: #{format_reason(reason)}"), []}
-    end
   end
 
   defp tracker_config(tracker) do
@@ -450,25 +281,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp token_fingerprint(_token), do: "n/a"
-
-  defp candidate_detail(0) do
-    "Fetched 0 candidate issue(s). This means Linear API access worked, but no issues matched the configured project, active states, assignee, and blocker filters."
-  end
-
-  defp candidate_detail(count), do: "Fetched #{count} candidate issue(s)."
-
-  defp failed_graphql_probe(title, prefix, reason, metadata \\ %{}) do
-    case reason do
-      {:linear_api_status, status, body} ->
-        probe(:error, title, "#{prefix} with HTTP #{status}. See response metadata.", Map.merge(metadata, %{status: status, response: body}))
-
-      {:linear_graphql_errors, errors} ->
-        probe(:error, title, "#{prefix}: Linear GraphQL returned errors.", Map.merge(metadata, %{errors: sanitize_errors(errors)}))
-
-      _ ->
-        probe(:error, title, "#{prefix}: #{format_reason(reason)}", metadata)
-    end
-  end
 
   defp diagnostics_log(result, context) do
     [
@@ -544,91 +356,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp runtime_source_detail(%{type: :setup_required}), do: "setup required"
   defp runtime_source_detail(_source), do: "n/a"
 
-  defp normalize_project(project) do
-    %{
-      id: display_value(project["id"]),
-      name: display_value(project["name"]),
-      slug: display_value(project["slugId"]),
-      url: display_value(project["url"]),
-      teams: project_teams(project)
-    }
-  end
-
-  defp normalize_team_summary(team) when is_map(team) do
-    %{
-      id: display_value(team["id"]),
-      name: display_value(team["name"])
-    }
-  end
-
-  defp normalize_team_summary(_team), do: %{id: "n/a", name: "n/a"}
-
-  defp normalize_issue(%Issue{} = issue) do
-    %{
-      identifier: display_value(issue.identifier),
-      title: display_value(issue.title),
-      state: display_value(issue.state),
-      assignee: if(blank?(issue.assignee_id), do: "unassigned", else: "assigned"),
-      labels: issue.labels || [],
-      blockers: issue.blocked_by || [],
-      updated_at: format_datetime(issue.updated_at),
-      url: display_value(issue.url)
-    }
-  end
-
-  defp normalize_issue(issue) when is_map(issue) do
-    normalize_issue(struct(Issue, issue))
-  end
-
-  defp normalize_issue(_issue) do
-    %{
-      identifier: "n/a",
-      title: "n/a",
-      state: "n/a",
-      assignee: "n/a",
-      labels: [],
-      blockers: [],
-      updated_at: "n/a",
-      url: "n/a"
-    }
-  end
-
-  defp project_state_names(project) do
-    project
-    |> project_teams()
-    |> Enum.flat_map(& &1.states)
-    |> Enum.uniq()
-    |> Enum.sort()
-  end
-
-  defp project_teams(%{"teams" => %{"nodes" => teams}}) when is_list(teams) do
-    Enum.map(teams, &normalize_team/1)
-  end
-
-  defp project_teams(%{"team" => team}) when is_map(team), do: [normalize_team(team)]
-  defp project_teams(_project), do: []
-
-  defp normalize_team(team) when is_map(team) do
-    %{
-      id: display_value(team["id"]),
-      name: display_value(team["name"]),
-      states: state_nodes_to_names(get_in(team, ["states", "nodes"]))
-    }
-  end
-
-  defp normalize_team(_team), do: %{id: "n/a", name: "n/a", states: []}
-
-  defp state_nodes_to_names(nodes) when is_list(nodes) do
-    nodes
-    |> Enum.map(fn
-      %{"name" => name} -> name
-      _ -> nil
-    end)
-    |> Enum.reject(&blank?/1)
-  end
-
-  defp state_nodes_to_names(_nodes), do: []
-
   defp probe(status, title, detail, data \\ %{}) when status in [:ok, :warning, :error, :skipped] do
     %{status: status, title: title, detail: detail, data: data}
   end
@@ -637,18 +364,6 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     Application.get_env(:symphony_elixir, :linear_diagnostics_client_module) ||
       Application.get_env(:symphony_elixir, :linear_client_module, Client)
   end
-
-  defp sanitize_errors(errors) when is_list(errors) do
-    Enum.map(errors, fn
-      %{"message" => message} -> %{"message" => message}
-      other -> %{"message" => format_reason(other)}
-    end)
-  end
-
-  defp sanitize_errors(error), do: [%{"message" => format_reason(error)}]
-
-  defp format_datetime(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
-  defp format_datetime(_datetime), do: "n/a"
 
   defp display_value(value) when is_binary(value) do
     if String.trim(value) == "", do: "n/a", else: value

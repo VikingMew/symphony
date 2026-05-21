@@ -5,13 +5,12 @@ defmodule SymphonyElixir.Config.Schema do
 
   import Ecto.Changeset
 
-  alias SymphonyElixir.PathSafety
+  alias SymphonyElixir.Config.{ProjectCommands, RuntimeResolver, WorkflowContract}
 
   @primary_key false
 
   @type t :: %__MODULE__{}
 
-  @linear_state_name_max_length 25
   @codex_approval_policies ["untrusted", "on-failure", "on-request", "granular", "never"]
 
   defmodule StringOrMap do
@@ -397,9 +396,9 @@ defmodule SymphonyElixir.Config.Schema do
 
       _ ->
         workspace
-        |> default_workspace_root(settings.workspace.root)
-        |> expand_local_workspace_root()
-        |> default_turn_sandbox_policy()
+        |> RuntimeResolver.default_workspace_root(settings.workspace.root)
+        |> RuntimeResolver.expand_local_workspace_root()
+        |> RuntimeResolver.default_turn_sandbox_policy()
     end
   end
 
@@ -412,8 +411,8 @@ defmodule SymphonyElixir.Config.Schema do
 
       _ ->
         workspace
-        |> default_workspace_root(settings.workspace.root)
-        |> default_runtime_turn_sandbox_policy(opts)
+        |> RuntimeResolver.default_workspace_root(settings.workspace.root)
+        |> RuntimeResolver.default_runtime_turn_sandbox_policy(opts)
     end
   end
 
@@ -507,14 +506,7 @@ defmodule SymphonyElixir.Config.Schema do
   @doc false
   @spec generated_project_bootstrap_commands(%__MODULE__{}) :: String.t() | nil
   def generated_project_bootstrap_commands(%__MODULE__{project: %Project{} = project}) do
-    commands =
-      []
-      |> maybe_append_source_command(project)
-      |> Kernel.++(project.setup_commands || [])
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    if commands == [], do: nil, else: Enum.join(commands, "\n")
+    ProjectCommands.generated_project_bootstrap_commands(project)
   end
 
   def generated_project_bootstrap_commands(_settings), do: nil
@@ -522,13 +514,7 @@ defmodule SymphonyElixir.Config.Schema do
   @doc false
   @spec project_setup_commands(%__MODULE__{}) :: String.t() | nil
   def project_setup_commands(%__MODULE__{project: %Project{} = project}) do
-    commands =
-      project.setup_commands
-      |> List.wrap()
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    if commands == [], do: nil, else: Enum.join(commands, "\n")
+    ProjectCommands.project_setup_commands(project)
   end
 
   def project_setup_commands(_settings), do: nil
@@ -536,13 +522,7 @@ defmodule SymphonyElixir.Config.Schema do
   @doc false
   @spec generated_before_remove_hook(%__MODULE__{}) :: String.t() | nil
   def generated_before_remove_hook(%__MODULE__{project: %Project{} = project}) do
-    commands =
-      project.cleanup_commands
-      |> List.wrap()
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-
-    if commands == [], do: nil, else: Enum.join(commands, "\n")
+    ProjectCommands.generated_before_remove_hook(project)
   end
 
   def generated_before_remove_hook(_settings), do: nil
@@ -576,66 +556,6 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
-  defp maybe_append_source_command(commands, %Project{source_strategy: "worktree"}), do: commands
-
-  defp maybe_append_source_command(commands, %Project{repository_url: repository_url})
-       when not is_binary(repository_url) or repository_url == "" do
-    commands
-  end
-
-  defp maybe_append_source_command(commands, %Project{} = project) do
-    clone_parts =
-      ["GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "SSH_ASKPASS="]
-      |> maybe_append_git_ssh_command(project.repository_url)
-      |> Kernel.++([
-        "git",
-        "-c",
-        "credential.helper=",
-        "-c",
-        "core.askPass=",
-        "-c",
-        "http.lowSpeedLimit=1",
-        "-c",
-        "http.lowSpeedTime=30",
-        "clone",
-        "--progress"
-      ])
-      |> maybe_append_clone_depth(project.checkout_depth)
-      |> maybe_append_clone_branch(project.default_branch)
-      |> Kernel.++([SymphonyElixir.Shell.escape(project.repository_url), "."])
-
-    commands ++ [Enum.join(clone_parts, " ")]
-  end
-
-  defp maybe_append_git_ssh_command(parts, repository_url) when is_binary(repository_url) do
-    if ssh_repository_url?(repository_url) do
-      parts ++
-        [
-          "GIT_SSH_COMMAND=#{SymphonyElixir.Shell.escape("ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new")}"
-        ]
-    else
-      parts
-    end
-  end
-
-  defp maybe_append_git_ssh_command(parts, _repository_url), do: parts
-
-  defp ssh_repository_url?(repository_url) do
-    String.starts_with?(repository_url, "git@") or String.starts_with?(repository_url, "ssh://")
-  end
-
-  defp maybe_append_clone_depth(parts, depth) when is_integer(depth) and depth > 0 do
-    parts ++ ["--depth", Integer.to_string(depth)]
-  end
-
-  defp maybe_append_clone_depth(parts, _depth), do: parts
-
-  defp maybe_append_clone_branch(parts, branch) when is_binary(branch) and branch != "" do
-    parts ++ ["--branch", SymphonyElixir.Shell.escape(branch)]
-  end
-
-  defp maybe_append_clone_branch(parts, _branch), do: parts
-
   defp changeset(attrs) do
     %__MODULE__{}
     |> cast(attrs, [:workflow, :profiles])
@@ -655,15 +575,15 @@ defmodule SymphonyElixir.Config.Schema do
   defp finalize_settings(settings) do
     tracker = %{
       settings.tracker
-      | api_key: env_secret("LINEAR_API_KEY"),
-        assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+      | api_key: RuntimeResolver.env_secret("LINEAR_API_KEY"),
+        assignee: RuntimeResolver.resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
     }
 
     workspace = %{
       settings.workspace
-      | root: resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
-        repository_base_root: resolve_optional_path_value(settings.workspace.repository_base_root),
-        worktree_base_root: resolve_optional_path_value(settings.workspace.worktree_base_root)
+      | root: RuntimeResolver.resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
+        repository_base_root: RuntimeResolver.resolve_optional_path_value(settings.workspace.repository_base_root),
+        worktree_base_root: RuntimeResolver.resolve_optional_path_value(settings.workspace.worktree_base_root)
     }
 
     codex = %{
@@ -787,311 +707,13 @@ defmodule SymphonyElixir.Config.Schema do
     tracker = get_field(changeset, :tracker)
 
     workflow_errors =
-      workflow
-      |> normalize_keys()
-      |> workflow_policy_errors(normalize_keys(profiles), tracker)
+      WorkflowContract.workflow_errors(workflow, profiles, tracker)
 
     profile_errors =
-      profiles
-      |> normalize_keys()
-      |> profile_policy_errors()
+      WorkflowContract.profile_errors(profiles)
 
     Enum.reduce(workflow_errors, changeset, &add_error(&2, :workflow, &1))
     |> then(fn changeset -> Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1)) end)
-  end
-
-  defp workflow_policy_errors(workflow, profiles, tracker) when is_map(workflow) do
-    []
-    |> Kernel.++(validate_no_nested_profiles(workflow))
-    |> Kernel.++(validate_tracker_state_names(tracker))
-    |> Kernel.++(validate_states(Map.get(workflow, "states", %{}), profiles))
-    |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
-    |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
-    |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
-  end
-
-  defp workflow_policy_errors(_workflow, _profiles, _tracker), do: ["must be a map"]
-
-  defp validate_no_nested_profiles(workflow) do
-    if Map.has_key?(workflow, "profiles") do
-      ["workflow.profiles is not supported; define profiles at top-level profiles"]
-    else
-      []
-    end
-  end
-
-  defp validate_states(states, profiles) when is_map(states) do
-    known_profiles =
-      default_profiles()
-      |> Map.merge(profiles)
-      |> Map.keys()
-      |> MapSet.new()
-
-    Enum.flat_map(states, &validate_state_policy(&1, known_profiles))
-  end
-
-  defp validate_states(_states, _profiles), do: ["states must be a map"]
-
-  defp validate_state_policy({state, policy}, known_profiles) when is_binary(state) do
-    if String.trim(state) == "" do
-      ["states must use non-empty state names"]
-    else
-      validate_named_state_policy(state, policy, known_profiles)
-    end
-  end
-
-  defp validate_state_policy(_entry, _known_profiles), do: ["states must use non-empty state names"]
-
-  defp validate_named_state_policy(state, policy, known_profiles) do
-    if linear_state_name_too_long?(state) do
-      [linear_state_name_length_error("states.#{state}", state)]
-    else
-      validate_state_policy_map(state, policy, known_profiles)
-    end
-  end
-
-  defp validate_state_policy_map(state, policy, known_profiles) when is_map(policy) do
-    validate_state_policy_profile(state, Map.get(policy, "profile"), known_profiles)
-  end
-
-  defp validate_state_policy_map(state, _policy, _known_profiles), do: ["states.#{state} must be a map"]
-
-  defp validate_state_policy_profile(state, profile, known_profiles) do
-    cond do
-      not is_binary(profile) or String.trim(profile) == "" ->
-        ["states.#{state}.profile must be a non-empty string"]
-
-      not MapSet.member?(known_profiles, profile) ->
-        ["states.#{state}.profile references unknown profile #{profile}"]
-
-      true ->
-        []
-    end
-  end
-
-  defp profile_policy_errors(profiles) when is_map(profiles) do
-    Enum.flat_map(profiles, fn {profile, policy} ->
-      cond do
-        not is_binary(profile) or String.trim(profile) == "" ->
-          ["profiles must use non-empty string names"]
-
-        not is_map(policy) ->
-          ["profiles.#{profile} must be a map"]
-
-        Map.has_key?(policy, "active_states") ->
-          ["profiles.#{profile}.active_states is not supported; use workflow.states"]
-
-        true ->
-          validate_profile_name(profile, Map.get(policy, "name")) ++
-            validate_executor(profile, Map.get(policy, "executor")) ++
-            validate_prompt_policy(profile, Map.get(policy, "prompt")) ++
-            validate_profile_executor_prompt(profile, policy) ++
-            validate_allowed_updates(profile, Map.get(policy, "allowed_updates", %{}))
-      end
-    end)
-  end
-
-  defp profile_policy_errors(_profiles), do: ["profiles must be a map"]
-
-  defp validate_profile_name(profile, name) do
-    if is_binary(name) and String.trim(name) != "" do
-      []
-    else
-      ["profiles.#{profile}.name must be a non-empty string"]
-    end
-  end
-
-  defp validate_executor(_profile, %{"type" => type}) when type in ["codex_agent", "manual", "backend_action", "external_worker"] do
-    []
-  end
-
-  defp validate_executor(profile, %{"type" => _type}), do: ["profiles.#{profile}.executor.type is invalid"]
-  defp validate_executor(profile, _executor), do: ["profiles.#{profile}.executor.type must be a non-empty string"]
-
-  defp validate_prompt_policy(_profile, %{"mode" => mode}) when mode in ["extend", "replace", "disabled"], do: []
-  defp validate_prompt_policy(profile, %{"mode" => _mode}), do: ["profiles.#{profile}.prompt.mode is invalid"]
-  defp validate_prompt_policy(profile, _prompt), do: ["profiles.#{profile}.prompt.mode must be a non-empty string"]
-
-  defp validate_profile_executor_prompt(profile, policy) do
-    executor_type = get_in(policy, ["executor", "type"])
-    prompt_mode = get_in(policy, ["prompt", "mode"])
-    prompt_template = get_in(policy, ["prompt", "template"])
-
-    cond do
-      executor_type == "codex_agent" and prompt_mode == "disabled" ->
-        ["profiles.#{profile}.prompt.mode cannot be disabled for codex_agent"]
-
-      executor_type == "codex_agent" and prompt_mode in ["extend", "replace"] and not non_empty_string?(prompt_template) ->
-        ["profiles.#{profile}.prompt.template must be a non-empty string for codex_agent #{prompt_mode} mode"]
-
-      true ->
-        []
-    end
-  end
-
-  defp validate_allowed_updates(profile, updates) when is_map(updates) do
-    validate_string_list(Map.get(updates, "target_states", []), "profiles.#{profile}.allowed_updates.target_states")
-  end
-
-  defp validate_allowed_updates(profile, _updates), do: ["profiles.#{profile}.allowed_updates must be a map"]
-
-  defp validate_transitions(transitions) when is_list(transitions) do
-    Enum.flat_map(transitions, fn
-      transition when is_map(transition) ->
-        from = Map.get(transition, "from")
-        to = Map.get(transition, "to")
-        actor = Map.get(transition, "actor")
-
-        []
-        |> maybe_required_string_error(from, "allowed_transitions.from")
-        |> maybe_required_string_error(to, "allowed_transitions.to")
-        |> maybe_linear_state_name_length_error(from, "allowed_transitions.from")
-        |> maybe_linear_state_name_length_error(to, "allowed_transitions.to")
-        |> maybe_actor_error(actor)
-
-      _transition ->
-        ["allowed_transitions entries must be maps"]
-    end)
-  end
-
-  defp validate_transitions(_transitions), do: ["allowed_transitions must be a list"]
-
-  defp validate_workflow_state_references(workflow, profiles, tracker) do
-    used_profiles = workflow_used_profiles(workflow, profiles)
-
-    profiles =
-      default_profiles()
-      |> Map.take(used_profiles)
-      |> Map.merge(profiles, fn _profile, default_profile, configured_profile ->
-        Map.merge(default_profile, configured_profile)
-      end)
-
-    known_states = workflow_known_states(workflow, tracker)
-
-    validate_transition_state_references(Map.get(workflow, "allowed_transitions", []), known_states) ++
-      validate_profile_target_state_references(profiles, known_states)
-  end
-
-  defp workflow_used_profiles(workflow, _profiles) do
-    state_profiles =
-      workflow
-      |> Map.get("states", %{})
-      |> Enum.map(fn {_state, policy} -> if is_map(policy), do: Map.get(policy, "profile") end)
-
-    transition_profiles =
-      workflow
-      |> Map.get("allowed_transitions", [])
-      |> Enum.map(fn transition -> if is_map(transition), do: Map.get(transition, "profile") end)
-
-    state_profiles
-    |> Kernel.++(transition_profiles)
-    |> Enum.filter(&is_binary/1)
-    |> Enum.reject(&(String.trim(&1) == ""))
-  end
-
-  defp workflow_known_states(workflow, tracker) do
-    []
-    |> Kernel.++(tracker_states(tracker, :active_states))
-    |> Kernel.++(tracker_states(tracker, :terminal_states))
-    |> Kernel.++(Map.keys(Map.get(workflow, "states", %{})))
-    |> Kernel.++(Map.get(workflow, "human_review_states", []))
-    |> Enum.filter(&is_binary/1)
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> MapSet.new(&normalize_issue_state/1)
-  end
-
-  defp tracker_states(%Tracker{} = tracker, field), do: Map.get(tracker, field) || []
-  defp tracker_states(_tracker, _field), do: []
-
-  defp validate_tracker_state_names(%Tracker{} = tracker) do
-    validate_string_list(tracker.active_states || [], "tracker.active_states") ++
-      validate_string_list(tracker.terminal_states || [], "tracker.terminal_states")
-  end
-
-  defp validate_tracker_state_names(_tracker), do: []
-
-  defp validate_transition_state_references(transitions, known_states) when is_list(transitions) do
-    Enum.flat_map(transitions, fn
-      transition when is_map(transition) ->
-        Enum.flat_map(["from", "to"], &transition_state_reference_errors(transition, known_states, &1))
-
-      _transition ->
-        []
-    end)
-  end
-
-  defp validate_transition_state_references(_transitions, _known_states), do: []
-
-  defp transition_state_reference_errors(transition, known_states, field) do
-    state = Map.get(transition, field)
-
-    if known_state?(known_states, state) do
-      []
-    else
-      ["allowed_transitions.#{field} references unknown workflow state #{inspect(state)}"]
-    end
-  end
-
-  defp validate_profile_target_state_references(profiles, known_states) when is_map(profiles) do
-    Enum.flat_map(profiles, fn {profile, policy} ->
-      policy
-      |> get_in(["allowed_updates", "target_states"])
-      |> case do
-        states when is_list(states) ->
-          states
-          |> Enum.reject(&known_state?(known_states, &1))
-          |> Enum.map(&"profiles.#{profile}.allowed_updates.target_states references unknown workflow state #{inspect(&1)}")
-
-        _states ->
-          []
-      end
-    end)
-  end
-
-  defp known_state?(known_states, state) when is_binary(state) do
-    MapSet.member?(known_states, normalize_issue_state(String.trim(state)))
-  end
-
-  defp known_state?(_known_states, _state), do: true
-
-  defp maybe_required_string_error(errors, value, field) do
-    if is_binary(value) and String.trim(value) != "", do: errors, else: [field <> " must be a non-empty string" | errors]
-  end
-
-  defp maybe_linear_state_name_length_error(errors, value, field) do
-    if linear_state_name_too_long?(value), do: [linear_state_name_length_error(field, value) | errors], else: errors
-  end
-
-  defp maybe_actor_error(errors, actor) do
-    if actor in ["codex", "human"], do: errors, else: ["allowed_transitions.actor must be either codex or human" | errors]
-  end
-
-  defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""
-
-  defp validate_string_list(values, field) when is_list(values) do
-    cond do
-      not Enum.all?(values, &(is_binary(&1) and String.trim(&1) != "")) ->
-        [field <> " must be a list of non-empty strings"]
-
-      too_long = Enum.find(values, &linear_state_name_too_long?/1) ->
-        [linear_state_name_length_error(field, too_long)]
-
-      true ->
-        []
-    end
-  end
-
-  defp validate_string_list(_values, field), do: [field <> " must be a list of non-empty strings"]
-
-  defp linear_state_name_too_long?(value) when is_binary(value) do
-    value |> String.trim() |> String.length() > @linear_state_name_max_length
-  end
-
-  defp linear_state_name_too_long?(_value), do: false
-
-  defp linear_state_name_length_error(field, value) do
-    "#{field} exceeds Linear state name limit of #{@linear_state_name_max_length} characters: #{inspect(value)}"
   end
 
   defp normalize_keys(value) when is_map(value) do
@@ -1120,128 +742,6 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp drop_nil_values(value) when is_list(value), do: Enum.map(value, &drop_nil_values/1)
   defp drop_nil_values(value), do: value
-
-  defp resolve_secret_setting(nil, fallback), do: normalize_secret_value(fallback)
-
-  defp resolve_secret_setting(value, fallback) when is_binary(value) do
-    case resolve_env_value(value, fallback) do
-      resolved when is_binary(resolved) -> normalize_secret_value(resolved)
-      resolved -> resolved
-    end
-  end
-
-  defp env_secret(env_name), do: normalize_secret_value(System.get_env(env_name))
-
-  defp resolve_path_value(value, default) when is_binary(value) do
-    case normalize_path_token(value) do
-      :missing ->
-        default
-
-      "" ->
-        default
-
-      path ->
-        path
-    end
-  end
-
-  defp resolve_path_value(_value, default), do: default
-
-  defp resolve_optional_path_value(value) when is_binary(value) do
-    case normalize_path_token(value) do
-      :missing -> nil
-      "" -> nil
-      path -> path
-    end
-  end
-
-  defp resolve_optional_path_value(_value), do: nil
-
-  defp resolve_env_value(value, fallback) when is_binary(value) do
-    case env_reference_name(value) do
-      {:ok, env_name} ->
-        case System.get_env(env_name) do
-          nil -> fallback
-          "" -> nil
-          env_value -> env_value
-        end
-
-      :error ->
-        value
-    end
-  end
-
-  defp normalize_path_token(value) when is_binary(value) do
-    case env_reference_name(value) do
-      {:ok, env_name} -> resolve_env_token(env_name)
-      :error -> value
-    end
-  end
-
-  defp env_reference_name("$" <> env_name) do
-    if String.match?(env_name, ~r/^[A-Za-z_][A-Za-z0-9_]*$/) do
-      {:ok, env_name}
-    else
-      :error
-    end
-  end
-
-  defp env_reference_name(_value), do: :error
-
-  defp resolve_env_token(env_name) do
-    case System.get_env(env_name) do
-      nil -> :missing
-      env_value -> env_value
-    end
-  end
-
-  defp normalize_secret_value(value) when is_binary(value) do
-    if value == "", do: nil, else: value
-  end
-
-  defp normalize_secret_value(_value), do: nil
-
-  defp default_turn_sandbox_policy(workspace) do
-    %{
-      "type" => "workspaceWrite",
-      "writableRoots" => [workspace],
-      "readOnlyAccess" => %{"type" => "fullAccess"},
-      "networkAccess" => false,
-      "excludeTmpdirEnvVar" => false,
-      "excludeSlashTmp" => false
-    }
-  end
-
-  defp default_runtime_turn_sandbox_policy(workspace_root, opts) when is_binary(workspace_root) do
-    if Keyword.get(opts, :remote, false) do
-      {:ok, default_turn_sandbox_policy(workspace_root)}
-    else
-      with expanded_workspace_root <- expand_local_workspace_root(workspace_root),
-           {:ok, canonical_workspace_root} <- PathSafety.canonicalize(expanded_workspace_root) do
-        {:ok, default_turn_sandbox_policy(canonical_workspace_root)}
-      end
-    end
-  end
-
-  defp default_runtime_turn_sandbox_policy(workspace_root, _opts) do
-    {:error, {:unsafe_turn_sandbox_policy, {:invalid_workspace_root, workspace_root}}}
-  end
-
-  defp default_workspace_root(workspace, _fallback) when is_binary(workspace) and workspace != "",
-    do: workspace
-
-  defp default_workspace_root(nil, fallback), do: fallback
-  defp default_workspace_root("", fallback), do: fallback
-  defp default_workspace_root(workspace, _fallback), do: workspace
-
-  defp expand_local_workspace_root(workspace_root)
-       when is_binary(workspace_root) and workspace_root != "" do
-    Path.expand(workspace_root)
-  end
-
-  defp expand_local_workspace_root(_workspace_root) do
-    Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))
-  end
 
   defp format_errors(changeset) do
     changeset

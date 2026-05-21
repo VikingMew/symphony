@@ -59,6 +59,35 @@ defmodule SymphonyElixir.CodexUpdateTest do
     assert Update.rate_limits(%{payload: %{"nested" => %{"rate_limits" => rate_limits}}}) == rate_limits
   end
 
+  test "rate limits normalize observed camelCase codex payload shape" do
+    update = %{
+      payload: %{
+        "method" => "account/rateLimits/updated",
+        "params" => %{
+          "rateLimits" => [
+            %{
+              "credits" => nil,
+              "limitId" => "codex",
+              "limitName" => nil,
+              "planType" => "pro",
+              "primary" => %{"resetsAt" => 1_779_341_757, "usedPercent" => 65, "windowDurationMins" => 300},
+              "rateLimitReachedType" => nil,
+              "secondary" => %{"resetsAt" => 1_779_848_319, "usedPercent" => 18, "windowDurationMins" => 10_080}
+            }
+          ]
+        }
+      }
+    }
+
+    assert Update.rate_limits(update) == %{
+             "credits" => nil,
+             "limit_id" => "codex",
+             "plan_type" => "pro",
+             "primary" => %{"resets_at" => 1_779_341_757, "used_percent" => 65, "window_duration_mins" => 300},
+             "secondary" => %{"resets_at" => 1_779_848_319, "used_percent" => 18, "window_duration_mins" => 10_080}
+           }
+  end
+
   test "event payload redacts and truncates sensitive debug content" do
     payload = Update.event_payload(%{event: :notification, payload: %{"api_key" => "secret", "message" => String.duplicate("a", 1_200)}})
 

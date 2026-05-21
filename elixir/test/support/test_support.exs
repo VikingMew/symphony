@@ -122,6 +122,7 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Config
       alias SymphonyElixir.HttpServer
       alias SymphonyElixir.Linear.Client
+      alias SymphonyElixir.Linear.Health
       alias SymphonyElixir.Linear.Issue
       alias SymphonyElixir.Orchestrator
       alias SymphonyElixir.PromptBuilder
@@ -137,6 +138,7 @@ defmodule SymphonyElixir.TestSupport do
 
       setup do
         FakePersistence.reset!()
+        Health.reset!()
         previous_linear_api_key = System.get_env("LINEAR_API_KEY")
         System.put_env("LINEAR_API_KEY", "token")
 

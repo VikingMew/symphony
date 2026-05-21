@@ -140,6 +140,28 @@ Plans should focus on product and engineering intent rather than full implementa
 133. [133-events-page-signal-and-filtering.md](completed/133-events-page-signal-and-filtering.md)
 134. [134-rate-limit-unrecognized-payload-debug.md](completed/134-rate-limit-unrecognized-payload-debug.md)
 135. [135-profile-prompt-guidance.md](completed/135-profile-prompt-guidance.md)
+136. [136-dashboard-linear-signal-uses-latest-diagnostics.md](completed/136-dashboard-linear-signal-uses-latest-diagnostics.md)
+137. [137-approval-policy-doc-runtime-drift.md](completed/137-approval-policy-doc-runtime-drift.md)
+138. [138-linear-health-signal-classification-boundary.md](completed/138-linear-health-signal-classification-boundary.md)
+139. [139-codex-message-humanizer-boundary.md](completed/139-codex-message-humanizer-boundary.md)
+140. [140-admin-project-settings-boundary.md](completed/140-admin-project-settings-boundary.md)
+141. [141-run-detail-agent-execution-summary.md](completed/141-run-detail-agent-execution-summary.md)
+142. [142-orchestrator-dispatch-policy-boundary.md](completed/142-orchestrator-dispatch-policy-boundary.md)
+143. [143-orchestrator-retry-and-stall-boundary.md](completed/143-orchestrator-retry-and-stall-boundary.md)
+144. [144-orchestrator-persistence-event-boundary.md](completed/144-orchestrator-persistence-event-boundary.md)
+145. [145-workspace-hook-runner-boundary.md](completed/145-workspace-hook-runner-boundary.md)
+146. [146-workspace-remote-command-boundary.md](completed/146-workspace-remote-command-boundary.md)
+147. [147-codex-app-server-protocol-boundary.md](completed/147-codex-app-server-protocol-boundary.md)
+148. [148-codex-tool-request-handler-boundary.md](completed/148-codex-tool-request-handler-boundary.md)
+149. [149-config-schema-workflow-contract-boundary.md](completed/149-config-schema-workflow-contract-boundary.md)
+150. [150-config-schema-runtime-resolution-boundary.md](completed/150-config-schema-runtime-resolution-boundary.md)
+151. [151-persistence-worker-queue-boundary.md](completed/151-persistence-worker-queue-boundary.md)
+152. [152-persistence-workflow-runtime-boundary.md](completed/152-persistence-workflow-runtime-boundary.md)
+153. [153-linear-client-response-normalization-boundary.md](completed/153-linear-client-response-normalization-boundary.md)
+154. [154-linear-diagnostics-probe-boundary.md](completed/154-linear-diagnostics-probe-boundary.md)
+155. [155-dashboard-live-presentation-boundary.md](completed/155-dashboard-live-presentation-boundary.md)
+156. [156-rate-limit-known-payload-rendering.md](completed/156-rate-limit-known-payload-rendering.md)
+157. [157-input-required-blocked-sessions.md](completed/157-input-required-blocked-sessions.md)
 
 ## Intentional Numbering Gaps
 
@@ -190,4 +212,4 @@ This is partly review policy rather than a fully mechanical check. `mix exec_pla
 
 ## Active Plans
 
-None.
+No active plans.

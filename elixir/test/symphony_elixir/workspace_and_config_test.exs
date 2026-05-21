@@ -3,7 +3,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
   alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.Linear.{Client, IssueNormalizer, Pagination}
+  alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.TestSupport.FakePersistence
 
   test "bundled split workflow package parses and validates against runtime schema" do
@@ -814,7 +815,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       "updatedAt" => "2026-01-02T00:00:00Z"
     }
 
-    issue = Client.normalize_issue_for_test(raw_issue, "user-1")
+    {:ok, assignee_filter} = IssueNormalizer.build_assignee_filter("user-1")
+    issue = IssueNormalizer.normalize_issue(raw_issue, assignee_filter)
 
     assert issue.blocked_by == [%{id: "issue-2", identifier: "MT-2", state: "In Progress"}]
     assert issue.labels == ["backend"]
@@ -835,7 +837,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       }
     }
 
-    issue = Client.normalize_issue_for_test(raw_issue, "user-1")
+    {:ok, assignee_filter} = IssueNormalizer.build_assignee_filter("user-1")
+    issue = IssueNormalizer.normalize_issue(raw_issue, assignee_filter)
 
     refute issue.assigned_to_worker
   end
@@ -850,7 +853,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       %Issue{id: "issue-3", identifier: "MT-3"}
     ]
 
-    merged = Client.merge_issue_pages_for_test([issue_page_1, issue_page_2])
+    merged = Pagination.merge_issue_pages([issue_page_1, issue_page_2])
 
     assert Enum.map(merged, & &1.identifier) == ["MT-1", "MT-2", "MT-3"]
   end
@@ -1017,7 +1020,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     }
 
     sorted =
-      Orchestrator.sort_issues_for_dispatch_for_test([
+      DispatchPolicy.sort_issues_for_dispatch([
         issue_lower_priority_older,
         issue_same_priority_newer,
         issue_same_priority_older
@@ -1043,12 +1046,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
     }
 
-    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+    refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
   end
 
   test "issue assigned to another worker is not dispatch-eligible" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_assignee: "dev@example.com")
-
     state = %Orchestrator.State{
       max_concurrent_agents: 3,
       running: %{},
@@ -1065,7 +1066,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assigned_to_worker: false
     }
 
-    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+    refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
   end
 
   test "ready issue with terminal blockers remains dispatch-eligible" do
@@ -1085,7 +1086,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       blocked_by: [%{id: "blocker-2", identifier: "MT-1004", state: "Done"}]
     }
 
-    assert Orchestrator.should_dispatch_issue_for_test(issue, state)
+    assert DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
   end
 
   test "dispatch revalidation skips stale ready issue once a non-terminal blocker appears" do
@@ -1108,7 +1109,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     fetcher = fn ["blocked-2"] -> {:ok, [refreshed_issue]} end
 
     assert {:skip, %Issue{} = skipped_issue} =
-             Orchestrator.revalidate_issue_for_dispatch_for_test(stale_issue, fetcher)
+             DispatchPolicy.revalidate_issue_for_dispatch(stale_issue, fetcher, dispatch_policy_settings())
 
     assert skipped_issue.identifier == "MT-1005"
     assert skipped_issue.blocked_by == [%{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}]
@@ -1616,6 +1617,16 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              })
 
     assert message =~ "codex.approval_policy"
+    assert message =~ "is invalid"
+  end
+
+  test "schema parse normalizes only blank approval policy maps to never" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               codex: %{approval_policy: %{}}
+             })
+
+    assert settings.codex.approval_policy == "never"
   end
 
   test "schema rejects Linear state names longer than Linear allows" do
@@ -1927,6 +1938,17 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     after
       1_000 -> :timeout
     end
+  end
+
+  defp dispatch_policy_settings do
+    %{
+      active_states: DispatchPolicy.normalized_state_set(["Ready", "In Progress"]),
+      terminal_states: DispatchPolicy.normalized_state_set(["Done"]),
+      max_concurrent_agents: 3,
+      max_concurrent_agents_for_state: fn _state -> 3 end,
+      workflow_executor_for_state: fn _state -> "codex_agent" end,
+      human_review_state?: fn _state -> false end
+    }
   end
 
   defp repository_cache_path(base_root, repository_url, branch) do

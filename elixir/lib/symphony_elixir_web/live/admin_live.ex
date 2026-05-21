@@ -18,6 +18,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   }
 
   alias SymphonyElixir.Linear.{Discovery, StateFixes, WorkflowStateValidator}
+  alias SymphonyElixirWeb.Admin.ProjectSettings
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
@@ -184,7 +185,7 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <tr :for={project <- discovery.projects}>
                     <td><%= project.name %></td>
                     <td class="mono"><%= project.slug %></td>
-                    <td><%= project_team_names(project) %></td>
+                    <td><%= ProjectSettings.team_names(project) %></td>
                     <td>
                       <a :if={project.url != "n/a"} class="issue-link" href={project.url}>Open</a>
                       <span :if={project.url == "n/a"} class="muted">n/a</span>
@@ -485,7 +486,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("save_workflow_form", %{"workflow" => params}, socket) do
-    draft = workflow_draft(socket, params) |> apply_project_settings(socket.assigns.default_project)
+    draft = workflow_draft(socket, params) |> ProjectSettings.apply_to_workflow_draft(socket.assigns.default_project)
     section = settings_tab(socket.assigns.live_action)
 
     socket =
@@ -543,7 +544,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   @impl true
   def handle_event("save_project_settings", %{"project" => params}, socket) do
     id = blank_as_nil(Map.get(params, "id"))
-    attrs = project_attrs(params)
+    attrs = ProjectSettings.attrs(params)
 
     result =
       case id do
@@ -589,7 +590,7 @@ defmodule SymphonyElixirWeb.AdminLive do
            raw when is_binary(raw) <- persistence().export_workflow(version),
            {:ok, history_draft} <- WorkflowForm.from_raw(raw),
            draft <- WorkflowSettingsPackage.restore_section(section, socket.assigns.workflow_form, history_draft),
-           draft <- apply_project_settings(draft, socket.assigns.default_project),
+           draft <- ProjectSettings.apply_to_workflow_draft(draft, socket.assigns.default_project),
            {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
            {:ok, project} <- persistence().default_project(),
            {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
@@ -748,14 +749,20 @@ defmodule SymphonyElixirWeb.AdminLive do
                 </tbody>
               </table>
 
-              <h2 class="section-title">Run Summary</h2>
+              <h2 class="section-title">Agent Summary</h2>
               <table class="data-table">
                 <tbody>
                   <tr><th>Outcome</th><td><%= @run_detail.summary.outcome %></td></tr>
+                  <tr><th>Final message</th><td><%= @run_detail.summary.final_message || "No final agent message was persisted." %></td></tr>
                   <tr><th>Last Codex signal</th><td><%= @run_detail.summary.last_codex_detail || "No useful Codex signal recorded." %></td></tr>
+                  <tr><th>Work performed</th><td><%= list_summary(@run_detail.summary.actions) %></td></tr>
+                  <tr><th>Tools</th><td><%= list_summary(@run_detail.summary.tools) %></td></tr>
+                  <tr><th>Commands</th><td><%= list_summary(@run_detail.summary.commands) %></td></tr>
+                  <tr><th>Linear updates</th><td><%= list_summary(@run_detail.summary.linear_updates) %></td></tr>
                   <tr><th>Highlights</th><td><%= list_summary(@run_detail.summary.highlights) %></td></tr>
                   <tr><th>Blockers</th><td><%= list_summary(@run_detail.summary.blockers) %></td></tr>
                   <tr><th>Sessions</th><td><%= list_summary(@run_detail.summary.sessions) %></td></tr>
+                  <tr><th>Evidence</th><td><%= @run_detail.summary.evidence_quality %></td></tr>
                 </tbody>
               </table>
 
@@ -1059,24 +1066,24 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <div class="workflow-profile-field-grid">
                     <label class="settings-field"><span class="metric-label">Name</span><input name="project[name]" value={project.name} /></label>
                     <label class="settings-field"><span class="metric-label">Internal slug</span><input name="project[slug]" value={project.slug} /></label>
-                    <label class={project_field_class(@project_configuration_items, "Linear project slug")}><span class={project_field_title_class(@project_configuration_items, "Linear project slug")}>Linear project slug</span><input name="project[linear_project_slug]" value={project_value(project, :linear_project_slug)} /></label>
-                    <label class={project_field_class(@project_configuration_items, "Repository URL")}><span class={project_field_title_class(@project_configuration_items, "Repository URL")}>Repository URL</span><input name="project[repository_url]" value={project_value(project, :repository_url)} /></label>
-                    <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value={project_value(project, :default_branch) || "main"} /></label>
-                    <label class="settings-field"><span class="metric-label">Checkout depth</span><input type="number" min="1" name="project[checkout_depth]" value={project_value(project, :checkout_depth) || 1} /></label>
+                    <label class={project_field_class(@project_configuration_items, "Linear project slug")}><span class={project_field_title_class(@project_configuration_items, "Linear project slug")}>Linear project slug</span><input name="project[linear_project_slug]" value={ProjectSettings.value(project, :linear_project_slug)} /></label>
+                    <label class={project_field_class(@project_configuration_items, "Repository URL")}><span class={project_field_title_class(@project_configuration_items, "Repository URL")}>Repository URL</span><input name="project[repository_url]" value={ProjectSettings.value(project, :repository_url)} /></label>
+                    <label class="settings-field"><span class="metric-label">Default branch</span><input name="project[default_branch]" value={ProjectSettings.value(project, :default_branch) || "main"} /></label>
+                    <label class="settings-field"><span class="metric-label">Checkout depth</span><input type="number" min="1" name="project[checkout_depth]" value={ProjectSettings.value(project, :checkout_depth) || 1} /></label>
                     <label class="settings-field">
                       <span class="metric-label">Source strategy</span>
                       <select name="project[source_strategy]">
-                        <option value="clone" selected={project_value(project, :source_strategy) in [nil, "clone"]}>clone</option>
-                        <option value="worktree" selected={project_value(project, :source_strategy) == "worktree"}>worktree</option>
+                        <option value="clone" selected={ProjectSettings.value(project, :source_strategy) in [nil, "clone"]}>clone</option>
+                        <option value="worktree" selected={ProjectSettings.value(project, :source_strategy) == "worktree"}>worktree</option>
                       </select>
                     </label>
                     <div class="workflow-checkbox-row">
                       <input type="hidden" name="project[worktree_fetch]" value="false" />
-                      <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked={project_value(project, :worktree_fetch) != false} /> Fetch before worktree</label>
+                      <label><input type="checkbox" name="project[worktree_fetch]" value="true" checked={ProjectSettings.value(project, :worktree_fetch) != false} /> Fetch before worktree</label>
                       <input type="hidden" name="project[worktree_cleanup]" value="false" />
-                      <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked={project_value(project, :worktree_cleanup) != false} /> Clean stale worktree</label>
+                      <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked={ProjectSettings.value(project, :worktree_cleanup) != false} /> Clean stale worktree</label>
                     </div>
-                    <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" value={project_value(project, :description)} /></label>
+                    <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" value={ProjectSettings.value(project, :description)} /></label>
                     <div class="workflow-checkbox-row">
                       <input type="hidden" name="project[enabled]" value="false" />
                       <label><input type="checkbox" name="project[enabled]" value="true" checked={project.enabled} /> Enabled</label>
@@ -1319,8 +1326,8 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <label><span class="metric-label">Worktree base root</span><input name="workflow[workspace_worktree_base_root]" value={@workflow_form["workspace_worktree_base_root"]} placeholder="Defaults to clone workspace root/worktrees" /></label>
                   <div class="settings-derived-preview">
                     <span class="metric-label">Derived paths</span>
-                    <code><%= workspace_repository_preview(@workflow_form, @projects) %></code>
-                    <code><%= workspace_worktree_preview(@workflow_form) %></code>
+                    <code><%= ProjectSettings.repository_preview(@workflow_form, @projects) %></code>
+                    <code><%= ProjectSettings.worktree_preview(@workflow_form) %></code>
                   </div>
                   <label>
                     <span class="metric-label">Polling interval ms</span>
@@ -1662,7 +1669,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     workflow_form = refreshed_workflow_form(socket, loaded_workflow_form)
     default_project = default_project()
 
-    configuration_items = configuration_missing_items(workflow_setup_required, default_project)
+    configuration_items = ProjectSettings.configuration_missing_items(workflow_setup_required, default_project)
 
     socket
     |> assign(:projects, persistence().list_projects())
@@ -1682,9 +1689,9 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:workflow_form, workflow_form)
     |> assign_workflow_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
-    |> assign(:project_configuration_items, scoped_configuration_items(configuration_items, "Project"))
-    |> assign(:workflow_configuration_items, scoped_configuration_items(configuration_items, "Workflow"))
-    |> assign(:runtime_configuration_items, scoped_configuration_items(configuration_items, "Runtime"))
+    |> assign(:project_configuration_items, ProjectSettings.scoped_configuration_items(configuration_items, "Project"))
+    |> assign(:workflow_configuration_items, ProjectSettings.scoped_configuration_items(configuration_items, "Workflow"))
+    |> assign(:runtime_configuration_items, ProjectSettings.scoped_configuration_items(configuration_items, "Runtime"))
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
@@ -1715,62 +1722,6 @@ defmodule SymphonyElixirWeb.AdminLive do
       {:ok, project} -> project
       _ -> nil
     end
-  end
-
-  defp configuration_missing_items(workflow_setup_required, project) do
-    []
-    |> maybe_add_workflow_version_item(workflow_setup_required)
-    |> maybe_add_project_item(project, :linear_project_slug, "Linear project slug", "Set the Linear project slug on the default project.", "Edit projects")
-    |> maybe_add_project_item(project, :repository_url, "Repository URL", "Set the repository URL on the default project so runs can create workspaces.", "Edit projects")
-    |> maybe_add_linear_api_token_item()
-  end
-
-  defp maybe_add_workflow_version_item(items, true) do
-    items ++
-      [
-        %{
-          scope: "Workflow",
-          title: "Active workflow version",
-          detail: "Save the draft below to create the first active workflow version.",
-          href: nil,
-          action: nil
-        }
-      ]
-  end
-
-  defp maybe_add_workflow_version_item(items, _workflow_setup_required), do: items
-
-  defp maybe_add_project_item(items, nil, _key, title, detail, action) do
-    items ++ [%{scope: "Project", title: title, detail: detail, href: "/settings/projects", action: action}]
-  end
-
-  defp maybe_add_project_item(items, project, key, title, detail, action) do
-    if blank?(project_value(project, key)) do
-      items ++ [%{scope: "Project", title: title, detail: detail, href: "/settings/projects", action: action}]
-    else
-      items
-    end
-  end
-
-  defp maybe_add_linear_api_token_item(items) do
-    if blank?(System.get_env("LINEAR_API_KEY")) do
-      items ++
-        [
-          %{
-            scope: "Runtime",
-            title: "Linear API token",
-            detail: "Set LINEAR_API_KEY in the runtime environment before running Linear diagnostics or listening.",
-            href: nil,
-            action: nil
-          }
-        ]
-    else
-      items
-    end
-  end
-
-  defp scoped_configuration_items(items, scope) do
-    Enum.filter(items, &(Map.get(&1, :scope) == scope))
   end
 
   defp settings_source(:agents), do: @agent_settings_source
@@ -1913,131 +1864,14 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> Map.put("_base_config", base_config)
   end
 
-  defp apply_project_settings(draft, nil), do: draft
-
-  defp apply_project_settings(draft, project) do
-    draft
-    |> Map.put("tracker_project_slug", project_value(project, :linear_project_slug) || "")
-    |> Map.put("project_repository_url", project_value(project, :repository_url) || "")
-    |> Map.put("project_default_branch", project_value(project, :default_branch) || "main")
-    |> Map.put("project_checkout_depth", to_string(project_value(project, :checkout_depth) || 1))
-    |> Map.put("project_source_strategy", project_value(project, :source_strategy) || "clone")
-    |> Map.put("project_worktree_fetch", boolean_string(project_value(project, :worktree_fetch), true))
-    |> Map.put("project_worktree_cleanup", boolean_string(project_value(project, :worktree_cleanup), true))
-  end
-
-  defp project_attrs(params) do
-    %{
-      name: Map.get(params, "name", ""),
-      slug: Map.get(params, "slug", ""),
-      linear_project_slug: blank_as_nil(Map.get(params, "linear_project_slug")),
-      repository_url: blank_as_nil(Map.get(params, "repository_url")),
-      default_branch: blank_as_nil(Map.get(params, "default_branch")) || "main",
-      checkout_depth: parse_project_checkout_depth(Map.get(params, "checkout_depth")),
-      source_strategy: Map.get(params, "source_strategy", "clone"),
-      worktree_fetch: truthy_param?(Map.get(params, "worktree_fetch", "true")),
-      worktree_cleanup: truthy_param?(Map.get(params, "worktree_cleanup", "true")),
-      description: blank_as_nil(Map.get(params, "description")),
-      enabled: truthy_param?(Map.get(params, "enabled"))
-    }
-  end
-
   defp maybe_update_project(id, attrs, socket) do
-    case Enum.find(socket.assigns.projects, &(project_value(&1, :id) == id)) do
+    case Enum.find(socket.assigns.projects, &(ProjectSettings.value(&1, :id) == id)) do
       nil ->
         persistence().update_project(id, attrs)
 
       project ->
-        if project_changed?(project, attrs), do: persistence().update_project(id, attrs), else: :unchanged
+        if ProjectSettings.changed?(project, attrs), do: persistence().update_project(id, attrs), else: :unchanged
     end
-  end
-
-  defp project_changed?(project, attrs) do
-    Enum.any?(project_compare_fields(), fn field ->
-      normalize_project_value(project_value(project, field)) != normalize_project_value(Map.get(attrs, field))
-    end)
-  end
-
-  defp workspace_repository_preview(form, projects) do
-    root = shared_repository_base_root(form)
-    project = Enum.find(projects, &project_value(&1, :enabled)) || List.first(projects)
-    cache_name = project_cache_name(project)
-    Path.join(root, cache_name)
-  end
-
-  defp workspace_worktree_preview(form) do
-    form
-    |> shared_worktree_base_root()
-    |> Path.join("CCR-5")
-  end
-
-  defp shared_repository_base_root(form) do
-    case Map.get(form, "workspace_repository_base_root") do
-      value when is_binary(value) and value != "" -> value
-      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "repositories")
-    end
-  end
-
-  defp shared_worktree_base_root(form) do
-    case Map.get(form, "workspace_worktree_base_root") do
-      value when is_binary(value) and value != "" -> value
-      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "worktrees")
-    end
-  end
-
-  defp project_cache_name(nil), do: "project-<hash>"
-
-  defp project_cache_name(project) do
-    source = "#{project_value(project, :repository_url) || "project"}:#{project_value(project, :default_branch) || "main"}"
-    digest = :crypto.hash(:sha256, source) |> Base.encode16(case: :lower) |> binary_part(0, 12)
-    "#{safe_path_segment(Path.basename(project_value(project, :repository_url) || "project", ".git"))}-#{digest}"
-  end
-
-  defp safe_path_segment(value) do
-    String.replace(value || "project", ~r/[^a-zA-Z0-9._-]/, "_")
-  end
-
-  defp project_compare_fields do
-    [
-      :name,
-      :slug,
-      :linear_project_slug,
-      :repository_url,
-      :default_branch,
-      :checkout_depth,
-      :source_strategy,
-      :worktree_fetch,
-      :worktree_cleanup,
-      :description,
-      :enabled
-    ]
-  end
-
-  defp normalize_project_value(value) when is_binary(value) do
-    value = String.trim(value)
-    if value == "", do: nil, else: value
-  end
-
-  defp normalize_project_value(value), do: value
-
-  defp parse_project_checkout_depth(value) do
-    case Integer.parse(to_string(value || "")) do
-      {integer, ""} when integer > 0 -> integer
-      _ -> 1
-    end
-  end
-
-  defp boolean_string(nil, default), do: to_string(default)
-  defp boolean_string(value, _default), do: to_string(value)
-
-  defp project_value(project, key) do
-    Map.get(project, key) || Map.get(project, to_string(key))
-  end
-
-  defp project_team_names(project) do
-    project
-    |> Map.get(:teams, [])
-    |> Enum.map_join(", ", & &1.name)
   end
 
   defp changeset_or_reason(%Ecto.Changeset{} = changeset) do
@@ -2047,8 +1881,6 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   defp changeset_or_reason(reason), do: inspect(reason)
-
-  defp truthy_param?(value), do: to_string(value) == "true"
 
   defp append_empty_transition(draft) do
     transitions =

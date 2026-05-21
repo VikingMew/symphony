@@ -5,6 +5,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
+  import SymphonyElixirWeb.DashboardPresenter
+
   alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
   @runtime_tick_ms 1_000
 
@@ -157,6 +159,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </article>
 
           <article class="metric-card">
+            <p class="metric-label">Blocked</p>
+            <p class="metric-value numeric"><%= @payload.counts.blocked %></p>
+            <p class="metric-detail">Sessions paused for operator input or approval.</p>
+          </article>
+
+          <article class="metric-card">
             <p class="metric-label">Total tokens</p>
             <p class="metric-value numeric"><%= format_int(@payload.codex_totals.total_tokens) %></p>
             <p class="metric-detail numeric">
@@ -187,6 +195,47 @@ defmodule SymphonyElixirWeb.DashboardLive do
         <section class="section-card">
           <div class="section-header">
             <div>
+              <h2 class="section-title">Blocked sessions</h2>
+              <p class="section-copy">Issues paused because Codex requested operator input or approval.</p>
+            </div>
+          </div>
+
+          <%= if @payload.blocked == [] do %>
+            <p class="empty-state">No sessions are waiting for input.</p>
+          <% else %>
+            <div class="table-wrap">
+              <table class="data-table" style="min-width: 760px;">
+                <thead>
+                  <tr>
+                    <th>Issue</th>
+                    <th>State</th>
+                    <th>Reason</th>
+                    <th>Blocked at</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr :for={entry <- @payload.blocked}>
+                    <td>
+                      <div class="issue-stack">
+                        <span class="issue-id"><%= entry.issue_identifier %></span>
+                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                      </div>
+                    </td>
+                    <td><span class={state_badge_class(entry.state || "blocked")}><%= entry.state || "blocked" %></span></td>
+                    <td><span class="status-badge status-warning"><%= entry.reason %></span></td>
+                    <td class="mono numeric"><%= entry.blocked_at || "n/a" %></td>
+                    <td><%= entry.detail || "n/a" %></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          <% end %>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
               <h2 class="section-title">Rate limits</h2>
               <p class="section-copy"><%= @payload.rate_limit_status.note %></p>
             </div>
@@ -196,7 +245,22 @@ defmodule SymphonyElixirWeb.DashboardLive do
           </div>
 
           <%= if @payload.rate_limit_status.status == :available do %>
-            <pre class="code-panel"><%= pretty_value(@payload.rate_limit_status.snapshot) %></pre>
+            <div class="rate-limit-fallback-grid">
+              <article class="metric-card">
+                <p class="metric-label">Plan</p>
+                <p class="metric-detail"><%= rate_limit_plan_context(@payload.rate_limit_status.snapshot) %></p>
+              </article>
+              <article :for={bucket <- rate_limit_bucket_summaries(@payload.rate_limit_status.snapshot)} class="metric-card">
+                <p class="metric-label"><%= bucket.label %></p>
+                <p class="metric-value numeric"><%= bucket.used_percent || "n/a" %>%</p>
+                <p class="metric-detail">Window <span class="mono numeric"><%= bucket.window_duration %></span></p>
+                <p class="metric-detail">Resets <span class="mono numeric"><%= bucket.resets_at %></span></p>
+              </article>
+            </div>
+            <details class="rate-limit-debug-panel">
+              <summary>Parsed rate-limit payload</summary>
+              <pre class="code-panel"><%= pretty_value(@payload.rate_limit_status.snapshot) %></pre>
+            </details>
           <% else %>
             <div class="rate-limit-fallback-grid">
               <article class="metric-card">
@@ -408,155 +472,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     Endpoint.config(:snapshot_timeout_ms) || 15_000
   end
 
-  defp completed_runtime_seconds(payload) do
-    payload.codex_totals.seconds_running || 0
-  end
-
-  defp total_runtime_seconds(payload, now) do
-    completed_runtime_seconds(payload) +
-      Enum.reduce(payload.running, 0, fn entry, total ->
-        total + runtime_seconds_from_started_at(entry.started_at, now)
-      end)
-  end
-
-  defp format_runtime_and_turns(started_at, turn_count, now) when is_integer(turn_count) and turn_count > 0 do
-    "#{format_runtime_seconds(runtime_seconds_from_started_at(started_at, now))} / #{turn_count}"
-  end
-
-  defp format_runtime_and_turns(started_at, _turn_count, now),
-    do: format_runtime_seconds(runtime_seconds_from_started_at(started_at, now))
-
-  defp format_runtime_seconds(seconds) when is_number(seconds) do
-    whole_seconds = max(trunc(seconds), 0)
-    mins = div(whole_seconds, 60)
-    secs = rem(whole_seconds, 60)
-    "#{mins}m #{secs}s"
-  end
-
-  defp runtime_seconds_from_started_at(%DateTime{} = started_at, %DateTime{} = now) do
-    DateTime.diff(now, started_at, :second)
-  end
-
-  defp runtime_seconds_from_started_at(started_at, %DateTime{} = now) when is_binary(started_at) do
-    case DateTime.from_iso8601(started_at) do
-      {:ok, parsed, _offset} -> runtime_seconds_from_started_at(parsed, now)
-      _ -> 0
-    end
-  end
-
-  defp runtime_seconds_from_started_at(_started_at, _now), do: 0
-
-  defp format_int(value) when is_integer(value) do
-    value
-    |> Integer.to_string()
-    |> String.reverse()
-    |> String.replace(~r/.{3}(?=.)/, "\\0,")
-    |> String.reverse()
-  end
-
-  defp format_int(_value), do: "n/a"
-
-  defp format_time(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
-  defp format_time(value), do: to_string(value)
-
-  defp rate_limit_status_label(:available), do: "available"
-  defp rate_limit_status_label(:unrecognized), do: "unrecognized"
-  defp rate_limit_status_label(_status), do: "not received"
-
-  defp rate_limit_badge_class(:available), do: "status-badge status-success"
-  defp rate_limit_badge_class(:unrecognized), do: "status-badge status-warning"
-  defp rate_limit_badge_class(_status), do: "status-badge status-info"
-
-  defp state_badge_class(state) do
-    base = "state-badge"
-    normalized = state |> to_string() |> String.downcase()
-
-    cond do
-      String.contains?(normalized, ["progress", "running", "active"]) -> "#{base} state-badge-active"
-      String.contains?(normalized, ["blocked", "error", "failed"]) -> "#{base} state-badge-danger"
-      String.contains?(normalized, ["todo", "queued", "pending", "retry"]) -> "#{base} state-badge-warning"
-      true -> base
-    end
-  end
-
-  defp listening_enabled?(payload) do
-    payload
-    |> Map.get(:polling, %{})
-    |> Map.get(:listening?, false)
-  end
-
-  defp listening_badge_class(payload) do
-    if listening_enabled?(payload), do: "status-badge status-success", else: "status-badge status-danger"
-  end
-
-  defp history_badge_class(:error), do: "status-badge status-danger"
-  defp history_badge_class(:warning), do: "status-badge status-warning"
-  defp history_badge_class(_severity), do: "status-badge status-info"
-
-  defp history_source_badge_class(:system), do: "status-badge"
-  defp history_source_badge_class("system"), do: "status-badge"
-  defp history_source_badge_class(:linear), do: "status-badge status-accent"
-  defp history_source_badge_class("linear"), do: "status-badge status-accent"
-  defp history_source_badge_class(_source), do: "status-badge status-info"
-
-  defp history_source_label(nil), do: "agent"
-  defp history_source_label(source), do: source |> to_string() |> String.replace("_", " ")
-
-  defp session_history_key(entry) do
-    cond do
-      Map.get(entry, :issue_id) not in [nil, ""] -> Map.get(entry, :issue_id)
-      Map.get(entry, :issue_identifier) not in [nil, ""] -> Map.get(entry, :issue_identifier)
-      true -> Map.get(entry, :session_id) || "unknown"
-    end
-  end
-
-  defp session_history_expanded?(expanded_session_histories, entry) do
-    MapSet.member?(expanded_session_histories, session_history_key(entry))
-  end
-
-  defp session_history_summary(entry) do
-    visible_count = length(Map.get(entry, :session_history, []) || [])
-    total_count = Map.get(entry, :session_history_total_count) || visible_count
-
-    if total_count > visible_count do
-      "Session history (#{visible_count} rows from #{total_count} events)"
-    else
-      "Session history (#{visible_count})"
-    end
-  end
-
-  defp toggle_session_history_key(expanded_session_histories, key) do
-    if MapSet.member?(expanded_session_histories, key) do
-      MapSet.delete(expanded_session_histories, key)
-    else
-      MapSet.put(expanded_session_histories, key)
-    end
-  end
-
   defp schedule_runtime_tick do
     Process.send_after(self(), :runtime_tick, @runtime_tick_ms)
   end
-
-  defp pretty_value(nil), do: "n/a"
-  defp pretty_value(value), do: inspect(value, pretty: true, limit: :infinity)
-
-  defp rate_limit_debug_source(debug), do: debug_value(debug, :source_path, "n/a")
-  defp rate_limit_debug_method(debug), do: debug_value(debug, :method, "n/a")
-  defp rate_limit_debug_reason(debug), do: debug_value(debug, :reason, "No parser failure reason recorded.")
-  defp rate_limit_debug_truncated?(debug), do: debug_value(debug, :truncated, false) == true
-
-  defp rate_limit_debug_payload(debug) do
-    debug
-    |> debug_value(:payload, nil)
-    |> pretty_value()
-    |> truncate_string(2_000)
-  end
-
-  defp debug_value(debug, key, default) when is_map(debug), do: Map.get(debug, key) || Map.get(debug, to_string(key)) || default
-  defp debug_value(_debug, _key, default), do: default
-
-  defp truncate_string(value, max_bytes) when is_binary(value) and byte_size(value) > max_bytes,
-    do: binary_part(value, 0, max_bytes) <> "... (truncated)"
-
-  defp truncate_string(value, _max_bytes), do: value
 end

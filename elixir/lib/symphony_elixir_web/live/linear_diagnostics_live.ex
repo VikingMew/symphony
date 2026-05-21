@@ -6,7 +6,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.Config
-  alias SymphonyElixir.Linear.{Diagnostics, StateFixes, WorkflowBootstrap}
+  alias SymphonyElixir.Linear.{Diagnostics, Health, StateFixes, WorkflowBootstrap}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -14,7 +14,8 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
      socket
      |> assign(:refresh_message, nil)
      |> assign(:bootstrap_result, nil)
-     |> assign(:diagnostics, Diagnostics.run())}
+     |> assign(:diagnostics, Diagnostics.run())
+     |> assign(:linear_health, Health.latest())}
   end
 
   @impl true
@@ -24,6 +25,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
     {:noreply,
      socket
      |> assign(:diagnostics, diagnostics)
+     |> assign(:linear_health, Health.latest())
      |> assign(:bootstrap_result, nil)
      |> assign(:refresh_message, "Diagnostics refreshed at #{fmt_dt(diagnostics.ran_at)}")}
   end
@@ -56,6 +58,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
     {:noreply,
      socket
      |> assign(:diagnostics, refreshed)
+     |> assign(:linear_health, Health.latest())
      |> assign(:bootstrap_result, result)
      |> assign(:refresh_message, message)}
   end
@@ -108,6 +111,12 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
       </section>
 
       <section class="metric-grid">
+        <article class="metric-card">
+          <span class={probe_badge_class(health_probe_status(@linear_health.status))}>Shared health</span>
+          <p class="metric-label">Latest shared Linear signal</p>
+          <p class="metric-detail">{health_detail(@linear_health)}</p>
+          <p class="metric-detail mono">{fmt_dt(@linear_health[:observed_at])}</p>
+        </article>
         <article class="metric-card">
           <span class="status-badge status-info">Run</span>
           <p class="metric-label">Last run</p>
@@ -342,6 +351,14 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
   defp probe_status_text(:error), do: "Failed"
   defp probe_status_text(:skipped), do: "Skipped"
   defp probe_status_text(_status), do: "Unknown"
+
+  defp health_probe_status(:stale), do: :warning
+  defp health_probe_status(status), do: status
+
+  defp health_detail(%{display_detail: detail}) when is_binary(detail) and detail != "", do: detail
+  defp health_detail(%{status: :unknown}), do: "No shared Linear observation has completed yet."
+  defp health_detail(%{detail: detail}) when is_binary(detail) and detail != "", do: detail
+  defp health_detail(_health), do: "No Linear health detail recorded."
 
   defp project_data(diagnostics) do
     get_in(diagnostics, [:probes, :project, :data]) || %{}

@@ -42,6 +42,31 @@ defmodule SymphonyElixir.DashboardSignalTest do
     assert is_nil(Update.rate_limits(update))
   end
 
+  test "observed codex rate-limit payload renders as a parsed snapshot" do
+    raw = %{
+      "credits" => nil,
+      "limitId" => "codex",
+      "limitName" => nil,
+      "planType" => "pro",
+      "primary" => %{"resetsAt" => 1_779_341_757, "usedPercent" => 65, "windowDurationMins" => 300},
+      "rateLimitReachedType" => nil,
+      "secondary" => %{"resetsAt" => 1_779_848_319, "usedPercent" => 18, "windowDurationMins" => 10_080}
+    }
+
+    parsed = Update.rate_limits(%{payload: %{"params" => %{"rateLimits" => [raw]}}})
+
+    assert parsed["limit_id"] == "codex"
+    assert parsed["plan_type"] == "pro"
+    assert parsed["primary"]["used_percent"] == 65
+    assert parsed["secondary"]["used_percent"] == 18
+
+    status = RateLimitStatus.from_snapshot(%{rate_limits: parsed, codex_totals: %{}, running: []})
+
+    assert status.status == :available
+    refute status.status == :unrecognized
+    assert status.debug_payload == nil
+  end
+
   test "rate-limit debug payload captures bounded scrubbed unrecognized candidate data" do
     update = %{
       event: :notification,
@@ -107,5 +132,37 @@ defmodule SymphonyElixir.DashboardSignalTest do
 
     assert error.status == :error
     assert error.detail =~ "token is missing"
+  end
+
+  test "linear signal summarizes shared health stale and recent failed request states" do
+    stale =
+      LinearStatusSignal.from_health(%{
+        status: :stale,
+        display_status: :stale,
+        label: "Linear stale",
+        observed_at: ~U[2026-05-21 00:00:00Z],
+        project_slug: "project",
+        detail: "Latest Linear diagnostics did not report blocking issues.",
+        display_detail: "Stale Linear health: Latest Linear diagnostics did not report blocking issues."
+      })
+
+    assert stale.status == :stale
+    assert stale.badge_class =~ "warning"
+    assert stale.detail =~ "Stale"
+
+    warning =
+      LinearStatusSignal.from_health(%{
+        status: :ok,
+        display_status: :warning,
+        label: "Linear warning",
+        observed_at: ~U[2026-05-21 00:00:00Z],
+        project_slug: "project",
+        detail: "Latest Linear diagnostics did not report blocking issues.",
+        display_detail: "Linear candidate issue fetch failed: timeout",
+        request: %{state: :failed, detail: "Linear candidate issue fetch failed: timeout"}
+      })
+
+    assert warning.status == :warning
+    assert warning.detail =~ "candidate issue fetch failed"
   end
 end

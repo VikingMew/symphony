@@ -334,7 +334,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
-             "counts" => %{"running" => 1, "retrying" => 1},
+             "counts" => %{"running" => 1, "retrying" => 1, "blocked" => 1},
              "running" => [
                %{
                  "issue_id" => "issue-http",
@@ -364,6 +364,21 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "workspace_path" => nil
                }
              ],
+             "blocked" => [
+               %{
+                 "issue_id" => "issue-blocked",
+                 "issue_identifier" => "MT-BLOCKED",
+                 "state" => "In Progress",
+                 "worker_host" => nil,
+                 "workspace_path" => nil,
+                 "session_id" => "thread-blocked",
+                 "reason" => "turn_input_required",
+                 "detail" => "turn blocked: waiting for user input",
+                 "blocked_at" => state_payload["blocked"] |> List.first() |> Map.fetch!("blocked_at"),
+                 "session_history" => [],
+                 "session_history_total_count" => 0
+               }
+             ],
              "codex_totals" => %{
                "input_tokens" => 4,
                "output_tokens" => 8,
@@ -386,7 +401,7 @@ defmodule SymphonyElixir.ExtensionsTest do
              "linear_status" => %{
                "badge_class" => "status-badge status-info",
                "candidate_count" => nil,
-               "detail" => "Diagnostics have not been run from this dashboard snapshot.",
+               "detail" => "Open Linear diagnostics to run connectivity and state checks.",
                "href" => "/diagnostics/linear",
                "label" => "Linear unknown",
                "project_slug" => "project",
@@ -420,6 +435,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_event_at" => nil,
                "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
              },
+             "blocked" => nil,
              "retry" => nil,
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
@@ -431,6 +447,13 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert %{"status" => "retrying", "retry" => %{"attempt" => 2, "error" => "boom"}} =
              json_response(conn, 200)
+
+    conn = get(build_conn(), "/api/v1/MT-BLOCKED")
+
+    assert %{
+             "status" => "blocked",
+             "blocked" => %{"reason" => "turn_input_required", "detail" => "turn blocked: waiting for user input"}
+           } = json_response(conn, 200)
 
     conn = get(build_conn(), "/api/v1/MT-MISSING")
 
@@ -669,6 +692,34 @@ defmodule SymphonyElixir.ExtensionsTest do
     refute html =~ "Bearer"
   end
 
+  test "dashboard renders observed parsed codex rate-limit payload" do
+    orchestrator_name = Module.concat(__MODULE__, :ParsedRateLimitOrchestrator)
+
+    snapshot =
+      static_snapshot()
+      |> Map.put(:rate_limits, %{
+        "limit_id" => "codex",
+        "plan_type" => "pro",
+        "primary" => %{"used_percent" => 65, "window_duration_mins" => 300, "resets_at" => 1_779_341_757},
+        "secondary" => %{"used_percent" => 18, "window_duration_mins" => 10_080, "resets_at" => 1_779_848_319}
+      })
+
+    {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, _view, html} = live(build_conn(), "/")
+
+    assert html =~ "available"
+    assert html =~ "Plan pro"
+    assert html =~ "Limit codex"
+    assert html =~ "65%"
+    assert html =~ "18%"
+    assert html =~ "5h"
+    assert html =~ "1w"
+    refute html =~ "unrecognized"
+    refute html =~ "Raw rate-limit payload"
+  end
+
   test "dashboard controls listening status" do
     orchestrator_name = Module.concat(__MODULE__, :DashboardListeningOrchestrator)
 
@@ -822,7 +873,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
     assert response.status == 200
-    assert response.body["counts"] == %{"running" => 1, "retrying" => 1}
+    assert response.body["counts"] == %{"running" => 1, "retrying" => 1, "blocked" => 1}
 
     dashboard_css = Req.get!("http://127.0.0.1:#{port}/dashboard.css")
     assert dashboard_css.status == 200
@@ -946,6 +997,17 @@ defmodule SymphonyElixir.ExtensionsTest do
           attempt: 2,
           due_in_ms: 2_000,
           error: "boom"
+        }
+      ],
+      blocked: [
+        %{
+          issue_id: "issue-blocked",
+          identifier: "MT-BLOCKED",
+          state: "In Progress",
+          session_id: "thread-blocked",
+          reason: :turn_input_required,
+          detail: "turn blocked: waiting for user input",
+          blocked_at: DateTime.utc_now()
         }
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},

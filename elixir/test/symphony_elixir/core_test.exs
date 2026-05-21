@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.TestSupport.FakePersistence
 
   defmodule EmptyIssueLinearClient do
@@ -1226,27 +1227,17 @@ defmodule SymphonyElixir.CoreTest do
     assert {:noreply, ^coalesced_state} = Orchestrator.handle_info({:tick, stale_tick_token}, coalesced_state)
   end
 
-  test "select_worker_host_for_test skips full ssh hosts under the shared per-host cap" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      worker_ssh_hosts: ["worker-a", "worker-b"],
-      worker_max_concurrent_agents_per_host: 1
-    )
-
+  test "dispatch policy skips full ssh hosts under the shared per-host cap" do
     state = %Orchestrator.State{
       running: %{
         "issue-1" => %{worker_host: "worker-a"}
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, nil) == "worker-b"
+    assert DispatchPolicy.select_worker_host(state, nil, worker_policy_settings(1)) == "worker-b"
   end
 
-  test "select_worker_host_for_test returns no_worker_capacity when every ssh host is full" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      worker_ssh_hosts: ["worker-a", "worker-b"],
-      worker_max_concurrent_agents_per_host: 1
-    )
-
+  test "dispatch policy returns no_worker_capacity when every ssh host is full" do
     state = %Orchestrator.State{
       running: %{
         "issue-1" => %{worker_host: "worker-a"},
@@ -1254,15 +1245,10 @@ defmodule SymphonyElixir.CoreTest do
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, nil) == :no_worker_capacity
+    assert DispatchPolicy.select_worker_host(state, nil, worker_policy_settings(1)) == :no_worker_capacity
   end
 
-  test "select_worker_host_for_test keeps the preferred ssh host when it still has capacity" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      worker_ssh_hosts: ["worker-a", "worker-b"],
-      worker_max_concurrent_agents_per_host: 2
-    )
-
+  test "dispatch policy keeps the preferred ssh host when it still has capacity" do
     state = %Orchestrator.State{
       running: %{
         "issue-1" => %{worker_host: "worker-a"},
@@ -1270,7 +1256,14 @@ defmodule SymphonyElixir.CoreTest do
       }
     }
 
-    assert Orchestrator.select_worker_host_for_test(state, "worker-a") == "worker-a"
+    assert DispatchPolicy.select_worker_host(state, "worker-a", worker_policy_settings(2)) == "worker-a"
+  end
+
+  defp worker_policy_settings(max_per_host) do
+    %{
+      ssh_hosts: ["worker-a", "worker-b"],
+      max_concurrent_agents_per_host: max_per_host
+    }
   end
 
   defp assert_due_after(due_at_ms, reference_ms, min_delay_ms, max_delay_ms) do

@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Codex.MessageHumanizer
+
   defmodule RollbackLinearClient do
     alias SymphonyElixir.Linear.Issue
 
@@ -1279,6 +1281,114 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert remaining_ms <= 10_500
   end
 
+  test "orchestrator blocks input-required agent results without scheduling retry" do
+    issue_id = "issue-input-blocked"
+    orchestrator_name = Module.concat(__MODULE__, :InputBlockedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    ref = make_ref()
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: self(),
+      ref: ref,
+      identifier: "MT-BLOCK",
+      issue: %Issue{id: issue_id, identifier: "MT-BLOCK", state: "In Progress"},
+      session_id: "thread-block",
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: DateTime.utc_now(),
+      session_history: [],
+      session_history_total_count: 0,
+      agent_result: {:error, {:turn_input_required, %{"method" => "turn/input_required", "params" => %{"reason" => "operator decision"}}}}
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(pid, {:DOWN, ref, :process, self(), :normal})
+    Process.sleep(50)
+
+    state = :sys.get_state(pid)
+
+    refute Map.has_key?(state.running, issue_id)
+    assert MapSet.member?(state.claimed, issue_id)
+    assert state.retry_attempts == %{}
+    assert %{reason: :turn_input_required, detail: detail} = state.blocked[issue_id]
+    assert detail =~ "waiting for user input"
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert [%{issue_id: ^issue_id, reason: :turn_input_required}] = snapshot.blocked
+  end
+
+  test "stalled input-required sessions become blocked instead of retrying" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      codex_stall_timeout_ms: 1_000
+    )
+
+    issue_id = "issue-stall-input-blocked"
+    orchestrator_name = Module.concat(__MODULE__, :StallInputBlockedOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    worker_pid =
+      spawn(fn ->
+        receive do
+          :done -> :ok
+        end
+      end)
+
+    stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %{
+      pid: worker_pid,
+      ref: make_ref(),
+      identifier: "MT-STALL-BLOCK",
+      issue: %Issue{id: issue_id, identifier: "MT-STALL-BLOCK", state: "In Progress"},
+      session_id: "thread-stall-block",
+      last_codex_message: %{"method" => "turn/input_required", "params" => %{"reason" => "operator decision"}},
+      last_codex_timestamp: stale_activity_at,
+      last_codex_event: :turn_input_required,
+      started_at: stale_activity_at,
+      session_history: [],
+      session_history_total_count: 0
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+      |> Map.put(:listening?, true)
+    end)
+
+    send(pid, :tick)
+    Process.sleep(100)
+    state = :sys.get_state(pid)
+
+    refute Process.alive?(worker_pid)
+    refute Map.has_key?(state.running, issue_id)
+    assert MapSet.member?(state.claimed, issue_id)
+    assert state.retry_attempts == %{}
+    assert %{reason: :turn_input_required} = state.blocked[issue_id]
+  end
+
   test "orchestrator does not treat pre-codex workspace preparation as codex stall" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1655,7 +1765,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         <<0>> <>
         " after\nline"
 
-    plain = StatusDashboard.humanize_codex_message(payload)
+    plain = MessageHumanizer.humanize_codex_message(payload)
 
     assert plain =~ "cmd: RED after line"
     refute plain =~ <<27>>
@@ -1704,7 +1814,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       message = Map.put(payload, "method", method)
 
       humanized =
-        StatusDashboard.humanize_codex_message(%{event: :notification, message: message})
+        MessageHumanizer.humanize_codex_message(%{event: :notification, message: message})
 
       assert humanized =~ expected_fragment
     end)
@@ -1725,7 +1835,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    assert StatusDashboard.humanize_codex_message(message) ==
+    assert MessageHumanizer.humanize_codex_message(message) ==
              "MCP elicitation requested (server: linear, tool: task_comment, prompt: Confirm comment update?)"
   end
 
@@ -1751,13 +1861,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    assert StatusDashboard.humanize_codex_message(completed) =~
+    assert MessageHumanizer.humanize_codex_message(completed) =~
              "dynamic tool call completed (linear_graphql)"
 
-    assert StatusDashboard.humanize_codex_message(failed) =~
+    assert MessageHumanizer.humanize_codex_message(failed) =~
              "dynamic tool call failed (linear_graphql)"
 
-    assert StatusDashboard.humanize_codex_message(unsupported) =~
+    assert MessageHumanizer.humanize_codex_message(unsupported) =~
              "unsupported dynamic tool call rejected (unknown_tool)"
   end
 
@@ -1776,8 +1886,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    assert StatusDashboard.humanize_codex_message(wrapped) =~ "turn completed"
-    assert StatusDashboard.humanize_codex_message(wrapped) =~ "in 10"
+    assert MessageHumanizer.humanize_codex_message(wrapped) =~ "turn completed"
+    assert MessageHumanizer.humanize_codex_message(wrapped) =~ "in 10"
   end
 
   test "status dashboard uses shell command line as exec command status text" do
@@ -1789,7 +1899,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    assert StatusDashboard.humanize_codex_message(message) == "git status --short"
+    assert MessageHumanizer.humanize_codex_message(message) == "git status --short"
   end
 
   test "status dashboard formats auto-approval updates from codex" do
@@ -1804,7 +1914,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    humanized = StatusDashboard.humanize_codex_message(message)
+    humanized = MessageHumanizer.humanize_codex_message(message)
     assert humanized =~ "command approval requested"
     assert humanized =~ "auto-approved"
   end
@@ -1821,7 +1931,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    humanized = StatusDashboard.humanize_codex_message(message)
+    humanized = MessageHumanizer.humanize_codex_message(message)
     assert humanized =~ "tool requires user input"
     assert humanized =~ "auto-answered"
   end
@@ -1859,13 +1969,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       }
     }
 
-    assert StatusDashboard.humanize_codex_message(reasoning_message) =~
+    assert MessageHumanizer.humanize_codex_message(reasoning_message) =~
              "reasoning update: compare retry paths for Linear polling"
 
-    assert StatusDashboard.humanize_codex_message(message_delta) =~
+    assert MessageHumanizer.humanize_codex_message(message_delta) =~
              "agent message streaming: writing workpad reconciliation update"
 
-    assert StatusDashboard.humanize_codex_message(fallback_reasoning) == "reasoning update"
+    assert MessageHumanizer.humanize_codex_message(fallback_reasoning) == "reasoning update"
   end
 
   test "application stop logs offline status" do

@@ -4,7 +4,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias SymphonyElixir.Linear.{Diagnostics, Discovery}
+  alias SymphonyElixir.Linear.{Diagnostics, Discovery, Health}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.{Workflow, WorkflowStore}
 
@@ -232,6 +232,8 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert diagnostics.probes.states.status == :ok
     assert diagnostics.probes.candidates.status == :ok
     assert [%{identifier: "LIN-1", state: "Ready", assignee: "assigned"}] = diagnostics.issues
+
+    assert %{status: :ok, source: :diagnostics, project_slug: "project"} = Health.latest()
   end
 
   test "diagnostics gives setup-required next steps" do
@@ -663,6 +665,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     {:ok, _dashboard, dashboard_html} = live(build_conn(), "/")
     assert dashboard_html =~ ~s(href="/diagnostics/linear")
     assert dashboard_html =~ "Linear"
+    assert dashboard_html =~ "Linear unknown"
 
     {:ok, view, html} = live(build_conn(), "/diagnostics/linear")
     assert html =~ "Linear Diagnostics"
@@ -670,6 +673,8 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     refute html =~ "Linear Configuration Discovery"
     refute html =~ "No discovery data fetched yet."
     assert html =~ "Last run"
+    assert html =~ "Shared health"
+    assert html =~ "Latest shared Linear signal"
     assert html =~ "Run ID"
     assert html =~ "Diagnostics Log"
     assert html =~ "Account, Teams, and Project"
@@ -685,6 +690,10 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     refreshed_html = render_click(view, "refresh_diagnostics")
     assert refreshed_html =~ "Diagnostics refreshed at"
+
+    {:ok, _dashboard, ready_dashboard_html} = live(build_conn(), "/")
+    assert ready_dashboard_html =~ "Linear ok"
+    assert ready_dashboard_html =~ "Latest Linear diagnostics did not report blocking issues"
   end
 
   test "diagnostics page does not expose Linear discovery controls" do

@@ -3,7 +3,8 @@ defmodule SymphonyElixir.EventPresenter do
   Normalized presentation rows for persisted events.
   """
 
-  alias SymphonyElixir.{Payload, Redaction, StatusDashboard, Text}
+  alias SymphonyElixir.Codex.MessageHumanizer
+  alias SymphonyElixir.{Payload, Redaction, Text}
 
   @type row :: map()
 
@@ -81,7 +82,7 @@ defmodule SymphonyElixir.EventPresenter do
     if empty_codex_notification?(payload) do
       "Empty Codex notification"
     else
-      StatusDashboard.humanize_codex_message(%{event: payload_event(payload), message: message})
+      MessageHumanizer.humanize_codex_message(%{event: payload_event(payload), message: message})
     end
   end
 

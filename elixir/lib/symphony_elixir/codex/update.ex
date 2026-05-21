@@ -3,7 +3,9 @@ defmodule SymphonyElixir.Codex.Update do
   Normalizes Codex app-server updates into run metadata, history, and persisted payloads.
   """
 
-  alias SymphonyElixir.{Payload, Redaction, StatusDashboard}
+  alias SymphonyElixir.Codex.MessageHumanizer
+  alias SymphonyElixir.Codex.RateLimitParser
+  alias SymphonyElixir.{Payload, Redaction}
 
   @default_history_limit 100
   @debug_payload_string_limit 500
@@ -313,7 +315,7 @@ defmodule SymphonyElixir.Codex.Update do
   end
 
   defp history_label(event), do: event |> to_string() |> String.replace("_", " ") |> String.capitalize()
-  defp history_detail(_event, %{message: message}), do: StatusDashboard.humanize_codex_message(message)
+  defp history_detail(_event, %{message: message}), do: MessageHumanizer.humanize_codex_message(message)
   defp history_detail(event, _metadata), do: to_string(event)
   defp history_source(_event, _metadata), do: :agent
   defp history_severity(event, _metadata) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
@@ -445,8 +447,8 @@ defmodule SymphonyElixir.Codex.Update do
     direct = Payload.get_any(payload, ["rate_limits", :rate_limits])
 
     cond do
-      rate_limits_map?(direct) -> direct
-      rate_limits_map?(payload) -> payload
+      parsed = RateLimitParser.parse(direct) -> parsed
+      parsed = RateLimitParser.parse(payload) -> parsed
       true -> rate_limit_payloads(payload)
     end
   end
@@ -465,14 +467,6 @@ defmodule SymphonyElixir.Codex.Update do
       end
     end)
   end
-
-  defp rate_limits_map?(payload) when is_map(payload) do
-    limit_id = Payload.get_any(payload, ["limit_id", :limit_id, "limit_name", :limit_name])
-    has_buckets = Enum.any?(["primary", :primary, "secondary", :secondary, "credits", :credits], &Map.has_key?(payload, &1))
-    !is_nil(limit_id) and has_buckets
-  end
-
-  defp rate_limits_map?(_payload), do: false
 
   defp explicit_map_at_paths(payload, paths),
     do:

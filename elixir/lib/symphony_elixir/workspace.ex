@@ -4,10 +4,9 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, SSH, WorkspaceCleanupPolicy}
-  alias SymphonyElixir.Workspace.SourcePreparation
+  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, WorkspaceCleanupPolicy}
+  alias SymphonyElixir.Workspace.{HookRunner, Remote, SourcePreparation}
 
-  @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
   @hook_recent_output_bytes 4_096
   @hook_event_output_bytes 2_048
   @hook_command_preview_bytes 512
@@ -63,28 +62,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp do_ensure_remote_workspace(workspace, worker_host) do
-    script =
-      [
-        "set -eu",
-        remote_shell_assign("workspace", workspace),
-        "rm -rf \"$workspace\"",
-        "mkdir -p \"$workspace\"",
-        "cd \"$workspace\"",
-        "printf '%s\\t%s\\t%s\\n' '#{@remote_workspace_marker}' '1' \"$(pwd -P)\""
-      ]
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.join("\n")
-
-    case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
-      {:ok, {output, 0}} ->
-        parse_remote_workspace_output(output)
-
-      {:ok, {output, status}} ->
-        {:error, {:workspace_prepare_failed, worker_host, status, output}}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
+    Remote.ensure_workspace(worker_host, workspace, Config.settings!().hooks.timeout_ms)
   end
 
   defp create_workspace(workspace) do
@@ -121,23 +99,7 @@ defmodule SymphonyElixir.Workspace do
       :ok ->
         maybe_run_before_remove_hook(workspace, worker_host)
 
-        script =
-          [
-            remote_shell_assign("workspace", workspace),
-            "rm -rf \"$workspace\""
-          ]
-          |> Enum.join("\n")
-
-        case run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms) do
-          {:ok, {_output, 0}} ->
-            {:ok, []}
-
-          {:ok, {output, status}} ->
-            {:error, {:workspace_remove_failed, worker_host, status, output}, ""}
-
-          {:error, reason} ->
-            {:error, reason, ""}
-        end
+        Remote.remove_workspace(worker_host, workspace, Config.settings!().hooks.timeout_ms)
 
       {:error, reason} ->
         {:error, reason, ""}
@@ -671,17 +633,7 @@ defmodule SymphonyElixir.Workspace do
         :ok
 
       command ->
-        script =
-          [
-            remote_shell_assign("workspace", workspace),
-            "if [ -d \"$workspace\" ]; then",
-            "  cd \"$workspace\"",
-            "  #{command}",
-            "fi"
-          ]
-          |> Enum.join("\n")
-
-        run_remote_command(worker_host, script, Config.settings!().hooks.timeout_ms)
+        Remote.run_command(worker_host, Remote.before_remove_script(workspace, command), Config.settings!().hooks.timeout_ms)
         |> case do
           {:ok, {output, status}} ->
             handle_hook_command_result(
@@ -766,7 +718,7 @@ defmodule SymphonyElixir.Workspace do
       worker_host: worker_host_for_log(worker_host)
     })
 
-    case run_remote_command(worker_host, "cd #{SymphonyElixir.Shell.escape(workspace)} && #{command}", timeout_ms) do
+    case Remote.run_command(worker_host, Remote.hook_script(workspace, command), timeout_ms) do
       {:ok, {output, status}} ->
         handle_hook_command_result(
           {output, status},
@@ -933,65 +885,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp run_local_hook_command(command, workspace, timeout_ms, on_output) do
-    started_at = System.monotonic_time(:millisecond)
-    port = open_hook_port(command, workspace)
-
-    receive_hook_port(port, timeout_ms, started_at, "", on_output)
-  end
-
-  defp open_hook_port(command, workspace) do
-    sh = System.find_executable("sh") || "/bin/sh"
-
-    Port.open({:spawn_executable, sh}, [
-      :binary,
-      :exit_status,
-      :stderr_to_stdout,
-      {:args, ["-lc", command]},
-      {:cd, workspace},
-      {:env, [{~c"GIT_TERMINAL_PROMPT", ~c"0"}]}
-    ])
-  end
-
-  defp receive_hook_port(port, timeout_ms, started_at, recent_output, on_output) do
-    elapsed_ms = System.monotonic_time(:millisecond) - started_at
-    remaining_ms = max(timeout_ms - elapsed_ms, 0)
-
-    receive do
-      {^port, {:data, chunk}} ->
-        sanitized_chunk = sanitize_hook_output_for_log(chunk, @hook_recent_output_bytes)
-        recent_output = append_recent_output(recent_output, sanitized_chunk)
-        on_output.(chunk, recent_output)
-        receive_hook_port(port, timeout_ms, started_at, recent_output, on_output)
-
-      {^port, {:exit_status, status}} ->
-        {:ok, {recent_output, status}}
-    after
-      remaining_ms ->
-        close_hook_port(port)
-
-        details = %{
-          elapsed_ms: System.monotonic_time(:millisecond) - started_at,
-          recent_output: recent_output
-        }
-
-        {:error, {:workspace_hook_timeout, "local_command", timeout_ms, details}}
-    end
-  end
-
-  defp close_hook_port(port) do
-    Port.close(port)
-    :ok
-  catch
-    :error, _reason -> :ok
-  end
-
-  defp append_recent_output(current, chunk) do
-    output = current <> IO.iodata_to_binary(chunk)
-
-    case byte_size(output) <= @hook_recent_output_bytes do
-      true -> output
-      false -> binary_part(output, byte_size(output) - @hook_recent_output_bytes, @hook_recent_output_bytes)
-    end
+    HookRunner.run_local(command, workspace, timeout_ms, on_output)
   end
 
   defp progress_callback(opts, issue_context, phase, operation, prefix) do
@@ -1056,7 +950,7 @@ defmodule SymphonyElixir.Workspace do
   defp emit_system_progress(_opts, _issue_context, _metadata), do: :ok
 
   defp sanitize_hook_output_for_log(output, max_bytes \\ 2_048) do
-    SymphonyElixir.Redaction.bounded(output, max_bytes)
+    HookRunner.sanitize_output(output, max_bytes)
   end
 
   defp log_workspace_command_start("project_bootstrap", issue_context, workspace, nil) do
@@ -1186,58 +1080,6 @@ defmodule SymphonyElixir.Workspace do
 
       true ->
         :ok
-    end
-  end
-
-  defp remote_shell_assign(variable_name, raw_path)
-       when is_binary(variable_name) and is_binary(raw_path) do
-    [
-      "#{variable_name}=#{SymphonyElixir.Shell.escape(raw_path)}",
-      "case \"$#{variable_name}\" in",
-      "  '~') #{variable_name}=\"$HOME\" ;;",
-      "  '~/'*) " <> variable_name <> "=\"$HOME/${" <> variable_name <> "#~/}\" ;;",
-      "esac"
-    ]
-    |> Enum.join("\n")
-  end
-
-  defp parse_remote_workspace_output(output) do
-    lines = String.split(IO.iodata_to_binary(output), "\n", trim: true)
-
-    payload =
-      Enum.find_value(lines, fn line ->
-        case String.split(line, "\t", parts: 3) do
-          [@remote_workspace_marker, created, path] when created in ["0", "1"] and path != "" ->
-            {created == "1", path}
-
-          _ ->
-            nil
-        end
-      end)
-
-    case payload do
-      {created?, workspace} when is_boolean(created?) and is_binary(workspace) ->
-        {:ok, workspace, created?}
-
-      _ ->
-        {:error, {:workspace_prepare_failed, :invalid_output, output}}
-    end
-  end
-
-  defp run_remote_command(worker_host, script, timeout_ms)
-       when is_binary(worker_host) and is_binary(script) and is_integer(timeout_ms) and timeout_ms > 0 do
-    task =
-      Task.async(fn ->
-        SSH.run(worker_host, script, stderr_to_stdout: true)
-      end)
-
-    case Task.yield(task, timeout_ms) do
-      {:ok, result} ->
-        result
-
-      nil ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, {:workspace_hook_timeout, "remote_command", timeout_ms}}
     end
   end
 

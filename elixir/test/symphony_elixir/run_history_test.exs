@@ -212,16 +212,31 @@ defmodule SymphonyElixir.RunHistoryTest do
           event_type: "codex.update",
           payload: %{"event" => "turn_input_required", "message" => %{"method" => "turn/input_required"}},
           occurred_at: ~U[2026-05-21 00:00:02Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{"event" => "notification", "message" => %{"method" => "item/agentMessage/delta", "params" => %{"delta" => "Finished the task."}}},
+          occurred_at: ~U[2026-05-21 00:00:03Z]
+        },
+        %{
+          event_type: "linear.state_transition",
+          payload: %{"from_state" => "In Progress", "to_state" => "In Review"},
+          occurred_at: ~U[2026-05-21 00:00:04Z]
         }
       ])
 
     summary = RunHistory.summarize(%{status: "failed", attempt: 2, failure_reason: "needs input"}, history)
 
     assert summary.outcome == "failed attempt 2"
-    assert summary.last_codex_detail == "turn blocked: waiting for user input"
+    assert summary.final_message == "Finished the task."
+    assert summary.last_codex_detail == "agent message streaming: Finished the task."
+    assert "dynamic tool call requested (linear_task_read)" in summary.actions
+    assert "linear_task_read x1" in summary.tools
+    assert "In Progress -> In Review" in summary.linear_updates
     assert "dynamic tool call requested (linear_task_read)" in summary.highlights
     assert "needs input" in summary.blockers
     assert "turn blocked: waiting for user input" in summary.blockers
     assert summary.sessions == ["thread-1"]
+    assert summary.evidence_quality == :complete
   end
 end

@@ -615,7 +615,9 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     {:ok, _view, run_html} = live(build_conn(), "/runs/run-1")
     assert run_html =~ "Run Detail"
     assert run_html =~ "MT-1"
-    assert run_html =~ "Run Summary"
+    assert run_html =~ "Agent Summary"
+    assert run_html =~ "Final message"
+    assert run_html =~ "Work performed"
     assert run_html =~ "Last Codex signal"
     assert run_html =~ "Workflow Version"
     assert run_html =~ "ID: workflow-1"
@@ -756,8 +758,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     {:ok, _view, html} = live(build_conn(), "/runs/run-codex-history")
 
+    assert html =~ "Agent Summary"
+    assert html =~ "Final message"
+    assert html =~ "Tools"
     assert html =~ "No structured agent turns recorded. Session history below is the source of truth for this run."
     assert html =~ "dynamic tool call requested (linear_task_read)"
+    assert html =~ "linear_task_read x1"
     assert html =~ "agent message streaming: Finished the task."
     assert html =~ "2 empty Codex notifications; detailed payload was not persisted"
     assert html =~ "thread-history"

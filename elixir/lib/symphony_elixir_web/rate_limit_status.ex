@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
   Dashboard-facing rate-limit observability projection.
   """
 
-  alias SymphonyElixir.StatusDashboard
+  alias SymphonyElixir.Codex.MessageHumanizer
 
   @spec from_snapshot(map()) :: map()
   def from_snapshot(snapshot) when is_map(snapshot) do
@@ -64,7 +64,7 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
     |> Map.get(:running, [])
     |> Enum.find_value(fn entry ->
       message = Map.get(entry, :last_codex_message)
-      if is_nil(message), do: nil, else: StatusDashboard.humanize_codex_message(message)
+      if is_nil(message), do: nil, else: MessageHumanizer.humanize_codex_message(message)
     end)
   end
 end
