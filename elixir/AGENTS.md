@@ -67,3 +67,6 @@ If behavior/config changes, update docs in the same PR:
   contract changes. The SQLite active workflow version is the runtime
   authority; local split package files are examples/import artifacts, not the
   live runtime source.
+- `docs/documentation_alignment.md` when a change affects runtime source,
+  Settings ownership, worker modes, observability/analytics, Linear
+  integration, deployment ownership, or other long-lived documentation claims.

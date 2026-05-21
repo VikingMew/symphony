@@ -28,7 +28,7 @@ Settings 长期应提供几个互相一致的 tab/入口：
 - `/settings/workflow` 结构化编辑：按 tracker、bootstrap、workspace、hooks、agent、codex、workflow routing 等区域编辑共享策略。
 - `/settings/agents` 结构化编辑：编辑 base prompt、profiles、profile prompt policy、allowed updates、executor policy。
 - `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。
-- Split package 导入：导入 `workflow.yml` 和 `profiles.yml`，解析后进入同一套结构化模型，显示 diff 和校验结果。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure，并阻止运行时监听。当前 UI 通过一个 YAML 输入逐个粘贴 `workflow.yml` 或 `profiles.yml`，并根据顶层 `profiles` / `base_prompt` 字段自动识别 package 类型；长期可以升级为文件上传，但导入语义不能改变。
+- Split package 导入：`/settings/import` 可粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，显示 staged diff 和校验结果。导入根据 YAML 字段自动识别 package 类型；确认导入只修改 editable draft，运行时只有正常 Save 后才变化。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure，并阻止运行时监听。
 
 这些入口必须写入同一个 workflow version 模型，避免 UI 配置、导入文件和导出的 Markdown 配置分裂。
 
@@ -84,7 +84,7 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 
 导入流程：
 
-1. 提供一个 YAML 文档。当前 UI 可以先通过 paste/import 表单逐个导入 `workflow.yml` 或 `profiles.yml`；文件上传只是同一 parser 的输入方式。
+1. 提供一个 YAML 文档。当前 UI 通过 `/settings/import` 粘贴或上传 `workflow.yml` / `profiles.yml`；两种输入使用同一 parser。
 2. 解析 runtime/routing YAML、profiles YAML 和 `base_prompt`。
 3. 映射到结构化 workflow form state。
 4. 运行 field、section、contract 三层 verification，并区分“不能解析/不能保存”和“能保存但运行时不可用”。
@@ -108,6 +108,6 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 - 语义错误不会让保存按钮失效；保存后会刷新 configuration check，并明确说明下一步去 Projects、Workflow、Agents 还是环境变量修。
 - 导入无效 split package 不会创建 workflow version。
 - 导入有效 split package 会生成结构化表单 state、展示 diff，并能保存为 workflow version。
-- 导入入口必须清楚标明导入只填充 draft，不等于保存或激活。当前实现允许通过一个 YAML 输入逐个粘贴 `workflow.yml` 或 `profiles.yml` 内容，并自动识别类型；后续文件上传入口应复用同一 parser 和 draft flow。
+- 导入入口必须清楚标明导入只填充 draft，不等于保存或激活。当前实现允许粘贴或上传 `workflow.yml` / `profiles.yml` 内容，并自动识别类型；后续导入体验优化必须复用同一 parser、diff 和 draft flow。
 - 页面不提供原文查看或高级 raw editor 编辑入口。
 - 导出的 split package 可以重新上传导入并得到等价 workflow version。

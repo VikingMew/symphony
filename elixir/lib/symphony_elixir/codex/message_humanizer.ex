@@ -3,6 +3,8 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
   Pure formatter for compact, operator-facing Codex protocol and event messages.
   """
 
+  alias SymphonyElixir.Codex.MessageUsageFormatter
+
   @doc false
   @spec humanize_codex_message(term()) :: String.t()
   def humanize_codex_message(nil), do: "no codex message yet"
@@ -185,7 +187,7 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
         SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
 
     usage_suffix =
-      case format_usage_counts(usage) do
+      case MessageUsageFormatter.format_usage_counts(usage) do
         nil -> ""
         usage_text -> " (#{usage_text})"
       end
@@ -240,7 +242,7 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
         SymphonyElixir.Payload.get_path(payload, [:params, :tokenUsage, :total]) ||
         SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
 
-    case format_usage_counts(usage) do
+    case MessageUsageFormatter.format_usage_counts(usage) do
       nil -> "thread token usage updated"
       usage_text -> "thread token usage updated (#{usage_text})"
     end
@@ -326,7 +328,7 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
       SymphonyElixir.Payload.get_path(payload, ["params", "rateLimits"]) ||
         SymphonyElixir.Payload.get_path(payload, [:params, :rateLimits])
 
-    "rate limits updated: #{format_rate_limits_summary(rate_limits)}"
+    "rate limits updated: #{MessageUsageFormatter.format_rate_limits_summary(rate_limits)}"
   end
 
   defp humanize_codex_method("account/chatgptAuthTokens/refresh", _payload), do: "account auth token refresh requested"
@@ -551,7 +553,7 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
   defp humanize_codex_wrapper_event("token_count", payload) do
     usage = extract_first_path(payload, token_usage_paths())
 
-    case format_usage_counts(usage) do
+    case MessageUsageFormatter.format_usage_counts(usage) do
       nil -> "token count update"
       usage_text -> "token count update (#{usage_text})"
     end
@@ -598,101 +600,6 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
       "command completed"
     end
   end
-
-  defp format_usage_counts(usage) when is_map(usage) do
-    input =
-      parse_integer(
-        SymphonyElixir.Payload.get_any(usage, [
-          "input_tokens",
-          :input_tokens,
-          "prompt_tokens",
-          :prompt_tokens,
-          "inputTokens",
-          :inputTokens,
-          "promptTokens",
-          :promptTokens
-        ])
-      )
-
-    output =
-      parse_integer(
-        SymphonyElixir.Payload.get_any(usage, [
-          "output_tokens",
-          :output_tokens,
-          "completion_tokens",
-          :completion_tokens,
-          "outputTokens",
-          :outputTokens,
-          "completionTokens",
-          :completionTokens
-        ])
-      )
-
-    total =
-      parse_integer(
-        SymphonyElixir.Payload.get_any(usage, [
-          "total_tokens",
-          :total_tokens,
-          "total",
-          :total,
-          "totalTokens",
-          :totalTokens
-        ])
-      )
-
-    parts =
-      []
-      |> append_usage_part("in", input)
-      |> append_usage_part("out", output)
-      |> append_usage_part("total", total)
-
-    case parts do
-      [] -> nil
-      _ -> Enum.join(parts, ", ")
-    end
-  end
-
-  defp format_usage_counts(_usage), do: nil
-
-  defp append_usage_part(parts, _label, value) when not is_integer(value), do: parts
-  defp append_usage_part(parts, label, value), do: parts ++ ["#{label} #{SymphonyElixir.NumberFormat.grouped_integer(value)}"]
-
-  defp format_rate_limits_summary(nil), do: "n/a"
-
-  defp format_rate_limits_summary(rate_limits) when is_map(rate_limits) do
-    primary = SymphonyElixir.Payload.get_any(rate_limits, ["primary", :primary])
-    secondary = SymphonyElixir.Payload.get_any(rate_limits, ["secondary", :secondary])
-
-    primary_text = format_rate_limit_bucket_summary(primary)
-    secondary_text = format_rate_limit_bucket_summary(secondary)
-
-    cond do
-      primary_text != nil and secondary_text != nil -> "primary #{primary_text}; secondary #{secondary_text}"
-      primary_text != nil -> "primary #{primary_text}"
-      secondary_text != nil -> "secondary #{secondary_text}"
-      true -> "n/a"
-    end
-  end
-
-  defp format_rate_limits_summary(_rate_limits), do: "n/a"
-
-  defp format_rate_limit_bucket_summary(bucket) when is_map(bucket) do
-    used_percent = SymphonyElixir.Payload.get_any(bucket, ["used_percent", :used_percent, "usedPercent", :usedPercent])
-    window_mins = SymphonyElixir.Payload.get_any(bucket, ["window_duration_mins", :window_duration_mins, "windowDurationMins", :windowDurationMins])
-
-    cond do
-      is_number(used_percent) and is_integer(window_mins) ->
-        "#{used_percent}% / #{window_mins}m"
-
-      is_number(used_percent) ->
-        "#{used_percent}% used"
-
-      true ->
-        nil
-    end
-  end
-
-  defp format_rate_limit_bucket_summary(_bucket), do: nil
 
   defp format_error_value(%{"message" => message}) when is_binary(message), do: message
   defp format_error_value(%{message: message}) when is_binary(message), do: message
@@ -835,17 +742,6 @@ defmodule SymphonyElixir.Codex.MessageHumanizer do
   end
 
   defp inline_text(other), do: other |> to_string() |> inline_text()
-
-  defp parse_integer(value) when is_integer(value), do: value
-
-  defp parse_integer(value) when is_binary(value) do
-    case Integer.parse(String.trim(value)) do
-      {parsed, ""} -> parsed
-      _ -> nil
-    end
-  end
-
-  defp parse_integer(_value), do: nil
 
   defp token_usage_paths do
     [

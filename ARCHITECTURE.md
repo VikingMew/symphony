@@ -220,6 +220,7 @@ port is configured, the service provides:
 - `/api/v1/<issue_identifier>`: issue-specific state
 - `/api/v1/refresh`: manual refresh endpoint
 - `/runs`, `/events`, `/workers`, `/settings/*`: management pages
+- `/settings/import`: staged split-package import and diff review before applying to editable Settings draft
 - `/diagnostics/linear`: validation for the active Linear runtime configuration
 
 ### 6.10 Persistence and Worker API
@@ -289,6 +290,20 @@ Symphony is designed for long-running operation and transient failure recovery:
 - Active runs are stopped when issue states become terminal or ineligible.
 - Terminal issues trigger cleanup of matching workspaces.
 - Runtime details are written to logs and exposed through the optional status API.
+- Input-required, approval-required, and MCP elicitation outcomes are blocked sessions, not normal
+  retry failures. They remain claimed and visible in snapshot/API/dashboard until issue state or
+  routing changes release the claim.
+
+## 9.1 Planned Operational Surfaces
+
+Two operator-facing areas are intentionally planned rather than current architecture:
+
+- Historical time-range Analytics/Stats is owned by
+  `elixir/docs/exec-plans/active/158-runtime-results-analytics-page.md`. Current dashboard state is
+  live runtime state; `/runs` and `/events` provide persisted per-run and audit views.
+- Reverse-proxy/Kubernetes edge behavior is owned by
+  `elixir/docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md`. Current Docker and
+  local deployment docs do not mean Symphony owns public TLS, domains, or ingress policy.
 
 ## 10. Security and Trust Model
 

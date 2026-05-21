@@ -15,6 +15,7 @@ Use this README together with:
 - [docs/user_guide.zh-CN.md](docs/user_guide.zh-CN.md): user installation and startup guide.
 - [docs/persistence_and_auth.md](docs/persistence_and_auth.md): SQLite/auth configuration.
 - [docs/long_term_direction.zh-CN.md](docs/long_term_direction.zh-CN.md): long-term direction and technical choices.
+- [docs/documentation_alignment.md](docs/documentation_alignment.md): canonical doc/exec-plan alignment matrix.
 - [docs/exec-plans/README.md](docs/exec-plans/README.md): completed implementation plans.
 
 > [!WARNING]
@@ -443,14 +444,26 @@ codex:
 The observability and management UI runs on a Phoenix stack:
 
 - LiveView for the dashboard at `/`
-- LiveView management pages at `/runs`, `/workers`, and `/settings`
-- Settings tabs at `/settings/projects`, `/settings/workflow`, `/settings/agents`, and `/settings/runtime`
+- LiveView management pages at `/runs`, `/events`, `/workers`, and `/settings`
+- Settings tabs at `/settings/projects`, `/settings/workflow`, `/settings/agents`, `/settings/runtime`, and `/settings/import`
 - Shared Linear configuration discovery inside Settings for copying project slug and workflow state candidates
 - Linear integration diagnostics at `/diagnostics/linear`
 - JSON API for operational debugging under `/api/v1/*`
 - Worker API under `/api/worker/v1/*`
 - Bandit as the HTTP server
 - Phoenix dependency static assets for the LiveView client bootstrap
+
+The dashboard is the live operational view. `/runs` and `/events` are persisted debugging and audit
+views. A time-range Analytics/Stats page is planned in
+[docs/exec-plans/active/158-runtime-results-analytics-page.md](docs/exec-plans/active/158-runtime-results-analytics-page.md)
+and should not be treated as implemented yet.
+
+Current Docker targets cover local/all-in-one and worker-oriented deployments. Reverse-proxy and
+Kubernetes edge behavior, including trusted forwarded headers and health/readiness probes, is
+planned in
+[docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md](docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md).
+Until that lands, public TLS/domain routing should be owned by your existing proxy or platform and
+verified separately.
 
 ## Project Layout
 

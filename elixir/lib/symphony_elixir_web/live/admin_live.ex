@@ -18,7 +18,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   }
 
   alias SymphonyElixir.Linear.{Discovery, StateFixes, WorkflowStateValidator}
-  alias SymphonyElixirWeb.Admin.ProjectSettings
+  alias SymphonyElixirWeb.Admin.{ObservabilityPresenter, ProjectSettings, SettingsCheck}
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
@@ -327,7 +327,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @spec settings_check_messages(map()) :: Phoenix.LiveView.Rendered.t()
   def settings_check_messages(assigns) do
-    assigns = assign(assigns, :messages, settings_check_messages(assigns.targets, assigns.tab, assigns.field, assigns.scope))
+    assigns = assign(assigns, :messages, SettingsCheck.messages(assigns.targets, assigns.tab, assigns.field, assigns.scope))
 
     ~H"""
     <p :for={message <- @messages} class="settings-check-message"><%= message %></p>
@@ -1936,163 +1936,23 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp assign_workflow_semantic_error(socket, draft, message) do
     socket
     |> assign(:workflow_field_errors, %{})
-    |> assign(:workflow_check_targets, workflow_check_targets(draft, message))
+    |> assign(:workflow_check_targets, SettingsCheck.workflow_check_targets(draft, message))
     |> assign(:workflow_validation_error, message)
     |> assign(:workflow_form_valid?, false)
     |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
   end
 
-  defp workflow_check_targets(draft, message) do
-    text = to_string(message)
-    quoted = quoted_values(text)
-
-    []
-    |> Kernel.++(workflow_state_length_targets(text))
-    |> Kernel.++(workflow_tracker_targets(text))
-    |> Kernel.++(workflow_human_review_targets(text))
-    |> Kernel.++(workflow_state_route_targets(text, draft))
-    |> Kernel.++(workflow_transition_targets(text, draft, quoted))
-    |> Kernel.++(workflow_profile_targets(text, quoted))
-    |> Enum.uniq_by(fn target -> {target.tab, target.field, target.scope, target.message} end)
-  end
-
-  defp workflow_state_length_targets(text) do
-    cond do
-      String.contains?(text, "tracker.active_states") ->
-        [check_target(:workflow, :active_states, nil, "Active states", text)]
-
-      String.contains?(text, "tracker.terminal_states") ->
-        [check_target(:workflow, :terminal_states, nil, "Terminal states", text)]
-
-      String.contains?(text, "human_review_states") ->
-        [check_target(:workflow, :human_review_states, nil, "Human review states", text)]
-
-      true ->
-        []
-    end
-  end
-
-  defp workflow_tracker_targets(text) do
-    []
-    |> maybe_check_target(String.contains?(text, "tracker.active_states"), :workflow, :active_states, nil, "Active states", text)
-    |> maybe_check_target(String.contains?(text, "tracker.terminal_states"), :workflow, :terminal_states, nil, "Terminal states", text)
-  end
-
-  defp workflow_human_review_targets(text) do
-    if String.contains?(text, "human_review_states") do
-      [check_target(:workflow, :human_review_states, nil, "Human review states", text)]
-    else
-      []
-    end
-  end
-
-  defp workflow_state_route_targets(text, draft) do
-    states = draft |> Map.get("workflow_states", %{}) |> Map.keys()
-
-    states
-    |> Enum.filter(&(String.contains?(text, "states.#{&1}") or String.contains?(text, inspect(&1))))
-    |> Enum.map(&check_target(:workflow, :workflow_state, &1, "Workflow state #{&1}", text))
-  end
-
-  defp workflow_transition_targets(text, draft, quoted) do
-    if String.contains?(text, "allowed_transitions") do
-      transition_entries(draft)
-      |> Enum.filter(fn {transition, _index} -> transition_matches_message?(transition, quoted, text) end)
-      |> transition_check_targets(text)
-    else
-      []
-    end
-  end
-
-  defp transition_check_targets([], text), do: [check_target(:workflow, :allowed_transitions, nil, "Allowed transitions", text)]
-
-  defp transition_check_targets(entries, text) do
-    Enum.map(entries, fn {_transition, index} ->
-      check_target(:workflow, :allowed_transition, index, "Allowed transition #{index + 1}", text)
-    end)
-  end
-
-  defp workflow_profile_targets(text, quoted) do
-    Regex.scan(~r/profiles\.([^. ,]+)\.([^,\n]+)/, text)
-    |> Enum.flat_map(fn [_match, profile, rest] ->
-      field =
-        cond do
-          String.contains?(rest, "allowed_updates.target_states") -> :profile_target_states
-          String.contains?(rest, "prompt.template") -> :profile_prompt_template
-          String.contains?(rest, "prompt.mode") -> :profile_prompt_mode
-          String.contains?(rest, "executor.type") -> :profile_executor
-          String.starts_with?(rest, "name") -> :profile_name
-          true -> :profile_panel
-        end
-
-      title = profile_target_title(field, profile)
-      message = profile_message(text, quoted)
-
-      [
-        check_target(:agents, field, profile, title, message),
-        check_target(:agents, :profile_panel, profile, "Profile #{profile}", message)
-      ]
-    end)
-  end
-
-  defp profile_message(text, []), do: text
-  defp profile_message(text, quoted), do: "#{text} (#{Enum.join(quoted, ", ")})"
-
-  defp profile_target_title(:profile_target_states, profile), do: "#{profile} allowed target states"
-  defp profile_target_title(:profile_prompt_template, profile), do: "#{profile} prompt template"
-  defp profile_target_title(:profile_prompt_mode, profile), do: "#{profile} prompt mode"
-  defp profile_target_title(:profile_executor, profile), do: "#{profile} executor"
-  defp profile_target_title(:profile_name, profile), do: "#{profile} name"
-  defp profile_target_title(_field, profile), do: "Profile #{profile}"
-
-  defp quoted_values(text) do
-    Regex.scan(~r/"([^"]+)"/, text)
-    |> Enum.map(fn [_match, value] -> value end)
-  end
-
-  defp transition_matches_message?(_transition, [], _text), do: true
-
-  defp transition_matches_message?(transition, quoted, text) do
-    values = [Map.get(transition, "from"), Map.get(transition, "to"), Map.get(transition, "actor"), Map.get(transition, "profile")]
-
-    Enum.any?(values, fn value ->
-      value = to_string(value || "")
-      value != "" and (Enum.member?(quoted, value) or String.contains?(text, value))
-    end)
-  end
-
-  defp maybe_check_target(targets, true, tab, field, scope, title, message), do: [check_target(tab, field, scope, title, message) | targets]
-  defp maybe_check_target(targets, false, _tab, _field, _scope, _title, _message), do: targets
-
-  defp check_target(tab, field, scope, title, message) do
-    %{tab: tab, field: field, scope: scope, title: title, message: message}
-  end
-
   defp settings_check_class(targets, tab, field, scope \\ nil, base \\ "settings-field") do
-    [base, if(settings_check_invalid?(targets, tab, field, scope), do: "settings-check-invalid")]
+    SettingsCheck.class(targets, tab, field, scope, base)
   end
 
   defp settings_check_title_class(targets, tab, field, scope \\ nil, base \\ "metric-label") do
-    [base, if(settings_check_invalid?(targets, tab, field, scope), do: "settings-check-title-invalid")]
+    SettingsCheck.title_class(targets, tab, field, scope, base)
   end
 
   defp settings_check_invalid?(targets, tab, field, scope \\ nil) do
-    Enum.any?(targets, &settings_check_match?(&1, tab, field, scope))
+    SettingsCheck.invalid?(targets, tab, field, scope)
   end
-
-  defp settings_check_messages(targets, tab, field, scope) do
-    targets
-    |> Enum.filter(&settings_check_match?(&1, tab, field, scope))
-    |> Enum.map(& &1.message)
-    |> Enum.uniq()
-  end
-
-  defp settings_check_match?(target, tab, field, scope) do
-    target.tab == tab and target.field == field and normalize_scope(target.scope) == normalize_scope(scope)
-  end
-
-  defp normalize_scope(nil), do: nil
-  defp normalize_scope(scope), do: to_string(scope)
 
   defp settings_tab_label(:projects), do: "Projects"
   defp settings_tab_label(:workflow), do: "Workflow"
@@ -2109,14 +1969,12 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp settings_tab_path(_tab), do: "/settings"
 
   defp project_field_class(items, title) do
-    ["settings-field", if(project_item_present?(items, title), do: "settings-check-invalid")]
+    SettingsCheck.project_field_class(items, title)
   end
 
   defp project_field_title_class(items, title) do
-    ["metric-label", if(project_item_present?(items, title), do: "settings-check-title-invalid")]
+    SettingsCheck.project_field_title_class(items, title)
   end
-
-  defp project_item_present?(items, title), do: Enum.any?(items, &(Map.get(&1, :title) == title))
 
   defp workflow_field_id(field), do: "workflow-field-#{String.replace(field, "_", "-")}"
 
@@ -2146,9 +2004,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp persistence, do: PersistenceProvider.module()
 
-  defp worker_empty_message(:centralized), do: "Worker-backed mode is inactive. Centralized execution does not require registered workers."
-  defp worker_empty_message("centralized"), do: worker_empty_message(:centralized)
-  defp worker_empty_message(_mode), do: "No workers are registered. Worker-backed execution expects compatible workers to register through the worker API."
+  defp worker_empty_message(mode), do: ObservabilityPresenter.worker_empty_message(mode)
 
   defp import_upload_content(socket) do
     case uploaded_entries(socket, :settings_package) do
@@ -2277,57 +2133,16 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp db_runtime_mismatch?(_version, _runtime), do: true
 
-  defp fmt_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
-  defp fmt_dt(_), do: "n/a"
+  defp fmt_dt(value), do: ObservabilityPresenter.fmt_dt(value)
 
-  defp fmt_duration(%DateTime{} = started_at, %DateTime{} = finished_at) do
-    elapsed = DateTime.diff(finished_at, started_at, :second)
-
-    cond do
-      elapsed < 0 -> "n/a"
-      elapsed < 60 -> "#{elapsed}s"
-      elapsed < 3_600 -> "#{div(elapsed, 60)}m #{rem(elapsed, 60)}s"
-      true -> "#{div(elapsed, 3_600)}h #{div(rem(elapsed, 3_600), 60)}m"
-    end
-  end
-
-  defp fmt_duration(_started_at, _finished_at), do: "running"
+  defp fmt_duration(started_at, finished_at), do: ObservabilityPresenter.fmt_duration(started_at, finished_at)
 
   defp list_summary([]), do: "n/a"
   defp list_summary(values) when is_list(values), do: Enum.join(values, " | ")
 
-  defp workflow_version_summary(version) do
-    [
-      "ID: #{Map.get(version, :id) || "n/a"}",
-      "Version: #{Map.get(version, :version) || "n/a"}",
-      "Source: #{Map.get(version, :source) || "n/a"}",
-      "Active: #{Map.get(version, :active) || false}",
-      "Inserted: #{fmt_dt(Map.get(version, :inserted_at))}"
-    ]
-    |> Enum.join("\n")
-  end
+  defp workflow_version_summary(version), do: ObservabilityPresenter.workflow_version_summary(version)
 
-  defp safe_event_payload(payload) do
-    payload
-    |> scrub_payload()
-    |> inspect(pretty: true, limit: 20)
-    |> truncate(2_000)
-  end
-
-  defp scrub_payload(%{} = payload) do
-    Map.new(payload, fn {key, value} ->
-      key_string = to_string(key)
-
-      if String.contains?(String.downcase(key_string), ["token", "secret", "authorization", "api_key", "cookie"]) do
-        {key, "[REDACTED]"}
-      else
-        {key, scrub_payload(value)}
-      end
-    end)
-  end
-
-  defp scrub_payload(value) when is_list(value), do: Enum.map(value, &scrub_payload/1)
-  defp scrub_payload(value), do: value
+  defp safe_event_payload(payload), do: ObservabilityPresenter.safe_event_payload(payload)
 
   defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit do
     binary_part(value, 0, limit) <> "\n... truncated"
@@ -2335,13 +2150,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp truncate(value, _limit), do: value
 
-  defp labels_text(%{"values" => labels}) when is_list(labels), do: Enum.join(labels, ", ")
-  defp labels_text(_), do: ""
+  defp labels_text(labels), do: ObservabilityPresenter.labels_text(labels)
 
-  defp status_class(status) when status in ["completed", "healthy", "online"], do: "status-badge status-success"
-  defp status_class(status) when status in ["info"], do: "status-badge status-info"
-  defp status_class(status) when status in ["queued", "pending", "waiting"], do: "status-badge status-accent"
-  defp status_class(status) when status in ["running", "retrying", "leased", "warning"], do: "status-badge status-warning"
-  defp status_class(status) when status in ["failed", "offline", "expired", "error"], do: "status-badge status-danger"
-  defp status_class(_), do: "status-badge"
+  defp status_class(status), do: ObservabilityPresenter.status_class(status)
 end

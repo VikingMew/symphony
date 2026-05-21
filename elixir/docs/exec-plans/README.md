@@ -162,6 +162,7 @@ Plans should focus on product and engineering intent rather than full implementa
 155. [155-dashboard-live-presentation-boundary.md](completed/155-dashboard-live-presentation-boundary.md)
 156. [156-rate-limit-known-payload-rendering.md](completed/156-rate-limit-known-payload-rendering.md)
 157. [157-input-required-blocked-sessions.md](completed/157-input-required-blocked-sessions.md)
+160. [160-execplans-long-term-docs-alignment.md](completed/160-execplans-long-term-docs-alignment.md)
 
 ## Intentional Numbering Gaps
 
@@ -212,4 +213,17 @@ This is partly review policy rather than a fully mechanical check. `mix exec_pla
 
 ## Active Plans
 
-No active plans.
+158. [158-runtime-results-analytics-page.md](completed/158-runtime-results-analytics-page.md)
+159. [159-reverse-proxy-and-kubernetes-deployment.md](completed/159-reverse-proxy-and-kubernetes-deployment.md)
+161. [161-github-style-project-readme.md](completed/161-github-style-project-readme.md)
+162. [162-codex-message-humanizer-method-boundary.md](completed/162-codex-message-humanizer-method-boundary.md)
+163. [163-run-history-summary-boundary.md](completed/163-run-history-summary-boundary.md)
+164. [164-agent-runner-sequencing-boundary.md](completed/164-agent-runner-sequencing-boundary.md)
+165. [165-admin-live-settings-check-boundary.md](completed/165-admin-live-settings-check-boundary.md)
+166. [166-admin-live-observability-page-boundary.md](completed/166-admin-live-observability-page-boundary.md)
+167. [167-codex-dynamic-tool-policy-boundary.md](completed/167-codex-dynamic-tool-policy-boundary.md)
+168. [168-core-test-domain-split.md](completed/168-core-test-domain-split.md)
+169. [169-app-server-test-harness-split.md](completed/169-app-server-test-harness-split.md)
+170. [170-web-fake-persistence-test-split.md](completed/170-web-fake-persistence-test-split.md)
+171. [171-orchestrator-status-test-ownership-split.md](completed/171-orchestrator-status-test-ownership-split.md)
+172. [172-coverage-ignore-exit-after-extractions.md](completed/172-coverage-ignore-exit-after-extractions.md)

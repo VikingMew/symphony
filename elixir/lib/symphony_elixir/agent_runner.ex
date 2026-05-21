@@ -7,6 +7,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   alias SymphonyElixir.{
     BranchName,
+    AgentRunner.Policy,
     Codex.AppServer,
     Config,
     Git,
@@ -28,7 +29,7 @@ defmodule SymphonyElixir.AgentRunner do
   @spec run(map(), pid() | nil, keyword()) :: :ok | {:error, term()}
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     # The orchestrator owns host retries so one worker lifetime never hops machines.
-    worker_host = selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+    worker_host = Policy.selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
 
     Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
@@ -37,29 +38,9 @@ defmodule SymphonyElixir.AgentRunner do
         :ok
 
       {:error, reason} ->
-        Logger.error("Agent run failed for #{issue_context(issue)}: #{failure_summary(reason)}")
+        Logger.error("Agent run failed for #{issue_context(issue)}: #{Policy.failure_summary(reason)}")
         {:error, reason}
     end
-  end
-
-  defp failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
-    elapsed_ms = if is_map(details), do: Map.get(details, :elapsed_ms), else: nil
-    output = if is_map(details), do: Map.get(details, :recent_output, ""), else: ""
-
-    "workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{elapsed_ms} output=#{compact_output(output)}"
-  end
-
-  defp failure_summary(reason), do: reason |> inspect(limit: 20, printable_limit: 1_000) |> compact_output()
-
-  defp compact_output(output) do
-    output
-    |> to_string()
-    |> String.replace("\r", "\n")
-    |> String.split("\n", trim: true)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.take(-8)
-    |> Enum.join(" | ")
-    |> String.slice(0, 1_000)
   end
 
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
@@ -235,18 +216,12 @@ defmodule SymphonyElixir.AgentRunner do
   defp maybe_mark_implementation_started(%Issue{} = issue, opts) do
     profile = Config.workflow_profile_for_state(issue.state)
 
-    if implementation_start_transition_required?(issue, profile) do
+    if Policy.implementation_start_transition_required?(issue, profile) do
       transition_implementation_start(issue, profile, opts)
     else
       {:ok, issue}
     end
   end
-
-  defp implementation_start_transition_required?(%Issue{state: state}, @implementation_profile) do
-    normalize_issue_state(state) == normalize_issue_state(@implementation_start_state)
-  end
-
-  defp implementation_start_transition_required?(_issue, _profile), do: false
 
   defp transition_implementation_start(%Issue{id: issue_id} = issue, profile, opts)
        when is_binary(issue_id) and issue_id != "" do
@@ -265,30 +240,13 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp validate_implementation_start_transition(from_state, to_state, profile) do
-    if workflow_transition_allowed?(from_state, to_state, profile) do
-      :ok
-    else
-      {:error, {:transition_not_allowed, from_state, to_state, profile}}
+    transitions = Config.settings!().workflow |> Map.get("allowed_transitions", [])
+
+    case Policy.validate_implementation_start_transition(transitions, from_state, profile) do
+      :ok -> :ok
+      {:error, {:transition_not_allowed, ^from_state, _expected_to_state, ^profile}} -> {:error, {:transition_not_allowed, from_state, to_state, profile}}
     end
   end
-
-  defp workflow_transition_allowed?(from_state, to_state, profile) do
-    Config.settings!().workflow
-    |> Map.get("allowed_transitions", [])
-    |> Enum.any?(&matching_transition?(&1, from_state, to_state, profile))
-  end
-
-  defp matching_transition?(%{} = transition, from_state, to_state, profile) do
-    transition_profile = Map.get(transition, "profile")
-    actor = Map.get(transition, "actor")
-
-    normalize_issue_state(Map.get(transition, "from", "")) == normalize_issue_state(from_state) &&
-      normalize_issue_state(Map.get(transition, "to", "")) == normalize_issue_state(to_state) &&
-      transition_profile in [nil, profile] &&
-      actor in [nil, "codex", "symphony"]
-  end
-
-  defp matching_transition?(_transition, _from_state, _to_state, _profile), do: false
 
   defp call_implementation_start_transitioner(issue, target_state, opts) do
     transitioner = Keyword.get(opts, :implementation_start_transitioner, &default_implementation_start_transitioner/2)
@@ -342,7 +300,7 @@ defmodule SymphonyElixir.AgentRunner do
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-      case continue_with_issue?(issue, issue_state_fetcher) do
+      case Policy.continue_with_issue?(issue, issue_state_fetcher, Config.settings!().tracker.active_states) do
         {:continue, refreshed_issue} when turn_number < max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
@@ -395,56 +353,8 @@ defmodule SymphonyElixir.AgentRunner do
     """
   end
 
-  defp continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher) when is_binary(issue_id) do
-    case issue_state_fetcher.([issue_id]) do
-      {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if active_issue_state?(refreshed_issue.state) do
-          {:continue, refreshed_issue}
-        else
-          {:done, refreshed_issue}
-        end
-
-      {:ok, []} ->
-        {:done, issue}
-
-      {:error, reason} ->
-        {:error, {:issue_state_refresh_failed, reason}}
-    end
-  end
-
-  defp continue_with_issue?(issue, _issue_state_fetcher), do: {:done, issue}
-
-  defp active_issue_state?(state_name) when is_binary(state_name) do
-    normalized_state = normalize_issue_state(state_name)
-
-    Config.settings!().tracker.active_states
-    |> Enum.any?(fn active_state -> normalize_issue_state(active_state) == normalized_state end)
-  end
-
-  defp active_issue_state?(_state_name), do: false
-
-  defp selected_worker_host(nil, []), do: nil
-
-  defp selected_worker_host(preferred_host, configured_hosts) when is_list(configured_hosts) do
-    hosts =
-      configured_hosts
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.uniq()
-
-    case preferred_host do
-      host when is_binary(host) and host != "" -> host
-      _ when hosts == [] -> nil
-      _ -> List.first(hosts)
-    end
-  end
-
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
-
-  defp normalize_issue_state(state_name) when is_binary(state_name) do
-    SymphonyElixir.StateName.normalize(state_name)
-  end
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"

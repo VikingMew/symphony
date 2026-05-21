@@ -1,0 +1,301 @@
+defmodule SymphonyElixir.Analytics do
+  @moduledoc """
+  Database-backed runtime analytics read model.
+
+  This module derives historical metrics from persisted runs, events, projects,
+  and agent turns. It deliberately does not read live orchestrator state.
+  """
+
+  alias SymphonyElixir.Persistence
+
+  @default_limit 2_000
+  @range_presets %{
+    "24h" => {"Last 24 hours", 24 * 60 * 60},
+    "7d" => {"Last 7 days", 7 * 24 * 60 * 60},
+    "30d" => {"Last 30 days", 30 * 24 * 60 * 60},
+    "all" => {"All time", nil}
+  }
+
+  @type summary :: %{
+          range: map(),
+          generated_at: DateTime.t(),
+          total_runs: non_neg_integer(),
+          status_rows: [map()],
+          project_rows: [map()],
+          issue_rows: [map()],
+          execution_mode_rows: [map()],
+          failure_rows: [map()],
+          event_rows: [map()],
+          retry_count: non_neg_integer(),
+          blocked_count: non_neg_integer(),
+          duration: map(),
+          tokens: map()
+        }
+
+  @spec summary(keyword()) :: summary()
+  def summary(opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    persistence = Keyword.get(opts, :persistence, persistence())
+    range = range(Keyword.get(opts, :range, "7d"), now)
+
+    runs =
+      persistence
+      |> safe_list_runs(Keyword.get(opts, :limit, @default_limit))
+      |> Enum.filter(&in_range?(run_time(&1), range))
+
+    events =
+      persistence
+      |> safe_list_events(Keyword.get(opts, :event_limit, @default_limit))
+      |> Enum.filter(&in_range?(Map.get(&1, :occurred_at), range))
+
+    projects = Map.new(safe_list_projects(persistence), &{Map.get(&1, :id), &1})
+
+    %{
+      range: range,
+      generated_at: now,
+      total_runs: length(runs),
+      status_rows: grouped_rows(runs, &run_status/1, "/runs?status="),
+      project_rows: project_rows(runs, projects),
+      issue_rows: grouped_rows(runs, &issue_identifier/1, "/issues/"),
+      execution_mode_rows: grouped_rows(runs, &execution_mode/1, "/runs?execution_mode="),
+      failure_rows: failure_rows(runs),
+      event_rows: grouped_rows(events, &event_type/1, "/events?event_type="),
+      retry_count: count_events(events, "retry"),
+      blocked_count: count_events(events, "blocked") + count_status(runs, "blocked"),
+      duration: duration_summary(runs),
+      tokens: token_summary(events)
+    }
+  end
+
+  @spec range(String.t() | nil, DateTime.t()) :: map()
+  def range(preset, %DateTime{} = now) do
+    preset = if Map.has_key?(@range_presets, preset), do: preset, else: "7d"
+    {label, seconds} = Map.fetch!(@range_presets, preset)
+
+    %{
+      preset: preset,
+      label: label,
+      from: if(seconds, do: DateTime.add(now, -seconds, :second)),
+      to: now
+    }
+  end
+
+  @spec range_presets() :: [{String.t(), String.t()}]
+  def range_presets do
+    Enum.map(@range_presets, fn {key, {label, _seconds}} -> {key, label} end)
+  end
+
+  defp safe_list_runs(persistence, limit) do
+    persistence.list_runs(limit: limit)
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp safe_list_events(persistence, limit) do
+    persistence.list_events(limit: limit)
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp safe_list_projects(persistence) do
+    persistence.list_projects()
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp grouped_rows(records, key_fun, href_prefix) do
+    records
+    |> Enum.group_by(key_fun)
+    |> Enum.reject(fn {key, _records} -> blank?(key) end)
+    |> Enum.map(fn {key, records} ->
+      %{
+        key: key,
+        count: length(records),
+        href: href_prefix <> URI.encode(to_string(key)),
+        completed: count_status(records, "completed"),
+        failed: count_status(records, "failed"),
+        blocked: count_status(records, "blocked")
+      }
+    end)
+    |> Enum.sort_by(&{-&1.count, &1.key})
+  end
+
+  defp project_rows(runs, projects) do
+    runs
+    |> Enum.group_by(&Map.get(&1, :project_id))
+    |> Enum.reject(fn {project_id, _records} -> blank?(project_id) end)
+    |> Enum.map(fn {project_id, records} ->
+      project = Map.get(projects, project_id, %{})
+      name = Map.get(project, :name) || Map.get(project, "name") || project_id
+      slug = Map.get(project, :slug) || Map.get(project, "slug") || project_id
+
+      %{
+        key: name,
+        slug: slug,
+        count: length(records),
+        href: "/runs?project_id=#{URI.encode(to_string(project_id))}",
+        completed: count_status(records, "completed"),
+        failed: count_status(records, "failed"),
+        blocked: count_status(records, "blocked")
+      }
+    end)
+    |> Enum.sort_by(&{-&1.count, &1.key})
+  end
+
+  defp failure_rows(runs) do
+    runs
+    |> Enum.filter(&(run_status(&1) in ["failed", "cancelled", "stopped"]))
+    |> grouped_rows(fn run -> Map.get(run, :failure_reason) || "n/a" end, "/runs?failure_reason=")
+  end
+
+  defp duration_summary(runs) do
+    durations =
+      runs
+      |> Enum.map(&duration_seconds/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.sort()
+
+    total = Enum.sum(durations)
+    count = length(durations)
+
+    %{
+      count: count,
+      total_seconds: total,
+      average_seconds: if(count == 0, do: 0, else: div(total, count)),
+      p50_seconds: percentile(durations, 0.5),
+      p95_seconds: percentile(durations, 0.95)
+    }
+  end
+
+  defp token_summary(events) do
+    Enum.reduce(events, %{input_tokens: 0, output_tokens: 0, total_tokens: 0}, fn event, acc ->
+      tokens = extract_tokens(Map.get(event, :payload, %{}))
+
+      %{
+        input_tokens: acc.input_tokens + tokens.input_tokens,
+        output_tokens: acc.output_tokens + tokens.output_tokens,
+        total_tokens: acc.total_tokens + tokens.total_tokens
+      }
+    end)
+  end
+
+  defp extract_tokens(payload) when is_map(payload) do
+    candidates = [
+      payload,
+      Map.get(payload, "tokens"),
+      Map.get(payload, :tokens),
+      get_in(payload, ["params", "tokens"]),
+      get_in(payload, [:params, :tokens]),
+      get_in(payload, ["params", "total_token_usage"]),
+      get_in(payload, [:params, :total_token_usage]),
+      get_in(payload, ["message", "params", "tokens"]),
+      get_in(payload, [:message, :params, :tokens]),
+      get_in(payload, ["message", "params", "total_token_usage"]),
+      get_in(payload, [:message, :params, :total_token_usage])
+    ]
+
+    Enum.reduce(candidates, %{input_tokens: 0, output_tokens: 0, total_tokens: 0}, fn
+      map, acc when is_map(map) ->
+        %{
+          input_tokens: max(acc.input_tokens, integer_value(map, ["input_tokens", :input_tokens])),
+          output_tokens: max(acc.output_tokens, integer_value(map, ["output_tokens", :output_tokens])),
+          total_tokens: max(acc.total_tokens, integer_value(map, ["total_tokens", :total_tokens]))
+        }
+
+      _other, acc ->
+        acc
+    end)
+  end
+
+  defp extract_tokens(_payload), do: %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
+
+  defp integer_value(map, keys) do
+    keys
+    |> Enum.map(&Map.get(map, &1))
+    |> Enum.find_value(0, fn
+      value when is_integer(value) ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, ""} -> parsed
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp percentile([], _point), do: 0
+
+  defp percentile(values, point) do
+    index =
+      values
+      |> length()
+      |> Kernel.*(point)
+      |> Float.ceil()
+      |> trunc()
+      |> Kernel.-(1)
+      |> max(0)
+
+    Enum.at(values, index, 0)
+  end
+
+  defp count_events(events, needle) do
+    Enum.count(events, fn event ->
+      event
+      |> event_type()
+      |> String.downcase()
+      |> String.contains?(needle)
+    end)
+  end
+
+  defp count_status(records, status) do
+    Enum.count(records, &(run_status(&1) == status))
+  end
+
+  defp in_range?(_time, %{preset: "all"}), do: true
+  defp in_range?(nil, _range), do: false
+
+  defp in_range?(%DateTime{} = time, %{from: from, to: to}) do
+    DateTime.compare(time, from) != :lt and DateTime.compare(time, to) != :gt
+  end
+
+  defp in_range?(_time, _range), do: false
+
+  defp run_time(run), do: Map.get(run, :finished_at) || Map.get(run, :started_at) || Map.get(run, :inserted_at)
+
+  defp duration_seconds(run) do
+    with %DateTime{} = started <- Map.get(run, :started_at),
+         %DateTime{} = finished <- Map.get(run, :finished_at) do
+      max(DateTime.diff(finished, started, :second), 0)
+    else
+      _ -> nil
+    end
+  end
+
+  defp run_status(run), do: normalize_key(Map.get(run, :status))
+  defp issue_identifier(run), do: Map.get(run, :issue_identifier) || "n/a"
+  defp execution_mode(run), do: Map.get(run, :execution_mode) || "centralized"
+  defp event_type(event), do: Map.get(event, :event_type) || "unknown"
+
+  defp normalize_key(value) when is_binary(value), do: value
+  defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
+  defp normalize_key(nil), do: "unknown"
+  defp normalize_key(value), do: to_string(value)
+
+  defp blank?(nil), do: true
+  defp blank?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank?(_value), do: false
+
+  defp persistence do
+    Application.get_env(:symphony_elixir, :persistence_module, Persistence)
+  end
+end

@@ -44,10 +44,16 @@ Elixir / Phoenix Web Service
 - `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取 DB active workflow version；本地 split package 文件只作为导入/导出格式和示例存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
 - `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
 - `已落地`：中心化 agent run 终态必须持久化 `status`、`finished_at` 和失败原因；Orchestrator 启动时会把上一次 runtime 遗留的 `running` rows 标记为 failed 并写入明确原因，避免 Runs 页面长期显示多个过期 running attempts。
-- `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、diff 审计和页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
+- `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，展示 staged diff/review，并在确认后写入 editable draft；运行时仍只在正常 Save 后变化。
+- `已落地`：input-required / approval-required / MCP elicitation 会作为 blocked session 暴露在 snapshot、API 和 dashboard 中，不再当作普通 retry failure。
+- `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
 - `部分落地`：`profiles.<id>.executor.type` schema 支持 `codex_agent`、`manual`、`backend_action`、`external_worker`。当前调度层会自动执行 `codex_agent`，也会把 merge profile 的 `backend_action` 交给后端 merge executor；manual/external 仍是路由契约和后续执行器扩展点。
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、Docker worker 和更强 sandbox runner 仍是后续阶段。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
+- `已落地`：独立历史 Analytics 页面已由 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md) 落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
+- `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已由 [159 Reverse Proxy and Kubernetes Deployment](exec-plans/completed/159-reverse-proxy-and-kubernetes-deployment.md) 落地，部署说明维护在 [Deployment Guide](deployment.md)。
+- `已落地`：GitHub 风格顶层 README 重写已由 [161 GitHub Style Project README](exec-plans/completed/161-github-style-project-readme.md) 落地，顶层 README 是项目入口文档。
+- 文档和 exec plan 的对齐矩阵维护在 [Documentation Alignment Matrix](documentation_alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的计划完成时，应同步更新该矩阵或对应 canonical docs。
 - `文档偏差检查点`：凡是写成“当前已经”或“已支持”的句子，必须能在代码或测试中找到对应实现；否则应改成“目标”、“后续”或“部分落地”。
 
 ## 2. 技术选型结论
@@ -252,8 +258,8 @@ verification、diff 审计、导出按钮和所有配置域的高级编辑。后
 - workflow states、review states、allowed transitions
 - execution profiles、profile prompt policy、allowed updates
 
-此阶段应支持 split package 上传导入和导出。页面级导入/导出入口和版本 diff
-仍属于后续补齐项。早期 raw editor 不是长期目标入口；长期主入口应保持结构化表单。导入/导出是数据交换能力，不是运行时 source 选择。
+此阶段应支持 split package 上传导入和导出。当前 `/settings/import` 已支持粘贴或上传 package、staged review 和 diff；
+页面级导出按钮仍属于后续补齐项。早期 raw editor 不是长期目标入口；长期主入口应保持结构化表单。导入/导出是数据交换能力，不是运行时 source 选择。
 
 Settings 页面长期应提供几个互相一致的 tab/入口：
 
@@ -262,8 +268,7 @@ Settings 页面长期应提供几个互相一致的 tab/入口：
   workflow routing、human review states、allowed transitions 等共享区域编辑。project repository 和 Linear project slug 不在这里编辑。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy。
 - `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
-- Split package 导入：导入 split package，解析后进入同一套结构化模型，显示校验结果；当前可先通过一个 YAML 输入逐个粘贴 `workflow.yml` 或 `profiles.yml` 内容进入 draft，并根据顶层 `profiles` / `base_prompt` 字段自动识别 package 类型，后续补齐文件上传
-  与当前 active version 的 diff。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure 并阻止运行时监听。
+- Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，根据 YAML 字段自动识别 package 类型，显示 staged diff 和校验结果。确认导入只修改 editable draft；字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
 这些入口必须写入同一个 workflow version 模型。导入文件写入 DB version；导出文件来自 DB version；运行时只读取 DB active version，避免 UI 配置、文件配置和运行时配置分裂。
 详细页面结构、verification 分层、上传导入流程和导出定位维护在
@@ -486,7 +491,9 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - 查看 active runs、queued issues、backoff queue。
 - 查看每个 issue 的 workspace、attempt、agent turn、最近事件。
 - 查看 run 历史。
+- 查看 persisted events 审计流。
 - 查看 workflow version 和配置 diff。当前已能查看版本历史和 active 状态，完整 diff UI 属于后续。
+- 查看 input-required / approval-required blocked sessions。当前 dashboard/API 会展示 blocked count 和 blocked session detail；后续如果要在 UI 中回答 MCP elicitation，需要新计划单独实现。
 - 暂停/恢复 project。
 - 手动 refresh tracker。
 - 停止、重试、清理 run。
@@ -494,6 +501,7 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - 配置 workspace root、hooks、Codex command。
 - 编辑完整 workflow package contract 的结构化字段，包括 `workflow.yml` 和 `profiles.yml`。当前已覆盖核心字段，仍需补齐所有配置域和更细字段校验。
 - 预览 workflow diff，并在保存前运行字段/schema 校验；跨字段和 Linear 外部匹配问题保存为 configuration check。当前已运行 schema 校验，diff 预览仍是后续。
+- 查看时间范围内的 runtime/project/profile 成果统计，见 `/analytics` 和 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md)。
 - 查看每个 run 绑定的 workflow version 和原始 workflow 内容。
 
 ## 8. 安全方向
@@ -623,22 +631,22 @@ lib/symphony_elixir_web/
 - 已引入 `ecto_sqlite3`、Repo 和 migration。
 - 已保存 projects、workflow_versions、issues、runs、agent_turns、workspaces、events，以及 worker 相关 task/lease/session 状态。
 - Dashboard 已能读取 DB 中的 runs、workers、tasks、workflow versions 等历史/管理数据。
-- 运行时目标是 DB-only workflow source。split package 保留为导入/导出格式，不作为启动或 fallback source。
+- 运行时已经是 DB-only workflow source。split package 保留为导入/导出格式，不作为启动或 fallback source。
 
 ### Milestone 2：Dashboard 升级（部分完成）
 
-- 已有 `/` dashboard、`/runs`、`/workers`、`/settings`、`/settings/projects` 和 `/diagnostics/linear`。
+- 已有 `/` dashboard、`/runs`、`/events`、`/workers`、`/settings`、`/settings/projects`、`/settings/import` 和 `/diagnostics/linear`。
 - `/workers` 已提供 task cancel/requeue operator controls。
-- 仍可继续增加 run detail、issue detail、events/logs 页面，以及更完整的分页/筛选。
+- 已有 run detail、issue detail、events 页面、blocked session 可见性，以及 [158](exec-plans/completed/158-runtime-results-analytics-page.md) 落地的历史 Analytics 页面；仍可继续增加 logs 页面和更完整分页/筛选。
 
-### Milestone 3：配置 UI（raw workflow 基础路径已完成）
+### Milestone 3：配置 UI（结构化 Settings 基础路径已完成）
 
 - 已有 projects 页面。
 - 已有 `/settings/workflow` 结构化 draft form，可编辑核心 tracker、project/bootstrap、hooks、runtime、codex 和 state routing 字段，并保存为完整 workflow version。
 - 已有 `/settings/agents` 设置 tab，可编辑 base prompt、profiles、profile prompt 和 allowed updates。
-- 页面不再以 raw textarea 作为主要编辑入口；split package 导入/导出入口仍需补齐。
+- 页面不再以 raw textarea 作为主要编辑入口；`/settings/import` 已支持 split package 粘贴/上传、staged review 和 diff。导出入口仍需补齐。
 - 每次保存生成 workflow version，并可激活历史版本。
-- 仍需补齐导出按钮、diff 审计、allowed transitions 完整编辑器、更多配置域和更细的字段级 verification。
+- 仍需补齐导出按钮、allowed transitions 完整编辑器、更多配置域和更细的字段级 verification。
 
 ### Milestone 4：安全和权限（部分完成）
 

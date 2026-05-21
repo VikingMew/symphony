@@ -434,6 +434,41 @@ pre,
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.analytics-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.analytics-table {
+  min-width: 520px;
+}
+
+.range-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.pill-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2rem;
+  padding: 0.35rem 0.8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.pill-link-active {
+  border-color: var(--color-primary-border);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-hover);
+}
+
 .metric-card {
   border-radius: 22px;
   padding: 1rem 1.05rem 1.1rem;

@@ -28,6 +28,8 @@ defmodule SymphonyElixirWeb.Router do
   end
 
   scope "/", SymphonyElixirWeb do
+    get("/health/live", HealthController, :live)
+    get("/health/ready", HealthController, :ready)
     get("/dashboard.css", StaticAssetController, :dashboard_css)
     get("/vendor/phoenix_html/phoenix_html.js", StaticAssetController, :phoenix_html_js)
     get("/vendor/phoenix/phoenix.js", StaticAssetController, :phoenix_js)
@@ -46,6 +48,7 @@ defmodule SymphonyElixirWeb.Router do
     pipe_through([:browser, :browser_auth])
 
     live("/", DashboardLive, :index)
+    live("/analytics", AnalyticsLive, :index)
     live("/runs", AdminLive, :runs)
     live("/runs/:id", AdminLive, :run_detail)
     live("/issues/:identifier", AdminLive, :issue_detail)
