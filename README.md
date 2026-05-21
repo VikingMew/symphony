@@ -1,35 +1,61 @@
 # Symphony
 
-Symphony is a Phoenix/Elixir control plane that turns Linear issues into isolated Codex agent runs.
+[![CI](https://github.com/VikingMew/symphony/actions/workflows/make-all.yml/badge.svg)](https://github.com/VikingMew/symphony/actions/workflows/make-all.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-It watches configured work states, prepares a per-issue workspace, starts `codex app-server`, gives the agent a workflow/profile prompt, records the run, and exposes enough UI and logs for an operator to understand what happened.
+> [!IMPORTANT]
+> This repository is a fork of the upstream OpenAI Symphony preview. It has diverged into an Elixir/Phoenix control plane with SQLite-backed runtime settings, persisted run history, Linear diagnostics, and worker execution paths.
+
+Symphony is a Phoenix/Elixir control plane for running Codex agents from Linear issues.
+
+It watches configured Linear workflow states, prepares an isolated workspace for each issue, starts `codex app-server`, applies a workflow/profile prompt, records the run, and exposes operator pages for understanding what happened.
 
 > [!WARNING]
-> This fork is alpha software for trusted environments. It intentionally diverges from the upstream OpenAI Symphony preview.
+> This fork is alpha software for trusted environments.
 
-[![Symphony demo video preview](.github/media/symphony-demo-poster.jpg)](.github/media/symphony-demo.mp4)
+## What Symphony Provides
 
-## What It Does
+- Linear-backed issue discovery and workflow-state routing.
+- Local centralized Codex execution by default.
+- Optional remote execution through configured SSH worker hosts.
+- Optional HTTP worker-task queue mode for external workers.
+- Per-issue workspaces and Git worktrees.
+- SQLite-backed projects, workflow versions, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
+- Settings pages for Projects, Workflow, Agents, Runtime, and package import.
+- Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages.
+- Structured logs, JSON observability APIs, worker APIs, and health probes.
 
-- Polls Linear for issues in workflow-defined active states.
-- Runs Codex locally, over configured SSH worker hosts, or through the worker task API.
-- Creates deterministic per-issue Git worktrees/workspaces.
-- Keeps runtime configuration in SQLite-backed Settings and workflow versions.
-- Imports and exports workflow packages for portability, while the active database workflow remains runtime truth.
-- Persists projects, workflow versions, issues, runs, events, agent turns, workers, tasks, leases, and workspace records.
-- Provides Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, Settings, and Analytics pages.
-- Exposes structured logs, JSON observability APIs, worker APIs, and health probe endpoints.
+## How It Works
+
+```text
+Linear issue
+  -> Symphony scheduler
+  -> workflow/profile policy
+  -> isolated workspace
+  -> codex app-server
+  -> persisted run history
+  -> operator dashboard and diagnostics
+```
+
+The default workflow is intentionally gated by human review states:
+
+```text
+Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
+  -> In Review -> Ready to Merge -> Merging -> Done
+```
+
+Agent-work states are active. Human-review states are intentionally not dispatched until a person moves the issue forward.
 
 ## Core Concepts
 
 | Concept | Meaning |
 | --- | --- |
-| Project | A configured Linear project slug plus repository URL, default branch, checkout depth, and enablement. |
-| Workflow | Shared runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and worker/runtime settings. |
+| Project | A configured Linear project slug plus repository URL, default branch, checkout depth, and workspace source policy. |
+| Workflow | Shared runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement, implementation, or merge. |
-| Run | One persisted attempt to work an issue. Runs have timestamps, status, attempt, failure reason, events, and agent turns. |
+| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, and agent turns. |
 | Workspace | The per-issue filesystem location where Codex works. |
-| Worker mode | A dashboard/queue mode where external workers claim tasks through `/api/worker/v1/*`. |
+| Worker mode | Optional HTTP task-queue mode where external workers claim tasks through `/api/worker/v1/*`. |
 
 ## Quick Start
 
@@ -40,7 +66,7 @@ Requirements:
 - Codex CLI available to the runtime user
 
 ```bash
-git clone https://github.com/openai/symphony
+git clone https://github.com/VikingMew/symphony
 cd symphony/elixir
 mise trust
 mise install
@@ -53,17 +79,18 @@ mise exec -- ./bin/symphony --port 4000
 Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 1. Settings / Projects: Linear project slug and repository URL.
-2. Settings / Workflow: active states, terminal states, transitions, bootstrap, hooks, polling, and runtime settings.
-3. Settings / Agents: base prompt and profile prompts.
-4. Settings / Import: optional package import for workflow/profile YAML.
+2. Settings / Workflow: active states, terminal states, transitions, bootstrap, hooks, polling, and routing.
+3. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
+4. Settings / Runtime: Codex command, sandbox, approval policy, workspace paths, and worker settings.
+5. Settings / Import: optional workflow/profile package import with preview before applying.
 
 If SQLite has no active workflow version, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates the first workflow.
 
-## Configuration Model
+## Configuration
 
 The runtime source of truth is the SQLite database. `workflow.yml` and `profiles.yml` are import/export artifacts, not files that Symphony watches at runtime.
 
-Useful runtime options:
+Useful startup options:
 
 ```bash
 mise exec -- ./bin/symphony \
@@ -77,10 +104,12 @@ Common environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `LINEAR_API_KEY` | Linear API access. |
+| `LINEAR_ASSIGNEE` | Optional default Linear assignee. |
 | `SYMPHONY_DATABASE_PATH` | Default SQLite location when `--database-path` is not passed. |
 | `SYMPHONY_AUTH_ENABLED` | Enables username/password auth for the web UI/API. |
-| `SYMPHONY_ADMIN_USERNAME` / `SYMPHONY_ADMIN_PASSWORD` | Simple local admin auth. Prefer a hash for shared environments. |
+| `SYMPHONY_ADMIN_USERNAME` / `SYMPHONY_ADMIN_PASSWORD` | Simple local admin auth. |
 | `SYMPHONY_EXECUTION_MODE=worker` | Queue work for external workers instead of local Codex execution. |
+| `SYMPHONY_WORKER_REGISTRATION_TOKEN` | Shared token used by worker API clients. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used for Linear/Codex subprocess network access. |
 | `SYMPHONY_TRUST_X_FORWARDED_HEADERS=true` | Trust reverse-proxy forwarded scheme/host/prefix headers. |
 | `SYMPHONY_PUBLIC_URL` | Optional fixed public base URL behind a proxy. |
@@ -89,10 +118,12 @@ Common environment variables:
 
 | Mode | Use When |
 | --- | --- |
-| Local centralized | You want one machine to run the dashboard, SQLite, workspaces, and Codex. |
-| Centralized with SSH hosts | You want Symphony to coordinate work but run Codex on configured SSH hosts. |
-| Worker mode | You want the dashboard/queue separated from external workers that claim tasks over HTTP. |
-| Dashboard-first setup | You want to start with an empty database and create configuration through Settings. |
+| Local centralized | One machine runs the dashboard, SQLite, workspaces, and Codex. |
+| Centralized with SSH hosts | Symphony coordinates work but launches Codex on configured SSH hosts. |
+| Worker mode | Dashboard and queue are separated from external workers that claim tasks over HTTP. |
+| Dashboard-first setup | Start with an empty database and create configuration through Settings. |
+
+Centralized execution is the default and does not require registered workers.
 
 ## Observability
 
@@ -109,11 +140,11 @@ Common environment variables:
 | JSON state API | `/api/v1/state` |
 | Health probes | `/health/live`, `/health/ready` |
 
-Logs are normal structured application logs. There is no TUI status surface.
+Logs are structured application logs. There is no TUI status surface.
 
 ## Deployment
 
-Symphony does not need to own public TLS or certificate issuance. Put it behind Nginx, Kubernetes Ingress, or another trusted proxy, and enable forwarded headers only at that boundary.
+Symphony does not need to own public TLS, certificate issuance, or a dedicated domain. Put it behind Nginx, Kubernetes Ingress, or another trusted proxy, and enable forwarded headers only at that boundary.
 
 See [elixir/docs/deployment.md](elixir/docs/deployment.md) for Nginx, Kubernetes, WebSocket, health probe, and forwarded-header examples.
 
@@ -129,6 +160,8 @@ mise exec -- mix lint
 mise exec -- mix exec_plans.check
 ```
 
+The main CI workflow runs `make all`, which includes setup, build, formatting check, lint, coverage, and dialyzer.
+
 Exec plans are the implementation ledger:
 
 - Active work: [elixir/docs/exec-plans/active](elixir/docs/exec-plans/active)
@@ -140,32 +173,32 @@ Exec plans are the implementation ledger:
 - [SPEC.md](SPEC.md): language-agnostic service specification.
 - [ARCHITECTURE.md](ARCHITECTURE.md): implementation architecture.
 - [CODE_STRUCTURE.md](CODE_STRUCTURE.md): code structure overview.
-- [elixir/README.md](elixir/README.md): Elixir implementation guide.
+- [elixir/README.md](elixir/README.md): Elixir implementation and Docker guide.
 - [elixir/docs/user_guide.zh-CN.md](elixir/docs/user_guide.zh-CN.md): Chinese operator guide.
-- [elixir/docs/long_term_direction.zh-CN.md](elixir/docs/long_term_direction.zh-CN.md): long-term direction.
-- [elixir/docs/documentation_alignment.md](elixir/docs/documentation_alignment.md): long-lived documentation alignment.
 - [elixir/docs/persistence_and_auth.md](elixir/docs/persistence_and_auth.md): SQLite and auth details.
 - [elixir/docs/deployment.md](elixir/docs/deployment.md): reverse proxy and Kubernetes deployment.
+- [elixir/docs/documentation_alignment.md](elixir/docs/documentation_alignment.md): long-lived documentation alignment.
+- [elixir/docs/long_term_direction.zh-CN.md](elixir/docs/long_term_direction.zh-CN.md): long-term direction.
 
-## Status
+## Project Status
 
-Implemented today:
+Implemented:
 
 - database-backed runtime configuration and workflow versions;
-- Linear tracker integration and diagnostics;
-- project/workflow/agent/runtime Settings;
+- Linear tracker integration, discovery helpers, and diagnostics;
+- restricted Linear task tools for Codex sessions;
 - Codex app-server orchestration;
 - centralized, SSH-host, and worker-backed execution paths;
-- worktree/workspace source preparation;
+- workspace/source preparation and cleanup policy;
 - persisted runs, events, agent turns, worker tasks, and analytics;
 - health endpoints and reverse proxy support.
 
 Still alpha:
 
 - APIs and UI are changing quickly;
-- no multi-tenant hardening;
 - SQLite is the supported persistence backend;
-- operators should review prompts, skills, sandbox, approval, and repository safety before using it on important code.
+- multi-tenant hardening is not a goal yet;
+- operators should review prompts, skills, sandbox, approval policy, repository access, and worker trust boundaries before using it on important code.
 
 ## License
 
