@@ -37,6 +37,8 @@ defmodule SymphonyElixir.WorkflowForm do
       "workspace_repository_base_root" => get_string(display_config, ["workspace", "repository_base_root"], ""),
       "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"], ""),
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
+      "workspace_min_free_bytes" => get_integer_string(display_config, ["workspace", "min_free_bytes"], 1_073_741_824),
+      "workspace_auto_cleanup" => get_boolean_string(display_config, ["workspace", "auto_cleanup"], false),
       "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
       "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
@@ -75,7 +77,7 @@ defmodule SymphonyElixir.WorkflowForm do
   def field_errors(draft) when is_map(draft) do
     integer_field_specs()
     |> Enum.reduce(%{}, fn {key, label}, errors ->
-      case parse_positive_integer(draft, key, label) do
+      case parse_integer_field(draft, key, label) do
         {:ok, _value} -> errors
         {:error, message} -> Map.put(errors, key, message)
       end
@@ -88,6 +90,7 @@ defmodule SymphonyElixir.WorkflowForm do
     with {:ok, polling_interval_ms} <- parse_positive_integer(draft, "polling_interval_ms", "Polling interval"),
          {:ok, checkout_depth} <- parse_positive_integer(draft, "project_checkout_depth", "Checkout depth"),
          {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
+         {:ok, workspace_min_free_bytes} <- parse_non_negative_integer(draft, "workspace_min_free_bytes", "Minimum free bytes"),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
@@ -107,6 +110,8 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_optional_path(["workspace", "repository_base_root"], Map.get(draft, "workspace_repository_base_root", ""))
         |> put_optional_path(["workspace", "worktree_base_root"], Map.get(draft, "workspace_worktree_base_root", ""))
         |> put_path(["workspace", "initialize_timeout_ms"], initialize_timeout_ms)
+        |> put_path(["workspace", "min_free_bytes"], workspace_min_free_bytes)
+        |> put_path(["workspace", "auto_cleanup"], truthy?(Map.get(draft, "workspace_auto_cleanup")))
         |> put_path(["agent", "max_concurrent_agents"], max_agents)
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
@@ -128,6 +133,7 @@ defmodule SymphonyElixir.WorkflowForm do
     [
       {"polling_interval_ms", "Polling interval"},
       {"initialize_timeout_ms", "Initialize timeout"},
+      {"workspace_min_free_bytes", "Minimum free bytes"},
       {"agent_max_concurrent_agents", "Max agents"},
       {"agent_max_turns", "Max turns"},
       {"hook_timeout_ms", "Hook timeout"}
@@ -402,6 +408,18 @@ defmodule SymphonyElixir.WorkflowForm do
       _ -> {:error, "#{label} must be a positive integer"}
     end
   end
+
+  defp parse_non_negative_integer(draft, key, label) do
+    value = Map.get(draft, key, "1073741824")
+
+    case Integer.parse(to_string(value)) do
+      {integer, ""} when integer >= 0 -> {:ok, integer}
+      _ -> {:error, "#{label} must be zero or a positive integer"}
+    end
+  end
+
+  defp parse_integer_field(draft, "workspace_min_free_bytes", label), do: parse_non_negative_integer(draft, "workspace_min_free_bytes", label)
+  defp parse_integer_field(draft, key, label), do: parse_positive_integer(draft, key, label)
 
   defp get_string(config, path, default) do
     case get_in(config, path) do

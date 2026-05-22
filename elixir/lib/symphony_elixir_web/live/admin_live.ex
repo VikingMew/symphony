@@ -22,6 +22,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
+  @runs_page_size 25
 
   attr(:events, :list, required: true)
 
@@ -675,6 +676,11 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("load_more_runs", _params, socket) do
+    {:noreply, assign_runs_page(socket, reset: false)}
+  end
+
+  @impl true
   def render(assigns) do
     ~H"""
     <section class="dashboard-shell">
@@ -688,20 +694,25 @@ defmodule SymphonyElixirWeb.AdminLive do
               <p class="empty-state">No persisted runs yet.</p>
             <% else %>
               <table class="data-table">
-                <thead><tr><th>Issue</th><th>Status</th><th>Attempt</th><th>Started</th><th>Finished</th></tr></thead>
+                <thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Attempt</th><th>Started</th><th>Finished</th></tr></thead>
                 <tbody>
                   <tr :for={run <- @runs}>
                     <td class="issue-id">
-                      <a class="issue-link" href={"/runs/#{run.id}"}><%= run.issue_identifier %></a>
-                      <a class="issue-link" href={"/issues/#{run.issue_identifier}"}>Issue</a>
+                      <a class="issue-link" href={"/runs/#{run.id}"}><%= run_label(run) %></a>
+                      <a :if={Map.get(run, :issue_identifier)} class="issue-link" href={"/issues/#{run.issue_identifier}"}>Issue</a>
                     </td>
-                    <td><%= run.status %></td>
-                    <td><%= run.attempt %></td>
-                    <td class="mono"><%= fmt_dt(run.started_at) %></td>
-                    <td class="mono"><%= fmt_dt(run.finished_at) %></td>
+                    <td><%= Map.get(run, :kind) || "issue" %></td>
+                    <td><%= Map.get(run, :status) %></td>
+                    <td><%= Map.get(run, :attempt) || 0 %></td>
+                    <td class="mono"><%= fmt_dt(Map.get(run, :started_at)) %></td>
+                    <td class="mono"><%= fmt_dt(Map.get(run, :finished_at)) %></td>
                   </tr>
                 </tbody>
               </table>
+              <div class="form-actions">
+                <button :if={@runs_has_more} type="button" class="subtle-button" phx-click="load_more_runs">Load more runs</button>
+                <span :if={!@runs_has_more} class="muted">All matching runs are loaded.</span>
+              </div>
             <% end %>
           </section>
 
@@ -712,7 +723,9 @@ defmodule SymphonyElixirWeb.AdminLive do
               <table class="data-table">
                 <tbody>
                   <tr><th>Run ID</th><td class="mono"><%= @run_detail.run.id %></td></tr>
-                  <tr><th>Issue</th><td><a class="issue-link" href={"/issues/#{@run_detail.run.issue_identifier}"}><%= @run_detail.run.issue_identifier %></a></td></tr>
+                  <tr><th>Kind</th><td><%= Map.get(@run_detail.run, :kind) || "issue" %></td></tr>
+                  <tr><th>Label</th><td><%= run_label(@run_detail.run) %></td></tr>
+                  <tr :if={Map.get(@run_detail.run, :issue_identifier)}><th>Issue</th><td><a class="issue-link" href={"/issues/#{@run_detail.run.issue_identifier}"}><%= @run_detail.run.issue_identifier %></a></td></tr>
                   <tr><th>Status</th><td><span class={status_class(@run_detail.run.status)}><%= @run_detail.run.status %></span></td></tr>
                   <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
                   <tr><th>Worker</th><td><%= Map.get(@run_detail.run, :worker_host) || "local" %></td></tr>
@@ -1228,6 +1241,16 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <label><span class="metric-label">Clone workspace root</span><input name="workflow[workspace_root]" value={@workflow_form["workspace_root"]} /></label>
                   <label><span class="metric-label">Repository base root</span><input name="workflow[workspace_repository_base_root]" value={@workflow_form["workspace_repository_base_root"]} placeholder="Defaults to clone workspace root/repositories" /></label>
                   <label><span class="metric-label">Worktree base root</span><input name="workflow[workspace_worktree_base_root]" value={@workflow_form["workspace_worktree_base_root"]} placeholder="Defaults to clone workspace root/worktrees" /></label>
+                  <label>
+                    <span class="metric-label">Minimum free bytes</span>
+                    <input id={workflow_field_id("workspace_min_free_bytes")} class={workflow_field_class(@workflow_field_errors, "workspace_min_free_bytes")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "workspace_min_free_bytes")} type="number" min="0" name="workflow[workspace_min_free_bytes]" value={@workflow_form["workspace_min_free_bytes"]} />
+                    <.workflow_field_error field="workspace_min_free_bytes" errors={@workflow_field_errors} />
+                  </label>
+                  <label class="checkbox-row">
+                    <input type="hidden" name="workflow[workspace_auto_cleanup]" value="false" />
+                    <input type="checkbox" name="workflow[workspace_auto_cleanup]" value="true" checked={@workflow_form["workspace_auto_cleanup"] == "true"} />
+                    <span>Auto cleanup before blocking</span>
+                  </label>
                   <div class="settings-derived-preview">
                     <span class="metric-label">Derived paths</span>
                     <code><%= ProjectSettings.repository_preview(@workflow_form, @projects) %></code>
@@ -1579,7 +1602,7 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:projects, persistence().list_projects())
     |> assign(:default_project, default_project)
     |> assign(:active_workflow_version, active)
-    |> assign(:runs, persistence().list_runs(limit: 100))
+    |> assign_runs_page(reset: true)
     |> assign(:events, event_list(socket))
     |> assign(:event_filters, event_filters(socket))
     |> assign_event_rows()
@@ -1597,6 +1620,18 @@ defmodule SymphonyElixirWeb.AdminLive do
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
     |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> assign_detail_data()
+  end
+
+  defp assign_runs_page(socket, opts) do
+    reset = Keyword.get(opts, :reset, true)
+    cursor = if reset, do: nil, else: Map.get(socket.assigns, :runs_next_cursor)
+    page = persistence().list_runs_page(page_size: @runs_page_size, cursor: cursor)
+    existing = if reset, do: [], else: Map.get(socket.assigns, :runs, [])
+
+    socket
+    |> assign(:runs, existing ++ page.entries)
+    |> assign(:runs_next_cursor, page.next_cursor)
+    |> assign(:runs_has_more, page.has_more?)
   end
 
   defp refreshed_workflow_form(socket, loaded_workflow_form) do
@@ -2036,6 +2071,10 @@ defmodule SymphonyElixirWeb.AdminLive do
   defp fmt_dt(value), do: ObservabilityPresenter.fmt_dt(value)
 
   defp fmt_duration(started_at, finished_at), do: ObservabilityPresenter.fmt_duration(started_at, finished_at)
+
+  defp run_label(run) do
+    Map.get(run, :label) || Map.get(run, :issue_identifier) || Map.get(run, :id) || "n/a"
+  end
 
   defp list_summary([]), do: "n/a"
   defp list_summary(values) when is_list(values), do: Enum.join(values, " | ")

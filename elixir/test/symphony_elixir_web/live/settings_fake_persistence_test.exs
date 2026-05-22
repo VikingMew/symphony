@@ -3,7 +3,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
-  import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
@@ -386,29 +385,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     agents_draft_html = render_patch(view, "/settings/agents")
     assert agents_draft_html =~ "Imported base prompt."
     assert agents_draft_html =~ "Imported implementation prompt."
-  end
-
-  test "settings import package reports parse errors without saving" do
-    refute Process.whereis(SymphonyElixir.Repo)
-    start_test_endpoint()
-
-    {:ok, view, _html} = live(build_conn(), "/settings/import")
-
-    html =
-      view
-      |> form("form[phx-submit='stage_settings_import']",
-        import: %{
-          "yaml" => "workflow: ["
-        }
-      )
-      |> render_submit()
-
-    assert html =~ "Package import failed"
-
-    refute Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, _project, _raw, _source} -> true
-             _ -> false
-           end)
   end
 
   test "settings import accepts uploaded package files and can cancel staged changes" do
@@ -1411,22 +1387,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
-  end
-
-  defp worker_registration_payload do
-    %{
-      "worker_name" => "fake-worker",
-      "worker_version" => "0.1.0",
-      "protocol_version" => "worker-api-v1",
-      "instance_id" => "test-instance"
-    }
-  end
-
-  defp worker_headers(conn, worker_id, session_id) do
-    conn
-    |> put_req_header("x-symphony-worker-protocol", "worker-api-v1")
-    |> put_req_header("x-symphony-worker-id", worker_id)
-    |> put_req_header("x-symphony-worker-session", session_id)
   end
 
   defp workflow_form_params do

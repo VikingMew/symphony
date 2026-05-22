@@ -6,8 +6,6 @@ defmodule SymphonyElixir.Orchestrator do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.Codex.MessageHumanizer
-
   alias SymphonyElixir.{
     AgentRunner,
     Codex.Update,
@@ -16,7 +14,8 @@ defmodule SymphonyElixir.Orchestrator do
     RunLifecycle,
     StatusDashboard,
     Tracker,
-    Workspace
+    Workspace,
+    WorkspaceDiskGuard
   }
 
   alias SymphonyElixir.Linear.Issue
@@ -24,11 +23,11 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.Orchestrator.Events
   alias SymphonyElixir.Orchestrator.InputBlocker
   alias SymphonyElixir.Orchestrator.RetryPolicy
+  alias SymphonyElixir.Orchestrator.SessionHistory
 
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
-  @session_history_limit 100
   @empty_codex_totals %{
     input_tokens: 0,
     output_tokens: 0,
@@ -749,28 +748,32 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
-    case {InputBlocker.blocked_reason(blocking_signal(running_entry)), RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)} do
-      {{:blocked, reason, payload}, {:stalled, decision}} ->
-        Logger.warning(
-          "Issue stalled while waiting for input: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; marking blocked"
-        )
+    if operator_running_entry?(running_entry) do
+      state
+    else
+      case {InputBlocker.blocked_reason(blocking_signal(running_entry)), RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)} do
+        {{:blocked, reason, payload}, {:stalled, decision}} ->
+          Logger.warning(
+            "Issue stalled while waiting for input: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; marking blocked"
+          )
 
-        stop_running_process(running_entry)
+          stop_running_process(running_entry)
 
-        state
-        |> record_session_completion_totals(running_entry)
-        |> Map.update!(:running, &Map.delete(&1, issue_id))
-        |> block_issue_for_input(issue_id, running_entry, {reason, payload}, decision.session_id)
+          state
+          |> record_session_completion_totals(running_entry)
+          |> Map.update!(:running, &Map.delete(&1, issue_id))
+          |> block_issue_for_input(issue_id, running_entry, {reason, payload}, decision.session_id)
 
-      {_input_state, {:stalled, decision}} ->
-        Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
+        {_input_state, {:stalled, decision}} ->
+          Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
 
-        state
-        |> terminate_running_issue(issue_id, false)
-        |> schedule_issue_retry(issue_id, decision.attempt, decision.metadata)
+          state
+          |> terminate_running_issue(issue_id, false)
+          |> schedule_issue_retry(issue_id, decision.attempt, decision.metadata)
 
-      {_input_state, :active} ->
-        state
+        {_input_state, :active} ->
+          state
+      end
     end
   end
 
@@ -954,61 +957,66 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
-    case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           result = AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
-           send(recipient, {:agent_runner_finished, issue.id, result})
-           result
-         end) do
-      {:ok, pid} ->
-        ref = Process.monitor(pid)
-        run_record = persist_run_started(issue, attempt, worker_host)
+    with :ok <- ensure_workspace_disk_available(issue) do
+      case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
+             result = AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+             send(recipient, {:agent_runner_finished, issue.id, result})
+             result
+           end) do
+        {:ok, pid} ->
+          ref = Process.monitor(pid)
+          run_record = persist_run_started(issue, attempt, worker_host)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+          Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
-        running =
-          Map.put(state.running, issue.id, %{
-            pid: pid,
-            ref: ref,
-            run_id: run_record && run_record.id,
+          running =
+            Map.put(state.running, issue.id, %{
+              pid: pid,
+              ref: ref,
+              run_id: run_record && run_record.id,
+              identifier: issue.identifier,
+              issue: issue,
+              worker_host: worker_host,
+              workspace_path: nil,
+              session_id: nil,
+              last_codex_message: nil,
+              last_codex_timestamp: nil,
+              last_codex_event: nil,
+              codex_app_server_pid: nil,
+              codex_input_tokens: 0,
+              codex_output_tokens: 0,
+              codex_total_tokens: 0,
+              codex_last_reported_input_tokens: 0,
+              codex_last_reported_output_tokens: 0,
+              codex_last_reported_total_tokens: 0,
+              turn_count: 0,
+              retry_attempt: RetryPolicy.normalize_attempt(attempt),
+              started_at: DateTime.utc_now(),
+              session_history: initial_session_history(issue, attempt, worker_host),
+              session_history_total_count: 1
+            })
+
+          %{
+            state
+            | running: running,
+              claimed: MapSet.put(state.claimed, issue.id),
+              retry_attempts: Map.delete(state.retry_attempts, issue.id)
+          }
+
+        {:error, reason} ->
+          Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
+          persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
+          next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
+
+          schedule_issue_retry(state, issue.id, next_attempt, %{
             identifier: issue.identifier,
-            issue: issue,
-            worker_host: worker_host,
-            workspace_path: nil,
-            session_id: nil,
-            last_codex_message: nil,
-            last_codex_timestamp: nil,
-            last_codex_event: nil,
-            codex_app_server_pid: nil,
-            codex_input_tokens: 0,
-            codex_output_tokens: 0,
-            codex_total_tokens: 0,
-            codex_last_reported_input_tokens: 0,
-            codex_last_reported_output_tokens: 0,
-            codex_last_reported_total_tokens: 0,
-            turn_count: 0,
-            retry_attempt: RetryPolicy.normalize_attempt(attempt),
-            started_at: DateTime.utc_now(),
-            session_history: initial_session_history(issue, attempt, worker_host),
-            session_history_total_count: 1
+            error: "failed to spawn agent: #{inspect(reason)}",
+            worker_host: worker_host
           })
-
-        %{
-          state
-          | running: running,
-            claimed: MapSet.put(state.claimed, issue.id),
-            retry_attempts: Map.delete(state.retry_attempts, issue.id)
-        }
-
+      end
+    else
       {:error, reason} ->
-        Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
-        persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
-        next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
-
-        schedule_issue_retry(state, issue.id, next_attempt, %{
-          identifier: issue.identifier,
-          error: "failed to spawn agent: #{inspect(reason)}",
-          worker_host: worker_host
-        })
+        block_issue_for_disk_guard(state, issue, reason, worker_host)
     end
   end
 
@@ -1019,6 +1027,71 @@ defmodule SymphonyElixir.Orchestrator do
         retry_attempts: Map.delete(state.retry_attempts, issue_id)
     }
   end
+
+  defp ensure_workspace_disk_available(issue) do
+    case WorkspaceDiskGuard.check(Config.settings!()) do
+      {:ok, _summary} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("Skipping agent spawn for #{issue_context(issue)}: #{format_disk_guard_reason(reason)}")
+        {:error, reason}
+    end
+  rescue
+    error ->
+      Logger.warning("Unable to evaluate workspace disk guard for #{issue_context(issue)}: #{Exception.message(error)}")
+      :ok
+  end
+
+  defp block_issue_for_disk_guard(%State{} = state, %Issue{} = issue, reason, worker_host) do
+    detail = format_disk_guard_reason(reason)
+
+    persist_event("run.blocked", issue.identifier, %{
+      issue_id: issue.id,
+      reason: "workspace_disk_guard",
+      detail: detail,
+      root: Map.get(reason, :root),
+      free_bytes: Map.get(reason, :free_bytes),
+      min_free_bytes: Map.get(reason, :min_free_bytes),
+      setting: Map.get(reason, :setting)
+    })
+
+    blocked_entry = %{
+      issue_id: issue.id,
+      identifier: issue.identifier,
+      state: issue.state,
+      worker_host: worker_host,
+      workspace_path: nil,
+      session_id: nil,
+      blocked_at: DateTime.utc_now(),
+      reason: :workspace_disk_guard,
+      detail: detail,
+      session_history: [
+        %{
+          at: DateTime.utc_now(),
+          source: :system,
+          event: "workspace_disk_guard.blocked",
+          label: "Workspace disk guard",
+          detail: detail,
+          severity: :warning
+        }
+      ],
+      session_history_total_count: 1
+    }
+
+    %{
+      state
+      | blocked: Map.put(state.blocked, issue.id, blocked_entry),
+        retry_attempts: Map.delete(state.retry_attempts, issue.id),
+        claimed: MapSet.put(state.claimed, issue.id)
+    }
+  end
+
+  defp format_disk_guard_reason(%{reason: :low_disk_space} = reason) do
+    "low workspace disk space root=#{Map.get(reason, :root)} free_bytes=#{Map.get(reason, :free_bytes)} min_free_bytes=#{Map.get(reason, :min_free_bytes)} setting=#{Map.get(reason, :setting)}"
+  end
+
+  defp format_disk_guard_reason(reason), do: inspect(reason)
 
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
@@ -1300,9 +1373,13 @@ defmodule SymphonyElixir.Orchestrator do
       state.running
       |> Enum.map(fn {issue_id, metadata} ->
         %{
-          issue_id: issue_id,
+          issue_id: Map.get(metadata, :issue_id, issue_id),
+          kind: Map.get(metadata, :kind, "issue"),
+          profile: Map.get(metadata, :profile),
+          label: Map.get(metadata, :label),
+          run_id: Map.get(metadata, :run_id),
           identifier: metadata.identifier,
-          state: metadata.issue.state,
+          state: running_entry_state(metadata),
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: metadata.session_id,
@@ -1491,7 +1568,7 @@ defmodule SymphonyElixir.Orchestrator do
           queued = %{task | status: :queued, queued_at: DateTime.utc_now()}
           {put_operator_task(state, kind, queued), queued}
         else
-          started = start_operator_task(task)
+          {state, started} = start_operator_task(state, task)
           {put_operator_task(state, kind, started), started}
         end
     end
@@ -1505,7 +1582,7 @@ defmodule SymphonyElixir.Orchestrator do
         task = operator_task(state_acc, kind)
 
         if task.status == :queued do
-          started = start_operator_task(task)
+          {state_acc, started} = start_operator_task(state_acc, task)
           persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
           put_operator_task(state_acc, kind, started)
         else
@@ -1529,8 +1606,8 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp start_operator_task(task) do
-    %{
+  defp start_operator_task(%State{} = state, task) do
+    started = %{
       task
       | status: :running,
         started_at: DateTime.utc_now(),
@@ -1538,7 +1615,59 @@ defmodule SymphonyElixir.Orchestrator do
         failure_reason: nil,
         summary: %{created: 0, skipped: 0, failed: 0, issues: []}
     }
+
+    run = persist_operator_run_started(started)
+    started = if run, do: %{started | run_id: run.id}, else: started
+    {put_operator_running_entry(state, started), started}
   end
+
+  defp put_operator_running_entry(%State{} = state, task) do
+    running_entry = %{
+      kind: to_string(task.kind),
+      profile: to_string(task.kind),
+      label: operator_task_label(task.kind),
+      pid: nil,
+      ref: nil,
+      run_id: task.run_id,
+      identifier: nil,
+      issue_id: nil,
+      issue: nil,
+      state: to_string(task.status),
+      worker_host: "local",
+      workspace_path: nil,
+      session_id: nil,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: "operator_task.started",
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      turn_count: 0,
+      retry_attempt: 0,
+      started_at: task.started_at,
+      session_history: [
+        %{
+          at: task.started_at,
+          source: :system,
+          event: "operator_task.started",
+          label: operator_task_label(task.kind),
+          detail: "Operator task started",
+          severity: :info
+        }
+      ],
+      session_history_total_count: 1
+    }
+
+    %{state | running: Map.put(state.running, task.run_id, running_entry)}
+  end
+
+  defp operator_task_label(:nap), do: "Nap"
+  defp operator_task_label(:day_dreaming), do: "Day dreaming"
+  defp operator_task_label(kind), do: to_string(kind)
 
   defp clear_operator_tasks(%State{} = state, status) do
     tasks =
@@ -1620,6 +1749,15 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp rollback_running_entry(issue_id, running_entry) do
+    if operator_running_entry?(running_entry) do
+      persist_event("run.force_stopped", nil, %{run_id: Map.get(running_entry, :run_id), kind: Map.get(running_entry, :kind)})
+      %{run_id: Map.get(running_entry, :run_id), kind: Map.get(running_entry, :kind), status: "stopped", reason: "operator_task"}
+    else
+      rollback_issue_running_entry(issue_id, running_entry)
+    end
+  end
+
+  defp rollback_issue_running_entry(issue_id, running_entry) do
     transitions = Map.get(running_entry, :linear_state_transitions, [])
 
     result =
@@ -1630,6 +1768,8 @@ defmodule SymphonyElixir.Orchestrator do
     persist_event("run.force_stopped", Map.get(running_entry, :identifier), %{issue_id: issue_id, rollback: result})
     result
   end
+
+  defp operator_running_entry?(running_entry), do: Map.get(running_entry, :kind) in ["nap", "day_dreaming"]
 
   defp rollback_transition(nil, issue_id, running_entry) do
     %{issue_id: issue_id, issue_identifier: Map.get(running_entry, :identifier), status: "skipped", reason: "no_symphony_owned_transition"}
@@ -1682,168 +1822,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp integrate_codex_update(running_entry, %{event: _event, timestamp: _timestamp} = update) do
-    Update.integrate(running_entry, update, history_limit: @session_history_limit)
+    SessionHistory.integrate_codex_update(running_entry, update)
   end
 
   defp initial_session_history(%Issue{} = issue, attempt, worker_host) do
-    [
-      session_history_event(:run_started, "Run started", %{
-        issue_id: issue.id,
-        issue_identifier: issue.identifier,
-        state: issue.state,
-        attempt: RetryPolicy.normalize_attempt(attempt),
-        worker_host: worker_host
-      })
-    ]
+    SessionHistory.initial(issue, attempt, worker_host)
   end
 
   defp append_system_history(running_entry, update) when is_map(running_entry) and is_map(update) do
-    metadata =
-      update
-      |> Map.put_new(:source, :system)
-      |> Map.put_new(:severity, system_update_severity(update))
-
-    append_coalescible_session_history(
-      running_entry,
-      :system_progress,
-      system_history_label(update),
-      metadata,
-      system_history_key(metadata)
-    )
-  end
-
-  defp system_update_severity(%{status: status}) when status in [:failed, "failed"], do: :error
-  defp system_update_severity(%{status: status}) when status in [:warning, "warning"], do: :warning
-  defp system_update_severity(_update), do: :info
-
-  defp system_history_label(%{operation: operation}) when is_binary(operation) do
-    operation
-    |> String.replace("hook:", "")
-    |> String.replace("_", " ")
-    |> String.capitalize()
-  end
-
-  defp system_history_label(%{phase: phase}) when is_binary(phase) do
-    phase
-    |> String.replace("_", " ")
-    |> String.capitalize()
-  end
-
-  defp system_history_label(_update), do: "System"
-
-  defp system_history_key(metadata) do
-    [
-      Map.get(metadata, :source),
-      Map.get(metadata, :phase),
-      Map.get(metadata, :operation)
-    ]
+    SessionHistory.append_system(running_entry, update)
   end
 
   defp append_session_history(running_entry, event, label, metadata) when is_map(running_entry) do
-    history = Map.get(running_entry, :session_history, [])
-    next = session_history_event(event, label, metadata)
-
-    running_entry
-    |> Map.put(:session_history, Enum.take(history ++ [next], -@session_history_limit))
-    |> Map.put(:session_history_total_count, Map.get(running_entry, :session_history_total_count, length(history)) + 1)
+    SessionHistory.append(running_entry, event, label, metadata)
   end
-
-  defp append_coalescible_session_history(running_entry, event, label, metadata, coalescing_key) when is_map(running_entry) do
-    metadata = Map.put(metadata, :coalescing_key, coalescing_key)
-    history = Map.get(running_entry, :session_history, [])
-    total_count = Map.get(running_entry, :session_history_total_count, length(history)) + 1
-    next = session_history_event(event, label, metadata)
-
-    case history do
-      [] ->
-        running_entry
-        |> Map.put(:session_history, [next])
-        |> Map.put(:session_history_total_count, total_count)
-
-      _ ->
-        {last, rest_reversed} = pop_last_history_event(history)
-
-        if coalescible_session_history?(last, event, coalescing_key) do
-          updated_last =
-            next
-            |> Map.put(:at, Map.get(last, :at))
-            |> Map.put(:metadata, merge_coalesced_metadata(Map.get(last, :metadata, %{}), Map.get(next, :metadata, %{})))
-
-          running_entry
-          |> Map.put(:session_history, Enum.take(Enum.reverse(rest_reversed) ++ [updated_last], -@session_history_limit))
-          |> Map.put(:session_history_total_count, total_count)
-        else
-          running_entry
-          |> Map.put(:session_history, Enum.take(history ++ [next], -@session_history_limit))
-          |> Map.put(:session_history_total_count, total_count)
-        end
-    end
-  end
-
-  defp pop_last_history_event(history) do
-    [last | rest_reversed] = Enum.reverse(history)
-    {last, rest_reversed}
-  end
-
-  defp coalescible_session_history?(%{event: event, metadata: metadata}, event, coalescing_key) when is_map(metadata) do
-    Map.get(metadata, :coalescing_key) == coalescing_key
-  end
-
-  defp coalescible_session_history?(_last, _event, _coalescing_key), do: false
-
-  defp merge_coalesced_metadata(existing, next) do
-    existing
-    |> Map.merge(next)
-    |> Map.put(:coalesced_event_count, Map.get(existing, :coalesced_event_count, 1) + 1)
-    |> Map.put(:coalesced_last_at, DateTime.utc_now())
-  end
-
-  defp session_history_event(event, label, metadata) do
-    %{
-      at: DateTime.utc_now(),
-      event: event,
-      label: label,
-      detail: history_detail(event, metadata),
-      severity: history_severity(event, metadata),
-      source: history_source(event, metadata),
-      metadata: sanitize_history_metadata(metadata)
-    }
-  end
-
-  defp history_detail(:workspace_ready, %{workspace_path: path}) when is_binary(path), do: path
-  defp history_detail(:run_started, %{state: state}) when is_binary(state), do: "Started from #{state}"
-  defp history_detail(:linear_state_transition, %{from_state: from_state, to_state: to_state}) when is_binary(from_state) and is_binary(to_state), do: "#{from_state} -> #{to_state}"
-  defp history_detail(:system_progress, %{detail: detail}) when is_binary(detail), do: detail
-  defp history_detail(_event, %{message: message}), do: MessageHumanizer.humanize_codex_message(message)
-  defp history_detail(event, _metadata), do: to_string(event)
-
-  defp history_source(_event, %{source: source}) when is_atom(source), do: source
-  defp history_source(_event, %{source: source}) when is_binary(source), do: source
-  defp history_source(:linear_state_transition, _metadata), do: :linear
-  defp history_source(:system_progress, _metadata), do: :system
-  defp history_source(:run_started, _metadata), do: :system
-  defp history_source(:workspace_ready, _metadata), do: :system
-  defp history_source(_event, _metadata), do: :agent
-
-  defp history_severity(:system_progress, %{severity: severity}) when severity in [:info, :warning, :error], do: severity
-  defp history_severity(event, _metadata) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
-  defp history_severity(event, _metadata) when event in [:approval_required, :turn_input_required], do: :warning
-  defp history_severity(_event, _metadata), do: :info
-
-  defp sanitize_history_metadata(metadata) when is_map(metadata) do
-    metadata
-    |> Enum.map(fn {key, value} -> {key, sanitize_history_value(value)} end)
-    |> Map.new()
-  end
-
-  defp sanitize_history_value(value) when is_binary(value) do
-    if String.length(value) > 500, do: String.slice(value, 0, 500) <> "...", else: value
-  end
-
-  defp sanitize_history_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp sanitize_history_value(value) when is_map(value), do: sanitize_history_metadata(value)
-  defp sanitize_history_value(value) when is_list(value), do: Enum.map(value, &sanitize_history_value/1)
-  defp sanitize_history_value(value), do: value
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do
     if is_reference(state.tick_timer_ref) do
@@ -2000,6 +1992,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_seconds(_started_at, _now), do: 0
 
+  defp running_entry_state(%{issue: %{state: state}}), do: state
+  defp running_entry_state(metadata), do: Map.get(metadata, :state, "running")
+
   defp persist_polled_issues(issues) when is_list(issues) do
     if persistence_enabled?() do
       Enum.each(issues, fn
@@ -2030,6 +2025,31 @@ defmodule SymphonyElixir.Orchestrator do
     {:ok, run} = persistence().create_run(run_attrs)
 
     persist_event(Events.run_started_event(issue, run, worker_host))
+    run
+  rescue
+    _error -> nil
+  catch
+    :persistence_disabled -> nil
+  end
+
+  defp persist_operator_run_started(task) do
+    if !persistence_enabled?(), do: throw(:persistence_disabled)
+
+    workflow_version = persistence().active_workflow_version()
+
+    {:ok, run} =
+      persistence().create_run(%{
+        kind: to_string(task.kind),
+        profile: to_string(task.kind),
+        label: operator_task_label(task.kind),
+        status: "running",
+        execution_mode: "centralized",
+        attempt: 0,
+        workflow_version_id: workflow_version && workflow_version.id,
+        started_at: task.started_at
+      })
+
+    persist_event("operator_task.started", nil, %{kind: to_string(task.kind), run_id: run.id})
     run
   rescue
     _error -> nil

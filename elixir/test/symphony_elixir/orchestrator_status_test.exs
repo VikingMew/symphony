@@ -1755,23 +1755,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert handler_config.level == :info
   end
 
-  test "status dashboard strips ANSI and control bytes from codex messages" do
-    payload =
-      "cmd: " <>
-        <<27>> <>
-        "[31mRED" <>
-        <<27>> <>
-        "[0m" <>
-        <<0>> <>
-        " after\nline"
-
-    plain = MessageHumanizer.humanize_codex_message(payload)
-
-    assert plain =~ "cmd: RED after line"
-    refute plain =~ <<27>>
-    refute plain =~ <<0>>
-  end
-
   test "status dashboard humanizes full codex app-server event set" do
     event_cases = [
       {"turn/started", %{"params" => %{"turn" => %{"id" => "turn-1"}}}, "turn started"},

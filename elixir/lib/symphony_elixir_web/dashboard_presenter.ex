@@ -146,6 +146,7 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
   @spec session_history_key(map()) :: String.t()
   def session_history_key(entry) do
     cond do
+      Map.get(entry, :run_id) not in [nil, ""] -> Map.get(entry, :run_id)
       Map.get(entry, :issue_id) not in [nil, ""] -> Map.get(entry, :issue_id)
       Map.get(entry, :issue_identifier) not in [nil, ""] -> Map.get(entry, :issue_identifier)
       true -> Map.get(entry, :session_id) || "unknown"

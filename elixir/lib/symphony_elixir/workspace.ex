@@ -19,7 +19,7 @@ defmodule SymphonyElixir.Workspace do
     issue_context = issue_context(issue_or_identifier)
 
     try do
-      safe_id = safe_identifier(issue_context.issue_identifier)
+      safe_id = SourcePreparation.safe_identifier(issue_context.issue_identifier)
 
       emit_system_progress(opts, issue_context, %{
         phase: "workspace_preparing",
@@ -111,7 +111,7 @@ defmodule SymphonyElixir.Workspace do
 
   @spec remove_issue_workspaces(term(), worker_host()) :: :ok
   def remove_issue_workspaces(identifier, worker_host) when is_binary(identifier) and is_binary(worker_host) do
-    safe_id = safe_identifier(identifier)
+    safe_id = SourcePreparation.safe_identifier(identifier)
 
     case workspace_path_for_issue(safe_id, worker_host) do
       {:ok, workspace} -> remove(workspace, worker_host)
@@ -122,7 +122,7 @@ defmodule SymphonyElixir.Workspace do
   end
 
   def remove_issue_workspaces(identifier, nil) when is_binary(identifier) do
-    safe_id = safe_identifier(identifier)
+    safe_id = SourcePreparation.safe_identifier(identifier)
 
     case Config.settings!().worker.ssh_hosts do
       [] ->
@@ -173,26 +173,16 @@ defmodule SymphonyElixir.Workspace do
   end
 
   defp workspace_path_for_issue(safe_id, nil) when is_binary(safe_id) do
-    workspace_root()
-    |> Path.join(safe_id)
-    |> PathSafety.canonicalize()
+    SourcePreparation.workspace_path_for_issue(safe_id, nil, Config.settings!())
   end
 
   defp workspace_path_for_issue(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
-    {:ok, Path.join(Config.settings!().workspace.root, safe_id)}
+    SourcePreparation.workspace_path_for_issue(safe_id, worker_host, Config.settings!())
   end
 
   defp workspace_root do
-    settings = Config.settings!()
-
-    case settings.project.source_strategy do
-      "worktree" -> SourcePreparation.worktree_base_root(settings)
-      _clone -> settings.workspace.root
-    end
-  end
-
-  defp safe_identifier(identifier) do
-    String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
+    Config.settings!()
+    |> SourcePreparation.workspace_root()
   end
 
   defp maybe_run_after_create_commands(workspace, issue_context, created?, worker_host, opts) do

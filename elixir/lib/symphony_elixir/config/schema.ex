@@ -96,15 +96,18 @@ defmodule SymphonyElixir.Config.Schema do
       field(:repository_base_root, :string)
       field(:worktree_base_root, :string)
       field(:initialize_timeout_ms, :integer, default: 60_000)
+      field(:min_free_bytes, :integer, default: 1_073_741_824)
+      field(:auto_cleanup, :boolean, default: false)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms], empty_values: [])
+      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes, :auto_cleanup], empty_values: [])
       |> validate_optional_non_blank(:repository_base_root)
       |> validate_optional_non_blank(:worktree_base_root)
       |> validate_number(:initialize_timeout_ms, greater_than: 0)
+      |> validate_number(:min_free_bytes, greater_than_or_equal_to: 0)
     end
 
     defp validate_optional_non_blank(changeset, field) do

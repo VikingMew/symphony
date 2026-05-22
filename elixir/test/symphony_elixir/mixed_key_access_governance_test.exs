@@ -10,7 +10,6 @@ defmodule SymphonyElixir.MixedKeyAccessGovernanceTest do
     "lib/symphony_elixir/linear/diagnostics.ex",
     "lib/symphony_elixir/linear/health.ex",
     "lib/symphony_elixir/merge_executor.ex",
-    "lib/symphony_elixir/nap/results.ex",
     "lib/symphony_elixir/persistence/worker_queue.ex",
     "lib/symphony_elixir/persistence/workflow_store.ex",
     "lib/symphony_elixir/profile_prompt_summary.ex",

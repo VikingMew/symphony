@@ -59,7 +59,14 @@ defmodule SymphonyElixir.Nap.Results do
   end
 
   defp get_string(map, key) do
-    value = Map.get(map, key) || Map.get(map, String.to_atom(key))
+    value = SymphonyElixir.Payload.get_any(map, finding_keys(key))
     if is_binary(value), do: String.trim(value), else: ""
   end
+
+  defp finding_keys("title"), do: ["title", :title]
+  defp finding_keys("category"), do: ["category", :category]
+  defp finding_keys("path"), do: ["path", :path]
+  defp finding_keys("symbol"), do: ["symbol", :symbol]
+  defp finding_keys("evidence"), do: ["evidence", :evidence]
+  defp finding_keys(_key), do: []
 end

@@ -138,6 +138,66 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     refute html =~ "Force stop all agents"
   end
 
+  test "runs page loads additional run pages without duplicating rows" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    runs =
+      for index <- 1..30 do
+        %{
+          id: "run-page-#{index}",
+          kind: "issue",
+          issue_identifier: "MT-PAGE-#{index}",
+          status: "completed",
+          attempt: 0,
+          started_at: DateTime.add(now, -index, :second),
+          finished_at: DateTime.add(now, -index, :second),
+          inserted_at: DateTime.add(now, -index, :second)
+        }
+      end
+
+    FakePersistence.put_runs(runs)
+
+    {:ok, view, html} = live(build_conn(), "/runs")
+
+    assert html =~ "MT-PAGE-1"
+    refute html =~ "MT-PAGE-30"
+
+    html =
+      view
+      |> element("button", "Load more runs")
+      |> render_click()
+
+    assert html =~ "MT-PAGE-30"
+    assert html =~ "All matching runs are loaded."
+  end
+
+  test "runs page renders operator runs without issue links" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.put_runs([
+      %{
+        id: "run-nap",
+        kind: "nap",
+        label: "Nap",
+        profile: "nap",
+        status: "running",
+        attempt: 0,
+        started_at: now,
+        inserted_at: now
+      }
+    ])
+
+    {:ok, _view, html} = live(build_conn(), "/runs")
+
+    assert html =~ "Nap"
+    assert html =~ "run-nap"
+    refute html =~ ~s(href="/issues/)
+  end
+
   test "workers page explains centralized mode instead of looking empty" do
     previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
     Application.put_env(:symphony_elixir, :execution_mode, :centralized)

@@ -196,6 +196,22 @@ Plans should focus on product and engineering intent rather than full implementa
 189. [189-agent-continuation-profile-revalidation.md](completed/189-agent-continuation-profile-revalidation.md)
 190. [190-first-run-default-yaml-import-prompt.md](completed/190-first-run-default-yaml-import-prompt.md)
 191. [191-linear-diagnostics-remove-shared-health-block.md](completed/191-linear-diagnostics-remove-shared-health-block.md)
+192. [192-workspace-disk-space-spawn-guard.md](completed/192-workspace-disk-space-spawn-guard.md)
+193. [193-operator-tasks-as-first-class-runs.md](completed/193-operator-tasks-as-first-class-runs.md)
+194. [194-runs-page-infinite-scroll-pagination.md](completed/194-runs-page-infinite-scroll-pagination.md)
+195. [195-nap-results-dynamic-atom-removal.md](completed/195-nap-results-dynamic-atom-removal.md)
+196. [196-test-support-dynamic-atom-fixture-boundary.md](completed/196-test-support-dynamic-atom-fixture-boundary.md)
+197. [197-documentation-alignment-plan-lifecycle-drift.md](completed/197-documentation-alignment-plan-lifecycle-drift.md)
+198. [198-dynamic-tool-issue-create-boundary.md](completed/198-dynamic-tool-issue-create-boundary.md)
+199. [199-message-humanizer-method-family-follow-up.md](completed/199-message-humanizer-method-family-follow-up.md)
+200. [200-admin-settings-route-split.md](completed/200-admin-settings-route-split.md)
+201. [201-orchestrator-session-history-boundary.md](completed/201-orchestrator-session-history-boundary.md)
+202. [202-workspace-lifecycle-facade-thinning.md](completed/202-workspace-lifecycle-facade-thinning.md)
+203. [203-orchestrator-status-test-integration-split.md](completed/203-orchestrator-status-test-integration-split.md)
+204. [204-settings-fake-persistence-test-page-split.md](completed/204-settings-fake-persistence-test-page-split.md)
+205. [205-workspace-source-preparation-test-split.md](completed/205-workspace-source-preparation-test-split.md)
+206. [206-app-server-tool-policy-test-split.md](completed/206-app-server-tool-policy-test-split.md)
+207. [207-mixed-key-governance-exemption-tightening.md](completed/207-mixed-key-governance-exemption-tightening.md)
 
 ## Intentional Numbering Gaps
 

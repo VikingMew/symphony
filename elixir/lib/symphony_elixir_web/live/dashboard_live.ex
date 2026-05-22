@@ -263,8 +263,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   <tr :for={entry <- @payload.blocked}>
                     <td>
                       <div class="issue-stack">
-                        <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                        <span class="issue-id"><%= running_entry_label(entry) %></span>
+                        <a :if={Map.get(entry, :run_id)} class="issue-link" href={"/runs/#{Map.get(entry, :run_id)}"}>Run detail</a>
+                        <a :if={entry.issue_identifier} class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
                       </div>
                     </td>
                     <td><span class={state_badge_class(entry.state || "blocked")}><%= entry.state || "blocked" %></span></td>
@@ -378,12 +379,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 </thead>
                 <tbody :for={entry <- @payload.running}>
                   <tr>
-                    <td>
-                      <div class="issue-stack">
-                        <span class="issue-id"><%= entry.issue_identifier %></span>
-                        <a class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
-                      </div>
-                    </td>
+                     <td>
+                       <div class="issue-stack">
+                         <span class="issue-id"><%= running_entry_label(entry) %></span>
+                         <a :if={Map.get(entry, :run_id)} class="issue-link" href={"/runs/#{Map.get(entry, :run_id)}"}>Run detail</a>
+                         <a :if={entry.issue_identifier} class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                       </div>
+                     </td>
                     <td>
                       <span class={state_badge_class(entry.state)}>
                         <%= entry.state %>
@@ -502,13 +504,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp operator_summary(payload, kind), do: get_in(payload, [:operator_tasks, kind, :summary])
 
   defp operator_summary_text(summary) when is_map(summary) do
-    created = Map.get(summary, :created) || Map.get(summary, "created") || 0
-    skipped = Map.get(summary, :skipped) || Map.get(summary, "skipped") || 0
-    failed = Map.get(summary, :failed) || Map.get(summary, "failed") || 0
+    created = SymphonyElixir.Payload.get_any(summary, [:created, "created"], 0)
+    skipped = SymphonyElixir.Payload.get_any(summary, [:skipped, "skipped"], 0)
+    failed = SymphonyElixir.Payload.get_any(summary, [:failed, "failed"], 0)
     "created #{created}, skipped #{skipped}, failed #{failed}"
   end
 
   defp operator_summary_text(_summary), do: "n/a"
+
+  defp running_entry_label(entry) do
+    Map.get(entry, :label) || Map.get(entry, :issue_identifier) || Map.get(entry, :run_id) || "n/a"
+  end
 
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())

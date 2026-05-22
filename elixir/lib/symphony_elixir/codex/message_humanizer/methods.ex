@@ -4,16 +4,17 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.Methods do
   """
 
   alias SymphonyElixir.Codex.MessageUsageFormatter
+  alias SymphonyElixir.Codex.MessageHumanizer.ToolMethods
 
   @doc false
   @spec humanize(String.t(), map()) :: String.t()
   def humanize(method, payload), do: humanize_codex_method(method, payload)
 
   @doc false
-  def humanize_mcp(payload), do: humanize_mcp_elicitation(payload)
+  def humanize_mcp(payload), do: ToolMethods.mcp_elicitation(payload)
 
   @doc false
-  def humanize_dynamic_tool(base, payload), do: humanize_dynamic_tool_event(base, payload)
+  def humanize_dynamic_tool(base, payload), do: ToolMethods.dynamic_tool_event(base, payload)
 
   defp humanize_codex_method("thread/started", payload) do
     thread_id =
@@ -184,8 +185,8 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.Methods do
   defp humanize_codex_method("tool/requestUserInput", payload),
     do: humanize_codex_method("item/tool/requestUserInput", payload)
 
-  defp humanize_codex_method("mcpServer/elicitation/request", payload), do: humanize_mcp_elicitation(payload)
-  defp humanize_codex_method("mcp/elicitation/request", payload), do: humanize_mcp_elicitation(payload)
+  defp humanize_codex_method("mcpServer/elicitation/request", payload), do: ToolMethods.mcp_elicitation(payload)
+  defp humanize_codex_method("mcp/elicitation/request", payload), do: ToolMethods.mcp_elicitation(payload)
 
   defp humanize_codex_method("account/updated", payload) do
     auth_mode =
@@ -206,15 +207,7 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.Methods do
 
   defp humanize_codex_method("account/chatgptAuthTokens/refresh", _payload), do: "account auth token refresh requested"
 
-  defp humanize_codex_method("item/tool/call", payload) do
-    tool = dynamic_tool_name(payload)
-
-    if is_binary(tool) and String.trim(tool) != "" do
-      "dynamic tool call requested (#{tool})"
-    else
-      "dynamic tool call requested"
-    end
-  end
+  defp humanize_codex_method("item/tool/call", payload), do: ToolMethods.dynamic_tool_call(payload)
 
   defp humanize_codex_method(<<"codex/event/", suffix::binary>>, payload) do
     SymphonyElixir.Codex.MessageHumanizer.WrapperEvents.humanize(suffix, payload)
@@ -230,123 +223,6 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.Methods do
     else
       method
     end
-  end
-
-  defp humanize_mcp_elicitation(payload) do
-    details =
-      [
-        {"server", extract_mcp_server_name(payload)},
-        {"tool", extract_mcp_tool_name(payload)},
-        {"prompt", extract_mcp_elicitation_prompt(payload)}
-      ]
-      |> Enum.flat_map(fn
-        {_label, nil} -> []
-        {label, value} -> ["#{label}: #{inline_text(value)}"]
-      end)
-
-    case details do
-      [] -> "MCP elicitation requested"
-      _ -> "MCP elicitation requested (#{Enum.join(details, ", ")})"
-    end
-  end
-
-  defp extract_mcp_server_name(payload) do
-    first_binary_path(payload, [
-      ["params", "server"],
-      [:params, :server],
-      ["params", "serverName"],
-      [:params, :serverName],
-      ["params", "server_name"],
-      [:params, :server_name],
-      ["params", "mcpServer"],
-      [:params, :mcpServer],
-      ["params", "mcp_server"],
-      [:params, :mcp_server],
-      ["params", "server", "name"],
-      [:params, :server, :name],
-      ["params", "request", "server"],
-      [:params, :request, :server],
-      ["params", "request", "serverName"],
-      [:params, :request, :serverName]
-    ])
-  end
-
-  defp extract_mcp_tool_name(payload) do
-    first_binary_path(payload, [
-      ["params", "tool"],
-      [:params, :tool],
-      ["params", "toolName"],
-      [:params, :toolName],
-      ["params", "tool_name"],
-      [:params, :tool_name],
-      ["params", "name"],
-      [:params, :name],
-      ["params", "request", "tool"],
-      [:params, :request, :tool],
-      ["params", "request", "toolName"],
-      [:params, :request, :toolName],
-      ["params", "item", "tool"],
-      [:params, :item, :tool],
-      ["params", "item", "name"],
-      [:params, :item, :name]
-    ])
-  end
-
-  defp extract_mcp_elicitation_prompt(payload) do
-    first_binary_path(payload, [
-      ["params", "prompt"],
-      [:params, :prompt],
-      ["params", "message"],
-      [:params, :message],
-      ["params", "question"],
-      [:params, :question],
-      ["params", "request", "prompt"],
-      [:params, :request, :prompt],
-      ["params", "request", "message"],
-      [:params, :request, :message],
-      ["params", "elicitation", "prompt"],
-      [:params, :elicitation, :prompt],
-      ["params", "elicitation", "message"],
-      [:params, :elicitation, :message]
-    ])
-  end
-
-  defp first_binary_path(payload, paths) do
-    Enum.find_value(paths, fn path ->
-      payload
-      |> SymphonyElixir.Payload.get_path(path)
-      |> non_blank_binary()
-    end)
-  end
-
-  defp non_blank_binary(value) when is_binary(value) do
-    value = String.trim(value)
-    if value == "", do: nil, else: value
-  end
-
-  defp non_blank_binary(_value), do: nil
-
-  defp humanize_dynamic_tool_event(base, payload) do
-    case dynamic_tool_name(payload) do
-      tool when is_binary(tool) ->
-        trimmed = String.trim(tool)
-
-        if trimmed == "" do
-          base
-        else
-          "#{base} (#{trimmed})"
-        end
-
-      _ ->
-        base
-    end
-  end
-
-  defp dynamic_tool_name(payload) do
-    SymphonyElixir.Payload.get_path(payload, ["params", "tool"]) ||
-      SymphonyElixir.Payload.get_path(payload, ["params", "name"]) ||
-      SymphonyElixir.Payload.get_path(payload, [:params, :tool]) ||
-      SymphonyElixir.Payload.get_path(payload, [:params, :name])
   end
 
   defp humanize_item_lifecycle(state, payload) do

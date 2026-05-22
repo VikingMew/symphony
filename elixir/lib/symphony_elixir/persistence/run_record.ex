@@ -13,6 +13,9 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     belongs_to(:workflow_version, SymphonyElixir.Persistence.WorkflowVersion)
     belongs_to(:issue, SymphonyElixir.Persistence.IssueRecord)
+    field(:kind, :string, default: "issue")
+    field(:profile, :string)
+    field(:label, :string)
     field(:issue_identifier, :string)
     field(:workspace_path, :string)
     field(:status, :string)
@@ -31,6 +34,9 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :project_id,
       :workflow_version_id,
       :issue_id,
+      :kind,
+      :profile,
+      :label,
       :issue_identifier,
       :workspace_path,
       :status,
@@ -40,7 +46,16 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :started_at,
       :finished_at
     ])
-    |> validate_required([:issue_identifier, :status])
+    |> validate_required([:kind, :status])
+    |> validate_inclusion(:kind, ["issue", "nap", "day_dreaming"])
+    |> validate_issue_identifier_for_issue_run()
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
+  end
+
+  defp validate_issue_identifier_for_issue_run(changeset) do
+    case get_field(changeset, :kind) do
+      "issue" -> validate_required(changeset, [:issue_identifier])
+      _ -> changeset
+    end
   end
 end

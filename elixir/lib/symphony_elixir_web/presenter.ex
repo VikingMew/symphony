@@ -107,27 +107,41 @@ defmodule SymphonyElixirWeb.Presenter do
   defp issue_status(_running, _retry, nil), do: "running"
 
   defp running_entry_payload(entry) do
-    %{
-      issue_id: entry.issue_id,
-      issue_identifier: entry.identifier,
-      state: entry.state,
+    payload = %{
+      issue_id: Map.get(entry, :issue_id),
+      issue_identifier: Map.get(entry, :identifier),
+      state: Map.get(entry, :state),
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
-      session_id: entry.session_id,
+      session_id: Map.get(entry, :session_id),
       turn_count: Map.get(entry, :turn_count, 0),
-      last_event: entry.last_codex_event,
-      last_message: summarize_message(entry.last_codex_message),
-      started_at: iso8601(entry.started_at),
-      last_event_at: iso8601(entry.last_codex_timestamp),
+      last_event: Map.get(entry, :last_codex_event),
+      last_message: summarize_message(Map.get(entry, :last_codex_message)),
+      started_at: iso8601(Map.get(entry, :started_at)),
+      last_event_at: iso8601(Map.get(entry, :last_codex_timestamp)),
       session_history: session_history_payload(Map.get(entry, :session_history, [])),
       session_history_total_count: session_history_total_count(entry),
       tokens: %{
-        input_tokens: entry.codex_input_tokens,
-        output_tokens: entry.codex_output_tokens,
-        total_tokens: entry.codex_total_tokens
+        input_tokens: Map.get(entry, :codex_input_tokens, 0),
+        output_tokens: Map.get(entry, :codex_output_tokens, 0),
+        total_tokens: Map.get(entry, :codex_total_tokens, 0)
       }
     }
+
+    payload
+    |> maybe_put_non_default(:kind, Map.get(entry, :kind), "issue")
+    |> maybe_put_present(:profile, Map.get(entry, :profile))
+    |> maybe_put_present(:label, Map.get(entry, :label))
+    |> maybe_put_present(:run_id, Map.get(entry, :run_id))
   end
+
+  defp maybe_put_non_default(map, _key, default, default), do: map
+  defp maybe_put_non_default(map, _key, nil, _default), do: map
+  defp maybe_put_non_default(map, key, value, _default), do: Map.put(map, key, value)
+
+  defp maybe_put_present(map, _key, nil), do: map
+  defp maybe_put_present(map, _key, ""), do: map
+  defp maybe_put_present(map, key, value), do: Map.put(map, key, value)
 
   defp retry_entry_payload(entry) do
     %{

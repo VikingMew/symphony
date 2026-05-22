@@ -31,6 +31,26 @@ defmodule SymphonyElixir.Workspace.SourcePreparation do
     end
   end
 
+  @spec workspace_root(map()) :: Path.t()
+  def workspace_root(settings) do
+    case settings.project.source_strategy do
+      "worktree" -> worktree_base_root(settings)
+      _clone -> settings.workspace.root
+    end
+  end
+
+  @spec workspace_path_for_issue(String.t(), String.t() | nil, map()) :: {:ok, Path.t()} | {:error, term()}
+  def workspace_path_for_issue(safe_id, nil, settings) when is_binary(safe_id) do
+    settings
+    |> workspace_root()
+    |> Path.join(safe_id)
+    |> SymphonyElixir.PathSafety.canonicalize()
+  end
+
+  def workspace_path_for_issue(safe_id, worker_host, settings) when is_binary(safe_id) and is_binary(worker_host) do
+    {:ok, Path.join(settings.workspace.root, safe_id)}
+  end
+
   @spec worktree_branch(String.t() | nil) :: String.t()
   def worktree_branch(issue_identifier) do
     "symphony/#{safe_identifier(issue_identifier || "issue")}"
@@ -54,7 +74,8 @@ defmodule SymphonyElixir.Workspace.SourcePreparation do
     |> safe_identifier()
   end
 
-  defp safe_identifier(identifier) do
+  @spec safe_identifier(String.t() | nil) :: String.t()
+  def safe_identifier(identifier) do
     String.replace(identifier || "issue", ~r/[^a-zA-Z0-9._-]/, "_")
   end
 end

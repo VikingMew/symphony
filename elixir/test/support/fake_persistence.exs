@@ -155,7 +155,51 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, fn state ->
       state.runs
       |> filter_eq(:status, Keyword.get(opts, :status))
+      |> filter_eq(:kind, Keyword.get(opts, :kind))
+      |> sort_runs()
       |> Enum.take(Keyword.get(opts, :limit, length(state.runs)))
+    end)
+  end
+
+  def list_runs_page(opts \\ []) do
+    ensure_started()
+    page_size = opts |> Keyword.get(:page_size, 25) |> max(1)
+    cursor = Keyword.get(opts, :cursor)
+
+    Agent.get(@name, fn state ->
+      runs =
+        state.runs
+        |> filter_eq(:status, Keyword.get(opts, :status))
+        |> filter_eq(:kind, Keyword.get(opts, :kind))
+        |> sort_runs()
+        |> apply_run_cursor(cursor)
+
+      {entries, overflow} = runs |> Enum.take(page_size + 1) |> Enum.split(page_size)
+
+      %{
+        entries: entries,
+        has_more?: overflow != [],
+        next_cursor: fake_run_cursor(List.last(entries), overflow != [])
+      }
+    end)
+  end
+
+  def create_run(attrs) when is_map(attrs) do
+    ensure_started()
+
+    run =
+      attrs
+      |> atomize_keys()
+      |> Map.put_new(:id, "run-#{System.unique_integer([:positive])}")
+      |> Map.put_new(:kind, "issue")
+      |> Map.put_new(:status, "running")
+      |> Map.put_new(:attempt, 0)
+      |> Map.put_new(:started_at, DateTime.utc_now())
+      |> Map.put_new(:inserted_at, DateTime.utc_now())
+      |> Map.put_new(:updated_at, DateTime.utc_now())
+
+    Agent.get_and_update(@name, fn state ->
+      {{:ok, run}, state |> record_call({:create_run, attrs}) |> Map.update!(:runs, &[run | &1])}
     end)
   end
 
@@ -266,6 +310,56 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp replace_run(existing, id, updated) do
     if Map.get(existing, :id) == id, do: updated, else: existing
   end
+
+  defp sort_runs(runs) do
+    Enum.sort(runs, fn left, right ->
+      case DateTime.compare(run_inserted_at(left), run_inserted_at(right)) do
+        :gt -> true
+        :lt -> false
+        :eq -> to_string(Map.get(left, :id)) >= to_string(Map.get(right, :id))
+      end
+    end)
+  end
+
+  defp apply_run_cursor(runs, nil), do: runs
+  defp apply_run_cursor(runs, ""), do: runs
+
+  defp apply_run_cursor(runs, cursor) when is_binary(cursor) do
+    case decode_fake_run_cursor(cursor) do
+      {:ok, inserted_at, id} ->
+        Enum.filter(runs, fn run ->
+          run_inserted_at = run_inserted_at(run)
+          run_id = Map.get(run, :id)
+          DateTime.compare(run_inserted_at, inserted_at) == :lt or (DateTime.compare(run_inserted_at, inserted_at) == :eq and run_id < id)
+        end)
+
+      :error ->
+        runs
+    end
+  end
+
+  defp fake_run_cursor(_run, false), do: nil
+  defp fake_run_cursor(nil, _has_more), do: nil
+
+  defp fake_run_cursor(run, true) do
+    encoded = Jason.encode!(%{"inserted_at" => DateTime.to_iso8601(run_inserted_at(run)), "id" => Map.get(run, :id)})
+    Base.url_encode64(encoded, padding: false)
+  end
+
+  defp decode_fake_run_cursor(cursor) do
+    with {:ok, json} <- Base.url_decode64(cursor, padding: false),
+         {:ok, %{"inserted_at" => inserted_at, "id" => id}} <- Jason.decode(json),
+         {:ok, datetime, _offset} <- DateTime.from_iso8601(inserted_at),
+         true <- is_binary(id) do
+      {:ok, datetime, id}
+    else
+      _ -> :error
+    end
+  end
+
+  defp run_inserted_at(%{inserted_at: %DateTime{} = inserted_at}), do: inserted_at
+  defp run_inserted_at(%{started_at: %DateTime{} = started_at}), do: started_at
+  defp run_inserted_at(_run), do: ~U[1970-01-01 00:00:00Z]
 
   def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) do
     case get_run(run_id) do
@@ -527,8 +621,30 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   defp atomize_keys(attrs) do
     Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {String.to_atom(key), value}
+      {key, value} when is_binary(key) -> {fixture_key(key), value}
       pair -> pair
     end)
   end
+
+  @fixture_keys %{
+    "id" => :id,
+    "kind" => :kind,
+    "profile" => :profile,
+    "label" => :label,
+    "project_id" => :project_id,
+    "workflow_version_id" => :workflow_version_id,
+    "issue_id" => :issue_id,
+    "issue_identifier" => :issue_identifier,
+    "workspace_path" => :workspace_path,
+    "status" => :status,
+    "execution_mode" => :execution_mode,
+    "attempt" => :attempt,
+    "failure_reason" => :failure_reason,
+    "started_at" => :started_at,
+    "finished_at" => :finished_at,
+    "inserted_at" => :inserted_at,
+    "updated_at" => :updated_at
+  }
+
+  defp fixture_key(key), do: Map.fetch!(@fixture_keys, key)
 end

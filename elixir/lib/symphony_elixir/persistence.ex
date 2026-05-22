@@ -166,12 +166,38 @@ defmodule SymphonyElixir.Persistence do
 
     if repo_available?() do
       RunRecord
-      |> maybe_filter_run_status(Keyword.get(opts, :status))
-      |> order_by([r], desc: r.inserted_at)
+      |> run_filters(opts)
+      |> order_runs()
       |> limit(^limit)
       |> Repo.all()
     else
       []
+    end
+  end
+
+  @spec list_runs_page(keyword()) :: %{entries: [RunRecord.t()], has_more?: boolean(), next_cursor: String.t() | nil}
+  def list_runs_page(opts \\ []) do
+    page_size = opts |> Keyword.get(:page_size, 25) |> max(1)
+    cursor = Keyword.get(opts, :cursor)
+
+    if repo_available?() do
+      entries =
+        RunRecord
+        |> run_filters(opts)
+        |> maybe_apply_run_cursor(cursor)
+        |> order_runs()
+        |> limit(^(page_size + 1))
+        |> Repo.all()
+
+      {page_entries, overflow} = Enum.split(entries, page_size)
+
+      %{
+        entries: page_entries,
+        has_more?: overflow != [],
+        next_cursor: next_run_cursor(List.last(page_entries), overflow != [])
+      }
+    else
+      %{entries: [], has_more?: false, next_cursor: nil}
     end
   end
 
@@ -192,11 +218,57 @@ defmodule SymphonyElixir.Persistence do
     end
   end
 
+  defp run_filters(query, opts) do
+    query
+    |> maybe_filter_run_status(Keyword.get(opts, :status))
+    |> maybe_filter_run_kind(Keyword.get(opts, :kind))
+  end
+
   defp maybe_filter_run_status(query, status) when is_binary(status) and status != "" do
     where(query, [r], r.status == ^status)
   end
 
   defp maybe_filter_run_status(query, _status), do: query
+
+  defp maybe_filter_run_kind(query, kind) when is_binary(kind) and kind != "" do
+    where(query, [r], r.kind == ^kind)
+  end
+
+  defp maybe_filter_run_kind(query, _kind), do: query
+
+  defp maybe_apply_run_cursor(query, nil), do: query
+  defp maybe_apply_run_cursor(query, ""), do: query
+
+  defp maybe_apply_run_cursor(query, cursor) when is_binary(cursor) do
+    case decode_run_cursor(cursor) do
+      {:ok, inserted_at, id} ->
+        where(query, [r], r.inserted_at < ^inserted_at or (r.inserted_at == ^inserted_at and r.id < ^id))
+
+      :error ->
+        query
+    end
+  end
+
+  defp order_runs(query), do: order_by(query, [r], desc: r.inserted_at, desc: r.id)
+
+  defp next_run_cursor(_run, false), do: nil
+  defp next_run_cursor(nil, _has_more), do: nil
+
+  defp next_run_cursor(run, true) do
+    encoded = Jason.encode!(%{"inserted_at" => DateTime.to_iso8601(run.inserted_at), "id" => run.id})
+    Base.url_encode64(encoded, padding: false)
+  end
+
+  defp decode_run_cursor(cursor) do
+    with {:ok, json} <- Base.url_decode64(cursor, padding: false),
+         {:ok, %{"inserted_at" => inserted_at, "id" => id}} <- Jason.decode(json),
+         {:ok, datetime, _offset} <- DateTime.from_iso8601(inserted_at),
+         true <- is_binary(id) do
+      {:ok, datetime, id}
+    else
+      _ -> :error
+    end
+  end
 
   defp order_events(query, :asc), do: order_by(query, [e], asc: e.occurred_at)
   defp order_events(query, "asc"), do: order_by(query, [e], asc: e.occurred_at)
