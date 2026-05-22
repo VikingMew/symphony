@@ -46,7 +46,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuard do
            root: root,
            free_bytes: free_bytes,
            min_free_bytes: min_free_bytes,
-           setting: "Settings / Workflow / Runtime / Minimum free bytes"
+           setting: "Settings / Workflow / Runtime / Minimum free GiB"
          }}
 
       {:error, reason} ->
@@ -56,7 +56,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuard do
            root: root,
            detail: inspect(reason),
            min_free_bytes: min_free_bytes,
-           setting: "Settings / Workflow / Runtime / Minimum free bytes"
+           setting: "Settings / Workflow / Runtime / Minimum free GiB"
          }}
     end
   end

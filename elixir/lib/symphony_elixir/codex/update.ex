@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.Update do
   Normalizes Codex app-server updates into run metadata, history, and persisted payloads.
   """
 
-  alias SymphonyElixir.Codex.MessageHumanizer
+  alias SymphonyElixir.Codex.{MessageHumanizer, TokenUsage}
   alias SymphonyElixir.Codex.RateLimitParser
   alias SymphonyElixir.{Payload, Redaction}
 
@@ -66,7 +66,7 @@ defmodule SymphonyElixir.Codex.Update do
   @spec token_delta(map(), map()) :: map()
   def token_delta(running_entry, %{event: _, timestamp: _} = update) do
     running_entry = running_entry || %{}
-    usage = token_usage(update)
+    usage = TokenUsage.absolute_usage(update)
 
     input = compute_token_delta(running_entry, :input, usage, :codex_last_reported_input_tokens)
     output = compute_token_delta(running_entry, :output, usage, :codex_last_reported_output_tokens)
@@ -330,54 +330,11 @@ defmodule SymphonyElixir.Codex.Update do
   defp sanitize_history_value(value), do: value
 
   defp compute_token_delta(running_entry, token_key, usage, reported_key) do
-    next_total = get_token_usage(usage, token_key)
+    next_total = TokenUsage.get(usage, token_key)
     prev_reported = Map.get(running_entry, reported_key, 0)
     delta = if is_integer(next_total) and next_total >= prev_reported, do: next_total - prev_reported, else: 0
     %{delta: max(delta, 0), reported: if(is_integer(next_total), do: next_total, else: prev_reported)}
   end
-
-  defp token_usage(update) do
-    payloads = [
-      update[:usage],
-      Map.get(update, "usage"),
-      Map.get(update, :usage),
-      update[:payload],
-      Map.get(update, "payload"),
-      update
-    ]
-
-    Enum.find_value(payloads, &absolute_token_usage_from_payload/1) ||
-      Enum.find_value(payloads, &turn_completed_usage_from_payload/1) ||
-      %{}
-  end
-
-  defp absolute_token_usage_from_payload(payload) when is_map(payload) do
-    explicit_map_at_paths(payload, [
-      ["params", "msg", "payload", "info", "total_token_usage"],
-      [:params, :msg, :payload, :info, :total_token_usage],
-      ["params", "msg", "info", "total_token_usage"],
-      [:params, :msg, :info, :total_token_usage],
-      ["params", "tokenUsage", "total"],
-      [:params, :tokenUsage, :total],
-      ["tokenUsage", "total"],
-      [:tokenUsage, :total]
-    ])
-  end
-
-  defp absolute_token_usage_from_payload(_payload), do: nil
-
-  defp turn_completed_usage_from_payload(payload) when is_map(payload) do
-    method = Payload.get_any(payload, ["method", :method])
-
-    direct =
-      Payload.get_any(payload, ["usage", :usage]) ||
-        Payload.get_path(payload, ["params", "usage"]) ||
-        Payload.get_path(payload, [:params, :usage])
-
-    if method in ["turn/completed", :turn_completed] and is_map(direct) and integer_token_map?(direct), do: direct
-  end
-
-  defp turn_completed_usage_from_payload(_payload), do: nil
 
   defp payload_method(payload) when is_map(payload) do
     Payload.get_any(payload, ["method", :method]) ||
@@ -467,92 +424,6 @@ defmodule SymphonyElixir.Codex.Update do
       end
     end)
   end
-
-  defp explicit_map_at_paths(payload, paths),
-    do:
-      Enum.find_value(paths, fn path ->
-        value = Payload.get_path(payload, path)
-        if is_map(value) and integer_token_map?(value), do: value
-      end)
-
-  defp integer_token_map?(payload) do
-    [
-      :input_tokens,
-      :output_tokens,
-      :total_tokens,
-      :prompt_tokens,
-      :completion_tokens,
-      :inputTokens,
-      :outputTokens,
-      :totalTokens,
-      :promptTokens,
-      :completionTokens,
-      "input_tokens",
-      "output_tokens",
-      "total_tokens",
-      "prompt_tokens",
-      "completion_tokens",
-      "inputTokens",
-      "outputTokens",
-      "totalTokens",
-      "promptTokens",
-      "completionTokens"
-    ]
-    |> Enum.any?(fn field ->
-      value = payload_get(payload, field)
-      !is_nil(integer_like(value))
-    end)
-  end
-
-  defp get_token_usage(usage, :input) do
-    payload_get(usage, [
-      "input_tokens",
-      "prompt_tokens",
-      :input_tokens,
-      :prompt_tokens,
-      :input,
-      "promptTokens",
-      :promptTokens,
-      "inputTokens",
-      :inputTokens
-    ])
-  end
-
-  defp get_token_usage(usage, :output) do
-    payload_get(usage, [
-      "output_tokens",
-      "completion_tokens",
-      :output_tokens,
-      :completion_tokens,
-      :output,
-      :completion,
-      "outputTokens",
-      :outputTokens,
-      "completionTokens",
-      :completionTokens
-    ])
-  end
-
-  defp get_token_usage(usage, :total) do
-    payload_get(usage, ["total_tokens", "total", :total_tokens, :total, "totalTokens", :totalTokens])
-  end
-
-  defp payload_get(payload, fields) when is_list(fields), do: Enum.find_value(fields, fn field -> map_integer_value(payload, field) end)
-  defp payload_get(payload, field), do: map_integer_value(payload, field)
-  defp map_integer_value(payload, field) when is_map(payload), do: payload |> Map.get(field) |> integer_like()
-  defp map_integer_value(_payload, _field), do: nil
-  defp integer_like(value) when is_integer(value) and value >= 0, do: value
-
-  defp integer_like(value) when is_binary(value),
-    do:
-      case(Integer.parse(String.trim(value)),
-        do: (
-          {num, _} when num >= 0 -> num
-          _ -> nil
-        )
-      )
-
-  defp integer_like(_value), do: nil
 
   defp drop_blank_debug(%{debug: debug} = payload) do
     debug = debug |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()

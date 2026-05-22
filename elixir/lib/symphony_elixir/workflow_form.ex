@@ -7,6 +7,7 @@ defmodule SymphonyElixir.WorkflowForm do
   alias SymphonyElixir.Workflow
 
   @type draft :: %{String.t() => term()}
+  @gib_bytes 1_073_741_824
 
   @spec from_raw(String.t()) :: {:ok, draft()} | {:error, term()}
   def from_raw(raw_workflow_md) when is_binary(raw_workflow_md) do
@@ -37,7 +38,7 @@ defmodule SymphonyElixir.WorkflowForm do
       "workspace_repository_base_root" => get_string(display_config, ["workspace", "repository_base_root"], ""),
       "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"], ""),
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
-      "workspace_min_free_bytes" => get_integer_string(display_config, ["workspace", "min_free_bytes"], 1_073_741_824),
+      "workspace_min_free_gib" => min_free_gib_string(get_in(display_config, ["workspace", "min_free_bytes"])),
       "workspace_auto_cleanup" => get_boolean_string(display_config, ["workspace", "auto_cleanup"], false),
       "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
@@ -90,7 +91,7 @@ defmodule SymphonyElixir.WorkflowForm do
     with {:ok, polling_interval_ms} <- parse_positive_integer(draft, "polling_interval_ms", "Polling interval"),
          {:ok, checkout_depth} <- parse_positive_integer(draft, "project_checkout_depth", "Checkout depth"),
          {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
-         {:ok, workspace_min_free_bytes} <- parse_non_negative_integer(draft, "workspace_min_free_bytes", "Minimum free bytes"),
+         {:ok, workspace_min_free_bytes} <- parse_min_free_bytes(draft),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
@@ -133,7 +134,7 @@ defmodule SymphonyElixir.WorkflowForm do
     [
       {"polling_interval_ms", "Polling interval"},
       {"initialize_timeout_ms", "Initialize timeout"},
-      {"workspace_min_free_bytes", "Minimum free bytes"},
+      {"workspace_min_free_gib", "Minimum free GiB"},
       {"agent_max_concurrent_agents", "Max agents"},
       {"agent_max_turns", "Max turns"},
       {"hook_timeout_ms", "Hook timeout"}
@@ -418,8 +419,39 @@ defmodule SymphonyElixir.WorkflowForm do
     end
   end
 
-  defp parse_integer_field(draft, "workspace_min_free_bytes", label), do: parse_non_negative_integer(draft, "workspace_min_free_bytes", label)
+  defp parse_integer_field(draft, "workspace_min_free_gib", _label), do: parse_min_free_bytes(draft)
   defp parse_integer_field(draft, key, label), do: parse_positive_integer(draft, key, label)
+
+  defp parse_min_free_bytes(%{"workspace_min_free_bytes" => value} = draft)
+       when not is_map_key(draft, "workspace_min_free_gib") do
+    parse_non_negative_integer(%{"workspace_min_free_bytes" => value}, "workspace_min_free_bytes", "Minimum free bytes")
+  end
+
+  defp parse_min_free_bytes(draft) do
+    value =
+      draft
+      |> Map.get("workspace_min_free_gib", "1")
+      |> to_string()
+      |> String.trim()
+
+    case Decimal.parse(value) do
+      {decimal, ""} ->
+        if Decimal.compare(decimal, Decimal.new(0)) in [:eq, :gt] do
+          bytes =
+            decimal
+            |> Decimal.mult(Decimal.new(@gib_bytes))
+            |> Decimal.round(0, :half_up)
+            |> Decimal.to_integer()
+
+          {:ok, bytes}
+        else
+          {:error, "Minimum free GiB must be zero or a positive number"}
+        end
+
+      _ ->
+        {:error, "Minimum free GiB must be zero or a positive number"}
+    end
+  end
 
   defp get_string(config, path, default) do
     case get_in(config, path) do
@@ -435,6 +467,29 @@ defmodule SymphonyElixir.WorkflowForm do
       value when is_binary(value) -> value
       _ -> Integer.to_string(default)
     end
+  end
+
+  defp min_free_gib_string(value) do
+    bytes =
+      case value do
+        value when is_integer(value) ->
+          value
+
+        value when is_binary(value) ->
+          case Integer.parse(value) do
+            {integer, ""} -> integer
+            _ -> @gib_bytes
+          end
+
+        _ ->
+          @gib_bytes
+      end
+
+    bytes
+    |> Decimal.new()
+    |> Decimal.div(Decimal.new(@gib_bytes))
+    |> Decimal.normalize()
+    |> Decimal.to_string(:normal)
   end
 
   defp get_boolean_string(config, path, default) do

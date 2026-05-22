@@ -102,7 +102,7 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
         </section>
       <% else %>
         <section class="analytics-grid">
-          <.breakdown title="Status" rows={@summary.status_rows} />
+          <.breakdown title="Status" rows={@summary.status_rows} show_status_columns={false} />
           <.breakdown title="Projects" rows={@summary.project_rows} />
           <.breakdown title="Issues" rows={@summary.issue_rows} />
           <.breakdown title="Execution Mode" rows={@summary.execution_mode_rows} />
@@ -116,6 +116,7 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
 
   attr(:title, :string, required: true)
   attr(:rows, :list, required: true)
+  attr(:show_status_columns, :boolean, default: true)
 
   defp breakdown(assigns) do
     ~H"""
@@ -128,15 +129,21 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
         <div class="table-wrap">
           <table class="data-table analytics-table">
             <thead>
-              <tr><th>Name</th><th>Runs</th><th>Completed</th><th>Failed</th><th>Blocked</th></tr>
+              <tr>
+                <th>Name</th>
+                <th>Runs</th>
+                <th :if={@show_status_columns}>Completed</th>
+                <th :if={@show_status_columns}>Failed</th>
+                <th :if={@show_status_columns}>Blocked</th>
+              </tr>
             </thead>
             <tbody>
               <tr :for={row <- @rows}>
                 <td><a class="issue-link" href={row.href}><%= row.key %></a></td>
                 <td class="numeric"><%= row.count %></td>
-                <td class="numeric"><%= Map.get(row, :completed, 0) %></td>
-                <td class="numeric"><%= Map.get(row, :failed, 0) %></td>
-                <td class="numeric"><%= Map.get(row, :blocked, 0) %></td>
+                <td :if={@show_status_columns} class="numeric"><%= Map.get(row, :completed, 0) %></td>
+                <td :if={@show_status_columns} class="numeric"><%= Map.get(row, :failed, 0) %></td>
+                <td :if={@show_status_columns} class="numeric"><%= Map.get(row, :blocked, 0) %></td>
               </tr>
             </tbody>
           </table>

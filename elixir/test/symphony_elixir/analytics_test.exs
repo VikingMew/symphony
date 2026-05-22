@@ -59,6 +59,50 @@ defmodule SymphonyElixir.AnalyticsTest do
     assert summary.tokens.total_tokens == 0
   end
 
+  test "extracts realistic codex token payload shapes without double-counting run cumulative snapshots" do
+    now = ~U[2026-05-21 00:00:00Z]
+
+    FakePersistence.put_runs([
+      run("run-token-1", "CCR-1", "completed", DateTime.add(now, -30, :second), now),
+      run("run-token-2", "CCR-2", "completed", DateTime.add(now, -20, :second), now)
+    ])
+
+    FakePersistence.put_events([
+      %{
+        run_id: "run-token-1",
+        event_type: "codex.update",
+        occurred_at: now,
+        payload: %{"params" => %{"tokenUsage" => %{"total" => %{"input_tokens" => 6, "output_tokens" => 4, "total_tokens" => 10}}}}
+      },
+      %{
+        run_id: "run-token-1",
+        event_type: "codex.update",
+        occurred_at: now,
+        payload: %{"params" => %{"tokenUsage" => %{"total" => %{"input_tokens" => 9, "output_tokens" => 6, "total_tokens" => 15}}}}
+      },
+      %{
+        run_id: "run-token-2",
+        event_type: "codex.update",
+        occurred_at: now,
+        payload: %{
+          "params" => %{
+            "msg" => %{
+              "payload" => %{
+                "info" => %{
+                  "total_token_usage" => %{"input_tokens" => 20, "output_tokens" => 5, "total_tokens" => 25}
+                }
+              }
+            }
+          }
+        }
+      }
+    ])
+
+    summary = Analytics.summary(range: "7d", now: now)
+
+    assert summary.tokens == %{input_tokens: 29, output_tokens: 11, total_tokens: 40}
+  end
+
   defp run(id, issue_identifier, status, started_at, finished_at, failure_reason \\ nil) do
     %{
       id: id,

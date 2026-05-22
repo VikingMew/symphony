@@ -169,6 +169,29 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            end)
   end
 
+  test "worker API returns controller-level errors before persistence work" do
+    start_test_endpoint()
+
+    assert %{"error" => %{"code" => "worker_session_not_found"}} =
+             build_conn()
+             |> post("/api/worker/v1/tasks/claim", %{})
+             |> json_response(401)
+
+    assert %{"error" => %{"code" => "unsupported_worker_protocol"}} =
+             build_conn()
+             |> put_req_header("x-symphony-worker-protocol", "worker-api-v0")
+             |> post("/api/worker/v1/tasks/claim", %{"worker_id" => "worker", "session_id" => "session"})
+             |> json_response(426)
+
+    assert %{"error" => %{"code" => "invalid_worker_event"}} =
+             build_conn()
+             |> put_req_header("x-symphony-worker-protocol", "worker-api-v1")
+             |> put_req_header("x-symphony-worker-id", "worker")
+             |> put_req_header("x-symphony-worker-session", "session")
+             |> post("/api/worker/v1/tasks/task-1/events", %{})
+             |> json_response(422)
+  end
+
   defp start_test_endpoint do
     endpoint_config =
       :symphony_elixir

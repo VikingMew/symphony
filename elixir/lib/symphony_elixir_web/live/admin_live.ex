@@ -1242,9 +1242,9 @@ defmodule SymphonyElixirWeb.AdminLive do
                   <label><span class="metric-label">Repository base root</span><input name="workflow[workspace_repository_base_root]" value={@workflow_form["workspace_repository_base_root"]} placeholder="Defaults to clone workspace root/repositories" /></label>
                   <label><span class="metric-label">Worktree base root</span><input name="workflow[workspace_worktree_base_root]" value={@workflow_form["workspace_worktree_base_root"]} placeholder="Defaults to clone workspace root/worktrees" /></label>
                   <label>
-                    <span class="metric-label">Minimum free bytes</span>
-                    <input id={workflow_field_id("workspace_min_free_bytes")} class={workflow_field_class(@workflow_field_errors, "workspace_min_free_bytes")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "workspace_min_free_bytes")} type="number" min="0" name="workflow[workspace_min_free_bytes]" value={@workflow_form["workspace_min_free_bytes"]} />
-                    <.workflow_field_error field="workspace_min_free_bytes" errors={@workflow_field_errors} />
+                    <span class="metric-label">Minimum free GiB</span>
+                    <input id={workflow_field_id("workspace_min_free_gib")} class={workflow_field_class(@workflow_field_errors, "workspace_min_free_gib")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "workspace_min_free_gib")} type="number" min="0" step="0.1" name="workflow[workspace_min_free_gib]" value={@workflow_form["workspace_min_free_gib"]} />
+                    <.workflow_field_error field="workspace_min_free_gib" errors={@workflow_field_errors} />
                   </label>
                   <label class="checkbox-row">
                     <input type="hidden" name="workflow[workspace_auto_cleanup]" value="false" />

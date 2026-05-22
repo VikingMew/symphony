@@ -1262,6 +1262,18 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
+  test "workflow page renders disk guard threshold as GiB" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/settings/workflow")
+
+    assert html =~ "Minimum free GiB"
+    assert html =~ ~s(name="workflow[workspace_min_free_gib]")
+    refute html =~ "Minimum free bytes"
+    refute html =~ "1073741824"
+  end
+
   test "workflow page saves parseable drafts with semantic configuration errors" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()

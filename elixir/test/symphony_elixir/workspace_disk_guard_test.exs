@@ -23,7 +23,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuardTest do
     assert reason.reason == :low_disk_space
     assert reason.free_bytes == 99
     assert reason.min_free_bytes == 100
-    assert reason.setting == "Settings / Workflow / Runtime / Minimum free bytes"
+    assert reason.setting == "Settings / Workflow / Runtime / Minimum free GiB"
   end
 
   test "zero minimum disables the disk-space check" do
@@ -33,6 +33,51 @@ defmodule SymphonyElixir.WorkspaceDiskGuardTest do
              WorkspaceDiskGuard.check(settings,
                free_bytes_fun: fn _path -> flunk("disk check should be skipped") end
              )
+  end
+
+  test "reports unavailable disk space with the actionable setting path" do
+    settings = settings(min_free_bytes: 100)
+
+    assert {:error, reason} =
+             WorkspaceDiskGuard.check(settings,
+               free_bytes_fun: fn _path -> {:error, :no_stat} end
+             )
+
+    assert reason.reason == :disk_space_unavailable
+    assert reason.detail == ":no_stat"
+    assert reason.min_free_bytes == 100
+    assert reason.setting == "Settings / Workflow / Runtime / Minimum free GiB"
+  end
+
+  test "checks unique workspace, repository, and worktree roots" do
+    root = Path.join(System.tmp_dir!(), "symphony-disk-guard-roots")
+    repos = Path.join(root, "repos")
+    worktrees = Path.join(root, "worktrees")
+    File.rm_rf!(root)
+    File.mkdir_p!(repos)
+    File.mkdir_p!(worktrees)
+
+    settings = %{
+      workspace: %{
+        root: root,
+        repository_base_root: repos,
+        worktree_base_root: worktrees,
+        min_free_bytes: 100
+      },
+      project: %{repository_url: "git@example.test:repo.git", default_branch: "main"}
+    }
+
+    {:ok, checked} = Agent.start_link(fn -> [] end)
+
+    assert {:ok, %{}} =
+             WorkspaceDiskGuard.check(settings,
+               free_bytes_fun: fn path ->
+                 Agent.update(checked, &[path | &1])
+                 {:ok, 200}
+               end
+             )
+
+    assert checked |> Agent.get(& &1) |> Enum.sort() == [repos, root, worktrees] |> Enum.sort()
   end
 
   defp settings(attrs) do

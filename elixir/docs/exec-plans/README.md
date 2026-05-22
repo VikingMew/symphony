@@ -212,6 +212,13 @@ Plans should focus on product and engineering intent rather than full implementa
 205. [205-workspace-source-preparation-test-split.md](completed/205-workspace-source-preparation-test-split.md)
 206. [206-app-server-tool-policy-test-split.md](completed/206-app-server-tool-policy-test-split.md)
 207. [207-mixed-key-governance-exemption-tightening.md](completed/207-mixed-key-governance-exemption-tightening.md)
+208. [208-effective-test-coverage-85-percent.md](completed/208-effective-test-coverage-85-percent.md)
+209. [209-analytics-token-and-status-table-accuracy.md](completed/209-analytics-token-and-status-table-accuracy.md)
+210. [210-workspace-disk-guard-gib-setting.md](completed/210-workspace-disk-guard-gib-setting.md)
+
+## Active Plans
+
+None.
 
 ## Intentional Numbering Gaps
 
@@ -259,7 +266,3 @@ Before moving a plan to `completed/`, update `Verification` with the evidence th
 - If a high-priority acceptance criterion is intentionally left unmet, `Completion Deviations` must name the gap and link an active follow-up execplan that owns it.
 
 This is partly review policy rather than a fully mechanical check. `mix exec_plans.check` catches structure and index consistency; reviewers are responsible for rejecting completed plans whose evidence is too narrow for their stated acceptance criteria.
-
-## Active Plans
-
-None.

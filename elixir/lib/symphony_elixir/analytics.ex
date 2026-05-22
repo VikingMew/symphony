@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Analytics do
   and agent turns. It deliberately does not read live orchestrator state.
   """
 
+  alias SymphonyElixir.Codex.TokenUsage
   alias SymphonyElixir.Persistence
 
   @default_limit 2_000
@@ -174,63 +175,32 @@ defmodule SymphonyElixir.Analytics do
   end
 
   defp token_summary(events) do
-    Enum.reduce(events, %{input_tokens: 0, output_tokens: 0, total_tokens: 0}, fn event, acc ->
-      tokens = extract_tokens(Map.get(event, :payload, %{}))
+    {run_tokens, standalone_tokens} =
+      events
+      |> Enum.map(fn event -> {Map.get(event, :run_id), TokenUsage.absolute_usage(Map.get(event, :payload, %{}))} end)
+      |> Enum.reject(fn {_run_id, tokens} -> tokens == TokenUsage.zero() end)
+      |> Enum.split_with(fn {run_id, _tokens} -> not blank?(run_id) end)
 
-      %{
-        input_tokens: acc.input_tokens + tokens.input_tokens,
-        output_tokens: acc.output_tokens + tokens.output_tokens,
-        total_tokens: acc.total_tokens + tokens.total_tokens
-      }
-    end)
+    per_run_tokens =
+      run_tokens
+      |> Enum.group_by(fn {run_id, _tokens} -> run_id end, fn {_run_id, tokens} -> tokens end)
+      |> Map.values()
+      |> Enum.map(&max_token_snapshot/1)
+
+    (per_run_tokens ++ Enum.map(standalone_tokens, fn {_run_id, tokens} -> tokens end))
+    |> Enum.reduce(TokenUsage.zero(), &sum_tokens/2)
   end
 
-  defp extract_tokens(payload) when is_map(payload) do
-    candidates = [
-      payload,
-      Map.get(payload, "tokens"),
-      Map.get(payload, :tokens),
-      get_in(payload, ["params", "tokens"]),
-      get_in(payload, [:params, :tokens]),
-      get_in(payload, ["params", "total_token_usage"]),
-      get_in(payload, [:params, :total_token_usage]),
-      get_in(payload, ["message", "params", "tokens"]),
-      get_in(payload, [:message, :params, :tokens]),
-      get_in(payload, ["message", "params", "total_token_usage"]),
-      get_in(payload, [:message, :params, :total_token_usage])
-    ]
-
-    Enum.reduce(candidates, %{input_tokens: 0, output_tokens: 0, total_tokens: 0}, fn
-      map, acc when is_map(map) ->
-        %{
-          input_tokens: max(acc.input_tokens, integer_value(map, ["input_tokens", :input_tokens])),
-          output_tokens: max(acc.output_tokens, integer_value(map, ["output_tokens", :output_tokens])),
-          total_tokens: max(acc.total_tokens, integer_value(map, ["total_tokens", :total_tokens]))
-        }
-
-      _other, acc ->
-        acc
-    end)
+  defp max_token_snapshot(snapshots) do
+    Enum.max_by(snapshots, & &1.total_tokens, fn -> TokenUsage.zero() end)
   end
 
-  defp extract_tokens(_payload), do: %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
-
-  defp integer_value(map, keys) do
-    keys
-    |> Enum.map(&Map.get(map, &1))
-    |> Enum.find_value(0, fn
-      value when is_integer(value) ->
-        value
-
-      value when is_binary(value) ->
-        case Integer.parse(value) do
-          {parsed, ""} -> parsed
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end)
+  defp sum_tokens(tokens, acc) do
+    %{
+      input_tokens: acc.input_tokens + tokens.input_tokens,
+      output_tokens: acc.output_tokens + tokens.output_tokens,
+      total_tokens: acc.total_tokens + tokens.total_tokens
+    }
   end
 
   defp percentile([], _point), do: 0

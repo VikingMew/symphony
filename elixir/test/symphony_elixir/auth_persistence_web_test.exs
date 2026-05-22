@@ -91,6 +91,35 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert redirected_to(conn) == "/login"
   end
 
+  test "login page and invalid login states render actionable errors" do
+    Application.put_env(:symphony_elixir, :auth,
+      enabled: true,
+      username: "admin",
+      password_hash: Auth.hash_password("secret")
+    )
+
+    start_test_endpoint()
+
+    assert html_response(get(build_conn(), "/login"), 200) =~ "Sign in"
+
+    assert build_conn()
+           |> init_test_session(%{})
+           |> post("/login", %{})
+           |> html_response(400) =~ "Username and password are required."
+
+    assert build_conn()
+           |> init_test_session(%{})
+           |> post("/login", %{"username" => "admin", "password" => "wrong"})
+           |> html_response(401) =~ "Invalid username or password."
+
+    Application.put_env(:symphony_elixir, :auth, enabled: true, username: "admin")
+
+    assert build_conn()
+           |> init_test_session(%{})
+           |> post("/login", %{"username" => "admin", "password" => "secret"})
+           |> html_response(503) =~ "Authentication is enabled but no admin user is configured."
+  end
+
   test "auth can read persisted user through fake persistence without Repo" do
     refute Process.whereis(SymphonyElixir.Repo)
 

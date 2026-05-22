@@ -56,8 +56,19 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
       %{
         event_type: "codex.update",
         issue_identifier: "CCR-5",
+        run_id: "run-analytics-1",
         occurred_at: now,
-        payload: %{"tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}}
+        payload: %{
+          "params" => %{
+            "msg" => %{
+              "payload" => %{
+                "info" => %{
+                  "total_token_usage" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                }
+              }
+            }
+          }
+        }
       }
     ])
 
@@ -70,6 +81,27 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
     assert html =~ "Total tokens"
     assert html =~ "12"
     assert html =~ ~s(href="/issues/CCR-5")
+
+    document = Floki.parse_document!(html)
+
+    status_headers = table_headers(document, "Status")
+    assert status_headers == ["Name", "Runs"]
+
+    project_headers = table_headers(document, "Projects")
+    assert project_headers == ["Name", "Runs", "Completed", "Failed", "Blocked"]
+  end
+
+  defp table_headers(document, title) do
+    document
+    |> Floki.find("section.section-card")
+    |> Enum.find(fn section ->
+      section
+      |> Floki.find("h2")
+      |> Floki.text()
+      |> String.trim() == title
+    end)
+    |> Floki.find("thead th")
+    |> Enum.map(fn th -> th |> Floki.text() |> String.trim() end)
   end
 
   defp start_test_endpoint do

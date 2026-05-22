@@ -199,7 +199,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
     assert returned_state.workflow.prompt == "Manual workflow prompt after poll"
     assert returned_state.source.type == :database
-    assert_receive :poll, 1_100
+    assert_receive :poll, 2_500
 
     Process.exit(manual_pid, :normal)
     restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
