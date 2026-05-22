@@ -1,0 +1,122 @@
+defmodule SymphonyElixir.FirstRunDefaults do
+  @moduledoc """
+  Explicit first-run import helper for checked-in workflow/profile YAML defaults.
+
+  This module never turns `workflow.yml` or `profiles.yml` into runtime sources.
+  It imports them once into the database only when the operator confirms.
+  """
+
+  require Logger
+
+  alias SymphonyElixir.{Persistence, Workflow}
+
+  @source "first_run_default_yaml"
+
+  @type deps :: %{
+          active_workflow_version: (-> term() | nil),
+          list_workflow_versions: (-> [term()]),
+          default_project: (-> {:ok, term()} | {:error, term()}),
+          import_workflow: (term(), String.t(), String.t() -> {:ok, term()} | {:error, term()}),
+          package_root: (-> String.t()),
+          read_file: (String.t() -> {:ok, String.t()} | {:error, term()}),
+          prompt: (String.t() -> String.t() | nil),
+          interactive?: (-> boolean()),
+          log: (atom(), String.t() -> term())
+        }
+
+  @spec maybe_import(keyword(), deps()) :: :ok | {:error, term()}
+  def maybe_import(opts \\ [], deps \\ default_deps()) do
+    cond do
+      disabled?(opts) ->
+        deps.log.(:info, "Default YAML first-run prompt is disabled.")
+        :ok
+
+      deps.active_workflow_version.() != nil ->
+        :ok
+
+      deps.list_workflow_versions.() != [] ->
+        deps.log.(:info, "Workflow versions already exist; default YAML first-run import was not offered.")
+        :ok
+
+      true ->
+        maybe_offer_import(opts, deps)
+    end
+  end
+
+  defp maybe_offer_import(opts, deps) do
+    root = Keyword.get(opts, :package_root) || deps.package_root.()
+    workflow_path = Path.join(root, "workflow.yml")
+    profiles_path = Path.join(root, "profiles.yml")
+
+    with {:ok, workflow_yaml} <- deps.read_file.(workflow_path),
+         {:ok, profiles_yaml} <- deps.read_file.(profiles_path),
+         {:ok, loaded} <- Workflow.parse_split_package(workflow_yaml, profiles_yaml) do
+      if deps.interactive?.() do
+        prompt_for_import(deps, root, loaded)
+      else
+        deps.log.(
+          :info,
+          "Default workflow.yml and profiles.yml are available at #{root}, but Symphony is non-interactive; open Settings / Import or restart without --no-default-yaml-prompt to import them."
+        )
+
+        :ok
+      end
+    else
+      {:error, :enoent} ->
+        deps.log.(:info, "Default YAML package is incomplete; start in setup-required mode and use Settings / Import when ready.")
+        :ok
+
+      {:error, reason} ->
+        deps.log.(:warning, "Default YAML package could not be imported: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp prompt_for_import(deps, root, loaded) do
+    answer =
+      deps.prompt.("No active Symphony workflow is configured. Import default workflow.yml and profiles.yml from #{root}? [y/N] ")
+
+    if yes?(answer) do
+      raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+
+      with {:ok, project} <- deps.default_project.(),
+           {:ok, _version} <- deps.import_workflow.(project, raw, @source) do
+        deps.log.(:info, "Imported default workflow.yml and profiles.yml into the database.")
+        :ok
+      end
+    else
+      deps.log.(:info, "Default YAML first-run import declined; start in setup-required mode.")
+      :ok
+    end
+  end
+
+  defp yes?(answer) when is_binary(answer), do: (answer |> String.trim() |> String.downcase()) in ["y", "yes"]
+  defp yes?(_answer), do: false
+
+  defp disabled?(opts) do
+    Keyword.get(opts, :no_default_yaml_prompt, false) ||
+      Application.get_env(:symphony_elixir, :no_default_yaml_prompt, false) ||
+      System.get_env("SYMPHONY_NO_DEFAULT_YAML_PROMPT") in ["1", "true", "TRUE", "yes", "YES"]
+  end
+
+  defp default_deps do
+    %{
+      active_workflow_version: &Persistence.active_workflow_version/0,
+      list_workflow_versions: &Persistence.list_workflow_versions/0,
+      default_project: &Persistence.default_project/0,
+      import_workflow: &Persistence.import_workflow/3,
+      package_root: &File.cwd!/0,
+      read_file: &File.read/1,
+      prompt: &IO.gets/1,
+      interactive?: &interactive?/0,
+      log: fn level, message -> Logger.log(level, message) end
+    }
+  end
+
+  defp interactive? do
+    case Application.get_env(:symphony_elixir, :default_yaml_prompt_interactive) do
+      value when is_boolean(value) -> value
+      _ -> not IEx.started?()
+    end
+  end
+end

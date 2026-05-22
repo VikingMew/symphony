@@ -677,6 +677,36 @@ defmodule SymphonyElixir.Config.Schema do
           "result" => true,
           "target_states" => ["Merging", "Done"]
         }
+      },
+      "nap" => %{
+        "name" => "Nap audit",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "replace",
+          "template" =>
+            "Workflow profile: nap\n\nRead the repository and project documentation. Find project fragments, code/documentation drift, technical debt, redundant code, compatibility code, and bad smells. Apply concrete engineering criteria inspired by Linus and Carmack: simple control flow, direct data structures, minimal compatibility layers, no speculative abstraction, and evidence-backed claims.\n\nDo not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct problem, create one Backlog Linear issue through the restricted issue creation tool with a concise title, evidence, why it matters, and a suggested fix direction."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => false,
+          "result" => false,
+          "target_states" => []
+        }
+      },
+      "day_dreaming" => %{
+        "name" => "Day dreaming",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "replace",
+          "template" =>
+            "Workflow profile: day_dreaming\n\nRead the existing code, README, architecture docs, long-term direction docs, and relevant exec plans. Compare implementation reality with product direction and identify useful features or optimization opportunities that should be developed next.\n\nDo not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct product or engineering opportunity, create one Backlog Linear issue through the restricted issue creation tool with a concise title, evidence from code/docs, why it matters, suggested direction, and rough impact."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => false,
+          "result" => false,
+          "target_states" => []
+        }
       }
     }
   end

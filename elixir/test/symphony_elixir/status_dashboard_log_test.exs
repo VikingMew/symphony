@@ -20,7 +20,7 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
   end
 
   test "status snapshot formatter is silent for idle and active states" do
-    assert StatusDashboard.format_snapshot_content_for_test(idle_snapshot(), 0.0) == ""
+    assert StatusDashboard.format_snapshot_content(idle_snapshot(), 0.0) == ""
 
     active_snapshot =
       {:ok,
@@ -51,8 +51,8 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
          rate_limits: nil
        }}
 
-    assert StatusDashboard.format_snapshot_content_for_test(active_snapshot, 0.0, 115) == ""
-    assert StatusDashboard.format_snapshot_content_for_test(:error, 0.0) == ""
+    assert StatusDashboard.format_snapshot_content(active_snapshot, 0.0, 115) == ""
+    assert StatusDashboard.format_snapshot_content(:error, 0.0) == ""
   end
 
   test "polling countdown-only changes are silent" do
@@ -76,8 +76,8 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
          polling: %{checking?: true, next_poll_in_ms: nil, poll_interval_ms: 30_000}
        }}
 
-    assert StatusDashboard.format_snapshot_content_for_test(waiting_snapshot, 0.0) == ""
-    assert StatusDashboard.format_snapshot_content_for_test(checking_snapshot, 0.0) == ""
+    assert StatusDashboard.format_snapshot_content(waiting_snapshot, 0.0) == ""
+    assert StatusDashboard.format_snapshot_content(checking_snapshot, 0.0) == ""
   end
 
   test "status dashboard module does not contain the old terminal status format" do

@@ -15,7 +15,9 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
           optional(:max_concurrent_agents) => pos_integer(),
           optional(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
           optional(:workflow_executor_for_state) => (term() -> String.t() | nil),
-          optional(:human_review_state?) => (term() -> boolean())
+          optional(:human_review_state?) => (term() -> boolean()),
+          optional(:listening_mode) => :not_listening | :listening_all | :listening_refine_only,
+          optional(:refinement_states) => MapSet.t()
         }
 
   @type worker_settings :: %{
@@ -149,6 +151,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
     terminal_states = Map.get(dispatch_settings, :terminal_states, MapSet.new())
 
     issue_routable_to_worker?(issue) and
+      allowed_by_listening_mode?(state_name, dispatch_settings) and
       active_issue_state?(state_name, active_states) and
       !human_review_state?(state_name, dispatch_settings) and
       executable_state?(state_name, dispatch_settings) and
@@ -196,6 +199,24 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
   end
 
   def active_issue_state?(_state_name, _active_states), do: false
+
+  @spec allowed_by_listening_mode?(term(), dispatch_settings()) :: boolean()
+  def allowed_by_listening_mode?(state_name, dispatch_settings) when is_binary(state_name) and is_map(dispatch_settings) do
+    case Map.get(dispatch_settings, :listening_mode, :listening_all) do
+      :listening_refine_only ->
+        dispatch_settings
+        |> Map.get(:refinement_states, MapSet.new(["refining"]))
+        |> MapSet.member?(normalize_issue_state(state_name))
+
+      :not_listening ->
+        false
+
+      _ ->
+        true
+    end
+  end
+
+  def allowed_by_listening_mode?(_state_name, _dispatch_settings), do: false
 
   @spec normalized_state_set([term()]) :: MapSet.t()
   def normalized_state_set(states) when is_list(states) do

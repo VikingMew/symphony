@@ -32,25 +32,54 @@ defmodule SymphonyElixir.AgentRunner.Policy do
     end
   end
 
-  @spec continue_with_issue?(Issue.t() | term(), function(), [String.t()]) :: {:continue, Issue.t()} | {:done, term()} | {:error, term()}
-  def continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher, active_states) when is_binary(issue_id) do
+  @spec continue_with_issue?(Issue.t() | term(), function(), [String.t()] | map()) ::
+          {:continue, Issue.t()} | {:done, term()} | {:done, term(), atom()} | {:error, term()}
+  def continue_with_issue?(%Issue{id: issue_id} = issue, issue_state_fetcher, continuation_settings) when is_binary(issue_id) do
     case issue_state_fetcher.([issue_id]) do
       {:ok, [%Issue{} = refreshed_issue | _]} ->
-        if active_issue_state?(refreshed_issue.state, active_states) do
-          {:continue, refreshed_issue}
-        else
-          {:done, refreshed_issue}
-        end
+        continuation_decision(refreshed_issue, continuation_settings)
 
       {:ok, []} ->
-        {:done, issue}
+        {:done, issue, :missing}
 
       {:error, reason} ->
         {:error, {:issue_state_refresh_failed, reason}}
     end
   end
 
-  def continue_with_issue?(issue, _issue_state_fetcher, _active_states), do: {:done, issue}
+  def continue_with_issue?(issue, _issue_state_fetcher, _active_states), do: {:done, issue, :invalid_issue}
+
+  defp continuation_decision(%Issue{} = issue, active_states) when is_list(active_states) do
+    if active_issue_state?(issue.state, active_states), do: {:continue, issue}, else: {:done, issue, :inactive_state}
+  end
+
+  defp continuation_decision(%Issue{} = issue, settings) when is_map(settings) do
+    current_profile = Map.get(settings, :current_profile)
+    refreshed_profile = profile_for_state(issue.state, settings)
+
+    cond do
+      terminal_issue_state?(issue.state, Map.get(settings, :terminal_states, [])) ->
+        {:done, issue, :terminal_state}
+
+      !active_issue_state?(issue.state, Map.get(settings, :active_states, [])) ->
+        {:done, issue, :inactive_state}
+
+      human_review_state?(issue.state, settings) ->
+        {:done, issue, :human_review_state}
+
+      blank?(refreshed_profile) ->
+        {:done, issue, :missing_workflow_profile}
+
+      refreshed_profile != current_profile ->
+        {:done, issue, :profile_changed}
+
+      !executable_state?(issue.state, settings) ->
+        {:done, issue, :non_executable_state}
+
+      true ->
+        {:continue, issue}
+    end
+  end
 
   @spec selected_worker_host(String.t() | nil, [String.t()] | term()) :: String.t() | nil
   def selected_worker_host(nil, []), do: nil
@@ -100,6 +129,36 @@ defmodule SymphonyElixir.AgentRunner.Policy do
   end
 
   defp active_issue_state?(_state_name, _active_states), do: false
+
+  defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) and is_list(terminal_states) do
+    normalized_state = normalize_issue_state(state_name)
+    Enum.any?(terminal_states, fn terminal_state -> normalize_issue_state(terminal_state) == normalized_state end)
+  end
+
+  defp terminal_issue_state?(_state_name, _terminal_states), do: false
+
+  defp human_review_state?(state_name, settings) do
+    case Map.get(settings, :human_review_state?) do
+      fun when is_function(fun, 1) -> fun.(state_name)
+      _ -> false
+    end
+  end
+
+  defp profile_for_state(state_name, settings) do
+    case Map.get(settings, :profile_for_state) do
+      fun when is_function(fun, 1) -> fun.(state_name)
+      _ -> nil
+    end
+  end
+
+  defp executable_state?(state_name, settings) do
+    case Map.get(settings, :executor_for_state) do
+      fun when is_function(fun, 1) -> fun.(state_name) in ["codex_agent", "backend_action"]
+      _ -> true
+    end
+  end
+
+  defp blank?(value), do: !is_binary(value) or String.trim(value) == ""
 
   defp normalize_issue_state(state_name) when is_binary(state_name), do: SymphonyElixir.StateName.normalize(state_name)
   defp normalize_issue_state(_state_name), do: ""

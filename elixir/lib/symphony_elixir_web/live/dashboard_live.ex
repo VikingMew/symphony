@@ -60,6 +60,16 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @impl true
+  def handle_event("start_refine_only_listening", _params, socket) do
+    result = SymphonyElixir.Orchestrator.start_refine_only_listening(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Refinement-only listening started: #{inspect(result)}")
+     |> refresh_payload()}
+  end
+
+  @impl true
   def handle_event("stop_listening", _params, socket) do
     result = SymphonyElixir.Orchestrator.stop_listening(orchestrator())
 
@@ -76,6 +86,26 @@ defmodule SymphonyElixirWeb.DashboardLive do
     {:noreply,
      socket
      |> put_flash(:info, "Force stop requested: #{inspect(result)}")
+     |> refresh_payload()}
+  end
+
+  @impl true
+  def handle_event("request_nap", _params, socket) do
+    result = SymphonyElixir.Orchestrator.request_nap(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Take a nap requested: #{inspect(result)}")
+     |> refresh_payload()}
+  end
+
+  @impl true
+  def handle_event("request_day_dreaming", _params, socket) do
+    result = SymphonyElixir.Orchestrator.request_day_dreaming(orchestrator())
+
+    {:noreply,
+     socket
+     |> put_flash(:info, "Day dreaming requested: #{inspect(result)}")
      |> refresh_payload()}
   end
 
@@ -129,12 +159,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
               <p class="metric-label">
                 Listening:
                 <span class={listening_badge_class(@payload)}>
-                  <%= if listening_enabled?(@payload), do: "enabled", else: "disabled" %>
+                  <%= listening_label(@payload) %>
                 </span>
               </p>
             </div>
             <div class="button-row">
               <button class="subtle-button" phx-click="start_listening">Start listening</button>
+              <button class="subtle-button" phx-click="start_refine_only_listening">Listen refinement only</button>
+              <button class="subtle-button" phx-click="request_nap">Take a nap</button>
+              <button class="subtle-button" phx-click="request_day_dreaming">Day dreaming</button>
               <button class="subtle-button" phx-click="stop_listening">Stop listening</button>
               <button
                 class="subtle-button"
@@ -142,6 +175,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
                 data-confirm="Force stop all active agents and roll back Symphony-owned Linear state transitions when safe?"
               >Force stop all agents</button>
             </div>
+          </div>
+          <div class="runtime-task-status">
+            <span class="metric-label">nap: <span class="mono"><%= get_in(@payload, [:operator_tasks, :nap, :status]) || "idle" %></span></span>
+            <span :if={operator_summary(@payload, :nap)} class="metric-label">
+              nap summary:
+              <span class="mono"><%= operator_summary_text(operator_summary(@payload, :nap)) %></span>
+            </span>
+            <span class="metric-label">day dreaming: <span class="mono"><%= get_in(@payload, [:operator_tasks, :day_dreaming, :status]) || "idle" %></span></span>
+            <span :if={operator_summary(@payload, :day_dreaming)} class="metric-label">
+              day dreaming summary:
+              <span class="mono"><%= operator_summary_text(operator_summary(@payload, :day_dreaming)) %></span>
+            </span>
           </div>
         </section>
 
@@ -453,6 +498,17 @@ defmodule SymphonyElixirWeb.DashboardLive do
     </section>
     """
   end
+
+  defp operator_summary(payload, kind), do: get_in(payload, [:operator_tasks, kind, :summary])
+
+  defp operator_summary_text(summary) when is_map(summary) do
+    created = Map.get(summary, :created) || Map.get(summary, "created") || 0
+    skipped = Map.get(summary, :skipped) || Map.get(summary, "skipped") || 0
+    failed = Map.get(summary, :failed) || Map.get(summary, "failed") || 0
+    "created #{created}, skipped #{skipped}, failed #{failed}"
+  end
+
+  defp operator_summary_text(_summary), do: "n/a"
 
   defp load_payload do
     Presenter.state_payload(orchestrator(), snapshot_timeout_ms())

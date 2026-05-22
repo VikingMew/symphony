@@ -94,8 +94,49 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   }
   """
 
+  @issue_create_context_query """
+  query SymphonyLinearIssueCreateContext($projectSlug: String!) {
+    projects(filter: {slugId: {eq: $projectSlug}}, first: 1) {
+      nodes {
+        id
+        name
+        teams(first: 5) {
+          nodes {
+            id
+            name
+            states(first: 100) {
+              nodes {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  """
+
+  @issue_create_mutation """
+  mutation SymphonyLinearIssueCreate($input: IssueCreateInput!) {
+    issueCreate(input: $input) {
+      success
+      issue {
+        id
+        identifier
+        title
+        url
+        state {
+          name
+        }
+      }
+    }
+  }
+  """
+
   @read_tool "linear_task_read"
   @update_tool "linear_task_update"
+  @issue_create_tool "linear_issue_create"
 
   @read_schema %{
     "type" => "object",
@@ -147,6 +188,21 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @issue_create_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["title", "problem", "evidence", "why_it_matters", "suggested_direction", "category"],
+    "properties" => %{
+      "title" => %{"type" => "string", "description" => "Concise backlog issue title."},
+      "problem" => %{"type" => "string", "description" => "Problem or opportunity statement."},
+      "evidence" => %{"type" => "string", "description" => "Concrete evidence from repository code or docs."},
+      "why_it_matters" => %{"type" => "string", "description" => "Why this should become backlog work."},
+      "suggested_direction" => %{"type" => "string", "description" => "Suggested fix or product direction."},
+      "category" => %{"type" => "string", "description" => "Finding category."},
+      "source_run_id" => %{"type" => ["string", "null"], "description" => "Source nap/day dreaming run id."}
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
@@ -155,6 +211,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
       @update_tool ->
         execute_task_update(arguments, opts)
+
+      @issue_create_tool ->
+        execute_issue_create(arguments, opts)
 
       other ->
         failure_response(%{
@@ -178,6 +237,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @update_tool,
         "description" => "Update the current Linear task through Symphony's restricted task API: description, comment, result, and allowed state transition.",
         "inputSchema" => @update_schema
+      },
+      %{
+        "name" => @issue_create_tool,
+        "description" => "Create a new backlog Linear issue through Symphony's restricted issue-creation policy. Only nap and day_dreaming profiles may use it.",
+        "inputSchema" => @issue_create_schema
       }
     ]
   end
@@ -203,6 +267,66 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     else
       {:error, reason} ->
         failure_response(tool_error_payload(@update_tool, reason))
+    end
+  end
+
+  defp execute_issue_create(arguments, opts) do
+    creator = Keyword.get(opts, :issue_creator, fn payload -> default_issue_creator(payload, opts) end)
+
+    with {:ok, profile} <- profile_from_opts(opts),
+         :ok <- validate_issue_create_profile(profile),
+         {:ok, payload} <- normalize_issue_create_arguments(arguments),
+         {:ok, result} <- creator.(payload) do
+      success_response(result)
+    else
+      {:error, reason} ->
+        failure_response(tool_error_payload(@issue_create_tool, reason))
+    end
+  end
+
+  defp validate_issue_create_profile(profile) when profile in ["nap", "day_dreaming"], do: :ok
+  defp validate_issue_create_profile(profile), do: {:error, {:issue_create_not_allowed, profile}}
+
+  defp blank_string?(value), do: !is_binary(value) or String.trim(value) == ""
+
+  defp normalize_issue_create_arguments(arguments) when is_map(arguments) do
+    payload =
+      arguments
+      |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
+      |> Map.take(["title", "problem", "evidence", "why_it_matters", "suggested_direction", "category", "source_run_id"])
+
+    required = ["title", "problem", "evidence", "why_it_matters", "suggested_direction", "category"]
+
+    cond do
+      Enum.any?(required, &blank_string?(Map.get(payload, &1))) ->
+        {:error, :invalid_issue_create_payload}
+
+      payload |> Map.values() |> Enum.any?(&(is_binary(&1) and String.length(&1) > 8_000)) ->
+        {:error, :issue_create_payload_too_large}
+
+      true ->
+        {:ok, payload}
+    end
+  end
+
+  defp normalize_issue_create_arguments(_arguments), do: {:error, :invalid_issue_create_payload}
+
+  defp default_issue_creator(payload, opts) do
+    settings = Config.settings!()
+    project_slug = settings.tracker.project_slug
+    backlog_state = get_in(settings.workflow, ["backlog_state"]) || "Backlog"
+
+    with project_slug when is_binary(project_slug) and project_slug != "" <- project_slug,
+         {:ok, context} <- graphql(opts, @issue_create_context_query, %{"projectSlug" => project_slug}),
+         {:ok, project, team, state} <- issue_create_context(context, backlog_state),
+         input <- issue_create_input(payload, project, team, state),
+         {:ok, response} <- graphql(opts, @issue_create_mutation, %{"input" => input}) do
+      normalize_issue_create_response(response)
+    else
+      nil -> {:error, :missing_linear_project_slug}
+      "" -> {:error, :missing_linear_project_slug}
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :linear_issue_create_context_unavailable}
     end
   end
 
@@ -265,6 +389,69 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   catch
     {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
   end
+
+  defp issue_create_context(response, backlog_state) do
+    with [project | _] <- get_in(response, ["data", "projects", "nodes"]),
+         teams when is_list(teams) <- get_in(project, ["teams", "nodes"]),
+         {team, state} <- find_team_state(teams, backlog_state) do
+      {:ok, project, team, state}
+    else
+      nil -> {:error, {:linear_state_not_found, backlog_state}}
+      [] -> {:error, :linear_project_not_found}
+      _ -> {:error, :linear_issue_create_context_unavailable}
+    end
+  end
+
+  defp find_team_state(teams, backlog_state) do
+    Enum.find_value(teams, fn team ->
+      state =
+        team
+        |> get_in(["states", "nodes"])
+        |> case do
+          states when is_list(states) -> Enum.find(states, &(Map.get(&1, "name") == backlog_state))
+          _ -> nil
+        end
+
+      if state, do: {team, state}
+    end)
+  end
+
+  defp issue_create_input(payload, project, team, state) do
+    %{
+      "teamId" => Map.fetch!(team, "id"),
+      "projectId" => Map.fetch!(project, "id"),
+      "stateId" => Map.fetch!(state, "id"),
+      "title" => Map.fetch!(payload, "title"),
+      "description" => issue_create_description(payload)
+    }
+  end
+
+  defp issue_create_description(payload) do
+    [
+      {"Problem", Map.get(payload, "problem")},
+      {"Evidence", Map.get(payload, "evidence")},
+      {"Why it matters", Map.get(payload, "why_it_matters")},
+      {"Suggested direction", Map.get(payload, "suggested_direction")},
+      {"Category", Map.get(payload, "category")},
+      {"Source run", Map.get(payload, "source_run_id")}
+    ]
+    |> Enum.reject(fn {_label, value} -> is_nil(value) or (is_binary(value) and String.trim(value) == "") end)
+    |> Enum.map_join("\n\n", fn {label, value} -> "### #{label}\n#{value}" end)
+  end
+
+  defp normalize_issue_create_response(%{"data" => %{"issueCreate" => %{"success" => true, "issue" => issue}}}) do
+    {:ok,
+     %{
+       "id" => Map.get(issue, "id"),
+       "identifier" => Map.get(issue, "identifier"),
+       "title" => Map.get(issue, "title"),
+       "url" => Map.get(issue, "url"),
+       "state" => get_in(issue, ["state", "name"])
+     }}
+  end
+
+  defp normalize_issue_create_response(%{"errors" => errors}), do: {:error, {:linear_graphql_errors, errors}}
+  defp normalize_issue_create_response(payload), do: {:error, {:unexpected_issue_create_payload, payload}}
 
   defp issue_id_from_opts(opts) do
     case Keyword.get(opts, :issue) do
@@ -553,6 +740,18 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "reason" => inspect(reason)
       }
     }
+  end
+
+  defp tool_error_payload(@issue_create_tool, {:issue_create_not_allowed, profile}) do
+    %{"error" => %{"message" => "`linear_issue_create` is not allowed in workflow profile `#{profile}`."}}
+  end
+
+  defp tool_error_payload(@issue_create_tool, :invalid_issue_create_payload) do
+    %{"error" => %{"message" => "`linear_issue_create` requires non-empty title, problem, evidence, why_it_matters, suggested_direction, and category."}}
+  end
+
+  defp tool_error_payload(@issue_create_tool, :issue_create_payload_too_large) do
+    %{"error" => %{"message" => "`linear_issue_create` payload is too large."}}
   end
 
   defp tool_error_payload(_tool, reason) do

@@ -57,7 +57,9 @@ defmodule SymphonyElixir.Orchestrator do
       codex_rate_limits: nil,
       codex_rate_limit_observation: nil,
       last_config_error: nil,
-      listening?: false
+      listening?: false,
+      listening_mode: :not_listening,
+      operator_tasks: %{}
     ]
   end
 
@@ -150,7 +152,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   def handle_info(:run_poll_cycle, state) do
     state = refresh_runtime_config(state)
-    state = if state.listening?, do: maybe_dispatch(state), else: state
+    state = if listening?(state), do: maybe_dispatch(state), else: state
     state = schedule_tick(state, state.poll_interval_ms)
     state = %{state | poll_check_in_progress: false}
 
@@ -171,7 +173,10 @@ defmodule SymphonyElixir.Orchestrator do
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
 
-        state = handle_worker_down_reason(state, issue_id, running_entry, reason, session_id)
+        state =
+          state
+          |> handle_worker_down_reason(issue_id, running_entry, reason, session_id)
+          |> maybe_start_queued_operator_tasks()
 
         Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} exit=#{agent_exit_summary(reason, running_entry)}")
 
@@ -509,13 +514,19 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  @doc false
-  @spec reconcile_issue_states_for_test([Issue.t()], term()) :: term()
-  def reconcile_issue_states_for_test(issues, %State{} = state) when is_list(issues) do
+  @doc """
+  Reconciles already-refreshed issue states against the current runtime state.
+
+  This is a side-effecting runtime boundary used by the orchestrator and
+  integration tests. It may stop active tasks and clean workspaces according to
+  the configured active and terminal state sets.
+  """
+  @spec reconcile_issue_states([Issue.t()], term()) :: term()
+  def reconcile_issue_states(issues, %State{} = state) when is_list(issues) do
     reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
   end
 
-  def reconcile_issue_states_for_test(issues, state) when is_list(issues) do
+  def reconcile_issue_states(issues, state) when is_list(issues) do
     reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
   end
 
@@ -801,7 +812,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp terminate_task(_pid), do: :ok
 
   defp choose_issues(issues, state) do
-    dispatch_settings = dispatch_policy_settings()
+    dispatch_settings = dispatch_policy_settings(state)
     worker_settings = worker_policy_settings()
 
     issues
@@ -839,17 +850,35 @@ defmodule SymphonyElixir.Orchestrator do
     |> DispatchPolicy.normalized_state_set()
   end
 
-  defp dispatch_policy_settings do
+  defp dispatch_policy_settings(%State{} = state) do
     config = Config.settings!()
 
     %{
       active_states: DispatchPolicy.normalized_state_set(config.tracker.active_states),
       terminal_states: DispatchPolicy.normalized_state_set(config.tracker.terminal_states),
+      refinement_states: refinement_state_set(config),
+      listening_mode: listening_mode_atom(state),
       max_concurrent_agents: config.agent.max_concurrent_agents,
       max_concurrent_agents_for_state: &Config.max_concurrent_agents_for_state/1,
       workflow_executor_for_state: &Config.workflow_executor_for_state/1,
       human_review_state?: &Config.human_review_state?/1
     }
+  end
+
+  defp dispatch_policy_settings(_state), do: dispatch_policy_settings(%State{listening?: true, listening_mode: :listening_all})
+
+  defp refinement_state_set(config) do
+    routed_states =
+      config.workflow
+      |> Map.get("states", %{})
+      |> Enum.flat_map(fn
+        {state_name, %{"profile" => "refinement"}} when is_binary(state_name) -> [state_name]
+        {state_name, %{profile: "refinement"}} when is_binary(state_name) -> [state_name]
+        _ -> []
+      end)
+      |> DispatchPolicy.normalized_state_set()
+
+    if MapSet.size(routed_states) > 0, do: routed_states, else: MapSet.new(["refining"])
   end
 
   defp worker_policy_settings do
@@ -865,7 +894,7 @@ defmodule SymphonyElixir.Orchestrator do
     case DispatchPolicy.revalidate_issue_for_dispatch(
            issue,
            &Tracker.fetch_issue_states_by_ids/1,
-           dispatch_policy_settings()
+           dispatch_policy_settings(state)
          ) do
       {:ok, %Issue{} = refreshed_issue} ->
         do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host)
@@ -1056,7 +1085,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue_lookup(%Issue{} = issue, state, issue_id, attempt, metadata) do
-    dispatch_settings = dispatch_policy_settings()
+    dispatch_settings = dispatch_policy_settings(state)
     terminal_states = Map.fetch!(dispatch_settings, :terminal_states)
 
     cond do
@@ -1111,7 +1140,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata) do
-    dispatch_settings = dispatch_policy_settings()
+    dispatch_settings = dispatch_policy_settings(state)
     worker_settings = worker_policy_settings()
 
     if DispatchPolicy.retry_candidate_issue?(issue, dispatch_settings) and
@@ -1204,12 +1233,36 @@ defmodule SymphonyElixir.Orchestrator do
     if Process.whereis(server), do: GenServer.call(server, :start_listening), else: :unavailable
   end
 
+  @spec start_refine_only_listening() :: map() | :unavailable
+  def start_refine_only_listening, do: start_refine_only_listening(__MODULE__)
+
+  @spec start_refine_only_listening(GenServer.server()) :: map() | :unavailable
+  def start_refine_only_listening(server) do
+    if Process.whereis(server), do: GenServer.call(server, :start_refine_only_listening), else: :unavailable
+  end
+
   @spec stop_listening() :: map() | :unavailable
   def stop_listening, do: stop_listening(__MODULE__)
 
   @spec stop_listening(GenServer.server()) :: map() | :unavailable
   def stop_listening(server) do
     if Process.whereis(server), do: GenServer.call(server, :stop_listening), else: :unavailable
+  end
+
+  @spec request_nap() :: map() | :unavailable
+  def request_nap, do: request_nap(__MODULE__)
+
+  @spec request_nap(GenServer.server()) :: map() | :unavailable
+  def request_nap(server) do
+    if Process.whereis(server), do: GenServer.call(server, {:request_operator_task, :nap}), else: :unavailable
+  end
+
+  @spec request_day_dreaming() :: map() | :unavailable
+  def request_day_dreaming, do: request_day_dreaming(__MODULE__)
+
+  @spec request_day_dreaming(GenServer.server()) :: map() | :unavailable
+  def request_day_dreaming(server) do
+    if Process.whereis(server), do: GenServer.call(server, {:request_operator_task, :day_dreaming}), else: :unavailable
   end
 
   @spec force_stop_all() :: map() | :unavailable
@@ -1309,8 +1362,10 @@ defmodule SymphonyElixir.Orchestrator do
        rate_limits: Map.get(state, :codex_rate_limits),
        rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
        config_error: config_error_payload(state.last_config_error),
+       operator_tasks: operator_tasks_payload(state),
        polling: %{
-         listening?: state.listening? == true,
+         listening?: listening?(state),
+         listening_mode: listening_mode_string(state),
          checking?: state.poll_check_in_progress == true,
          next_poll_in_ms: next_poll_in_ms(state.next_poll_due_at_ms, now_ms),
          poll_interval_ms: state.poll_interval_ms
@@ -1319,14 +1374,15 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:request_refresh, _from, state) do
-    if state.listening? != true do
+    if !listening?(state) do
       {:reply,
        %{
          queued: false,
          coalesced: true,
          requested_at: DateTime.utc_now(),
          operations: [],
-         listening?: false
+         listening?: false,
+         listening_mode: "not_listening"
        }, state}
     else
       do_handle_request_refresh(state)
@@ -1336,30 +1392,49 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_call(:start_listening, _from, state) do
     case runtime_config() do
       {:ok, _config} ->
-        state = %{state | listening?: true, last_config_error: nil}
+        state = %{state | listening?: true, listening_mode: :listening_all, last_config_error: nil}
         state = schedule_tick(state, 0)
-        persist_event("orchestrator.listening_started", nil, %{})
+        persist_event("orchestrator.listening_started", nil, %{mode: "listening_all"})
         notify_dashboard()
-        {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+        {:reply, %{listening?: true, listening_mode: "listening_all", changed_at: DateTime.utc_now()}, state}
 
       {:error, reason} ->
-        state = log_config_error_once(%{state | listening?: false, poll_check_in_progress: false}, reason)
+        state = log_config_error_once(%{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}, reason)
         notify_dashboard()
-        {:reply, %{listening?: false, error: inspect(reason), changed_at: DateTime.utc_now()}, state}
+        {:reply, %{listening?: false, listening_mode: "not_listening", error: inspect(reason), changed_at: DateTime.utc_now()}, state}
+    end
+  end
+
+  def handle_call(:start_refine_only_listening, _from, state) do
+    case runtime_config() do
+      {:ok, _config} ->
+        state = %{state | listening?: true, listening_mode: :listening_refine_only, last_config_error: nil}
+        state = schedule_tick(state, 0)
+        persist_event("orchestrator.listening_started", nil, %{mode: "listening_refine_only"})
+        notify_dashboard()
+        {:reply, %{listening?: true, listening_mode: "listening_refine_only", changed_at: DateTime.utc_now()}, state}
+
+      {:error, reason} ->
+        state = log_config_error_once(%{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}, reason)
+        notify_dashboard()
+        {:reply, %{listening?: false, listening_mode: "not_listening", error: inspect(reason), changed_at: DateTime.utc_now()}, state}
     end
   end
 
   def handle_call(:stop_listening, _from, state) do
-    state = %{state | listening?: false, poll_check_in_progress: false}
-    persist_event("orchestrator.listening_stopped", nil, %{})
+    previous_mode = listening_mode_string(state)
+    state = %{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}
+    persist_event("orchestrator.listening_stopped", nil, %{previous_mode: previous_mode})
     notify_dashboard()
-    {:reply, %{listening?: false, changed_at: DateTime.utc_now()}, state}
+    {:reply, %{listening?: false, listening_mode: "not_listening", changed_at: DateTime.utc_now()}, state}
   end
 
   def handle_call(:force_stop_all, _from, state) do
     {state, rollback_results} =
       state
       |> Map.put(:listening?, false)
+      |> Map.put(:listening_mode, :not_listening)
+      |> clear_operator_tasks(:cancelled)
       |> cancel_retry_timers()
       |> force_stop_running_entries()
 
@@ -1370,11 +1445,19 @@ defmodule SymphonyElixir.Orchestrator do
     {:reply,
      %{
        listening?: false,
+       listening_mode: "not_listening",
        stopped_agents: length(rollback_results),
        cancelled_tasks: cancelled_tasks,
        rollback_results: rollback_results,
        changed_at: DateTime.utc_now()
      }, state}
+  end
+
+  def handle_call({:request_operator_task, kind}, _from, state) when kind in [:nap, :day_dreaming] do
+    {state, task} = request_operator_task(state, kind)
+    persist_event("operator_task.requested", nil, %{kind: to_string(kind), status: task.status, run_id: task.run_id})
+    notify_dashboard()
+    {:reply, operator_task_reply(task), state}
   end
 
   defp do_handle_request_refresh(state) do
@@ -1388,9 +1471,133 @@ defmodule SymphonyElixir.Orchestrator do
        queued: true,
        coalesced: coalesced,
        requested_at: DateTime.utc_now(),
-       operations: ["poll", "reconcile"]
+       operations: ["poll", "reconcile"],
+       listening?: true,
+       listening_mode: listening_mode_string(state)
      }, state}
   end
+
+  defp request_operator_task(%State{} = state, kind) do
+    current = operator_task(state, kind)
+
+    case current.status do
+      status when status in [:queued, :starting, :running] ->
+        {state, current}
+
+      _ ->
+        task = new_operator_task(kind)
+
+        if runtime_busy?(state) do
+          queued = %{task | status: :queued, queued_at: DateTime.utc_now()}
+          {put_operator_task(state, kind, queued), queued}
+        else
+          started = start_operator_task(task)
+          {put_operator_task(state, kind, started), started}
+        end
+    end
+  end
+
+  defp maybe_start_queued_operator_tasks(%State{} = state) do
+    if runtime_busy?(state) do
+      state
+    else
+      Enum.reduce([:nap, :day_dreaming], state, fn kind, state_acc ->
+        task = operator_task(state_acc, kind)
+
+        if task.status == :queued do
+          started = start_operator_task(task)
+          persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
+          put_operator_task(state_acc, kind, started)
+        else
+          state_acc
+        end
+      end)
+    end
+  end
+
+  defp new_operator_task(kind) do
+    %{
+      kind: kind,
+      status: :idle,
+      run_id: "operator-#{kind}-#{System.unique_integer([:positive])}",
+      requested_at: DateTime.utc_now(),
+      queued_at: nil,
+      started_at: nil,
+      finished_at: nil,
+      failure_reason: nil,
+      summary: nil
+    }
+  end
+
+  defp start_operator_task(task) do
+    %{
+      task
+      | status: :running,
+        started_at: DateTime.utc_now(),
+        finished_at: nil,
+        failure_reason: nil,
+        summary: %{created: 0, skipped: 0, failed: 0, issues: []}
+    }
+  end
+
+  defp clear_operator_tasks(%State{} = state, status) do
+    tasks =
+      state.operator_tasks
+      |> Enum.map(fn {kind, task} ->
+        {kind, %{task | status: status, finished_at: DateTime.utc_now(), failure_reason: "force stopped"}}
+      end)
+      |> Map.new()
+
+    %{state | operator_tasks: tasks}
+  end
+
+  defp runtime_busy?(%State{} = state), do: map_size(state.running) > 0
+
+  defp operator_task(%State{} = state, kind) do
+    Map.get(state.operator_tasks || %{}, kind, %{
+      kind: kind,
+      status: :idle,
+      run_id: nil,
+      requested_at: nil,
+      queued_at: nil,
+      started_at: nil,
+      finished_at: nil,
+      failure_reason: nil,
+      summary: nil
+    })
+  end
+
+  defp put_operator_task(%State{} = state, kind, task), do: %{state | operator_tasks: Map.put(state.operator_tasks || %{}, kind, task)}
+
+  defp operator_task_reply(task) do
+    task
+    |> operator_task_payload()
+    |> Map.put(:accepted, true)
+  end
+
+  defp operator_tasks_payload(%State{} = state) do
+    %{
+      nap: operator_task_payload(operator_task(state, :nap)),
+      day_dreaming: operator_task_payload(operator_task(state, :day_dreaming))
+    }
+  end
+
+  defp operator_task_payload(task) do
+    %{
+      kind: to_string(task.kind),
+      status: to_string(task.status),
+      run_id: task.run_id,
+      requested_at: iso8601_or_nil(task.requested_at),
+      queued_at: iso8601_or_nil(task.queued_at),
+      started_at: iso8601_or_nil(task.started_at),
+      finished_at: iso8601_or_nil(task.finished_at),
+      failure_reason: task.failure_reason,
+      summary: task.summary
+    }
+  end
+
+  defp iso8601_or_nil(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp iso8601_or_nil(_value), do: nil
 
   defp cancel_retry_timers(%State{retry_attempts: retry_attempts} = state) do
     Enum.each(retry_attempts, fn
@@ -1701,9 +1908,22 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} ->
         state
         |> log_config_error_once(reason)
-        |> Map.merge(%{listening?: false, poll_check_in_progress: false, max_concurrent_agents: 0})
+        |> Map.merge(%{listening?: false, listening_mode: :not_listening, poll_check_in_progress: false, max_concurrent_agents: 0})
     end
   end
+
+  defp listening?(%State{listening_mode: mode}) when mode in [:listening_all, :listening_refine_only], do: true
+  defp listening?(%State{listening?: true}), do: true
+  defp listening?(_state), do: false
+
+  defp listening_mode_string(%State{listening_mode: :listening_refine_only}), do: "listening_refine_only"
+  defp listening_mode_string(%State{listening_mode: :listening_all}), do: "listening_all"
+  defp listening_mode_string(%State{listening?: true}), do: "listening_all"
+  defp listening_mode_string(_state), do: "not_listening"
+
+  defp listening_mode_atom(%State{listening?: true, listening_mode: :listening_refine_only}), do: :listening_refine_only
+  defp listening_mode_atom(%State{listening?: true}), do: :listening_all
+  defp listening_mode_atom(_state), do: :not_listening
 
   defp runtime_config, do: Config.settings()
 
@@ -1717,7 +1937,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do
-    DispatchPolicy.dispatch_slots_available?(issue, state, dispatch_policy_settings())
+    DispatchPolicy.dispatch_slots_available?(issue, state, dispatch_policy_settings(state))
   end
 
   defp apply_codex_token_delta(

@@ -27,6 +27,7 @@ defmodule SymphonyElixirWeb.Presenter do
           rate_limits: snapshot.rate_limits,
           rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
           linear_status: Health.latest() |> LinearStatusSignal.from_health(),
+          operator_tasks: Map.get(snapshot, :operator_tasks, %{}),
           polling: Map.get(snapshot, :polling, %{listening?: false})
         }
 

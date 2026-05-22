@@ -210,7 +210,14 @@ defmodule SymphonyElixir.StatusDashboard do
 
   defp loggable_fingerprint(:error), do: :snapshot_unavailable
 
-  defp format_snapshot_content(_snapshot_data, _tps, _terminal_columns_override \\ nil), do: ""
+  @doc """
+  Formats a runtime snapshot for the optional terminal status dashboard.
+
+  The current runtime intentionally renders no terminal dashboard content
+  because plain logs and the web dashboard own operator status presentation.
+  """
+  @spec format_snapshot_content(term(), number(), integer() | nil) :: String.t()
+  def format_snapshot_content(_snapshot_data, _tps, _terminal_columns_override \\ nil), do: ""
 
   defp sanitize_retry_error(error) when is_binary(error) do
     error
@@ -225,15 +232,6 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp sanitize_retry_error(_error), do: "retry scheduled"
-
-  @doc false
-  @spec format_snapshot_content_for_test(term(), number()) :: String.t()
-  def format_snapshot_content_for_test(snapshot_data, tps), do: format_snapshot_content(snapshot_data, tps)
-
-  @doc false
-  @spec format_snapshot_content_for_test(term(), number(), integer() | nil) :: String.t()
-  def format_snapshot_content_for_test(snapshot_data, tps, terminal_columns),
-    do: format_snapshot_content(snapshot_data, tps, terminal_columns)
 
   defp snapshot_payload do
     if Process.whereis(Orchestrator) do

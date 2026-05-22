@@ -5,15 +5,16 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   alias SymphonyElixir.Linear.Issue
 
   test "tool_specs advertises restricted Linear task tools" do
-    assert [
-             %{"name" => "linear_task_read", "inputSchema" => %{"type" => "object", "properties" => read_props}},
-             %{"name" => "linear_task_update", "inputSchema" => %{"type" => "object", "properties" => update_props}}
-           ] = DynamicTool.tool_specs()
+    specs = DynamicTool.tool_specs()
+    assert %{"inputSchema" => %{"type" => "object", "properties" => read_props}} = Enum.find(specs, &(&1["name"] == "linear_task_read"))
+    assert %{"inputSchema" => %{"type" => "object", "properties" => update_props}} = Enum.find(specs, &(&1["name"] == "linear_task_update"))
+    assert %{"inputSchema" => %{"type" => "object", "properties" => create_props}} = Enum.find(specs, &(&1["name"] == "linear_issue_create"))
 
     assert Map.has_key?(read_props, "include_activity")
     assert Map.has_key?(read_props, "activity_limit")
     assert Map.has_key?(update_props, "comment")
     assert Map.has_key?(update_props, "target_state")
+    assert Map.has_key?(create_props, "evidence")
     refute Enum.any?(DynamicTool.tool_specs(), &(&1["name"] == "linear_graphql"))
   end
 
@@ -25,7 +26,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_task_read", "linear_task_update"]
+               "supportedTools" => ["linear_task_read", "linear_task_update", "linear_issue_create"]
              }
            }
 
@@ -35,6 +36,109 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "text" => response["output"]
              }
            ]
+  end
+
+  test "linear_issue_create is restricted to nap and day dreaming profiles" do
+    payload = %{
+      "title" => "Code/doc drift",
+      "problem" => "Docs mention a missing surface.",
+      "evidence" => "README says X but code exposes Y.",
+      "why_it_matters" => "Operators get wrong guidance.",
+      "suggested_direction" => "Align docs with runtime.",
+      "category" => "documentation drift"
+    }
+
+    response =
+      DynamicTool.execute("linear_issue_create", payload,
+        profile: "nap",
+        issue_creator: fn created_payload -> {:ok, Map.put(created_payload, "identifier", "CCR-10")} end
+      )
+
+    assert response["success"] == true
+    assert Jason.decode!(response["output"])["identifier"] == "CCR-10"
+
+    rejected =
+      DynamicTool.execute("linear_issue_create", payload,
+        profile: "implementation",
+        issue_creator: fn _payload -> flunk("implementation profile must not create issues") end
+      )
+
+    assert rejected["success"] == false
+    assert Jason.decode!(rejected["output"])["error"]["message"] =~ "not allowed"
+  end
+
+  test "linear_issue_create default path resolves project team backlog state and creates issue" do
+    payload = %{
+      "title" => "Add missing operator cue",
+      "problem" => "The UI does not show the next action.",
+      "evidence" => "Settings validation can fail without a nearby action.",
+      "why_it_matters" => "Operators cannot recover quickly.",
+      "suggested_direction" => "Show a targeted setup action.",
+      "category" => "operator UX",
+      "source_run_id" => "operator-nap-1"
+    }
+
+    response =
+      DynamicTool.execute("linear_issue_create", payload,
+        profile: "nap",
+        graphql: fn query, variables ->
+          cond do
+            query =~ "SymphonyLinearIssueCreateContext" ->
+              assert variables == %{"projectSlug" => "project"}
+
+              {:ok,
+               %{
+                 "data" => %{
+                   "projects" => %{
+                     "nodes" => [
+                       %{
+                         "id" => "project-id",
+                         "teams" => %{
+                           "nodes" => [
+                             %{"id" => "team-id", "states" => %{"nodes" => [%{"id" => "state-backlog", "name" => "Backlog"}]}}
+                           ]
+                         }
+                       }
+                     ]
+                   }
+                 }
+               }}
+
+            query =~ "SymphonyLinearIssueCreate" ->
+              assert %{"input" => input} = variables
+              assert input["projectId"] == "project-id"
+              assert input["teamId"] == "team-id"
+              assert input["stateId"] == "state-backlog"
+              assert input["description"] =~ "Source run"
+
+              {:ok,
+               %{
+                 "data" => %{
+                   "issueCreate" => %{
+                     "success" => true,
+                     "issue" => %{
+                       "id" => "issue-id",
+                       "identifier" => "CCR-99",
+                       "title" => payload["title"],
+                       "url" => "https://linear.app/issue/CCR-99",
+                       "state" => %{"name" => "Backlog"}
+                     }
+                   }
+                 }
+               }}
+          end
+        end
+      )
+
+    assert response["success"] == true
+
+    assert Jason.decode!(response["output"]) == %{
+             "id" => "issue-id",
+             "identifier" => "CCR-99",
+             "title" => payload["title"],
+             "url" => "https://linear.app/issue/CCR-99",
+             "state" => "Backlog"
+           }
   end
 
   test "linear_task_read normalizes defaults and returns reader output" do

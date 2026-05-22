@@ -5,7 +5,7 @@ defmodule SymphonyElixir.CLI do
 
   alias SymphonyElixir.LogFile
 
-  @switches [database_path: :string, logs_root: :string, port: :integer]
+  @switches [database_path: :string, logs_root: :string, no_default_yaml_prompt: :boolean, port: :integer]
   @runtime_apps [
     :logger,
     :crypto,
@@ -59,14 +59,15 @@ defmodule SymphonyElixir.CLI do
   end
 
   @spec run_default(keyword(), deps()) :: :ok | {:error, String.t()}
-  def run_default(_opts, deps) do
+  def run_default(opts, deps) do
     :ok = deps.set_workflow_source.(:database)
+    Application.put_env(:symphony_elixir, :no_default_yaml_prompt, Keyword.get(opts, :no_default_yaml_prompt, false))
     start_database(deps)
   end
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>] [--no-default-yaml-prompt]"
   end
 
   @spec runtime_deps() :: deps()
@@ -83,8 +84,20 @@ defmodule SymphonyElixir.CLI do
   defp start_runtime_application do
     with {:ok, started_apps} <- start_runtime_dependencies(),
          :ok <- SymphonyElixir.DatabaseSetup.prepare(),
+         :ok <- maybe_import_first_run_defaults(),
          {:ok, _pid} <- start_symphony_supervisor() do
       {:ok, started_apps ++ [:symphony_elixir]}
+    end
+  end
+
+  defp maybe_import_first_run_defaults do
+    Ecto.Migrator.with_repo(SymphonyElixir.Repo, fn _repo ->
+      SymphonyElixir.FirstRunDefaults.maybe_import()
+    end)
+    |> case do
+      {:ok, :ok, _apps} -> :ok
+      {:ok, {:error, reason}, _apps} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
     end
   end
 

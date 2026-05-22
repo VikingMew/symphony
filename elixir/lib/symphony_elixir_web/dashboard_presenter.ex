@@ -94,14 +94,37 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
 
   @spec listening_enabled?(map()) :: boolean()
   def listening_enabled?(payload) do
-    payload
-    |> Map.get(:polling, %{})
-    |> Map.get(:listening?, false)
+    listening_mode(payload) != "not_listening"
+  end
+
+  @spec listening_mode(map()) :: String.t()
+  def listening_mode(payload) do
+    polling = Map.get(payload, :polling, %{})
+
+    case Map.get(polling, :listening_mode) || Map.get(polling, "listening_mode") do
+      mode when mode in ["listening_all", :listening_all] -> "listening_all"
+      mode when mode in ["listening_refine_only", :listening_refine_only] -> "listening_refine_only"
+      mode when mode in ["not_listening", :not_listening] -> "not_listening"
+      _ -> if Map.get(polling, :listening?, Map.get(polling, "listening?", false)), do: "listening_all", else: "not_listening"
+    end
+  end
+
+  @spec listening_label(map()) :: String.t()
+  def listening_label(payload) do
+    case listening_mode(payload) do
+      "listening_all" -> "all active work"
+      "listening_refine_only" -> "refinement only"
+      _ -> "disabled"
+    end
   end
 
   @spec listening_badge_class(map()) :: String.t()
   def listening_badge_class(payload) do
-    if listening_enabled?(payload), do: "status-badge status-success", else: "status-badge status-danger"
+    case listening_mode(payload) do
+      "listening_refine_only" -> "status-badge status-warning"
+      "listening_all" -> "status-badge status-success"
+      _ -> "status-badge status-danger"
+    end
   end
 
   @spec history_badge_class(atom()) :: String.t()

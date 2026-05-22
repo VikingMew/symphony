@@ -1584,7 +1584,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          rate_limits: nil
        }}
 
-    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
+    rendered = StatusDashboard.format_snapshot_content(snapshot_data, 0.0)
 
     assert rendered == ""
   end
@@ -1600,7 +1600,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          polling: %{checking?: false, next_poll_in_ms: 2_000, poll_interval_ms: 30_000}
        }}
 
-    waiting_rendered = StatusDashboard.format_snapshot_content_for_test(waiting_snapshot, 0.0)
+    waiting_rendered = StatusDashboard.format_snapshot_content(waiting_snapshot, 0.0)
     assert waiting_rendered == ""
 
     checking_snapshot =
@@ -1613,7 +1613,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          polling: %{checking?: true, next_poll_in_ms: nil, poll_interval_ms: 30_000}
        }}
 
-    checking_rendered = StatusDashboard.format_snapshot_content_for_test(checking_snapshot, 0.0)
+    checking_rendered = StatusDashboard.format_snapshot_content(checking_snapshot, 0.0)
     assert checking_rendered == ""
   end
 
@@ -1627,7 +1627,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          rate_limits: nil
        }}
 
-    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
+    rendered = StatusDashboard.format_snapshot_content(snapshot_data, 0.0)
     plain = Regex.replace(~r/\e\[[0-9;]*m/, rendered, "")
 
     assert plain == ""
@@ -1666,7 +1666,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          rate_limits: nil
        }}
 
-    assert StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0) == ""
+    assert StatusDashboard.format_snapshot_content(snapshot_data, 0.0) == ""
   end
 
   test "status dashboard does not render terminal border chrome" do
@@ -1679,7 +1679,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
          rate_limits: nil
        }}
 
-    rendered = StatusDashboard.format_snapshot_content_for_test(snapshot_data, 0.0)
+    rendered = StatusDashboard.format_snapshot_content(snapshot_data, 0.0)
 
     refute rendered =~ "╭─"
     refute rendered =~ "╰─"

@@ -103,6 +103,14 @@ mise exec -- ./bin/symphony \
 
 Open the dashboard at `http://127.0.0.1:4000/`.
 
+On a fresh database, Symphony can offer to import the checked-in `workflow.yml` and `profiles.yml`
+as the first active database workflow version. This is a one-time import prompt; the YAML files do
+not become runtime sources. To skip the prompt and stay in setup-required mode, start with:
+
+```bash
+mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
+```
+
 ### Docker Images
 
 The Dockerfile exposes four targets from the `elixir/` directory.

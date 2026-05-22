@@ -43,6 +43,23 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
            }) == "worker-a"
   end
 
+  test "refine-only listening dispatches only refinement states" do
+    state = %Orchestrator.State{max_concurrent_agents: 2, running: %{}, claimed: MapSet.new()}
+
+    settings =
+      dispatch_settings(
+        active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
+        listening_mode: :listening_refine_only,
+        refinement_states: ["Refining"]
+      )
+
+    assert DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("merging", "Merging"), state, settings)
+  end
+
   defp issue(id, state, attrs \\ []) do
     struct!(
       Issue,
@@ -61,8 +78,10 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
 
   defp dispatch_settings(opts) do
     %{
-      active_states: DispatchPolicy.normalized_state_set(["Ready", "Needs Review"]),
+      active_states: DispatchPolicy.normalized_state_set(Keyword.get(opts, :active_states, ["Ready", "Needs Review"])),
       terminal_states: DispatchPolicy.normalized_state_set(["Done"]),
+      listening_mode: Keyword.get(opts, :listening_mode, :listening_all),
+      refinement_states: DispatchPolicy.normalized_state_set(Keyword.get(opts, :refinement_states, ["Refining"])),
       max_concurrent_agents: 2,
       max_concurrent_agents_for_state: Keyword.get(opts, :max_for_state, fn _state -> 2 end),
       workflow_executor_for_state: Keyword.get(opts, :executor, fn _state -> "codex_agent" end),

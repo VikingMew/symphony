@@ -1,5 +1,5 @@
 defmodule SymphonyElixir.CLITest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias SymphonyElixir.CLI
 
@@ -62,42 +62,42 @@ defmodule SymphonyElixir.CLITest do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate(["workflow.yml"], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "rejects positional workflow path arguments with --port" do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate(["--port", "4000", "workflow.yml"], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "rejects the removed acknowledgement flag as invalid usage" do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate([@removed_ack_flag], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "rejects blank --database-path" do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate(["--database-path", ""], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "rejects blank --logs-root" do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate(["--logs-root", ""], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "rejects invalid --port" do
     deps = deps(self())
 
     assert {:error, message} = CLI.evaluate(["--port", "-1"], deps)
-    assert message == "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>]"
+    assert message == usage_message()
   end
 
   test "returns startup error when app cannot start" do
@@ -111,6 +111,19 @@ defmodule SymphonyElixir.CLITest do
     assert {:error, message} = CLI.evaluate([], deps)
     assert message =~ "Failed to start Symphony"
     assert message =~ ":boom"
+  end
+
+  test "accepts --no-default-yaml-prompt" do
+    deps = deps(self())
+
+    assert :ok = CLI.evaluate(["--no-default-yaml-prompt"], deps)
+    assert Application.get_env(:symphony_elixir, :no_default_yaml_prompt) == true
+    assert_received {:workflow_source, :database}
+    assert_received :started
+  end
+
+  defp usage_message do
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>] [--no-default-yaml-prompt]"
   end
 
   defp deps(parent, overrides \\ []) do

@@ -53,7 +53,7 @@ defmodule SymphonyElixirWeb.Router do
     live("/runs/:id", AdminLive, :run_detail)
     live("/issues/:identifier", AdminLive, :issue_detail)
     live("/events", AdminLive, :events)
-    live("/workers", AdminLive, :workers)
+    live("/workers", WorkersLive, :index)
     live("/diagnostics/linear", LinearDiagnosticsLive, :index)
     live("/settings", AdminLive, :settings)
     live("/settings/projects", AdminLive, :settings_projects)

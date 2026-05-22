@@ -174,6 +174,24 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
+  @doc """
+  Fetches issue state snapshots using an injected GraphQL function.
+
+  This public boundary is useful for alternate clients and focused tests that
+  need the same pagination/normalization logic without making network calls.
+  """
+  @spec fetch_issue_states_by_ids([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_issue_states_by_ids(issue_ids, graphql_fun)
+      when is_list(issue_ids) and is_function(graphql_fun, 2) do
+    ids = Enum.uniq(issue_ids)
+
+    case ids do
+      [] -> {:ok, []}
+      ids -> do_fetch_issue_states(ids, nil, graphql_fun)
+    end
+  end
+
   @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
   def graphql(query, variables \\ %{}, opts \\ [])
       when is_binary(query) and is_map(variables) and is_list(opts) do
@@ -230,26 +248,6 @@ defmodule SymphonyElixir.Linear.Client do
 
       {:error, reason} ->
         {:error, reason}
-    end
-  end
-
-  @doc false
-  @spec request_options_for_test(String.t()) :: keyword()
-  def request_options_for_test(url) when is_binary(url), do: request_options(url)
-
-  @doc false
-  @spec fetch_issue_states_by_ids_for_test([String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
-          {:ok, [Issue.t()]} | {:error, term()}
-  def fetch_issue_states_by_ids_for_test(issue_ids, graphql_fun)
-      when is_list(issue_ids) and is_function(graphql_fun, 2) do
-    ids = Enum.uniq(issue_ids)
-
-    case ids do
-      [] ->
-        {:ok, []}
-
-      ids ->
-        do_fetch_issue_states(ids, nil, graphql_fun)
     end
   end
 
@@ -448,7 +446,11 @@ defmodule SymphonyElixir.Linear.Client do
     )
   end
 
-  defp request_options(endpoint) when is_binary(endpoint) do
+  @doc """
+  Returns Req connection options for a Linear endpoint, including runtime proxy settings.
+  """
+  @spec request_options(String.t()) :: keyword()
+  def request_options(endpoint) when is_binary(endpoint) do
     RuntimeProxy.connect_options(endpoint, timeout: 30_000)
   end
 

@@ -77,23 +77,51 @@ defmodule SymphonyElixir.ExtensionsTest do
     end
 
     def handle_call(:start_listening, _from, state) do
-      state = update_snapshot_listening(state, true)
-      {:reply, %{listening?: true, changed_at: DateTime.utc_now()}, state}
+      state = update_snapshot_listening(state, true, "listening_all")
+      {:reply, %{listening?: true, listening_mode: "listening_all", changed_at: DateTime.utc_now()}, state}
+    end
+
+    def handle_call(:start_refine_only_listening, _from, state) do
+      state = update_snapshot_listening(state, true, "listening_refine_only")
+      {:reply, %{listening?: true, listening_mode: "listening_refine_only", changed_at: DateTime.utc_now()}, state}
     end
 
     def handle_call(:stop_listening, _from, state) do
-      state = update_snapshot_listening(state, false)
-      {:reply, %{listening?: false, changed_at: DateTime.utc_now()}, state}
+      state = update_snapshot_listening(state, false, "not_listening")
+      {:reply, %{listening?: false, listening_mode: "not_listening", changed_at: DateTime.utc_now()}, state}
     end
 
     def handle_call(:force_stop_all, _from, state) do
-      state = update_snapshot_listening(state, false)
-      {:reply, %{listening?: false, stopped_count: 0, rollback_results: []}, state}
+      state = update_snapshot_listening(state, false, "not_listening")
+      {:reply, %{listening?: false, listening_mode: "not_listening", stopped_count: 0, rollback_results: []}, state}
     end
 
-    defp update_snapshot_listening(state, listening?) do
+    def handle_call({:request_operator_task, kind}, _from, state) do
+      task = %{
+        kind: to_string(kind),
+        status: "running",
+        run_id: "operator-#{kind}-1",
+        requested_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        queued_at: nil,
+        started_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        finished_at: nil,
+        failure_reason: nil,
+        summary: %{created: 0, skipped: 0, failed: 0, issues: []}
+      }
+
+      state =
+        Keyword.update!(state, :snapshot, fn snapshot ->
+          update_in(snapshot, [:operator_tasks], fn tasks ->
+            Map.put(tasks || %{}, kind, task)
+          end)
+        end)
+
+      {:reply, Map.put(task, :accepted, true), state}
+    end
+
+    defp update_snapshot_listening(state, listening?, mode) do
       Keyword.update!(state, :snapshot, fn snapshot ->
-        Map.put(snapshot, :polling, %{listening?: listening?})
+        Map.put(snapshot, :polling, %{listening?: listening?, listening_mode: mode})
       end)
     end
   end
@@ -408,7 +436,11 @@ defmodule SymphonyElixir.ExtensionsTest do
                "ran_at" => nil,
                "status" => "unknown"
              },
-             "polling" => %{"listening?" => false}
+             "operator_tasks" => %{
+               "nap" => %{"status" => "idle"},
+               "day_dreaming" => %{"status" => "idle"}
+             },
+             "polling" => %{"listening?" => false, "listening_mode" => "not_listening"}
            }
 
     conn = get(build_conn(), "/api/v1/MT-HTTP")
@@ -735,6 +767,10 @@ defmodule SymphonyElixir.ExtensionsTest do
     {:ok, view, html} = live(build_conn(), "/")
     assert html =~ "Listening:"
     assert html =~ "disabled"
+    assert html =~ "Listen refinement only"
+    assert html =~ "Take a nap"
+    assert html =~ "Day dreaming"
+    assert html =~ "nap:"
 
     start_html =
       view
@@ -742,7 +778,15 @@ defmodule SymphonyElixir.ExtensionsTest do
       |> render_click()
 
     assert start_html =~ "Listening:"
-    assert start_html =~ "enabled"
+    assert start_html =~ "all active work"
+
+    refine_html =
+      view
+      |> element("button[phx-click='start_refine_only_listening']")
+      |> render_click()
+
+    assert refine_html =~ "Listening:"
+    assert refine_html =~ "refinement only"
 
     stop_html =
       view
@@ -751,6 +795,22 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert stop_html =~ "Listening:"
     assert stop_html =~ "disabled"
+
+    nap_html =
+      view
+      |> element("button[phx-click='request_nap']")
+      |> render_click()
+
+    assert nap_html =~ "nap:"
+    assert nap_html =~ "running"
+
+    day_dreaming_html =
+      view
+      |> element("button[phx-click='request_day_dreaming']")
+      |> render_click()
+
+    assert day_dreaming_html =~ "day dreaming:"
+    assert day_dreaming_html =~ "running"
   end
 
   test "dashboard keeps session history expanded across live updates" do
@@ -1012,7 +1072,11 @@ defmodule SymphonyElixir.ExtensionsTest do
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}},
-      polling: %{listening?: false}
+      polling: %{listening?: false, listening_mode: "not_listening"},
+      operator_tasks: %{
+        nap: %{status: "idle"},
+        day_dreaming: %{status: "idle"}
+      }
     }
   end
 

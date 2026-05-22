@@ -300,7 +300,7 @@ defmodule SymphonyElixir.AgentRunner do
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
-      case Policy.continue_with_issue?(issue, issue_state_fetcher, Config.settings!().tracker.active_states) do
+      case Policy.continue_with_issue?(issue, issue_state_fetcher, continuation_settings(issue)) do
         {:continue, refreshed_issue} when turn_number < max_turns ->
           Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
 
@@ -320,13 +320,30 @@ defmodule SymphonyElixir.AgentRunner do
 
           :ok
 
-        {:done, _refreshed_issue} ->
+        {:done, refreshed_issue, reason} ->
+          Logger.info(
+            "Stopping agent continuation for #{issue_context(refreshed_issue)} reason=#{reason} state=#{inspect(refreshed_issue.state)} profile=#{inspect(Config.workflow_profile_for_state(refreshed_issue.state))}"
+          )
+
           :ok
 
         {:error, reason} ->
           {:error, reason}
       end
     end
+  end
+
+  defp continuation_settings(%Issue{state: state}) do
+    config = Config.settings!()
+
+    %{
+      active_states: config.tracker.active_states,
+      terminal_states: config.tracker.terminal_states,
+      current_profile: Config.workflow_profile_for_state(state),
+      profile_for_state: &Config.workflow_profile_for_state/1,
+      executor_for_state: &Config.workflow_executor_for_state/1,
+      human_review_state?: &Config.human_review_state?/1
+    }
   end
 
   defp build_turn_prompt(issue, opts, 1, _max_turns) do
