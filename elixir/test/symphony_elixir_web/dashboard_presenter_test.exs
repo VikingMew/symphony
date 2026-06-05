@@ -18,10 +18,12 @@ defmodule SymphonyElixirWeb.DashboardPresenterTest do
 
   test "returns dashboard badge classes and labels" do
     assert DashboardPresenter.rate_limit_status_label(:available) == "available"
+    assert DashboardPresenter.rate_limit_status_label(:blocked) == "paused"
     assert DashboardPresenter.rate_limit_status_label(:unrecognized) == "unrecognized"
     assert DashboardPresenter.rate_limit_status_label(:missing) == "not received"
 
     assert DashboardPresenter.rate_limit_badge_class(:available) == "status-badge status-success"
+    assert DashboardPresenter.rate_limit_badge_class(:blocked) == "status-badge status-danger"
     assert DashboardPresenter.rate_limit_badge_class(:unrecognized) == "status-badge status-warning"
     assert DashboardPresenter.rate_limit_badge_class(nil) == "status-badge status-info"
 

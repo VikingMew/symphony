@@ -245,6 +245,10 @@ defmodule SymphonyElixir.Config.Schema do
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:read_timeout_ms, :integer, default: 5_000)
       field(:stall_timeout_ms, :integer, default: 300_000)
+      field(:rate_limit_gate_enabled, :boolean, default: true)
+      field(:rate_limit_gate_5h_threshold_percent, :float, default: 5.0)
+      field(:rate_limit_gate_7d_threshold_percent, :float, default: 3.0)
+      field(:rate_limit_gate_post_reset_delay_ms, :integer, default: 1_200_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -260,7 +264,11 @@ defmodule SymphonyElixir.Config.Schema do
           :turn_sandbox_policy,
           :turn_timeout_ms,
           :read_timeout_ms,
-          :stall_timeout_ms
+          :stall_timeout_ms,
+          :rate_limit_gate_enabled,
+          :rate_limit_gate_5h_threshold_percent,
+          :rate_limit_gate_7d_threshold_percent,
+          :rate_limit_gate_post_reset_delay_ms
         ],
         empty_values: []
       )
@@ -274,6 +282,9 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
+      |> validate_number(:rate_limit_gate_5h_threshold_percent, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+      |> validate_number(:rate_limit_gate_7d_threshold_percent, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+      |> validate_number(:rate_limit_gate_post_reset_delay_ms, greater_than_or_equal_to: 0)
     end
 
     defp normalize_approval_policy(changeset) do

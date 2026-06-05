@@ -9,9 +9,11 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
   def from_snapshot(snapshot) when is_map(snapshot) do
     rate_limits = Map.get(snapshot, :rate_limits)
     observation = Map.get(snapshot, :rate_limit_observation)
+    gate = Map.get(snapshot, :rate_limit_gate)
 
     status =
       cond do
+        gate_blocked?(gate) -> :blocked
         is_map(rate_limits) -> :available
         rate_limit_observed?(observation) -> :unrecognized
         true -> :not_received
@@ -20,7 +22,8 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
     %{
       status: status,
       snapshot: rate_limits,
-      note: note(status),
+      gate: gate,
+      note: note(status, gate),
       last_codex_event: last_codex_event(snapshot),
       last_codex_timestamp: last_codex_timestamp(snapshot),
       last_codex_message: last_codex_message(snapshot),
@@ -33,9 +36,24 @@ defmodule SymphonyElixirWeb.RateLimitStatus do
 
   def from_snapshot(_snapshot), do: from_snapshot(%{})
 
-  defp note(:available), do: "Upstream Codex rate-limit snapshot received."
-  defp note(:unrecognized), do: "A Codex rate-limit update was received, but Symphony did not recognize its payload shape."
-  defp note(:not_received), do: "No upstream rate-limit snapshot received yet."
+  defp note(:blocked, gate), do: "Dispatch paused by Codex rate-limit headroom: #{gate_note(gate)}"
+  defp note(:available, _gate), do: "Upstream Codex rate-limit snapshot received."
+  defp note(:unrecognized, _gate), do: "A Codex rate-limit update was received, but Symphony did not recognize its payload shape."
+  defp note(:not_received, _gate), do: "No upstream rate-limit snapshot received yet; enforcement is unavailable and dispatch is allowed."
+
+  defp gate_blocked?(%{status: :blocked}), do: true
+  defp gate_blocked?(%{"status" => "blocked"}), do: true
+  defp gate_blocked?(_gate), do: false
+
+  defp gate_note(gate) when is_map(gate) do
+    window = Map.get(gate, :window) || Map.get(gate, "window") || "unknown window"
+    remaining = Map.get(gate, :remaining_percent) || Map.get(gate, "remaining_percent") || "n/a"
+    threshold = Map.get(gate, :threshold_percent) || Map.get(gate, "threshold_percent") || "n/a"
+    resume_after = Map.get(gate, :resume_after) || Map.get(gate, "resume_after") || "n/a"
+    "#{window} remaining #{remaining}% below #{threshold}%; resume after #{resume_after}"
+  end
+
+  defp gate_note(_gate), do: "details unavailable"
 
   defp rate_limit_observed?(%{status: :unrecognized}), do: true
   defp rate_limit_observed?(%{"status" => "unrecognized"}), do: true

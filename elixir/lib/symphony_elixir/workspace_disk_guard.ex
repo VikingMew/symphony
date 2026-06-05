@@ -9,7 +9,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuard do
 
   @spec check(map(), keyword()) :: {:ok, map()} | {:error, map()}
   def check(settings, opts \\ []) when is_map(settings) do
-    min_free_bytes = get_in(settings, [:workspace, :min_free_bytes]) || @default_min_free_bytes
+    min_free_bytes = setting(settings, [:workspace, :min_free_bytes]) || @default_min_free_bytes
     free_bytes_fun = Keyword.get(opts, :free_bytes_fun, &free_bytes/1)
 
     if min_free_bytes <= 0 do
@@ -25,7 +25,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuard do
 
   defp roots(settings) do
     [
-      get_in(settings, [:workspace, :root]),
+      setting(settings, [:workspace, :root]),
       SourcePreparation.repository_base_root(settings),
       SourcePreparation.worktree_base_root(settings)
     ]
@@ -89,4 +89,14 @@ defmodule SymphonyElixir.WorkspaceDiskGuard do
       _ -> {:error, {:invalid_df_output, output}}
     end
   end
+
+  defp setting(value, []), do: value
+
+  defp setting(value, [key | rest]) when is_map(value) do
+    value
+    |> Map.get(key)
+    |> setting(rest)
+  end
+
+  defp setting(_value, _path), do: nil
 end

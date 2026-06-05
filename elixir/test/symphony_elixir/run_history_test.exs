@@ -180,6 +180,175 @@ defmodule SymphonyElixir.RunHistoryTest do
     assert transition.source == :linear
   end
 
+  test "transforms Linear tool call audit events" do
+    [success, failure] =
+      RunHistory.from_events([
+        %{
+          event_type: "linear.tool_call",
+          payload: %{
+            "tool" => "linear_issue_create",
+            "status" => "success",
+            "result" => %{"identifier" => "CCR-10", "url" => "https://linear.app/acme/issue/CCR-10"}
+          },
+          occurred_at: ~U[2026-05-21 00:00:01Z]
+        },
+        %{
+          event_type: "linear.tool_call",
+          payload: %{
+            "tool" => "linear_issue_create",
+            "status" => "failure",
+            "error" => %{"class" => "workflow_profile_unavailable", "message" => "Workflow profile is unavailable for this Codex session."}
+          },
+          occurred_at: ~U[2026-05-21 00:00:02Z]
+        }
+      ])
+
+    assert success.label == "Linear tool success"
+    assert success.detail == "linear_issue_create succeeded: CCR-10 https://linear.app/acme/issue/CCR-10"
+    assert success.source == :linear
+    assert success.severity == :info
+
+    assert failure.label == "Linear tool failure"
+    assert failure.detail == "linear_issue_create failed: workflow_profile_unavailable: Workflow profile is unavailable for this Codex session."
+    assert failure.source == :linear
+    assert failure.severity == :error
+  end
+
+  test "projects completed nap raw events into aligned readable history" do
+    thread_id = "019e5515-c0e1-7092-907b-a2ecdc4c6857"
+    turn_id = "019e5515-c147-7060-ad65-2da33d439cf7"
+
+    history =
+      RunHistory.from_events([
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "notification",
+            "message" => %{
+              "method" => "item/completed",
+              "params" => %{
+                "completedAtMs" => 1_779_544_142_693,
+                "item" => %{
+                  "id" => "msg_0eb22a2fdc89e0f2016a11b04cbb40819189af729271fbbbc4",
+                  "phase" => "final_answer",
+                  "text" => "Created 4 Backlog Linear issues, read-only:\n\n- `CCR-29` Align client model derivation\n- `CCR-30` Remove unused crate",
+                  "type" => "agentMessage"
+                },
+                "threadId" => thread_id,
+                "turnId" => turn_id
+              }
+            }
+          },
+          occurred_at: ~U[2026-05-23 13:49:02Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "notification",
+            "message" => %{
+              "method" => "thread/tokenUsage/updated",
+              "params" => %{
+                "threadId" => thread_id,
+                "turnId" => turn_id,
+                "tokenUsage" => "[REDACTED]"
+              }
+            },
+            "debug" => %{
+              "raw" =>
+                Jason.encode!(%{
+                  "method" => "thread/tokenUsage/updated",
+                  "params" => %{
+                    "threadId" => thread_id,
+                    "turnId" => turn_id,
+                    "tokenUsage" => %{
+                      "total" => %{
+                        "totalTokens" => 1_388_311,
+                        "inputTokens" => 1_381_584,
+                        "outputTokens" => 6_727
+                      }
+                    }
+                  }
+                })
+            }
+          },
+          occurred_at: ~U[2026-05-23 13:49:02Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "notification",
+            "message" => %{
+              "method" => "account/rateLimits/updated",
+              "params" => %{
+                "rateLimits" => %{
+                  "primary" => %{"usedPercent" => 6, "windowDurationMins" => 300},
+                  "secondary" => %{"usedPercent" => 61, "windowDurationMins" => 10080}
+                }
+              }
+            }
+          },
+          occurred_at: ~U[2026-05-23 13:49:02Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "notification",
+            "message" => %{"method" => "thread/status/changed", "params" => %{"threadId" => thread_id, "status" => %{"type" => "idle"}}}
+          },
+          occurred_at: ~U[2026-05-23 13:49:02Z]
+        },
+        %{
+          event_type: "codex.update",
+          payload: %{
+            "event" => "turn_completed",
+            "message" => %{
+              "method" => "turn/completed",
+              "params" => %{
+                "threadId" => thread_id,
+                "turn" => %{
+                  "id" => turn_id,
+                  "status" => "completed",
+                  "completedAt" => 1_779_544_142,
+                  "durationMs" => 193_080
+                }
+              }
+            }
+          },
+          occurred_at: ~U[2026-05-23 13:49:03Z]
+        },
+        %{event_type: "run.completed", payload: %{"failure_reason" => nil, "run_id" => "run-nap"}, occurred_at: ~U[2026-05-23 13:49:04Z]}
+      ])
+
+    final_answer = Enum.find(history, &String.starts_with?(&1.detail, "agent final answer:"))
+    token_usage = Enum.find(history, &String.starts_with?(&1.detail, "thread token usage updated"))
+    rate_limits = Enum.find(history, &String.starts_with?(&1.detail, "rate limits updated:"))
+    thread_idle = Enum.find(history, &(&1.operation == "thread/status/changed"))
+    turn_completed = Enum.find(history, &String.starts_with?(&1.detail, "turn completed"))
+    run_completed = Enum.find(history, &(&1.event == "run.completed"))
+
+    assert final_answer.at == DateTime.from_unix!(1_779_544_142_693, :millisecond)
+    assert final_answer.detail =~ "agent final answer: Created 4 Backlog Linear issues"
+    assert final_answer.metadata["thread_id"] == thread_id
+    assert final_answer.metadata["turn_id"] == turn_id
+    assert final_answer.metadata["session_id"] == "#{thread_id}-#{turn_id}"
+    assert final_answer.metadata["item_id"] == "msg_0eb22a2fdc89e0f2016a11b04cbb40819189af729271fbbbc4"
+
+    assert token_usage.detail == "thread token usage updated (total 1,388,311, in 1,381,584, out 6,727)"
+    assert rate_limits.detail == "rate limits updated: primary 6% / 300m secondary 61% / 10080m"
+    assert thread_idle.detail == "thread/status/changed"
+    assert turn_completed.at == DateTime.from_unix!(1_779_544_142, :second)
+    assert turn_completed.detail == "turn completed (completed) in 3.2m"
+    assert turn_completed.metadata["turn_id"] == turn_id
+    assert run_completed.label == "Run completed"
+
+    summary = RunHistory.summarize(%{status: "completed", attempt: 0}, history)
+
+    assert summary.final_message =~ "Created 4 Backlog Linear issues"
+    assert summary.last_codex_detail =~ "agent final answer: Created 4 Backlog Linear issues"
+    assert "#{thread_id}-#{turn_id}" in summary.sessions
+    assert summary.evidence_quality == :complete
+  end
+
   test "limit keeps the historical query bounded and chronological" do
     TestPersistence.put_events([
       %{run_id: "run-a", event_type: "run.phase", payload: %{"phase" => "two"}, occurred_at: ~U[2026-05-21 00:00:02Z]},

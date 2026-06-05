@@ -9,6 +9,7 @@ defmodule SymphonyElixir.AgentRunner do
     BranchName,
     AgentRunner.Policy,
     Codex.AppServer,
+    Codex.RateLimitGate,
     Config,
     Git,
     Linear.Issue,
@@ -43,6 +44,36 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
+  @spec run_operator(atom(), String.t(), pid() | nil, keyword()) :: :ok | {:error, term()}
+  def run_operator(kind, run_id, codex_update_recipient \\ nil, opts \\ [])
+      when kind in [:nap, :day_dreaming] and is_binary(run_id) do
+    profile = to_string(kind)
+
+    issue = %Issue{
+      id: run_id,
+      identifier: operator_identifier(kind, run_id),
+      title: operator_title(kind),
+      description: operator_description(kind),
+      state: operator_title(kind),
+      labels: ["operator", profile],
+      assigned_to_worker: false
+    }
+
+    worker_host = Policy.selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+    opts = Keyword.put(opts, :operator_profile, profile)
+
+    Logger.info("Starting operator run kind=#{profile} run_id=#{run_id} worker_host=#{worker_host_for_log(worker_host)}")
+
+    case run_operator_on_worker_host(issue, profile, codex_update_recipient, opts, worker_host) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("Operator run failed kind=#{profile} run_id=#{run_id}: #{Policy.failure_summary(reason)}")
+        {:error, reason}
+    end
+  end
+
   defp run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
     Logger.info("Starting worker attempt for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
     emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
@@ -57,6 +88,31 @@ defmodule SymphonyElixir.AgentRunner do
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host, workspace_opts) do
             run_profile(workspace, issue, codex_update_recipient, opts, worker_host)
+          end
+        after
+          Workspace.run_after_run_hook(workspace, issue, worker_host, workspace_opts)
+        end
+
+      {:error, reason} ->
+        emit_phase(issue, :workspace_preparing, :failed, worker_host, opts, %{reason: inspect(reason)})
+        {:error, reason}
+    end
+  end
+
+  defp run_operator_on_worker_host(issue, profile, codex_update_recipient, opts, worker_host) do
+    Logger.info("Starting operator worker attempt for #{issue_context(issue)} profile=#{profile} worker_host=#{worker_host_for_log(worker_host)}")
+    emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
+
+    workspace_opts = [progress_recipient: codex_update_recipient]
+
+    case Workspace.create_for_issue(issue, worker_host, workspace_opts) do
+      {:ok, workspace} ->
+        emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{workspace: workspace})
+        send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
+
+        try do
+          with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host, workspace_opts) do
+            run_operator_codex_turn(workspace, issue, profile, codex_update_recipient, opts, worker_host)
           end
         after
           Workspace.run_after_run_hook(workspace, issue, worker_host, workspace_opts)
@@ -171,6 +227,17 @@ defmodule SymphonyElixir.AgentRunner do
 
     emit_phase(issue, :codex_starting, :started, worker_host, opts, %{workspace: workspace})
 
+    case rate_limit_gate_allows_session_start(opts) do
+      :allow ->
+        start_issue_codex_session(workspace, issue, codex_update_recipient, opts, worker_host, issue_state_fetcher, max_turns)
+
+      {:block, details} ->
+        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{workspace: workspace, reason: inspect({:rate_limit_gate_blocked, details})})
+        {:error, {:codex_rate_limit_gate_blocked, details}}
+    end
+  end
+
+  defp start_issue_codex_session(workspace, issue, codex_update_recipient, opts, worker_host, issue_state_fetcher, max_turns) do
     case AppServer.start_session(workspace, worker_host: worker_host) do
       {:ok, session} ->
         emit_phase(issue, :codex_starting, :completed, worker_host, opts, %{workspace: workspace})
@@ -296,7 +363,8 @@ defmodule SymphonyElixir.AgentRunner do
              prompt,
              issue,
              on_message: codex_message_handler(codex_update_recipient, issue),
-             workspace: workspace
+             workspace: workspace,
+             run_id: Keyword.get(opts, :run_id)
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
@@ -331,6 +399,79 @@ defmodule SymphonyElixir.AgentRunner do
           {:error, reason}
       end
     end
+  end
+
+  defp run_operator_codex_turn(workspace, issue, profile, codex_update_recipient, opts, worker_host) do
+    opts = Keyword.put_new(opts, :codex_update_recipient, codex_update_recipient)
+
+    emit_phase(issue, :codex_starting, :started, worker_host, opts, %{workspace: workspace})
+
+    with :allow <- rate_limit_gate_allows_session_start(opts),
+         {:ok, profile_policy} <- operator_profile_policy(profile),
+         {:ok, app_session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+      emit_phase(issue, :codex_starting, :completed, worker_host, opts, %{workspace: workspace})
+      emit_phase(issue, :codex_running, :started, worker_host, opts, %{workspace: workspace})
+
+      result =
+        try do
+          prompt =
+            PromptBuilder.build_prompt(
+              issue,
+              opts
+              |> Keyword.put(:profile, profile)
+              |> Keyword.put(:profile_policy, profile_policy)
+              |> Keyword.put(:allowed_updates, Config.workflow_allowed_updates(profile))
+            )
+
+          with {:ok, turn_session} <-
+                 AppServer.run_turn(
+                   app_session,
+                   prompt,
+                   issue,
+                   on_message: codex_message_handler(codex_update_recipient, issue),
+                   workspace: workspace,
+                   profile: profile,
+                   operator_kind: profile,
+                   run_id: Keyword.get(opts, :run_id)
+                 ) do
+            Logger.info("Completed operator run for #{issue_context(issue)} profile=#{profile} session_id=#{turn_session[:session_id]} workspace=#{workspace}")
+            :ok
+          end
+        after
+          AppServer.stop_session(app_session)
+        end
+
+      case result do
+        :ok ->
+          emit_phase(issue, :codex_running, :completed, worker_host, opts, %{workspace: workspace})
+
+        {:error, reason} ->
+          emit_phase(issue, :codex_running, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
+      end
+
+      result
+    else
+      {:block, details} ->
+        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{workspace: workspace, reason: inspect({:rate_limit_gate_blocked, details})})
+        {:error, {:codex_rate_limit_gate_blocked, details}}
+
+      {:error, reason} ->
+        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
+        {:error, reason}
+    end
+  end
+
+  defp operator_profile_policy(profile) do
+    case Config.workflow_profile(profile) do
+      nil -> {:error, {:operator_profile_missing, profile}}
+      profile_policy -> {:ok, profile_policy}
+    end
+  end
+
+  defp rate_limit_gate_allows_session_start(opts) do
+    snapshot = Keyword.get(opts, :rate_limit_snapshot)
+    settings = Keyword.get(opts, :rate_limit_settings) || Config.settings!()
+    RateLimitGate.check(snapshot, settings)
   end
 
   defp continuation_settings(%Issue{state: state}) do
@@ -372,6 +513,26 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp worker_host_for_log(nil), do: "local"
   defp worker_host_for_log(worker_host), do: worker_host
+
+  defp operator_identifier(kind, run_id) do
+    suffix =
+      run_id
+      |> String.replace(~r/[^A-Za-z0-9]+/, "-")
+      |> String.trim("-")
+      |> String.slice(-12, 12)
+
+    kind
+    |> to_string()
+    |> String.replace("_", "-")
+    |> String.upcase()
+    |> Kernel.<>("-#{suffix}")
+  end
+
+  defp operator_title(:nap), do: "Nap"
+  defp operator_title(:day_dreaming), do: "Day dreaming"
+
+  defp operator_description(:nap), do: "Audit project context and create focused backlog issues without modifying the repository."
+  defp operator_description(:day_dreaming), do: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"

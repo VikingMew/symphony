@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   alias SymphonyElixir.{
     AgentRunner,
+    Codex.RateLimitGate,
     Codex.Update,
     Config,
     PersistenceProvider,
@@ -55,6 +56,8 @@ defmodule SymphonyElixir.Orchestrator do
       codex_totals: nil,
       codex_rate_limits: nil,
       codex_rate_limit_observation: nil,
+      rate_limit_gate: nil,
+      rate_limit_gate_event_fingerprint: nil,
       last_config_error: nil,
       listening?: false,
       listening_mode: :not_listening,
@@ -300,11 +303,20 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, state}
   end
 
-  defp handle_worker_down_reason(state, issue_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
+  defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id)
+       when is_map(running_entry) do
+    if operator_running_entry?(running_entry) do
+      handle_operator_down_reason(state, issue_id, running_entry, reason, session_id)
+    else
+      handle_issue_worker_down_reason(state, issue_id, running_entry, reason, session_id)
+    end
+  end
+
+  defp handle_issue_worker_down_reason(state, issue_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
     handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id)
   end
 
-  defp handle_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
+  defp handle_issue_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
     Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
     state
@@ -318,7 +330,7 @@ defmodule SymphonyElixir.Orchestrator do
     |> tap(fn _state -> persist_run_finished(running_entry, "completed", nil) end)
   end
 
-  defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
+  defp handle_issue_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
     Logger.warning("Agent task crashed for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}; scheduling retry")
 
     next_attempt = RetryPolicy.next_retry_attempt_from_running(running_entry)
@@ -331,6 +343,58 @@ defmodule SymphonyElixir.Orchestrator do
       workspace_path: Map.get(running_entry, :workspace_path)
     })
     |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+  end
+
+  defp handle_operator_down_reason(state, run_id, %{agent_result: :ok} = running_entry, :normal, session_id) do
+    Logger.info("Operator task completed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id}")
+
+    running_entry =
+      append_session_history(running_entry, :operator_task_completed, "Operator task completed", %{
+        source: :system,
+        run_id: run_id,
+        kind: Map.get(running_entry, :kind)
+      })
+
+    persist_run_finished(running_entry, "completed", nil)
+    finish_operator_task(state, running_entry, :completed, nil)
+  end
+
+  defp handle_operator_down_reason(state, run_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
+    summary = agent_failure_summary(reason)
+    Logger.warning("Operator task failed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id} #{summary}")
+
+    running_entry =
+      append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
+        source: :system,
+        run_id: run_id,
+        kind: Map.get(running_entry, :kind),
+        reason: summary
+      })
+
+    persist_run_finished(running_entry, "failed", summary)
+    finish_operator_task(state, running_entry, :failed, summary)
+  end
+
+  defp handle_operator_down_reason(state, run_id, running_entry, :normal, session_id) do
+    Logger.info("Operator task completed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id}")
+    persist_run_finished(running_entry, "completed", nil)
+    finish_operator_task(state, running_entry, :completed, nil)
+  end
+
+  defp handle_operator_down_reason(state, run_id, running_entry, reason, session_id) do
+    summary = "operator task crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    Logger.warning("Operator task crashed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id} #{summary}")
+
+    running_entry =
+      append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
+        source: :system,
+        run_id: run_id,
+        kind: Map.get(running_entry, :kind),
+        reason: summary
+      })
+
+    persist_run_finished(running_entry, "failed", summary)
+    finish_operator_task(state, running_entry, :failed, summary)
   end
 
   defp handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id) do
@@ -412,10 +476,12 @@ defmodule SymphonyElixir.Orchestrator do
   defp maybe_dispatch(%State{} = state) do
     state =
       state
+      |> reconcile_stale_operator_entries()
       |> reconcile_running_issues()
       |> reconcile_blocked_issues()
 
     with :ok <- Config.validate!(),
+         :allow <- rate_limit_gate_allows_dispatch(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0 do
       state = %{state | last_config_error: nil}
@@ -424,6 +490,11 @@ defmodule SymphonyElixir.Orchestrator do
     else
       {:error, reason} ->
         handle_dispatch_error(state, reason)
+
+      {:block, details} ->
+        state
+        |> apply_rate_limit_gate_block(details)
+        |> Map.put(:last_config_error, nil)
 
       false ->
         %{state | last_config_error: nil}
@@ -490,7 +561,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp reconcile_running_issues(%State{} = state) do
     state = reconcile_stalled_running_issues(state)
-    running_ids = Map.keys(state.running)
+    running_ids = issue_running_ids(state.running)
 
     if running_ids == [] do
       state
@@ -959,7 +1030,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     with :ok <- ensure_workspace_disk_available(issue) do
       case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-             result = AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+             result =
+               agent_runner().run(issue, recipient,
+                 attempt: attempt,
+                 worker_host: worker_host,
+                 rate_limit_snapshot: state.codex_rate_limits,
+                 rate_limit_settings: Config.settings!()
+               )
+
              send(recipient, {:agent_runner_finished, issue.id, result})
              result
            end) do
@@ -1438,6 +1516,7 @@ defmodule SymphonyElixir.Orchestrator do
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
+       rate_limit_gate: rate_limit_gate_snapshot(state),
        config_error: config_error_payload(state.last_config_error),
        operator_tasks: operator_tasks_payload(state),
        polling: %{
@@ -1511,7 +1590,7 @@ defmodule SymphonyElixir.Orchestrator do
       state
       |> Map.put(:listening?, false)
       |> Map.put(:listening_mode, :not_listening)
-      |> clear_operator_tasks(:cancelled)
+      |> clear_operator_tasks(:stopped)
       |> cancel_retry_timers()
       |> force_stop_running_entries()
 
@@ -1555,6 +1634,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp request_operator_task(%State{} = state, kind) do
+    state = reconcile_stale_operator_entries(state)
+    state = refresh_rate_limit_gate(state)
     current = operator_task(state, kind)
 
     case current.status do
@@ -1564,7 +1645,7 @@ defmodule SymphonyElixir.Orchestrator do
       _ ->
         task = new_operator_task(kind)
 
-        if runtime_busy?(state) do
+        if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
           queued = %{task | status: :queued, queued_at: DateTime.utc_now()}
           {put_operator_task(state, kind, queued), queued}
         else
@@ -1575,7 +1656,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_start_queued_operator_tasks(%State{} = state) do
-    if runtime_busy?(state) do
+    state = reconcile_stale_operator_entries(state)
+    state = refresh_rate_limit_gate(state)
+
+    if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
       state
     else
       Enum.reduce([:nap, :day_dreaming], state, fn kind, state_acc ->
@@ -1618,22 +1702,85 @@ defmodule SymphonyElixir.Orchestrator do
 
     run = persist_operator_run_started(started)
     started = if run, do: %{started | run_id: run.id}, else: started
-    {put_operator_running_entry(state, started), started}
+
+    case select_worker_host(state, nil) do
+      :no_worker_capacity ->
+        fail_operator_task_start(state, started, "no worker capacity available")
+
+      worker_host ->
+        issue = operator_task_issue(started)
+
+        with :ok <- ensure_workspace_disk_available(issue) do
+          spawn_operator_task(state, started, worker_host)
+        else
+          {:error, reason} ->
+            fail_operator_task_start(state, started, format_disk_guard_reason(reason))
+        end
+    end
   end
 
-  defp put_operator_running_entry(%State{} = state, task) do
+  defp spawn_operator_task(%State{} = state, task, worker_host) do
+    recipient = self()
+
+    case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
+           result =
+             agent_runner().run_operator(task.kind, task.run_id, recipient,
+               worker_host: worker_host,
+               run_id: task.run_id,
+               rate_limit_snapshot: state.codex_rate_limits,
+               rate_limit_settings: Config.settings!()
+             )
+
+           send(recipient, {:agent_runner_finished, task.run_id, result})
+           result
+         end) do
+      {:ok, pid} ->
+        ref = Process.monitor(pid)
+
+        Logger.info("Dispatching operator task to agent: kind=#{task.kind} run_id=#{task.run_id} pid=#{inspect(pid)} worker_host=#{worker_host || "local"}")
+
+        {put_operator_running_entry(state, task, pid, ref, worker_host), task}
+
+      {:error, reason} ->
+        fail_operator_task_start(state, task, "failed to spawn operator task: #{inspect(reason)}")
+    end
+  end
+
+  defp fail_operator_task_start(%State{} = state, task, reason) do
+    failed = %{
+      task
+      | status: :failed,
+        finished_at: DateTime.utc_now(),
+        failure_reason: reason,
+        summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: reason}
+    }
+
+    running_entry = operator_running_entry(failed, nil, nil, "local")
+
+    persist_event("operator_task.failed", nil, %{kind: to_string(task.kind), run_id: task.run_id, reason: reason}, task.run_id)
+    persist_run_finished(running_entry, "failed", reason)
+
+    {state, failed}
+  end
+
+  defp put_operator_running_entry(%State{} = state, task, pid, ref, worker_host) do
+    running_entry = operator_running_entry(task, pid, ref, worker_host)
+    %{state | running: Map.put(state.running, task.run_id, running_entry)}
+  end
+
+  defp operator_running_entry(task, pid, ref, worker_host) do
     running_entry = %{
       kind: to_string(task.kind),
       profile: to_string(task.kind),
       label: operator_task_label(task.kind),
-      pid: nil,
-      ref: nil,
+      pid: pid,
+      ref: ref,
       run_id: task.run_id,
-      identifier: nil,
+      identifier: operator_task_identifier(task.kind, task.run_id),
       issue_id: nil,
       issue: nil,
       state: to_string(task.status),
-      worker_host: "local",
+      worker_host: worker_host,
       workspace_path: nil,
       session_id: nil,
       last_codex_message: nil,
@@ -1662,12 +1809,74 @@ defmodule SymphonyElixir.Orchestrator do
       session_history_total_count: 1
     }
 
-    %{state | running: Map.put(state.running, task.run_id, running_entry)}
+    running_entry
   end
+
+  defp operator_task_issue(task) do
+    %Issue{
+      id: task.run_id,
+      identifier: operator_task_identifier(task.kind, task.run_id),
+      title: operator_task_label(task.kind),
+      description: "Operator task #{operator_task_label(task.kind)}",
+      state: operator_task_label(task.kind),
+      assigned_to_worker: false,
+      labels: ["operator", to_string(task.kind)]
+    }
+  end
+
+  defp operator_task_identifier(kind, run_id) when is_binary(run_id) do
+    suffix =
+      run_id
+      |> String.replace(~r/[^A-Za-z0-9]+/, "-")
+      |> String.trim("-")
+      |> String.slice(-12, 12)
+
+    kind
+    |> to_string()
+    |> String.replace("_", "-")
+    |> String.upcase()
+    |> Kernel.<>("-#{suffix}")
+  end
+
+  defp operator_task_identifier(kind, _run_id), do: to_string(kind)
 
   defp operator_task_label(:nap), do: "Nap"
   defp operator_task_label(:day_dreaming), do: "Day dreaming"
   defp operator_task_label(kind), do: to_string(kind)
+
+  defp finish_operator_task(%State{} = state, running_entry, status, failure_reason)
+       when status in [:completed, :failed, :stopped] do
+    case operator_kind_from_running_entry(running_entry) do
+      nil ->
+        state
+
+      kind ->
+        now = DateTime.utc_now()
+
+        task =
+          state
+          |> operator_task(kind)
+          |> Map.merge(%{
+            status: status,
+            run_id: Map.get(running_entry, :run_id),
+            finished_at: now,
+            failure_reason: failure_reason,
+            summary: operator_task_summary(status, failure_reason)
+          })
+
+        put_operator_task(state, kind, task)
+    end
+  end
+
+  defp operator_task_summary(:completed, _failure_reason), do: %{created: 0, skipped: 0, failed: 0, issues: []}
+  defp operator_task_summary(:stopped, _failure_reason), do: %{created: 0, skipped: 0, failed: 0, issues: [], stopped: true}
+  defp operator_task_summary(:failed, failure_reason), do: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+
+  defp operator_kind_from_running_entry(%{kind: "nap"}), do: :nap
+  defp operator_kind_from_running_entry(%{kind: "day_dreaming"}), do: :day_dreaming
+  defp operator_kind_from_running_entry(%{kind: :nap}), do: :nap
+  defp operator_kind_from_running_entry(%{kind: :day_dreaming}), do: :day_dreaming
+  defp operator_kind_from_running_entry(_running_entry), do: nil
 
   defp clear_operator_tasks(%State{} = state, status) do
     tasks =
@@ -1680,7 +1889,62 @@ defmodule SymphonyElixir.Orchestrator do
     %{state | operator_tasks: tasks}
   end
 
-  defp runtime_busy?(%State{} = state), do: map_size(state.running) > 0
+  defp runtime_busy?(%State{} = state), do: Enum.any?(state.running, fn {_id, entry} -> runtime_entry_active?(entry) end)
+
+  defp runtime_entry_active?(entry) when is_map(entry) do
+    cond do
+      !operator_running_entry?(entry) ->
+        true
+
+      is_pid(Map.get(entry, :pid)) and Process.alive?(Map.get(entry, :pid)) ->
+        true
+
+      is_binary(Map.get(entry, :session_id)) ->
+        true
+
+      true ->
+        false
+    end
+  end
+
+  defp runtime_entry_active?(_entry), do: false
+
+  defp issue_running_ids(running) when is_map(running) do
+    running
+    |> Enum.reject(fn {_id, entry} -> operator_running_entry?(entry) end)
+    |> Enum.map(fn {id, _entry} -> id end)
+  end
+
+  defp reconcile_stale_operator_entries(%State{} = state) do
+    Enum.reduce(state.running, state, fn {run_id, running_entry}, state_acc ->
+      if stale_operator_running_entry?(running_entry) do
+        reason = "operator task has no live process or Codex session"
+
+        failed_entry =
+          append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
+            source: :system,
+            run_id: run_id,
+            kind: Map.get(running_entry, :kind),
+            reason: reason
+          })
+
+        persist_event("operator_task.stale_failed", nil, %{kind: Map.get(running_entry, :kind), run_id: run_id, reason: reason}, Map.get(running_entry, :run_id))
+        persist_run_finished(failed_entry, "failed", reason)
+
+        state_acc
+        |> Map.update!(:running, &Map.delete(&1, run_id))
+        |> finish_operator_task(failed_entry, :failed, reason)
+      else
+        state_acc
+      end
+    end)
+  end
+
+  defp stale_operator_running_entry?(running_entry) when is_map(running_entry) do
+    operator_running_entry?(running_entry) and !runtime_entry_active?(running_entry)
+  end
+
+  defp stale_operator_running_entry?(_running_entry), do: false
 
   defp operator_task(%State{} = state, kind) do
     Map.get(state.operator_tasks || %{}, kind, %{
@@ -1919,6 +2183,82 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp runtime_config, do: Config.settings()
 
+  defp agent_runner do
+    Application.get_env(:symphony_elixir, :agent_runner_module, AgentRunner)
+  end
+
+  defp rate_limit_gate_allows_dispatch(%State{} = state) do
+    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+      :allow -> :allow
+      {:block, details} -> {:block, details}
+    end
+  end
+
+  defp refresh_rate_limit_gate(%State{} = state) do
+    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+      :allow ->
+        %{
+          state
+          | rate_limit_gate: rate_limit_gate_allow_snapshot(state),
+            rate_limit_gate_event_fingerprint: nil
+        }
+
+      {:block, details} ->
+        apply_rate_limit_gate_block(state, details)
+    end
+  rescue
+    _error -> %{state | rate_limit_gate: %{status: :allow, reason: :unavailable}}
+  end
+
+  defp apply_rate_limit_gate_block(%State{} = state, details) when is_map(details) do
+    fingerprint = rate_limit_gate_fingerprint(details)
+
+    if state.rate_limit_gate_event_fingerprint != fingerprint do
+      persist_event("codex.rate_limit_gate.blocked", nil, Map.put(details, :message, rate_limit_gate_message(details)))
+    end
+
+    %{state | rate_limit_gate: details, rate_limit_gate_event_fingerprint: fingerprint}
+  end
+
+  defp rate_limit_gate_blocked?(%State{} = state) do
+    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+      {:block, _details} -> true
+      _ -> false
+    end
+  rescue
+    _error -> false
+  end
+
+  defp rate_limit_gate_snapshot(%State{} = state) do
+    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+      :allow ->
+        rate_limit_gate_allow_snapshot(state)
+
+      {:block, details} ->
+        details
+    end
+  rescue
+    _error -> %{status: :allow, reason: :unavailable}
+  end
+
+  defp rate_limit_gate_allow_snapshot(%State{} = state) do
+    %{status: :allow, reason: if(is_map(state.codex_rate_limits), do: :available, else: :missing_snapshot)}
+  end
+
+  defp rate_limit_gate_fingerprint(details) do
+    [
+      Map.get(details, :window),
+      Map.get(details, :window_duration_mins),
+      Map.get(details, :threshold_percent),
+      Map.get(details, :resets_at),
+      Map.get(details, :resume_after)
+    ]
+  end
+
+  defp rate_limit_gate_message(details) do
+    "Codex session start paused by #{Map.get(details, :window)} rate-limit headroom: remaining=#{Map.get(details, :remaining_percent)} threshold=#{Map.get(details, :threshold_percent)} resume_after=#{Map.get(details, :resume_after) || "n/a"}"
+  end
+
   defp config_error_payload(nil), do: nil
 
   defp config_error_payload(reason) do
@@ -1950,6 +2290,7 @@ defmodule SymphonyElixir.Orchestrator do
           | codex_rate_limits: rate_limits,
             codex_rate_limit_observation: %{status: :parsed, at: DateTime.utc_now()}
         }
+        |> refresh_rate_limit_gate()
 
       _ ->
         if Update.rate_limit_update_event?(update) do

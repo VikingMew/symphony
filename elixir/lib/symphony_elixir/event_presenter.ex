@@ -57,7 +57,7 @@ defmodule SymphonyElixir.EventPresenter do
 
   defp source(type, _payload) do
     cond do
-      type in ["linear.state_transition"] -> :linear
+      type in ["linear.state_transition", "linear.tool_call"] -> :linear
       type in ["workspace.phase", "workspace.hook", "workspace.prepare"] -> :workspace
       type in ["worker.task", "worker.heartbeat"] -> :worker
       type == "codex.update" -> :agent
@@ -90,6 +90,18 @@ defmodule SymphonyElixir.EventPresenter do
     from = payload_value(payload, ["from_state", "from"])
     to = payload_value(payload, ["to_state", "to"])
     "Linear state moved #{from || "n/a"} -> #{to || "n/a"}"
+  end
+
+  defp summary("linear.tool_call", payload) do
+    tool = payload_value(payload, ["tool"])
+    status = payload_value(payload, ["status"])
+    message = payload_value(payload, ["message"])
+
+    cond do
+      is_binary(message) -> message
+      is_binary(tool) and is_binary(status) -> "#{tool} #{status}"
+      true -> "Linear tool call"
+    end
   end
 
   defp summary(type, payload) when is_binary(type) and type in ["run.failed", "run.completed", "run.started"] do
@@ -140,6 +152,7 @@ defmodule SymphonyElixir.EventPresenter do
   defp known_atom_key("recent_output"), do: :recent_output
   defp known_atom_key("status"), do: :status
   defp known_atom_key("summary"), do: :summary
+  defp known_atom_key("tool"), do: :tool
   defp known_atom_key("to"), do: :to
   defp known_atom_key("to_state"), do: :to_state
   defp known_atom_key(_key), do: nil

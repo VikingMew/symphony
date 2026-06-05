@@ -48,6 +48,10 @@ defmodule SymphonyElixir.WorkflowForm do
       "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"], "workspace-write"),
       "codex_turn_sandbox_preset" => get_codex_turn_sandbox_preset(display_config),
       "codex_turn_sandbox_json" => get_codex_turn_sandbox_json(display_config),
+      "codex_rate_limit_gate_enabled" => get_boolean_string(display_config, ["codex", "rate_limit_gate_enabled"], true),
+      "codex_rate_limit_gate_5h_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_5h_threshold_percent"], 5.0),
+      "codex_rate_limit_gate_7d_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_7d_threshold_percent"], 3.0),
+      "codex_rate_limit_gate_post_reset_delay_ms" => get_integer_string(display_config, ["codex", "rate_limit_gate_post_reset_delay_ms"], 1_200_000),
       "hook_after_create" => get_string(display_config, ["hooks", "after_create"], ""),
       "hook_before_run" => get_string(display_config, ["hooks", "before_run"], ""),
       "hook_after_run" => get_string(display_config, ["hooks", "after_run"], ""),
@@ -83,6 +87,8 @@ defmodule SymphonyElixir.WorkflowForm do
         {:error, message} -> Map.put(errors, key, message)
       end
     end)
+    |> put_percent_error(draft, "codex_rate_limit_gate_5h_threshold_percent", "5-hour rate-limit threshold")
+    |> put_percent_error(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold")
     |> put_turn_sandbox_error(draft)
   end
 
@@ -94,6 +100,9 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, workspace_min_free_bytes} <- parse_min_free_bytes(draft),
          {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
+         {:ok, rate_limit_gate_5h_threshold} <- parse_percent(draft, "codex_rate_limit_gate_5h_threshold_percent", "5-hour rate-limit threshold"),
+         {:ok, rate_limit_gate_7d_threshold} <- parse_percent(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold"),
+         {:ok, rate_limit_gate_post_reset_delay_ms} <- parse_non_negative_integer(draft, "codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
          {:ok, turn_sandbox_policy} <- codex_turn_sandbox_policy(draft) do
       config =
@@ -120,6 +129,10 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["codex", "approval_policy"], Map.get(draft, "codex_approval_policy", "never"))
         |> put_path(["codex", "thread_sandbox"], Map.get(draft, "codex_thread_sandbox", ""))
         |> put_path(["codex", "turn_sandbox_policy"], turn_sandbox_policy)
+        |> put_path(["codex", "rate_limit_gate_enabled"], truthy?(Map.get(draft, "codex_rate_limit_gate_enabled", "true")))
+        |> put_path(["codex", "rate_limit_gate_5h_threshold_percent"], rate_limit_gate_5h_threshold)
+        |> put_path(["codex", "rate_limit_gate_7d_threshold_percent"], rate_limit_gate_7d_threshold)
+        |> put_path(["codex", "rate_limit_gate_post_reset_delay_ms"], rate_limit_gate_post_reset_delay_ms)
         |> put_path(["hooks"], hooks_config(draft, hook_timeout_ms))
         |> put_path(["profiles"], profiles_config(draft))
         |> put_path(["workflow", "states"], workflow_states_config(draft))
@@ -137,6 +150,7 @@ defmodule SymphonyElixir.WorkflowForm do
       {"workspace_min_free_gib", "Minimum free GiB"},
       {"agent_max_concurrent_agents", "Max agents"},
       {"agent_max_turns", "Max turns"},
+      {"codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"},
       {"hook_timeout_ms", "Hook timeout"}
     ]
   end
@@ -411,7 +425,7 @@ defmodule SymphonyElixir.WorkflowForm do
   end
 
   defp parse_non_negative_integer(draft, key, label) do
-    value = Map.get(draft, key, "1073741824")
+    value = Map.get(draft, key, default_number_field_value(key, "1073741824"))
 
     case Integer.parse(to_string(value)) do
       {integer, ""} when integer >= 0 -> {:ok, integer}
@@ -420,7 +434,36 @@ defmodule SymphonyElixir.WorkflowForm do
   end
 
   defp parse_integer_field(draft, "workspace_min_free_gib", _label), do: parse_min_free_bytes(draft)
+
+  defp parse_integer_field(draft, "codex_rate_limit_gate_post_reset_delay_ms", label),
+    do: parse_non_negative_integer(draft, "codex_rate_limit_gate_post_reset_delay_ms", label)
+
   defp parse_integer_field(draft, key, label), do: parse_positive_integer(draft, key, label)
+
+  defp parse_percent(draft, key, label) do
+    value =
+      draft
+      |> Map.get(key, default_number_field_value(key, ""))
+      |> to_string()
+      |> String.trim()
+
+    case Float.parse(value) do
+      {number, ""} when number >= 0 and number <= 100 -> {:ok, number}
+      _ -> {:error, "#{label} must be between 0 and 100"}
+    end
+  end
+
+  defp default_number_field_value("codex_rate_limit_gate_5h_threshold_percent", _fallback), do: "5"
+  defp default_number_field_value("codex_rate_limit_gate_7d_threshold_percent", _fallback), do: "3"
+  defp default_number_field_value("codex_rate_limit_gate_post_reset_delay_ms", _fallback), do: "1200000"
+  defp default_number_field_value(_key, fallback), do: fallback
+
+  defp put_percent_error(errors, draft, key, label) do
+    case parse_percent(draft, key, label) do
+      {:ok, _value} -> errors
+      {:error, message} -> Map.put(errors, key, message)
+    end
+  end
 
   defp parse_min_free_bytes(%{"workspace_min_free_bytes" => value} = draft)
        when not is_map_key(draft, "workspace_min_free_gib") do
@@ -467,6 +510,20 @@ defmodule SymphonyElixir.WorkflowForm do
       value when is_binary(value) -> value
       _ -> Integer.to_string(default)
     end
+  end
+
+  defp get_number_string(config, path, default) do
+    case get_in(config, path) do
+      value when is_integer(value) -> Integer.to_string(value)
+      value when is_float(value) -> value |> Float.to_string() |> trim_trailing_decimal()
+      value when is_binary(value) -> value
+      _ -> default |> Float.to_string() |> trim_trailing_decimal()
+    end
+  end
+
+  defp trim_trailing_decimal(value) when is_binary(value) do
+    value
+    |> String.replace(~r/\.0$/, "")
   end
 
   defp min_free_gib_string(value) do

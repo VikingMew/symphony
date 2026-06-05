@@ -59,7 +59,7 @@ defmodule SymphonyElixir.RunHistory do
         payload_value(payload, ["operation", :operation, "hook", :hook, "hook_name", :hook_name]) ||
           codex_operation(type, payload),
       low_signal: low_signal?(type, payload, detail),
-      metadata: bounded_payload(payload)
+      metadata: metadata(type, payload)
     }
   end
 
@@ -73,7 +73,13 @@ defmodule SymphonyElixir.RunHistory do
 
   defp event_type(event), do: event |> value([:event_type, "event_type", :event, "event"]) |> to_string()
   defp event_payload(event), do: value(event, [:payload, "payload"]) || %{}
-  defp event_time(event), do: value(event, [:occurred_at, "occurred_at", :at, "at"])
+
+  defp event_time(event) do
+    payload = event_payload(event)
+
+    protocol_time(payload) ||
+      value(event, [:occurred_at, "occurred_at", :at, "at"])
+  end
 
   defp event_time_sort_key(event) do
     case event_time(event) do
@@ -92,6 +98,7 @@ defmodule SymphonyElixir.RunHistory do
   defp label("workspace.hook_completed", payload), do: "Workspace #{payload_value(payload, ["hook", :hook, "hook_name", :hook_name]) || "hook"} completed"
   defp label("workspace.hook_failed", payload), do: "Workspace #{payload_value(payload, ["hook", :hook, "hook_name", :hook_name]) || "hook"} failed"
   defp label("linear.state_transition", _payload), do: "Linear state transition"
+  defp label("linear.tool_call", payload), do: "Linear tool #{payload_value(payload, ["status", :status]) || "updated"}"
 
   defp label(type, payload) do
     payload_value(payload, ["label", :label]) ||
@@ -116,6 +123,33 @@ defmodule SymphonyElixir.RunHistory do
       payload_message(payload)
     else
       "#{from_state} -> #{to_state}"
+    end
+  end
+
+  defp detail("linear.tool_call", payload) do
+    tool = payload_value(payload, ["tool", :tool]) || "Linear tool"
+    status = payload_value(payload, ["status", :status])
+
+    case status do
+      "success" ->
+        created = payload_value(payload, ["result", :result]) || %{}
+        identifier = payload_value(created, ["identifier", :identifier])
+        url = payload_value(created, ["url", :url])
+
+        cond do
+          is_binary(identifier) and is_binary(url) -> "#{tool} succeeded: #{identifier} #{url}"
+          is_binary(identifier) -> "#{tool} succeeded: #{identifier}"
+          true -> "#{tool} succeeded"
+        end
+
+      "failure" ->
+        error = payload_value(payload, ["error", :error]) || %{}
+        error_class = payload_value(error, ["class", :class]) || "tool_failed"
+        message = payload_value(error, ["message", :message])
+        if blank?(message), do: "#{tool} failed: #{error_class}", else: "#{tool} failed: #{error_class}: #{message}"
+
+      _ ->
+        payload_message(payload) || "#{tool} updated"
     end
   end
 
@@ -153,10 +187,83 @@ defmodule SymphonyElixir.RunHistory do
         nil
 
       message ->
-        message
-        |> then(&MessageHumanizer.humanize_codex_message(%{event: event, message: &1}))
-        |> append_response_error_context(message)
+        codex_method_detail(message, payload) ||
+          message
+          |> then(&MessageHumanizer.humanize_codex_message(%{event: event, message: &1}))
+          |> append_response_error_context(message)
     end
+  end
+
+  defp codex_method_detail(message, payload) do
+    method = Payload.get_any(message, ["method", :method])
+
+    case method do
+      "item/completed" -> completed_item_detail(message)
+      "thread/tokenUsage/updated" -> token_usage_detail(message, payload)
+      "account/rateLimits/updated" -> rate_limit_detail(message)
+      "turn/completed" -> turn_completed_detail(message)
+      _ -> nil
+    end
+  end
+
+  defp completed_item_detail(message) do
+    item = Payload.get_path(message, ["params", "item"]) || Payload.get_path(message, [:params, :item]) || %{}
+    item_type = Payload.get_any(item, ["type", :type])
+    phase = Payload.get_any(item, ["phase", :phase])
+    text = item |> Payload.get_any(["text", :text]) |> normalize_text()
+
+    cond do
+      item_type == "agentMessage" and phase == "final_answer" and is_binary(text) ->
+        "agent final answer: #{text}"
+
+      item_type == "agentMessage" and is_binary(text) ->
+        "agent message completed: #{text}"
+
+      true ->
+        nil
+    end
+  end
+
+  defp token_usage_detail(message, payload) do
+    usage =
+      Payload.get_path(message, ["params", "tokenUsage", "total"]) ||
+        Payload.get_path(message, [:params, :tokenUsage, :total]) ||
+        token_usage_from_raw(payload)
+
+    case token_usage_summary(usage) do
+      nil -> nil
+      summary -> "thread token usage updated (#{summary})"
+    end
+  end
+
+  defp rate_limit_detail(message) do
+    rate_limits =
+      Payload.get_path(message, ["params", "rateLimits"]) ||
+        Payload.get_path(message, [:params, :rateLimits])
+
+    primary = rate_limit_bucket(rate_limits, "primary")
+    secondary = rate_limit_bucket(rate_limits, "secondary")
+
+    if primary || secondary do
+      ["rate limits updated:", primary, secondary]
+      |> Enum.reject(&blank?/1)
+      |> Enum.join(" ")
+    end
+  end
+
+  defp turn_completed_detail(message) do
+    turn = Payload.get_path(message, ["params", "turn"]) || Payload.get_path(message, [:params, :turn]) || %{}
+    status = Payload.get_any(turn, ["status", :status]) || "completed"
+    duration = Payload.get_any(turn, ["durationMs", :durationMs])
+
+    suffix =
+      if is_integer(duration) do
+        " in #{format_duration_ms(duration)}"
+      else
+        ""
+      end
+
+    "turn completed (#{status})#{suffix}"
   end
 
   defp empty_codex_detail(payload) do
@@ -224,6 +331,7 @@ defmodule SymphonyElixir.RunHistory do
     cond do
       type in ["run.failed", "workspace.hook_failed"] -> :error
       type in ["run.stopped"] -> :warning
+      type == "linear.tool_call" and payload_value(payload, ["status", :status]) == "failure" -> :error
       codex_event(payload) in ["startup_failed", "turn_ended_with_error", "turn_failed"] -> :error
       codex_event(payload) in ["approval_required", "turn_input_required"] -> :warning
       payload_value(payload, ["status", :status]) in ["failed", "error"] -> :error
@@ -261,6 +369,163 @@ defmodule SymphonyElixir.RunHistory do
   defp bound_value(value) when is_map(value), do: bounded_payload(value)
   defp bound_value(value) when is_list(value), do: Enum.map(value, &bound_value/1)
   defp bound_value(value), do: value
+
+  defp metadata(type, payload) do
+    payload
+    |> bounded_payload()
+    |> Map.merge(derived_metadata(type, payload))
+  end
+
+  defp derived_metadata("codex.update", payload) do
+    message = payload_value(payload, ["message", :message]) || %{}
+    method = Payload.get_any(message, ["method", :method])
+    thread_id = payload_thread_id(message)
+    turn_id = payload_turn_id(message)
+    session_id = payload_value(payload, ["session_id", :session_id]) || derived_session_id(thread_id, turn_id)
+
+    %{}
+    |> put_present("method", method)
+    |> put_present("thread_id", thread_id)
+    |> put_present("turn_id", turn_id)
+    |> put_present("session_id", session_id)
+    |> put_present("item_id", payload_item_id(message))
+  end
+
+  defp derived_metadata(_type, _payload), do: %{}
+
+  defp put_present(map, _key, nil), do: map
+  defp put_present(map, _key, ""), do: map
+  defp put_present(map, key, value), do: Map.put(map, key, value)
+
+  defp payload_thread_id(message) do
+    Payload.get_path(message, ["params", "threadId"]) ||
+      Payload.get_path(message, [:params, :threadId]) ||
+      Payload.get_path(message, ["params", "thread", "id"]) ||
+      Payload.get_path(message, [:params, :thread, :id])
+  end
+
+  defp payload_turn_id(message) do
+    Payload.get_path(message, ["params", "turnId"]) ||
+      Payload.get_path(message, [:params, :turnId]) ||
+      Payload.get_path(message, ["params", "turn", "id"]) ||
+      Payload.get_path(message, [:params, :turn, :id])
+  end
+
+  defp payload_item_id(message) do
+    Payload.get_path(message, ["params", "item", "id"]) ||
+      Payload.get_path(message, [:params, :item, :id]) ||
+      Payload.get_path(message, ["params", "id"]) ||
+      Payload.get_path(message, [:params, :id])
+  end
+
+  defp derived_session_id(thread_id, turn_id) when is_binary(thread_id) and is_binary(turn_id), do: "#{thread_id}-#{turn_id}"
+  defp derived_session_id(thread_id, _turn_id) when is_binary(thread_id), do: thread_id
+  defp derived_session_id(_thread_id, _turn_id), do: nil
+
+  defp protocol_time(payload) do
+    payload
+    |> payload_value(["message", :message])
+    |> case do
+      message when is_map(message) ->
+        protocol_timestamp(message)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp protocol_timestamp(message) do
+    ms =
+      Payload.get_path(message, ["params", "completedAtMs"]) ||
+        Payload.get_path(message, [:params, :completedAtMs]) ||
+        Payload.get_path(message, ["params", "startedAtMs"]) ||
+        Payload.get_path(message, [:params, :startedAtMs])
+
+    seconds =
+      Payload.get_path(message, ["params", "turn", "completedAt"]) ||
+        Payload.get_path(message, [:params, :turn, :completedAt]) ||
+        Payload.get_path(message, ["params", "turn", "startedAt"]) ||
+        Payload.get_path(message, [:params, :turn, :startedAt])
+
+    cond do
+      is_integer(ms) -> DateTime.from_unix!(ms, :millisecond)
+      is_integer(seconds) -> DateTime.from_unix!(seconds, :second)
+      true -> nil
+    end
+  rescue
+    _error -> nil
+  end
+
+  defp normalize_text(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.replace(~r/\s+/, " ")
+    |> then(fn text -> if text == "", do: nil, else: text end)
+  end
+
+  defp normalize_text(_value), do: nil
+
+  defp token_usage_from_raw(message) do
+    with raw when is_binary(raw) <- Payload.get_path(message, ["debug", "raw"]) || Payload.get_path(message, [:debug, :raw]),
+         {:ok, decoded} <- Jason.decode(raw) do
+      Payload.get_path(decoded, ["params", "tokenUsage", "total"])
+    else
+      _ -> nil
+    end
+  end
+
+  defp token_usage_summary(usage) when is_map(usage) do
+    total = Payload.get_any(usage, ["totalTokens", :totalTokens, "total_tokens", :total_tokens])
+    input = Payload.get_any(usage, ["inputTokens", :inputTokens, "input_tokens", :input_tokens])
+    output = Payload.get_any(usage, ["outputTokens", :outputTokens, "output_tokens", :output_tokens])
+
+    parts =
+      []
+      |> append_count("total", total)
+      |> append_count("in", input)
+      |> append_count("out", output)
+
+    if parts == [], do: nil, else: Enum.join(parts, ", ")
+  end
+
+  defp token_usage_summary(_usage), do: nil
+
+  defp append_count(parts, _label, value) when not is_integer(value), do: parts
+  defp append_count(parts, label, value), do: parts ++ ["#{label} #{format_integer(value)}"]
+
+  defp rate_limit_bucket(rate_limits, key) when is_map(rate_limits) do
+    bucket = Payload.get_any(rate_limits, rate_limit_bucket_keys(key))
+    used = Payload.get_any(bucket || %{}, ["usedPercent", :usedPercent, "used_percent", :used_percent])
+    duration = Payload.get_any(bucket || %{}, ["windowDurationMins", :windowDurationMins, "window_duration_mins", :window_duration_mins])
+
+    if is_integer(used) and is_integer(duration) do
+      "#{window_label(duration)} #{used}% / #{duration}m"
+    end
+  end
+
+  defp rate_limit_bucket(_rate_limits, _key), do: nil
+
+  defp rate_limit_bucket_keys("primary"), do: ["primary", :primary]
+  defp rate_limit_bucket_keys("secondary"), do: ["secondary", :secondary]
+  defp rate_limit_bucket_keys(key), do: [key]
+
+  defp window_label(300), do: "primary"
+  defp window_label(10_080), do: "secondary"
+  defp window_label(_duration), do: "window"
+
+  defp format_duration_ms(ms) when ms >= 60_000 do
+    "#{Float.round(ms / 60_000, 1)}m"
+  end
+
+  defp format_duration_ms(ms), do: "#{ms}ms"
+
+  defp format_integer(value) when is_integer(value) do
+    value
+    |> Integer.to_string()
+    |> String.reverse()
+    |> String.replace(~r/(\d{3})(?=\d)/, "\\1,")
+    |> String.reverse()
+  end
 
   defp payload_value(payload, keys), do: Payload.get_any(payload, keys)
 

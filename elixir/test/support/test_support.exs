@@ -82,6 +82,7 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
   end
 
   def yaml_value(value) when is_integer(value), do: to_string(value)
+  def yaml_value(value) when is_float(value), do: Float.to_string(value)
   def yaml_value(true), do: "true"
   def yaml_value(false), do: "false"
   def yaml_value(nil), do: "null"
@@ -283,6 +284,10 @@ defmodule SymphonyElixir.TestSupport do
           codex_turn_timeout_ms: 3_600_000,
           codex_read_timeout_ms: 5_000,
           codex_stall_timeout_ms: 300_000,
+          codex_rate_limit_gate_enabled: true,
+          codex_rate_limit_gate_5h_threshold_percent: 5.0,
+          codex_rate_limit_gate_7d_threshold_percent: 3.0,
+          codex_rate_limit_gate_post_reset_delay_ms: 1_200_000,
           hook_after_create: nil,
           hook_before_run: nil,
           hook_after_run: nil,
@@ -327,6 +332,10 @@ defmodule SymphonyElixir.TestSupport do
     codex_turn_timeout_ms = Keyword.get(config, :codex_turn_timeout_ms)
     codex_read_timeout_ms = Keyword.get(config, :codex_read_timeout_ms)
     codex_stall_timeout_ms = Keyword.get(config, :codex_stall_timeout_ms)
+    codex_rate_limit_gate_enabled = Keyword.get(config, :codex_rate_limit_gate_enabled)
+    codex_rate_limit_gate_5h_threshold_percent = Keyword.get(config, :codex_rate_limit_gate_5h_threshold_percent)
+    codex_rate_limit_gate_7d_threshold_percent = Keyword.get(config, :codex_rate_limit_gate_7d_threshold_percent)
+    codex_rate_limit_gate_post_reset_delay_ms = Keyword.get(config, :codex_rate_limit_gate_post_reset_delay_ms)
     hook_after_create = Keyword.get(config, :hook_after_create)
     hook_before_run = Keyword.get(config, :hook_before_run)
     hook_after_run = Keyword.get(config, :hook_after_run)
@@ -375,6 +384,10 @@ defmodule SymphonyElixir.TestSupport do
         "  turn_timeout_ms: #{yaml_value(codex_turn_timeout_ms)}",
         "  read_timeout_ms: #{yaml_value(codex_read_timeout_ms)}",
         "  stall_timeout_ms: #{yaml_value(codex_stall_timeout_ms)}",
+        "  rate_limit_gate_enabled: #{yaml_value(codex_rate_limit_gate_enabled)}",
+        "  rate_limit_gate_5h_threshold_percent: #{yaml_value(codex_rate_limit_gate_5h_threshold_percent)}",
+        "  rate_limit_gate_7d_threshold_percent: #{yaml_value(codex_rate_limit_gate_7d_threshold_percent)}",
+        "  rate_limit_gate_post_reset_delay_ms: #{yaml_value(codex_rate_limit_gate_post_reset_delay_ms)}",
         hooks_yaml(hook_after_create, hook_before_run, hook_after_run, hook_before_remove, hook_timeout_ms),
         observability_yaml(observability_enabled, observability_refresh_ms, observability_render_interval_ms),
         server_yaml(server_port, server_host),

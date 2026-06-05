@@ -215,6 +215,10 @@ Plans should focus on product and engineering intent rather than full implementa
 208. [208-effective-test-coverage-85-percent.md](completed/208-effective-test-coverage-85-percent.md)
 209. [209-analytics-token-and-status-table-accuracy.md](completed/209-analytics-token-and-status-table-accuracy.md)
 210. [210-workspace-disk-guard-gib-setting.md](completed/210-workspace-disk-guard-gib-setting.md)
+211. [211-operator-task-real-executor.md](completed/211-operator-task-real-executor.md)
+212. [212-rate-limit-session-start-gate.md](completed/212-rate-limit-session-start-gate.md)
+213. [213-operator-linear-tool-context-and-result-capture.md](completed/213-operator-linear-tool-context-and-result-capture.md)
+214. [214-session-history-raw-event-alignment.md](completed/214-session-history-raw-event-alignment.md)
 
 ## Active Plans
 

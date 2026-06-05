@@ -31,6 +31,25 @@ defmodule SymphonyElixir.DashboardSignalTest do
     assert unrecognized.last_codex_event == :notification
   end
 
+  test "rate-limit status exposes session start gate blocks" do
+    blocked =
+      RateLimitStatus.from_snapshot(%{
+        rate_limits: %{"limit_id" => "codex"},
+        rate_limit_gate: %{
+          status: :blocked,
+          window: "5h",
+          remaining_percent: 2.5,
+          threshold_percent: 5.0,
+          resume_after: ~U[2026-05-23 01:20:00Z]
+        }
+      })
+
+    assert blocked.status == :blocked
+    assert blocked.note =~ "Dispatch paused"
+    assert blocked.note =~ "5h"
+    assert blocked.gate.window == "5h"
+  end
+
   test "codex update detects rate-limit update events without parsed snapshots" do
     update = %{
       event: :notification,

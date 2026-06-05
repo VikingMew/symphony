@@ -1306,6 +1306,26 @@ defmodule SymphonyElixirWeb.AdminLive do
                     <textarea id={workflow_field_id("codex_turn_sandbox_json")} class={["workflow-textbox workflow-textbox-compact", workflow_field_class(@workflow_field_errors, "codex_turn_sandbox_json")]} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "codex_turn_sandbox_json")} name="workflow[codex_turn_sandbox_json]" rows="6" placeholder={~s({"type":"workspaceWrite","networkAccess":true})}><%= @workflow_form["codex_turn_sandbox_json"] %></textarea>
                     <.workflow_field_error field="codex_turn_sandbox_json" errors={@workflow_field_errors} />
                   </label>
+                  <label class="checkbox-row">
+                    <input type="hidden" name="workflow[codex_rate_limit_gate_enabled]" value="false" />
+                    <input type="checkbox" name="workflow[codex_rate_limit_gate_enabled]" value="true" checked={@workflow_form["codex_rate_limit_gate_enabled"] == "true"} />
+                    <span>Pause new sessions when Codex rate-limit headroom is low</span>
+                  </label>
+                  <label>
+                    <span class="metric-label">5-hour minimum remaining %</span>
+                    <input id={workflow_field_id("codex_rate_limit_gate_5h_threshold_percent")} class={workflow_field_class(@workflow_field_errors, "codex_rate_limit_gate_5h_threshold_percent")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "codex_rate_limit_gate_5h_threshold_percent")} type="number" min="0" max="100" step="0.1" name="workflow[codex_rate_limit_gate_5h_threshold_percent]" value={@workflow_form["codex_rate_limit_gate_5h_threshold_percent"]} />
+                    <.workflow_field_error field="codex_rate_limit_gate_5h_threshold_percent" errors={@workflow_field_errors} />
+                  </label>
+                  <label>
+                    <span class="metric-label">7-day / 1-week minimum remaining %</span>
+                    <input id={workflow_field_id("codex_rate_limit_gate_7d_threshold_percent")} class={workflow_field_class(@workflow_field_errors, "codex_rate_limit_gate_7d_threshold_percent")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "codex_rate_limit_gate_7d_threshold_percent")} type="number" min="0" max="100" step="0.1" name="workflow[codex_rate_limit_gate_7d_threshold_percent]" value={@workflow_form["codex_rate_limit_gate_7d_threshold_percent"]} />
+                    <.workflow_field_error field="codex_rate_limit_gate_7d_threshold_percent" errors={@workflow_field_errors} />
+                  </label>
+                  <label>
+                    <span class="metric-label">Post-reset delay ms</span>
+                    <input id={workflow_field_id("codex_rate_limit_gate_post_reset_delay_ms")} class={workflow_field_class(@workflow_field_errors, "codex_rate_limit_gate_post_reset_delay_ms")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "codex_rate_limit_gate_post_reset_delay_ms")} type="number" min="0" step="1000" name="workflow[codex_rate_limit_gate_post_reset_delay_ms]" value={@workflow_form["codex_rate_limit_gate_post_reset_delay_ms"]} />
+                    <.workflow_field_error field="codex_rate_limit_gate_post_reset_delay_ms" errors={@workflow_field_errors} />
+                  </label>
                 </section>
               </div>
 

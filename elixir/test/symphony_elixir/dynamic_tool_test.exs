@@ -67,6 +67,95 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(rejected["output"])["error"]["message"] =~ "not allowed"
   end
 
+  test "restricted Linear tool calls persist structured success audit events" do
+    payload = %{
+      "title" => "Code/doc drift",
+      "problem" => "Docs mention a missing surface.",
+      "evidence" => "README says X but code exposes Y.",
+      "why_it_matters" => "Operators get wrong guidance.",
+      "suggested_direction" => "Align docs with runtime.",
+      "category" => "documentation drift",
+      "source_run_id" => "run-operator"
+    }
+
+    response =
+      DynamicTool.execute("linear_issue_create", payload,
+        profile: "nap",
+        run_id: "run-operator",
+        operator_kind: "nap",
+        session_id: "thread-1-turn-1",
+        issue_creator: fn created_payload ->
+          {:ok,
+           %{
+             "id" => "issue-created",
+             "identifier" => "CCR-10",
+             "title" => created_payload["title"],
+             "url" => "https://linear.app/acme/issue/CCR-10",
+             "state" => "Backlog"
+           }}
+        end
+      )
+
+    assert response["success"] == true
+
+    [event] = FakePersistence.list_events(event_type: "linear.tool_call")
+    assert event.run_id == "run-operator"
+    assert event.payload.tool == "linear_issue_create"
+    assert event.payload.status == "success"
+    assert event.payload.profile == "nap"
+    assert event.payload.operator_kind == "nap"
+    assert event.payload.session_id == "thread-1-turn-1"
+    assert event.payload.arguments["title"] == "Code/doc drift"
+    assert event.payload.result["identifier"] == "CCR-10"
+    assert event.payload.result["url"] == "https://linear.app/acme/issue/CCR-10"
+  end
+
+  test "restricted Linear tool calls persist structured failure audit events" do
+    response =
+      DynamicTool.execute("linear_issue_create", %{"title" => "Incomplete"},
+        profile: "day_dreaming",
+        run_id: "run-day-dreaming",
+        operator_kind: "day_dreaming"
+      )
+
+    assert response["success"] == false
+
+    [event] = FakePersistence.list_events(event_type: "linear.tool_call")
+    assert event.run_id == "run-day-dreaming"
+    assert event.payload.tool == "linear_issue_create"
+    assert event.payload.status == "failure"
+    assert event.payload.profile == "day_dreaming"
+    assert event.payload.error.class == "validation_failed"
+    assert event.payload.error.message =~ "requires non-empty"
+    assert event.payload.arguments["title"] == "Incomplete"
+  end
+
+  test "missing workflow profile is captured as a stable Linear tool failure class" do
+    payload = %{
+      "title" => "Profile missing",
+      "problem" => "Synthetic operator state cannot resolve a workflow profile.",
+      "evidence" => "The issue state is Nap.",
+      "why_it_matters" => "Tool policy cannot decide whether creation is allowed.",
+      "suggested_direction" => "Pass explicit operator profile.",
+      "category" => "runtime"
+    }
+
+    response =
+      DynamicTool.execute("linear_issue_create", payload,
+        run_id: "run-missing-profile",
+        operator_kind: "nap",
+        issue: %Issue{id: "operator-nap", identifier: "NAP-1", state: "Nap"}
+      )
+
+    assert response["success"] == false
+
+    [event] = FakePersistence.list_events(event_type: "linear.tool_call")
+    assert event.run_id == "run-missing-profile"
+    assert event.issue_identifier == "NAP-1"
+    assert event.payload.error.class == "workflow_profile_unavailable"
+    assert event.payload.error.message == "Workflow profile is unavailable for this Codex session."
+  end
+
   test "linear_issue_create default path resolves project team backlog state and creates issue" do
     payload = %{
       "title" => "Add missing operator cue",

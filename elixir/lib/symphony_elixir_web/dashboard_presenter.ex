@@ -46,13 +46,28 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
 
   @spec rate_limit_status_label(atom()) :: String.t()
   def rate_limit_status_label(:available), do: "available"
+  def rate_limit_status_label(:blocked), do: "paused"
   def rate_limit_status_label(:unrecognized), do: "unrecognized"
   def rate_limit_status_label(_status), do: "not received"
 
   @spec rate_limit_badge_class(atom()) :: String.t()
   def rate_limit_badge_class(:available), do: "status-badge status-success"
+  def rate_limit_badge_class(:blocked), do: "status-badge status-danger"
   def rate_limit_badge_class(:unrecognized), do: "status-badge status-warning"
   def rate_limit_badge_class(_status), do: "status-badge status-info"
+
+  @spec rate_limit_gate_details(map() | nil) :: [map()]
+  def rate_limit_gate_details(gate) when is_map(gate) do
+    [
+      %{label: "Window", value: gate_value(gate, :window, "n/a")},
+      %{label: "Remaining", value: "#{gate_value(gate, :remaining_percent, "n/a")}%"},
+      %{label: "Threshold", value: "#{gate_value(gate, :threshold_percent, "n/a")}%"},
+      %{label: "Resets", value: format_gate_time(gate_value(gate, :resets_at, nil))},
+      %{label: "Resume after", value: format_gate_time(gate_value(gate, :resume_after, nil))}
+    ]
+  end
+
+  def rate_limit_gate_details(_gate), do: []
 
   @spec rate_limit_plan_context(map() | nil) :: String.t()
   def rate_limit_plan_context(snapshot) when is_map(snapshot) do
@@ -226,6 +241,14 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
       resets_at: format_reset_time(Payload.get_any(bucket, ["resets_at", :resets_at, "resetsAt", :resetsAt]))
     }
   end
+
+  defp gate_value(gate, key, default) when is_map(gate) do
+    Map.get(gate, key) || Map.get(gate, to_string(key)) || default
+  end
+
+  defp format_gate_time(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp format_gate_time(nil), do: "n/a"
+  defp format_gate_time(value), do: to_string(value)
 
   defp format_window_duration(minutes) when is_integer(minutes) do
     cond do

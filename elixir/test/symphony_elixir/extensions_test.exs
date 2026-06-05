@@ -421,6 +421,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_codex_timestamp" => nil,
                "note" => "Upstream Codex rate-limit snapshot received.",
                "debug_payload" => nil,
+               "gate" => nil,
                "observation" => nil,
                "snapshot" => %{"primary" => %{"remaining" => 11}},
                "status" => "available",

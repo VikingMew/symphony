@@ -290,6 +290,15 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </span>
           </div>
 
+          <%= if @payload.rate_limit_status.status == :blocked do %>
+            <div class="rate-limit-fallback-grid">
+              <article :for={detail <- rate_limit_gate_details(@payload.rate_limit_status.gate)} class="metric-card">
+                <p class="metric-label"><%= detail.label %></p>
+                <p class="metric-detail numeric"><%= detail.value %></p>
+              </article>
+            </div>
+          <% end %>
+
           <%= if @payload.rate_limit_status.status == :available do %>
             <div class="rate-limit-fallback-grid">
               <article class="metric-card">

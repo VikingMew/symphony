@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   """
 
   alias SymphonyElixir.{BranchName, Config, Git, Linear.Client, Linear.Issue}
+  alias SymphonyElixir.Codex.{LinearToolAudit}
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
 
   @task_read_query """
@@ -167,13 +168,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   def execute(tool, arguments, opts \\ []) do
     case tool do
       @read_tool ->
-        execute_task_read(arguments, opts)
+        execute_with_audit(@read_tool, arguments, opts, fn -> execute_task_read(arguments, opts) end)
 
       @update_tool ->
-        execute_task_update(arguments, opts)
+        execute_with_audit(@update_tool, arguments, opts, fn -> execute_task_update(arguments, opts) end)
 
       @issue_create_tool ->
-        execute_issue_create(arguments, opts)
+        execute_with_audit(@issue_create_tool, arguments, opts, fn -> execute_issue_create(arguments, opts) end)
 
       other ->
         failure_response(%{
@@ -183,6 +184,24 @@ defmodule SymphonyElixir.Codex.DynamicTool do
           }
         })
     end
+  end
+
+  defp execute_with_audit(tool, arguments, opts, fun) when is_function(fun, 0) do
+    started_at = DateTime.utc_now()
+    started_mono = System.monotonic_time(:millisecond)
+    response = fun.()
+    duration_ms = max(System.monotonic_time(:millisecond) - started_mono, 0)
+
+    LinearToolAudit.record(
+      tool,
+      arguments,
+      response,
+      opts
+      |> Keyword.put(:audit_started_at, started_at)
+      |> Keyword.put(:audit_duration_ms, duration_ms)
+    )
+
+    response
   end
 
   @spec tool_specs() :: [map()]

@@ -59,6 +59,12 @@ defmodule SymphonyElixir.RunSummary do
       detail = to_string(row.detail || "")
 
       cond do
+        String.starts_with?(detail, "agent final answer:") ->
+          detail |> String.replace_prefix("agent final answer:", "") |> String.trim()
+
+        String.starts_with?(detail, "agent message completed:") ->
+          detail |> String.replace_prefix("agent message completed:", "") |> String.trim()
+
         String.starts_with?(detail, "agent message streaming:") ->
           detail |> String.replace_prefix("agent message streaming:", "") |> String.trim()
 
