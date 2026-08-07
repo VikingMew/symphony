@@ -136,7 +136,7 @@ elixir/lib/symphony_elixir/
 | `SymphonyElixir.Application` | `symphony_elixir.ex` | OTP application entrypoint and supervision tree. |
 | `SymphonyElixir.CLI` | `cli.ex` | CLI parsing, runtime overrides, and app startup. |
 | `SymphonyElixir.Workflow` | `workflow.ex` | Workflow package parsing and config/prompt normalization entrypoints. |
-| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | Keeps current workflow state and last known good configuration. |
+| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | Caches the active workflow per enabled project and the last known good configuration. |
 | `SymphonyElixir.Config` | `config.ex` | Typed accessors for workflow configuration and defaults. |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | Configuration schema and validation rules. |
 | `SymphonyElixir.Orchestrator` | `orchestrator.ex` | Polling, dispatch, active-run tracking, retries, cleanup, status generation. |

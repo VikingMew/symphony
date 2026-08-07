@@ -99,6 +99,26 @@ defmodule SymphonyElixir.SpecsCheck do
   defp consume_form({:@, _, _}, state, _module_name, _file, _exemptions), do: state
 
   defp consume_form({:def, meta, [head_ast, _]} = _form, state, module_name, file, exemptions) do
+    consume_def(meta, head_ast, state, module_name, file, exemptions)
+  end
+
+  defp consume_form({:def, meta, [head_ast]} = _form, state, module_name, file, exemptions) do
+    # Bare function head (no body), e.g. `def foo(a \\ default)` declaring defaults
+    # before multi-clause definitions. It carries the same spec obligation as a
+    # body'd def: consume the pending @spec/@impl and remember the name so the
+    # following clauses are not reported.
+    consume_def(meta, head_ast, state, module_name, file, exemptions)
+  end
+
+  defp consume_form({:defp, _, _}, state, _module_name, _file, _exemptions) do
+    %{state | pending_specs: MapSet.new(), pending_impl: false}
+  end
+
+  defp consume_form(_form, state, _module_name, _file, _exemptions) do
+    %{state | pending_specs: MapSet.new(), pending_impl: false}
+  end
+
+  defp consume_def(meta, head_ast, state, module_name, file, exemptions) do
     {name, arity} = def_head_to_identifier(head_ast)
 
     id = {name, arity}
@@ -127,14 +147,6 @@ defmodule SymphonyElixir.SpecsCheck do
         %{next_state | findings: [finding | next_state.findings]}
       end
     end
-  end
-
-  defp consume_form({:defp, _, _}, state, _module_name, _file, _exemptions) do
-    %{state | pending_specs: MapSet.new(), pending_impl: false}
-  end
-
-  defp consume_form(_form, state, _module_name, _file, _exemptions) do
-    %{state | pending_specs: MapSet.new(), pending_impl: false}
   end
 
   defp compliant?(finding, state, exemptions) do

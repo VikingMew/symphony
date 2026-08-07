@@ -21,6 +21,10 @@ defmodule SymphonyElixir.Persistence.Project do
     field(:worktree_cleanup, :boolean, default: true)
     field(:description, :string)
     field(:enabled, :boolean, default: true)
+    field(:after_create_hook, :string)
+    field(:before_run_hook, :string)
+    field(:after_run_hook, :string)
+    field(:before_remove_hook, :string)
     timestamps(type: :utc_datetime_usec)
   end
 
@@ -38,7 +42,11 @@ defmodule SymphonyElixir.Persistence.Project do
       :worktree_fetch,
       :worktree_cleanup,
       :description,
-      :enabled
+      :enabled,
+      :after_create_hook,
+      :before_run_hook,
+      :after_run_hook,
+      :before_remove_hook
     ])
     |> validate_required([:name, :slug, :default_branch])
     |> validate_number(:checkout_depth, greater_than: 0)

@@ -3,9 +3,9 @@ defmodule SymphonyElixir.Payload do
   Helpers for mixed atom/string keyed external payloads.
   """
 
+  @spec get_any(map(), [atom() | String.t()], term()) :: term()
   def get_any(map, keys, default \\ nil)
 
-  @spec get_any(map(), [atom() | String.t()], term()) :: term()
   def get_any(map, keys, default) when is_map(map) and is_list(keys) do
     Enum.find_value(keys, default, fn key ->
       case Map.fetch(map, key) do
@@ -17,9 +17,9 @@ defmodule SymphonyElixir.Payload do
 
   def get_any(_map, _keys, default), do: default
 
+  @spec get_path(map(), [[atom() | String.t()]], term()) :: term()
   def get_path(map, path, default \\ nil)
 
-  @spec get_path(map(), [[atom() | String.t()]], term()) :: term()
   def get_path(map, path, default) when is_map(map) and is_list(path) do
     Enum.reduce_while(path, map, fn keys, acc ->
       case get_any(acc, List.wrap(keys), :__missing__) do

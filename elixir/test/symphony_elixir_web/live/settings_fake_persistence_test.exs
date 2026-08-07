@@ -1391,6 +1391,110 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
+  test "workflow settings page switches project via query parameter" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    {:ok, project_a} = FakePersistence.default_project()
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Second Project",
+        slug: "second",
+        linear_project_slug: "second-project",
+        repository_url: "git@github.com:org/repo-b.git"
+      })
+
+    b_raw =
+      workflow_import_raw("git@github.com:org/repo-b.git")
+      |> String.replace(
+        "polling:\n  interval_ms: 30000",
+        "hooks:\n  after_create: \"echo project-b\"\npolling:\n  interval_ms: 30000"
+      )
+
+    {:ok, _} = FakePersistence.import_workflow(project_a, workflow_import_raw("git@github.com:org/repo-a.git"), "web_workflow_settings")
+    {:ok, _} = FakePersistence.import_workflow(project_b, b_raw, "web_workflow_settings")
+    start_test_endpoint()
+
+    {:ok, _view, default_html} = live(build_conn(), "/settings/workflow")
+    refute default_html =~ "echo project-b"
+    assert default_html =~ ~s(value="/settings/workflow?project=fake-project-id")
+
+    {:ok, _view, b_html} = live(build_conn(), "/settings/workflow?project=#{project_b.id}")
+    assert b_html =~ "echo project-b"
+    assert b_html =~ ~s(value="/settings/workflow?project=#{project_b.id}")
+  end
+
+  test "workflow save targets the selected project and leaves other projects untouched" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    {:ok, project_a} = FakePersistence.default_project()
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Second Project",
+        slug: "second",
+        linear_project_slug: "second-project",
+        repository_url: "git@github.com:org/repo-b.git"
+      })
+
+    {:ok, _} = FakePersistence.import_workflow(project_a, workflow_import_raw("git@github.com:org/repo-a.git"), "web_workflow_settings")
+    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_import_raw("git@github.com:org/repo-b.git"), "web_workflow_settings")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/workflow?project=#{project_b.id}")
+
+    saved_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> render_submit()
+
+    assert saved_html =~ "Workflow settings saved"
+
+    imports =
+      Enum.filter(FakePersistence.calls(), fn
+        {:import_workflow, _project, _raw, "web_workflow_settings"} -> true
+        _ -> false
+      end)
+
+    assert length(imports) == 3
+
+    assert Enum.any?(imports, fn
+             {:import_workflow, project, _raw, "web_workflow_settings"} -> project.id == project_b.id
+             _ -> false
+           end)
+
+    a_version = FakePersistence.active_workflow_version(project_a)
+    assert a_version.raw_workflow_md =~ "git@github.com:org/repo-a.git"
+    refute a_version.raw_workflow_md =~ "git@github.com:org/repo-b.git"
+  end
+
+  test "settings header renders project switcher and preserves project in tab links" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Second Project",
+        slug: "second",
+        linear_project_slug: "second-project",
+        repository_url: "git@github.com:org/repo-b.git"
+      })
+
+    start_test_endpoint()
+
+    {:ok, _view, default_html} = live(build_conn(), "/settings/workflow")
+    assert default_html =~ "All projects"
+    assert default_html =~ "Fake Project"
+    assert default_html =~ "Second Project"
+    assert default_html =~ ~s(value="/settings/workflow?project=fake-project-id")
+    assert default_html =~ ~s(href="/settings/agents")
+    refute default_html =~ ~s(href="/settings/agents?project=)
+
+    {:ok, _view, b_html} = live(build_conn(), "/settings/workflow?project=#{project_b.id}")
+    assert b_html =~ ~s(value="/settings/workflow?project=#{project_b.id}")
+    assert b_html =~ ~s(href="/settings/agents?project=#{project_b.id}")
+    assert b_html =~ ~s(href="/settings/projects?project=#{project_b.id}")
+  end
+
   defp start_test_endpoint do
     endpoint_config =
       :symphony_elixir

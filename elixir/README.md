@@ -263,11 +263,15 @@ Symphony starts from the SQLite workflow database. Use `--database-path` to choo
 ```
 
 The local split package files, `workflow.yml` and `profiles.yml`, are package artifacts for import,
-export, and human-readable backups. They are not CLI startup arguments.
+export, and human-readable backups. They are not CLI startup arguments. The runtime authority is
+the active per-project workflow version in SQLite; hooks may be overridden per project in
+Settings / Projects.
 
 At startup, Symphony uses SQLite as the runtime workflow source. If the database has no active
 workflow version, Symphony enters setup-required mode and does not poll Linear or schedule agents
-until Settings creates the first active workflow.
+until Settings creates the first active workflow. Settings is project-aware: the workflow, agents,
+runtime, and import tabs edit the project selected by the Settings header switcher, and the Runs,
+Events, and Workers pages filter by the `project` query parameter.
 
 Optional flags:
 

@@ -449,6 +449,236 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     refute html =~ "No agent turns recorded."
   end
 
+  test "runs page filters by project query parameter" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.create_project(%{
+      name: "Second Project",
+      slug: "second",
+      linear_project_slug: "second-project",
+      repository_url: "git@github.com:org/repo2.git"
+    })
+
+    second_project = FakePersistence.list_projects() |> List.last()
+
+    FakePersistence.put_runs([
+      %{
+        id: "run-proj-a-1",
+        project_id: "fake-project-id",
+        kind: "issue",
+        issue_identifier: "MT-A-1",
+        status: "completed",
+        attempt: 0,
+        started_at: now,
+        finished_at: now,
+        inserted_at: now
+      },
+      %{
+        id: "run-proj-b-1",
+        project_id: second_project.id,
+        kind: "issue",
+        issue_identifier: "MT-B-1",
+        status: "running",
+        attempt: 0,
+        started_at: now,
+        inserted_at: now
+      }
+    ])
+
+    {:ok, _view, all_html} = live(build_conn(), "/runs")
+    assert all_html =~ "MT-A-1"
+    assert all_html =~ "MT-B-1"
+
+    {:ok, _view, filtered_html} = live(build_conn(), "/runs?project=fake-project-id")
+    assert filtered_html =~ "MT-A-1"
+    refute filtered_html =~ "MT-B-1"
+
+    {:ok, _view, second_html} = live(build_conn(), "/runs?project=#{second_project.id}")
+    assert second_html =~ "MT-B-1"
+    refute second_html =~ "MT-A-1"
+  end
+
+  test "runs page keeps project filter across pagination" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.create_project(%{
+      name: "Second Project",
+      slug: "second",
+      linear_project_slug: "second-project",
+      repository_url: "git@github.com:org/repo2.git"
+    })
+
+    second_project = FakePersistence.list_projects() |> List.last()
+
+    runs =
+      for index <- 1..30 do
+        %{
+          id: "run-proj-a-page-#{index}",
+          project_id: "fake-project-id",
+          kind: "issue",
+          issue_identifier: "MT-A-PAGE-#{index}",
+          status: "completed",
+          attempt: 0,
+          started_at: DateTime.add(now, -index, :second),
+          finished_at: DateTime.add(now, -index, :second),
+          inserted_at: DateTime.add(now, -index, :second)
+        }
+      end
+
+    FakePersistence.put_runs(
+      runs ++
+        [
+          %{
+            id: "run-proj-b-page-1",
+            project_id: second_project.id,
+            kind: "issue",
+            issue_identifier: "MT-B-PAGE-1",
+            status: "completed",
+            attempt: 0,
+            started_at: now,
+            finished_at: now,
+            inserted_at: now
+          }
+        ]
+    )
+
+    {:ok, view, html} = live(build_conn(), "/runs?project=fake-project-id")
+
+    assert html =~ "MT-A-PAGE-1"
+    refute html =~ "MT-A-PAGE-30"
+    refute html =~ "MT-B-PAGE-1"
+
+    html =
+      view
+      |> element("button", "Load more runs")
+      |> render_click()
+
+    assert html =~ "MT-A-PAGE-30"
+    refute html =~ "MT-B-PAGE-1"
+    assert html =~ "All matching runs are loaded."
+  end
+
+  test "events page filters by project query parameter" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.create_project(%{
+      name: "Second Project",
+      slug: "second",
+      linear_project_slug: "second-project",
+      repository_url: "git@github.com:org/repo2.git"
+    })
+
+    second_project = FakePersistence.list_projects() |> List.last()
+
+    FakePersistence.put_events([
+      %{
+        id: "event-proj-a-1",
+        project_id: "fake-project-id",
+        issue_identifier: "MT-EVTA-1",
+        event_type: "run.failed",
+        payload: %{"failure_reason" => "boom-a"},
+        occurred_at: now
+      },
+      %{
+        id: "event-proj-b-1",
+        project_id: second_project.id,
+        issue_identifier: "MT-EVTB-1",
+        event_type: "run.failed",
+        payload: %{"failure_reason" => "boom-b"},
+        occurred_at: now
+      }
+    ])
+
+    {:ok, _view, all_html} = live(build_conn(), "/events")
+    assert all_html =~ "boom-a"
+    assert all_html =~ "boom-b"
+
+    {:ok, _view, filtered_html} = live(build_conn(), "/events?project=fake-project-id")
+    assert filtered_html =~ "boom-a"
+    refute filtered_html =~ "boom-b"
+
+    {:ok, _view, second_html} = live(build_conn(), "/events?project=#{second_project.id}")
+    assert second_html =~ "boom-b"
+    refute second_html =~ "boom-a"
+  end
+
+  test "workers page tasks filter by project query parameter" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.create_project(%{
+      name: "Second Project",
+      slug: "second",
+      linear_project_slug: "second-project",
+      repository_url: "git@github.com:org/repo2.git"
+    })
+
+    second_project = FakePersistence.list_projects() |> List.last()
+
+    FakePersistence.put_tasks([
+      %{
+        id: "task-proj-a-1",
+        project_id: "fake-project-id",
+        issue_identifier: "MT-TASKA-1",
+        status: "queued",
+        execution_mode: "worker",
+        queued_at: now
+      },
+      %{
+        id: "task-proj-b-1",
+        project_id: second_project.id,
+        issue_identifier: "MT-TASKB-1",
+        status: "queued",
+        execution_mode: "worker",
+        queued_at: now
+      }
+    ])
+
+    {:ok, _view, all_html} = live(build_conn(), "/workers")
+    assert all_html =~ "MT-TASKA-1"
+    assert all_html =~ "MT-TASKB-1"
+
+    {:ok, _view, filtered_html} = live(build_conn(), "/workers?project=fake-project-id")
+    assert filtered_html =~ "MT-TASKA-1"
+    refute filtered_html =~ "MT-TASKB-1"
+
+    {:ok, _view, second_html} = live(build_conn(), "/workers?project=#{second_project.id}")
+    assert second_html =~ "MT-TASKB-1"
+    refute second_html =~ "MT-TASKA-1"
+  end
+
+  test "runs page renders project switcher with current project selected" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    start_test_endpoint()
+
+    FakePersistence.create_project(%{
+      name: "Second Project",
+      slug: "second",
+      linear_project_slug: "second-project",
+      repository_url: "git@github.com:org/repo2.git"
+    })
+
+    second_project = FakePersistence.list_projects() |> List.last()
+
+    {:ok, _view, all_html} = live(build_conn(), "/runs")
+    assert all_html =~ "All projects"
+    assert all_html =~ "Fake Project"
+    assert all_html =~ "Second Project"
+    assert all_html =~ ~s(value="/runs?project=fake-project-id")
+    assert all_html =~ ~s(value="/runs?project=#{second_project.id}")
+
+    {:ok, _view, filtered_html} = live(build_conn(), "/runs?project=#{second_project.id}")
+    assert filtered_html =~ ~s(value="/runs?project=#{second_project.id}")
+    assert filtered_html =~ "Second Project"
+  end
+
   defp start_test_endpoint do
     endpoint_config =
       :symphony_elixir

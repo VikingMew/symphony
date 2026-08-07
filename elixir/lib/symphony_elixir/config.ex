@@ -5,6 +5,8 @@ defmodule SymphonyElixir.Config do
 
   alias SymphonyElixir.{Config.Schema, Text, Workflow}
 
+  @workflow_context_key :symphony_workflow_context
+
   @default_prompt_template """
   You are working on a Linear issue.
 
@@ -28,7 +30,7 @@ defmodule SymphonyElixir.Config do
 
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
-    case Workflow.current() do
+    case current_workflow() do
       {:ok, %{setup_required: true}} ->
         {:error, :setup_required}
 
@@ -45,6 +47,30 @@ defmodule SymphonyElixir.Config do
 
       {:error, reason} ->
         raise ArgumentError, message: format_config_error(reason)
+    end
+  end
+
+  @spec with_workflow_context(Workflow.loaded_workflow(), (-> result)) :: result when result: term()
+  def with_workflow_context(%{config: _config} = workflow, fun) when is_function(fun, 0) do
+    previous = Process.get(@workflow_context_key)
+    Process.put(@workflow_context_key, workflow)
+
+    try do
+      fun.()
+    after
+      if is_nil(previous) do
+        Process.delete(@workflow_context_key)
+      else
+        Process.put(@workflow_context_key, previous)
+      end
+    end
+  end
+
+  @spec current_workflow() :: {:ok, Workflow.loaded_workflow()}
+  def current_workflow do
+    case Process.get(@workflow_context_key) do
+      %{config: _config} = workflow -> {:ok, workflow}
+      _ -> Workflow.current()
     end
   end
 
@@ -119,7 +145,7 @@ defmodule SymphonyElixir.Config do
 
   @spec workflow_prompt() :: String.t()
   def workflow_prompt do
-    {:ok, %{prompt_template: prompt}} = Workflow.current()
+    {:ok, %{prompt_template: prompt}} = current_workflow()
     if String.trim(prompt) == "", do: @default_prompt_template, else: prompt
   end
 

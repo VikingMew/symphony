@@ -23,12 +23,14 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
 
   @spec workflow_version_summary(map() | nil) :: String.t()
   def workflow_version_summary(version) do
+    version = version || %{}
+
     [
-      "ID: #{Map.get(version || %{}, :id) || "n/a"}",
-      "Version: #{Map.get(version || %{}, :version) || "n/a"}",
-      "Source: #{Map.get(version || %{}, :source) || "n/a"}",
-      "Active: #{Map.get(version || %{}, :active) || false}",
-      "Inserted: #{fmt_dt(Map.get(version || %{}, :inserted_at))}"
+      "ID: #{Map.get(version, :id) || "n/a"}",
+      "Version: #{Map.get(version, :version) || "n/a"}",
+      "Source: #{Map.get(version, :source) || "n/a"}",
+      "Active: #{Map.get(version, :active) || false}",
+      "Inserted: #{fmt_dt(Map.get(version, :inserted_at))}"
     ]
     |> Enum.join("\n")
   end

@@ -15,6 +15,7 @@ defmodule SymphonyElixir.Orchestrator do
     RunLifecycle,
     StatusDashboard,
     Tracker,
+    WorkflowStore,
     Workspace,
     WorkspaceDiskGuard
   }
@@ -480,10 +481,27 @@ defmodule SymphonyElixir.Orchestrator do
       |> reconcile_running_issues()
       |> reconcile_blocked_issues()
 
+    workflows = WorkflowStore.list_enabled()
+
+    if workflows == [] do
+      handle_dispatch_error(state, :setup_required)
+    else
+      Enum.reduce(workflows, state, &dispatch_workflow/2)
+    end
+  end
+
+  defp dispatch_workflow(workflow, state) do
+    Config.with_workflow_context(workflow, fn ->
+      dispatch_for_workflow(state, workflow)
+    end)
+  end
+
+  defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
     with :ok <- Config.validate!(),
          :allow <- rate_limit_gate_allows_dispatch(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
-         true <- available_slots(state) > 0 do
+         true <- available_slots(state) > 0,
+         true <- workflow_slots_available?(state, workflow) do
       state = %{state | last_config_error: nil}
       persist_polled_issues(issues)
       choose_issues(issues, state)
@@ -500,6 +518,21 @@ defmodule SymphonyElixir.Orchestrator do
         %{state | last_config_error: nil}
     end
   end
+
+  # Per-project concurrency: a project dispatches only while its own running
+  # count stays below its workflow's agent concurrency budget.
+  defp workflow_slots_available?(%State{running: running}, %{project_id: project_id}) do
+    max_for_project = Config.settings!().agent.max_concurrent_agents
+
+    running_for_project =
+      running
+      |> Map.values()
+      |> Enum.count(&(Map.get(&1, :project_id) == project_id))
+
+    running_for_project < max_for_project
+  end
+
+  defp workflow_slots_available?(%State{} = state, _workflow), do: available_slots(state) > 0
 
   defp handle_dispatch_error(%State{} = state, reason) do
     if config_validation_error?(reason) do
@@ -1029,18 +1062,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     with :ok <- ensure_workspace_disk_available(issue) do
-      case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-             result =
-               agent_runner().run(issue, recipient,
-                 attempt: attempt,
-                 worker_host: worker_host,
-                 rate_limit_snapshot: state.codex_rate_limits,
-                 rate_limit_settings: Config.settings!()
-               )
+      workflow = current_workflow_context()
 
-             send(recipient, {:agent_runner_finished, issue.id, result})
-             result
-           end) do
+      case start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
         {:ok, pid} ->
           ref = Process.monitor(pid)
           run_record = persist_run_started(issue, attempt, worker_host)
@@ -1054,6 +1078,7 @@ defmodule SymphonyElixir.Orchestrator do
               run_id: run_record && run_record.id,
               identifier: issue.identifier,
               issue: issue,
+              project_id: Map.get(workflow, :project_id),
               worker_host: worker_host,
               workspace_path: nil,
               session_id: nil,
@@ -1084,7 +1109,7 @@ defmodule SymphonyElixir.Orchestrator do
         {:error, reason} ->
           Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
           persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
-          next_attempt = if is_integer(attempt), do: attempt + 1, else: nil
+          next_attempt = next_spawn_attempt(attempt)
 
           schedule_issue_retry(state, issue.id, next_attempt, %{
             identifier: issue.identifier,
@@ -1096,6 +1121,26 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} ->
         block_issue_for_disk_guard(state, issue, reason, worker_host)
     end
+  end
+
+  defp next_spawn_attempt(attempt) when is_integer(attempt), do: attempt + 1
+  defp next_spawn_attempt(_attempt), do: nil
+
+  defp start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
+    Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
+      Config.with_workflow_context(workflow, fn ->
+        result =
+          agent_runner().run(issue, recipient,
+            attempt: attempt,
+            worker_host: worker_host,
+            rate_limit_snapshot: state.codex_rate_limits,
+            rate_limit_settings: Config.settings!()
+          )
+
+        send(recipient, {:agent_runner_finished, issue.id, result})
+        result
+      end)
+    end)
   end
 
   defp complete_issue(%State{} = state, issue_id) do
@@ -1530,7 +1575,9 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:request_refresh, _from, state) do
-    if !listening?(state) do
+    if listening?(state) do
+      do_handle_request_refresh(state)
+    else
       {:reply,
        %{
          queued: false,
@@ -1540,8 +1587,6 @@ defmodule SymphonyElixir.Orchestrator do
          listening?: false,
          listening_mode: "not_listening"
        }, state}
-    else
-      do_handle_request_refresh(state)
     end
   end
 
@@ -1662,17 +1707,19 @@ defmodule SymphonyElixir.Orchestrator do
     if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
       state
     else
-      Enum.reduce([:nap, :day_dreaming], state, fn kind, state_acc ->
-        task = operator_task(state_acc, kind)
+      Enum.reduce([:nap, :day_dreaming], state, &maybe_start_queued_operator_task/2)
+    end
+  end
 
-        if task.status == :queued do
-          {state_acc, started} = start_operator_task(state_acc, task)
-          persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
-          put_operator_task(state_acc, kind, started)
-        else
-          state_acc
-        end
-      end)
+  defp maybe_start_queued_operator_task(kind, state) do
+    task = operator_task(state, kind)
+
+    if task.status == :queued do
+      {state, started} = start_operator_task(state, task)
+      persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
+      put_operator_task(state, kind, started)
+    else
+      state
     end
   end
 
@@ -2336,11 +2383,13 @@ defmodule SymphonyElixir.Orchestrator do
   defp running_entry_state(%{issue: %{state: state}}), do: state
   defp running_entry_state(metadata), do: Map.get(metadata, :state, "running")
 
-  defp persist_polled_issues(issues) when is_list(issues) do
+  defp persist_polled_issues(issues) do
     if persistence_enabled?() do
+      project_id = Map.get(current_workflow_context(), :project_id)
+
       Enum.each(issues, fn
         %Issue{} = issue ->
-          _ = persistence().upsert_issue(Events.issue_attrs(issue))
+          _ = persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
 
         _ ->
           :ok
@@ -2350,18 +2399,38 @@ defmodule SymphonyElixir.Orchestrator do
     :ok
   end
 
+  # The workflow context is set by Config.with_workflow_context/2 while the
+  # orchestrator iterates enabled projects. Defaults keep single-project
+  # behavior intact when no context is active (e.g. operator tasks).
+  defp current_workflow_context do
+    case Config.current_workflow() do
+      {:ok, %{config: _config} = workflow} -> workflow
+      _ -> %{config: %{}, prompt: "", prompt_template: "", project_id: nil, workflow_version_id: nil}
+    end
+  end
+
+  defp context_workflow_version(%{workflow_version_id: version_id}) when is_binary(version_id) do
+    persistence().get_workflow_version(version_id) || persistence().active_workflow_version()
+  end
+
+  defp context_workflow_version(_workflow), do: persistence().active_workflow_version()
+
   defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
-    {:ok, issue_record} =
-      persistence().upsert_issue(Events.issue_attrs(issue))
+    workflow = current_workflow_context()
+    project_id = Map.get(workflow, :project_id)
 
-    workflow_version = persistence().active_workflow_version()
+    {:ok, issue_record} =
+      persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+
+    workflow_version = context_workflow_version(workflow)
 
     run_attrs =
       issue
       |> Events.run_attrs(workflow_version, "centralized", attempt)
       |> Map.put(:issue_id, issue_record.id)
+      |> Map.put_new(:project_id, project_id)
 
     {:ok, run} = persistence().create_run(run_attrs)
 
@@ -2376,7 +2445,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp persist_operator_run_started(task) do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
-    workflow_version = persistence().active_workflow_version()
+    workflow_version = context_workflow_version(current_workflow_context())
 
     {:ok, run} =
       persistence().create_run(%{
@@ -2401,15 +2470,19 @@ defmodule SymphonyElixir.Orchestrator do
   defp persist_worker_task_queued(%Issue{} = issue, attempt) do
     if !persistence_enabled?(), do: throw(:persistence_disabled)
 
-    {:ok, issue_record} =
-      persistence().upsert_issue(Events.issue_attrs(issue))
+    workflow = current_workflow_context()
+    project_id = Map.get(workflow, :project_id)
 
-    workflow_version = persistence().active_workflow_version()
+    {:ok, issue_record} =
+      persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+
+    workflow_version = context_workflow_version(workflow)
 
     run_attrs =
       issue
       |> Events.run_attrs(workflow_version, "worker", attempt)
       |> Map.put(:issue_id, issue_record.id)
+      |> Map.put_new(:project_id, project_id)
 
     {:ok, run} = persistence().create_run(run_attrs)
 

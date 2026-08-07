@@ -37,10 +37,7 @@ defmodule SymphonyElixir.Nap.Results do
             {MapSet.put(seen, fp), [%{status: :validation_failed, finding: finding, fingerprint: fp, issue: nil, reason: "missing required finding fields"} | results]}
 
           true ->
-            case create_fun.(finding) do
-              {:ok, issue} -> {MapSet.put(seen, fp), [%{status: :created, finding: finding, fingerprint: fp, issue: issue, reason: nil} | results]}
-              {:error, reason} -> {MapSet.put(seen, fp), [%{status: :create_failed, finding: finding, fingerprint: fp, issue: nil, reason: inspect(reason)} | results]}
-            end
+            create_result(finding, fp, seen, results, create_fun)
         end
       end)
 
@@ -52,6 +49,20 @@ defmodule SymphonyElixir.Nap.Results do
       failed: Enum.count(results, &(&1.status in [:validation_failed, :create_failed])),
       results: results
     }
+  end
+
+  defp create_result(finding, fingerprint, seen, results, create_fun) do
+    case create_fun.(finding) do
+      {:ok, issue} ->
+        {MapSet.put(seen, fingerprint), [%{status: :created, finding: finding, fingerprint: fingerprint, issue: issue, reason: nil} | results]}
+
+      {:error, reason} ->
+        {MapSet.put(seen, fingerprint),
+         [
+           %{status: :create_failed, finding: finding, fingerprint: fingerprint, issue: nil, reason: inspect(reason)}
+           | results
+         ]}
+    end
   end
 
   defp invalid_finding?(finding) do

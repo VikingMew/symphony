@@ -151,14 +151,18 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
     terminal_states = Map.get(dispatch_settings, :terminal_states, MapSet.new())
 
     issue_routable_to_worker?(issue) and
-      allowed_by_listening_mode?(state_name, dispatch_settings) and
+      candidate_state?(state_name, active_states, terminal_states, dispatch_settings)
+  end
+
+  def candidate_issue?(_issue, _dispatch_settings), do: false
+
+  defp candidate_state?(state_name, active_states, terminal_states, dispatch_settings) do
+    allowed_by_listening_mode?(state_name, dispatch_settings) and
       active_issue_state?(state_name, active_states) and
       !human_review_state?(state_name, dispatch_settings) and
       executable_state?(state_name, dispatch_settings) and
       !terminal_issue_state?(state_name, terminal_states)
   end
-
-  def candidate_issue?(_issue, _dispatch_settings), do: false
 
   @spec retry_candidate_issue?(Issue.t(), dispatch_settings()) :: boolean()
   def retry_candidate_issue?(%Issue{} = issue, dispatch_settings) when is_map(dispatch_settings) do

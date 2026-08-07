@@ -11,18 +11,18 @@ defmodule SymphonyElixir.RunLifecycle do
 
   @stale_reason "runtime restarted before run finished"
 
+  @spec task_event_attrs(String.t(), DateTime.t()) :: map()
   def task_event_attrs(event_type, now \\ DateTime.utc_now())
 
-  @spec task_event_attrs(String.t(), DateTime.t()) :: map()
   def task_event_attrs("task.accepted", now), do: %{status: "running", started_at: now}
   def task_event_attrs("task.completed", now), do: terminal_attrs("completed", nil, now)
   def task_event_attrs("task.failed", now), do: terminal_attrs("failed", nil, now)
   def task_event_attrs("task.cancelled", now), do: terminal_attrs("cancelled", nil, now)
   def task_event_attrs(_event_type, _now), do: %{}
 
+  @spec run_event_attrs(String.t(), DateTime.t()) :: map()
   def run_event_attrs(event_type, now \\ DateTime.utc_now())
 
-  @spec run_event_attrs(String.t(), DateTime.t()) :: map()
   def run_event_attrs("task.accepted", _now), do: %{status: "running"}
   def run_event_attrs("task.completed", now), do: terminal_attrs("completed", nil, now)
   def run_event_attrs("task.failed", now), do: terminal_attrs("failed", nil, now)
@@ -35,10 +35,10 @@ defmodule SymphonyElixir.RunLifecycle do
     |> maybe_put_failure_reason(failure_reason)
   end
 
-  def finish_run(persistence, run_id, status, failure_reason, opts \\ [])
-
   @spec finish_run(module(), String.t() | nil, String.t(), String.t() | nil, keyword()) ::
           {:ok, term()} | {:error, term()} | :noop
+  def finish_run(persistence, run_id, status, failure_reason, opts \\ [])
+
   def finish_run(_persistence, nil, _status, _failure_reason, _opts), do: :noop
 
   def finish_run(persistence, run_id, status, failure_reason, opts)

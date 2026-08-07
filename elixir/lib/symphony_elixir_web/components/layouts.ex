@@ -64,6 +64,31 @@ defmodule SymphonyElixirWeb.Layouts do
     """
   end
 
+  attr(:projects, :list, required: true)
+  attr(:current, :any, default: nil)
+  attr(:base_path, :string, required: true)
+
+  @spec project_switcher(map()) :: Phoenix.LiveView.Rendered.t()
+  def project_switcher(assigns) do
+    ~H"""
+    <label class="project-switcher">
+      <span class="metric-label">Project</span>
+      <select class="project-switcher-select" aria-label="Filter by project" onchange="location = this.value">
+        <option value={@base_path} selected={is_nil(@current)}>All projects</option>
+        <option
+          :for={project <- @projects}
+          value={project_path(@base_path, project)}
+          selected={project.id == @current}
+        >
+          <%= project.name %>
+        </option>
+      </select>
+    </label>
+    """
+  end
+
+  defp project_path(base_path, project), do: "#{base_path}?project=#{project.id}"
+
   @spec app_nav(map()) :: Phoenix.LiveView.Rendered.t()
   def app_nav(assigns) do
     assigns =

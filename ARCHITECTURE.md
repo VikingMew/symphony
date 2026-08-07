@@ -86,9 +86,10 @@ sequenceDiagram
     CLI->>Orch: Start application supervision tree
 
     loop polling interval
-        Orch->>Linear: Fetch active candidate issues
+        Orch->>Workflow: Resolve enabled projects' workflows
+        Orch->>Linear: Fetch active candidate issues per project
         Linear-->>Orch: Return normalized issues
-        Orch->>Orch: Apply concurrency, state, retry, and blocker rules
+        Orch->>Orch: Apply concurrency, state, retry, and blocker rules per project
         alt centralized execution
             Orch->>WS: Ensure issue workspace exists
             WS->>WS: Run after_create hook when newly created
@@ -129,9 +130,13 @@ Locations:
 - `elixir/lib/symphony_elixir/workflow.ex`
 - `elixir/lib/symphony_elixir/workflow_store.ex`
 
-The workflow store reads the active SQLite `workflow_versions` row, parses the saved workflow
-package, and keeps the prompt body as the shared base prompt. If no active workflow exists, it
-returns a setup-required sentinel that does not poll Linear or schedule agents.
+The workflow store caches the active SQLite `workflow_versions` row **for every enabled project**
+(keyed by project id), parses each saved workflow package, and keeps the prompt body as the shared
+base prompt. `current/0` and `current_with_source/0` keep single-workflow compatibility and return
+the default project's workflow (or the first enabled project's when the default has none);
+`list_enabled/0` and `for_project/1` expose the per-project map. If no enabled project has an
+active workflow, the store returns a setup-required sentinel that does not poll Linear or schedule
+agents. Workspace isolation is per repository, which keeps multiple projects' workspaces separate.
 
 ### 6.3 Config Layer
 

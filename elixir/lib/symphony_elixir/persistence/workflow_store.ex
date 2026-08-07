@@ -184,7 +184,29 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       |> put_project_value("worktree_fetch", project.worktree_fetch != false)
       |> put_project_value("worktree_cleanup", project.worktree_cleanup != false)
 
-    Map.put(config, "project", project_config)
+    config
+    |> Map.put("project", project_config)
+    |> apply_project_hooks(project)
+  end
+
+  # Per-project hook overlay: workflow-level hooks are the default; a project
+  # hook field, when set, overrides the corresponding workflow hook for that
+  # project. Unset project hook fields leave the workflow hook in place.
+  defp apply_project_hooks(config, %Project{} = project) do
+    [
+      {"after_create", project.after_create_hook},
+      {"before_run", project.before_run_hook},
+      {"after_run", project.after_run_hook},
+      {"before_remove", project.before_remove_hook}
+    ]
+    |> Enum.reduce(config, fn {key, value}, acc ->
+      if is_binary(value) and String.trim(value) != "" do
+        hooks = Map.get(acc, "hooks", %{})
+        Map.put(acc, "hooks", Map.put(hooks, key, value))
+      else
+        acc
+      end
+    end)
   end
 
   defp put_project_value(config, key, value) when is_binary(value) do

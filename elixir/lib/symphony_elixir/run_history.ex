@@ -130,27 +130,7 @@ defmodule SymphonyElixir.RunHistory do
     tool = payload_value(payload, ["tool", :tool]) || "Linear tool"
     status = payload_value(payload, ["status", :status])
 
-    case status do
-      "success" ->
-        created = payload_value(payload, ["result", :result]) || %{}
-        identifier = payload_value(created, ["identifier", :identifier])
-        url = payload_value(created, ["url", :url])
-
-        cond do
-          is_binary(identifier) and is_binary(url) -> "#{tool} succeeded: #{identifier} #{url}"
-          is_binary(identifier) -> "#{tool} succeeded: #{identifier}"
-          true -> "#{tool} succeeded"
-        end
-
-      "failure" ->
-        error = payload_value(payload, ["error", :error]) || %{}
-        error_class = payload_value(error, ["class", :class]) || "tool_failed"
-        message = payload_value(error, ["message", :message])
-        if blank?(message), do: "#{tool} failed: #{error_class}", else: "#{tool} failed: #{error_class}: #{message}"
-
-      _ ->
-        payload_message(payload) || "#{tool} updated"
-    end
+    linear_tool_call_detail(status, tool, payload)
   end
 
   defp detail("codex.update", payload), do: codex_update_detail(payload) || empty_codex_detail(payload) || "codex.update"
@@ -161,6 +141,28 @@ defmodule SymphonyElixir.RunHistory do
       payload_message(payload) ||
       type
   end
+
+  defp linear_tool_call_detail("success", tool, payload) do
+    created = payload_value(payload, ["result", :result]) || %{}
+    identifier = payload_value(created, ["identifier", :identifier])
+    url = payload_value(created, ["url", :url])
+
+    cond do
+      is_binary(identifier) and is_binary(url) -> "#{tool} succeeded: #{identifier} #{url}"
+      is_binary(identifier) -> "#{tool} succeeded: #{identifier}"
+      true -> "#{tool} succeeded"
+    end
+  end
+
+  defp linear_tool_call_detail("failure", tool, payload) do
+    error = payload_value(payload, ["error", :error]) || %{}
+    error_class = payload_value(error, ["class", :class]) || "tool_failed"
+    message = payload_value(error, ["message", :message])
+
+    if blank?(message), do: "#{tool} failed: #{error_class}", else: "#{tool} failed: #{error_class}: #{message}"
+  end
+
+  defp linear_tool_call_detail(_status, tool, payload), do: payload_message(payload) || "#{tool} updated"
 
   defp payload_message(payload) do
     case payload_value(payload, ["message", :message]) do
@@ -332,6 +334,12 @@ defmodule SymphonyElixir.RunHistory do
       type in ["run.failed", "workspace.hook_failed"] -> :error
       type in ["run.stopped"] -> :warning
       type == "linear.tool_call" and payload_value(payload, ["status", :status]) == "failure" -> :error
+      true -> payload_severity(payload)
+    end
+  end
+
+  defp payload_severity(payload) do
+    cond do
       codex_event(payload) in ["startup_failed", "turn_ended_with_error", "turn_failed"] -> :error
       codex_event(payload) in ["approval_required", "turn_input_required"] -> :warning
       payload_value(payload, ["status", :status]) in ["failed", "error"] -> :error
@@ -435,17 +443,8 @@ defmodule SymphonyElixir.RunHistory do
   end
 
   defp protocol_timestamp(message) do
-    ms =
-      Payload.get_path(message, ["params", "completedAtMs"]) ||
-        Payload.get_path(message, [:params, :completedAtMs]) ||
-        Payload.get_path(message, ["params", "startedAtMs"]) ||
-        Payload.get_path(message, [:params, :startedAtMs])
-
-    seconds =
-      Payload.get_path(message, ["params", "turn", "completedAt"]) ||
-        Payload.get_path(message, [:params, :turn, :completedAt]) ||
-        Payload.get_path(message, ["params", "turn", "startedAt"]) ||
-        Payload.get_path(message, [:params, :turn, :startedAt])
+    ms = protocol_timestamp_ms(message)
+    seconds = protocol_timestamp_seconds(message)
 
     cond do
       is_integer(ms) -> DateTime.from_unix!(ms, :millisecond)
@@ -454,6 +453,20 @@ defmodule SymphonyElixir.RunHistory do
     end
   rescue
     _error -> nil
+  end
+
+  defp protocol_timestamp_ms(message) do
+    Payload.get_path(message, ["params", "completedAtMs"]) ||
+      Payload.get_path(message, [:params, :completedAtMs]) ||
+      Payload.get_path(message, ["params", "startedAtMs"]) ||
+      Payload.get_path(message, [:params, :startedAtMs])
+  end
+
+  defp protocol_timestamp_seconds(message) do
+    Payload.get_path(message, ["params", "turn", "completedAt"]) ||
+      Payload.get_path(message, [:params, :turn, :completedAt]) ||
+      Payload.get_path(message, ["params", "turn", "startedAt"]) ||
+      Payload.get_path(message, [:params, :turn, :startedAt])
   end
 
   defp normalize_text(value) when is_binary(value) do

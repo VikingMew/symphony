@@ -131,7 +131,7 @@ elixir/lib/symphony_elixir/
 | `SymphonyElixir.Application` | `symphony_elixir.ex` | OTP 应用入口和监督树定义。 |
 | `SymphonyElixir.CLI` | `cli.ex` | CLI 参数解析、运行时覆盖项和应用启动。 |
 | `SymphonyElixir.Workflow` | `workflow.ex` | workflow package 解析、config/prompt 规范化入口。 |
-| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | 保存当前 workflow 状态，以及最后一次可用的正确配置。 |
+| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | 缓存每个已启用项目的活动 workflow，以及最后一次可用的正确配置。 |
 | `SymphonyElixir.Config` | `config.ex` | 为 workflow 配置提供带默认值的类型化读取接口。 |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | 配置 schema 和校验规则。 |
 | `SymphonyElixir.Orchestrator` | `orchestrator.ex` | 轮询、派发、并发控制、active run 跟踪、重试、清理、状态生成。 |

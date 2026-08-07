@@ -210,6 +210,7 @@ defmodule SymphonyElixir.Persistence do
       |> maybe_filter_event_issue(Keyword.get(opts, :issue_identifier))
       |> maybe_filter_event_run(Keyword.get(opts, :run_id))
       |> maybe_filter_event_type(Keyword.get(opts, :event_type))
+      |> maybe_filter_event_project(Keyword.get(opts, :project_id))
       |> order_events(Keyword.get(opts, :order, :desc))
       |> limit(^limit)
       |> Repo.all()
@@ -218,11 +219,24 @@ defmodule SymphonyElixir.Persistence do
     end
   end
 
+  defp maybe_filter_event_project(query, project_id) when is_binary(project_id) and project_id != "" do
+    where(query, [e], e.project_id == ^project_id)
+  end
+
+  defp maybe_filter_event_project(query, _project_id), do: query
+
   defp run_filters(query, opts) do
     query
     |> maybe_filter_run_status(Keyword.get(opts, :status))
     |> maybe_filter_run_kind(Keyword.get(opts, :kind))
+    |> maybe_filter_run_project(Keyword.get(opts, :project_id))
   end
+
+  defp maybe_filter_run_project(query, project_id) when is_binary(project_id) and project_id != "" do
+    where(query, [r], r.project_id == ^project_id)
+  end
+
+  defp maybe_filter_run_project(query, _project_id), do: query
 
   defp maybe_filter_run_status(query, status) when is_binary(status) and status != "" do
     where(query, [r], r.status == ^status)

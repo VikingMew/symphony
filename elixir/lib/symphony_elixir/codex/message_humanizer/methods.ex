@@ -11,9 +11,11 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.Methods do
   def humanize(method, payload), do: humanize_codex_method(method, payload)
 
   @doc false
+  @spec humanize_mcp(map()) :: String.t()
   def humanize_mcp(payload), do: ToolMethods.mcp_elicitation(payload)
 
   @doc false
+  @spec humanize_dynamic_tool(String.t(), map()) :: String.t()
   def humanize_dynamic_tool(base, payload), do: ToolMethods.dynamic_tool_event(base, payload)
 
   defp humanize_codex_method("thread/started", payload) do

@@ -53,9 +53,8 @@ defmodule SymphonyElixir.Codex.DynamicTool.IssueCreate do
 
     with {:ok, profile} <- profile_from_opts(opts),
          :ok <- validate_profile(profile),
-         {:ok, payload} <- normalize_arguments(arguments),
-         {:ok, result} <- creator.(payload) do
-      {:ok, result}
+         {:ok, payload} <- normalize_arguments(arguments) do
+      creator.(payload)
     end
   end
 

@@ -9,8 +9,8 @@ defmodule SymphonyElixirWeb.WorkersLive do
   alias SymphonyElixirWeb.Admin.ObservabilityPresenter
 
   @impl true
-  def mount(_params, _session, socket) do
-    {:ok, refresh(socket)}
+  def mount(params, _session, socket) do
+    {:ok, socket |> assign(:route_params, params) |> refresh()}
   end
 
   @impl true
@@ -90,7 +90,10 @@ defmodule SymphonyElixirWeb.WorkersLive do
       </section>
 
       <section class="section-card">
-        <h2 class="section-title">Tasks</h2>
+        <div class="section-header">
+          <h2 class="section-title">Tasks</h2>
+          <SymphonyElixirWeb.Layouts.project_switcher projects={@projects} current={@project_filter} base_path="/workers" />
+        </div>
         <%= if @tasks == [] do %>
           <p class="empty-state">No worker-backed tasks have been queued yet.</p>
         <% else %>
@@ -116,10 +119,18 @@ defmodule SymphonyElixirWeb.WorkersLive do
   end
 
   defp refresh(socket) do
+    filter = project_filter(socket)
+
     socket
     |> assign(:workers, persistence().list_workers(limit: 100))
-    |> assign(:tasks, persistence().list_tasks(limit: 100))
+    |> assign(:projects, persistence().list_projects())
+    |> assign(:project_filter, filter)
+    |> assign(:tasks, persistence().list_tasks(limit: 100, project_id: filter))
     |> assign(:execution_mode, Config.execution_mode())
+  end
+
+  defp project_filter(%{assigns: %{route_params: params}}) do
+    SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))
   end
 
   defp persistence, do: PersistenceProvider.module()

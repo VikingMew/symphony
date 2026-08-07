@@ -219,10 +219,19 @@ Plans should focus on product and engineering intent rather than full implementa
 212. [212-rate-limit-session-start-gate.md](completed/212-rate-limit-session-start-gate.md)
 213. [213-operator-linear-tool-context-and-result-capture.md](completed/213-operator-linear-tool-context-and-result-capture.md)
 214. [214-session-history-raw-event-alignment.md](completed/214-session-history-raw-event-alignment.md)
+215. [220-missing-spec-declarations.md](completed/220-missing-spec-declarations.md)
+216. [221-credo-strict-cleanup.md](completed/221-credo-strict-cleanup.md)
 
 ## Active Plans
 
-None.
+1. [215-multi-project-design-and-documentation-alignment.md](active/215-multi-project-design-and-documentation-alignment.md)
+2. [216-multi-project-runtime-workflow-store.md](active/216-multi-project-runtime-workflow-store.md)
+3. [217-multi-project-orchestrator-dispatch.md](active/217-multi-project-orchestrator-dispatch.md)
+4. [218-admin-ui-project-filtering.md](active/218-admin-ui-project-filtering.md)
+5. [219-settings-project-switching.md](active/219-settings-project-switching.md)
+6. [222-dialyzer-gate-unblock.md](active/222-dialyzer-gate-unblock.md)
+7. [223-dialyzer-unused-functions.md](active/223-dialyzer-unused-functions.md)
+8. [224-dialyzer-remaining-warnings.md](active/224-dialyzer-remaining-warnings.md)
 
 ## Intentional Numbering Gaps
 

@@ -82,17 +82,31 @@ defmodule SymphonyElixirWeb.Presenter do
         restart_count: restart_count(retry),
         current_retry_attempt: retry_attempt(retry)
       },
-      running: running && running_issue_payload(running),
-      blocked: blocked && blocked_issue_payload(blocked),
-      retry: retry && retry_issue_payload(retry),
+      running: optional_running_issue_payload(running),
+      blocked: optional_blocked_issue_payload(blocked),
+      retry: optional_retry_issue_payload(retry),
       logs: %{
         codex_session_logs: []
       },
-      recent_events: (running && recent_events_payload(running)) || (blocked && blocked_events_payload(blocked)) || [],
-      last_error: (retry && retry.error) || (blocked && blocked.detail),
+      recent_events: issue_recent_events(running, blocked),
+      last_error: issue_last_error(retry, blocked),
       tracked: %{}
     }
   end
+
+  defp optional_running_issue_payload(nil), do: nil
+  defp optional_running_issue_payload(running), do: running_issue_payload(running)
+
+  defp optional_blocked_issue_payload(nil), do: nil
+  defp optional_blocked_issue_payload(blocked), do: blocked_issue_payload(blocked)
+
+  defp optional_retry_issue_payload(nil), do: nil
+  defp optional_retry_issue_payload(retry), do: retry_issue_payload(retry)
+
+  defp issue_recent_events(running, blocked),
+    do: (running && recent_events_payload(running)) || (blocked && blocked_events_payload(blocked)) || []
+
+  defp issue_last_error(retry, blocked), do: (retry && retry.error) || (blocked && blocked.detail)
 
   defp issue_id_from_entries(running, retry, blocked),
     do: (running && running.issue_id) || (retry && retry.issue_id) || (blocked && blocked.issue_id)

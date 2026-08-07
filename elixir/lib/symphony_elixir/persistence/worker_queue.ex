@@ -96,11 +96,21 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     limit = Keyword.get(opts, :limit, 100)
 
     if Persistence.repo_available?() do
-      Repo.all(from(t in TaskRecord, order_by: [desc: t.inserted_at], limit: ^limit))
+      TaskRecord
+      |> maybe_filter_task_project(Keyword.get(opts, :project_id))
+      |> order_by([t], desc: t.inserted_at)
+      |> limit(^limit)
+      |> Repo.all()
     else
       []
     end
   end
+
+  defp maybe_filter_task_project(query, project_id) when is_binary(project_id) and project_id != "" do
+    where(query, [t], t.project_id == ^project_id)
+  end
+
+  defp maybe_filter_task_project(query, _project_id), do: query
 
   @spec list_task_leases(keyword()) :: [TaskLease.t()]
   def list_task_leases(opts \\ []) do

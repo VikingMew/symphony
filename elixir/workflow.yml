@@ -13,6 +13,9 @@ project:
   checkout_depth: 1
   cleanup_commands: ["cd elixir && mise exec -- mix workspace.before_remove"]
   default_branch: "main"
+# NOTE: This file is an import/export artifact, not the live runtime source.
+# The runtime authority is the active per-project workflow version in SQLite;
+# hooks may be overridden per project in Settings / Projects.
   repository_url: "https://github.com/openai/symphony"
   setup_commands: ["if command -v mise >/dev/null 2>&1; then cd elixir && mise trust && mise exec -- mix deps.get; fi"]
 tracker:

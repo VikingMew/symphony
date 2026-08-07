@@ -346,6 +346,10 @@ Note:
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
+- A Symphony instance maintains one active workflow version **per enabled project**. The workflow
+  schema is the per-project policy; `tracker.project_slug`, the repository URL, and workspace
+  hooks are overridable per project through the Project settings record, and persisted runs,
+  issues, events, and worker tasks carry the originating `project_id`.
 
 #### 5.3.1 `tracker` (object)
 
@@ -577,15 +581,16 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.kind`: string, REQUIRED, currently `linear`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
-- `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`
+- `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
+  the Project settings record (each enabled project names its own Linear project slug)
 - `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
-- `hooks.after_create`: shell script or null
-- `hooks.before_run`: shell script or null
-- `hooks.after_run`: shell script or null
-- `hooks.before_remove`: shell script or null
+- `hooks.after_create`: shell script or null; overridable per project
+- `hooks.before_run`: shell script or null; overridable per project
+- `hooks.after_run`: shell script or null; overridable per project
+- `hooks.before_remove`: shell script or null; overridable per project
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
@@ -710,13 +715,15 @@ Tick sequence:
 
 1. Reconcile running issues.
 2. Run dispatch preflight validation.
-3. Fetch candidate issues from tracker using active states.
+3. For each enabled project, fetch candidate issues from that project's tracker using its active
+   states and per-project concurrency budget.
 4. Sort issues by dispatch priority.
-5. Dispatch eligible issues while slots remain.
+5. Dispatch eligible issues while slots remain (global limit remains the outer bound).
 6. Notify observability/status consumers of state changes.
 
 If per-tick validation fails, dispatch is skipped for that tick, but reconciliation still happens
-first.
+first. A project whose config fails validation logs its own error and does not prevent other
+enabled projects from dispatching.
 
 ### 8.2 Candidate Selection Rules
 
@@ -870,6 +877,10 @@ Supported hooks:
 - `hooks.before_run`
 - `hooks.after_run`
 - `hooks.before_remove`
+
+Hooks are defined at the workflow level and MAY be overridden per project through the Project
+settings record. A non-blank project hook replaces the workflow-level hook for that project;
+unset project hooks leave the workflow-level hook intact.
 
 Execution contract:
 

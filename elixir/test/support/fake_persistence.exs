@@ -32,6 +32,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :runs, runs))
   end
 
+  def put_tasks(tasks) when is_list(tasks) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :tasks, tasks))
+  end
+
   def put_issues(issues) when is_list(issues) do
     ensure_started()
     Agent.update(@name, &Map.put(&1, :issues, issues))
@@ -82,7 +87,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     ensure_started()
 
     version = %{
-      id: "fake-workflow-version",
+      id: "fake-workflow-version-#{Map.get(project, :slug) || System.unique_integer([:positive])}",
       project_id: project.id,
       version: 1,
       source: source,
@@ -99,7 +104,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
           next_state =
             state
             |> Map.put(:active_workflow_version, version)
-            |> Map.put(:workflow_versions, [version])
+            |> Map.update(:workflow_versions, [version], &(&1 ++ [version]))
 
           {{:ok, version}, next_state}
 
@@ -112,6 +117,42 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def active_workflow_version do
     ensure_started()
     Agent.get(@name, & &1.active_workflow_version)
+  end
+
+  def active_workflow_version(%{id: project_id}) do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      # Real persistence selects the newest active version
+      # (where: project_id == ^id and active == true, order_by: [desc: version]).
+      # Fake tests seed "active" two ways: import_workflow/3 stamps `active: true`
+      # on the version and appends it to the list (oldest first), while
+      # put_workflow_versions/2 seeds `active: false` versions and expresses
+      # active via the slot. Prefer the real semantics (the last appended active
+      # version wins — import_workflow always stamps version: 1, so ordering by
+      # the version field alone cannot distinguish re-imports), then fall back to
+      # the slot when no active version exists.
+      versions = state.workflow_versions || []
+
+      case Enum.filter(versions, &(Map.get(&1, :project_id) == project_id and Map.get(&1, :active) == true)) do
+        [] ->
+          fallback_workflow_version(state, versions, project_id)
+
+        active_versions ->
+          List.last(active_versions)
+      end
+    end)
+  end
+
+  def active_workflow_version(_project) do
+    active_workflow_version()
+  end
+
+  defp fallback_workflow_version(state, versions, project_id) do
+    case Map.get(state, :active_workflow_version) do
+      %{project_id: ^project_id} = slot -> slot
+      _ -> versions |> Enum.reverse() |> Enum.find(&(Map.get(&1, :project_id) == project_id))
+    end
   end
 
   def list_projects do
@@ -156,6 +197,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       state.runs
       |> filter_eq(:status, Keyword.get(opts, :status))
       |> filter_eq(:kind, Keyword.get(opts, :kind))
+      |> filter_eq(:project_id, Keyword.get(opts, :project_id))
       |> sort_runs()
       |> Enum.take(Keyword.get(opts, :limit, length(state.runs)))
     end)
@@ -171,6 +213,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
         state.runs
         |> filter_eq(:status, Keyword.get(opts, :status))
         |> filter_eq(:kind, Keyword.get(opts, :kind))
+        |> filter_eq(:project_id, Keyword.get(opts, :project_id))
         |> sort_runs()
         |> apply_run_cursor(cursor)
 
@@ -211,6 +254,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       |> filter_eq(:issue_identifier, Keyword.get(opts, :issue_identifier))
       |> filter_eq(:run_id, Keyword.get(opts, :run_id))
       |> filter_eq(:event_type, Keyword.get(opts, :event_type))
+      |> filter_eq(:project_id, Keyword.get(opts, :project_id))
       |> sort_events(Keyword.get(opts, :order))
       |> Enum.take(Keyword.get(opts, :limit, length(state.events)))
     end)
@@ -243,9 +287,13 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, & &1.worker_sessions)
   end
 
-  def list_tasks(_opts \\ []) do
+  def list_tasks(opts \\ []) do
     ensure_started()
-    Agent.get(@name, & &1.tasks)
+
+    Agent.get(@name, fn state ->
+      state.tasks
+      |> filter_eq(:project_id, Keyword.get(opts, :project_id))
+    end)
   end
 
   def list_task_leases(_opts \\ []) do
@@ -256,6 +304,15 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def list_workflow_versions do
     ensure_started()
     Agent.get(@name, & &1.workflow_versions)
+  end
+
+  def list_workflow_versions(%{id: project_id}) do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      (state.workflow_versions || [])
+      |> Enum.filter(&(Map.get(&1, :project_id) == project_id))
+    end)
   end
 
   def list_tracker_configs do
@@ -441,7 +498,26 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       |> put_project_value("worktree_fetch", Map.get(project, :worktree_fetch) != false)
       |> put_project_value("worktree_cleanup", Map.get(project, :worktree_cleanup) != false)
 
-    Map.put(config, "project", project_config)
+    config
+    |> Map.put("project", project_config)
+    |> apply_project_hooks(project)
+  end
+
+  defp apply_project_hooks(config, project) do
+    [
+      {"after_create", Map.get(project, :after_create_hook)},
+      {"before_run", Map.get(project, :before_run_hook)},
+      {"after_run", Map.get(project, :after_run_hook)},
+      {"before_remove", Map.get(project, :before_remove_hook)}
+    ]
+    |> Enum.reduce(config, fn {key, value}, acc ->
+      if is_binary(value) and String.trim(value) != "" do
+        hooks = Map.get(acc, "hooks", %{})
+        Map.put(acc, "hooks", Map.put(hooks, key, value))
+      else
+        acc
+      end
+    end)
   end
 
   defp put_project_value(config, key, value) when is_binary(value) do
@@ -593,7 +669,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       worktree_fetch: project_attr(attrs, :worktree_fetch, true),
       worktree_cleanup: project_attr(attrs, :worktree_cleanup, true),
       description: project_attr(attrs, :description),
-      enabled: project_attr(attrs, :enabled, true)
+      enabled: project_attr(attrs, :enabled, true),
+      after_create_hook: project_attr(attrs, :after_create_hook),
+      before_run_hook: project_attr(attrs, :before_run_hook),
+      after_run_hook: project_attr(attrs, :after_run_hook),
+      before_remove_hook: project_attr(attrs, :before_remove_hook)
     }
   end
 

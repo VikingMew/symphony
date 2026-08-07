@@ -177,7 +177,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     FakePersistence.reset!()
 
     assert {:ok, state} = WorkflowStore.init([])
-    assert state.workflow.setup_required
+    assert state.workflows == %{}
     assert state.source.type == :setup_required
   end
 
@@ -197,7 +197,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     write_workflow_file!(manual_path, prompt: "Manual workflow prompt after poll")
     state = :sys.get_state(manual_pid)
     assert {:noreply, returned_state} = WorkflowStore.handle_info(:poll, state)
-    assert returned_state.workflow.prompt == "Manual workflow prompt after poll"
+    workflow = Map.get(returned_state.workflows, returned_state.default_project_id)
+    assert workflow.prompt == "Manual workflow prompt after poll"
     assert returned_state.source.type == :database
     assert_receive :poll, 2_500
 
