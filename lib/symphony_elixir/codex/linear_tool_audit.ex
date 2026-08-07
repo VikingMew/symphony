@@ -6,7 +6,6 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
   alias SymphonyElixir.{Payload, PersistenceProvider, Redaction}
 
   @linear_tools ~w(linear_task_read linear_task_update linear_issue_create)
-  @max_string_chars 1_200
 
   @spec linear_tool?(term()) :: boolean()
   def linear_tool?(tool) when tool in @linear_tools, do: true
@@ -86,10 +85,10 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
   defp normalize_success_result(%{} = output) do
     output
     |> Map.take(["id", "identifier", "title", "url", "state", "issue_update", "comment_update", "reference_links", "requested_state", "issue", "workflow"])
-    |> scrub()
+    |> Redaction.payload(500)
   end
 
-  defp normalize_success_result(output), do: scrub(output)
+  defp normalize_success_result(output), do: Redaction.payload(output, 500)
 
   defp decoded_output(%{"output" => output}) when is_binary(output) do
     case Jason.decode(output) do
@@ -137,27 +136,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp error_reason(_error), do: nil
 
-  defp safe_arguments(arguments), do: arguments |> scrub() |> bound()
-
-  defp scrub(%{} = payload) do
-    Map.new(payload, fn {key, value} ->
-      if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub(value)}
-    end)
-  end
-
-  defp scrub(value) when is_binary(value), do: Redaction.credentials(value)
-  defp scrub(value) when is_list(value), do: Enum.map(value, &scrub/1)
-  defp scrub(value), do: value
-
-  defp bound(value) when is_binary(value) do
-    if String.length(value) > @max_string_chars, do: String.slice(value, 0, @max_string_chars) <> "... (truncated)", else: value
-  end
-
-  defp bound(%{} = payload), do: Map.new(payload, fn {key, value} -> {key, bound(value)} end)
-  defp bound(value) when is_list(value), do: Enum.map(value, &bound/1)
-  defp bound(value), do: value
-
-  defp sensitive_key?(key), do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
+  defp safe_arguments(arguments), do: Redaction.payload(arguments, 500)
 
   defp issue_identifier(opts) do
     case Keyword.get(opts, :issue) do

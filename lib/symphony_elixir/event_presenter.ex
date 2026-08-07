@@ -43,7 +43,7 @@ defmodule SymphonyElixir.EventPresenter do
       summary: summary(type, payload),
       detail: detail(type, payload),
       low_signal?: low_signal?(type, payload),
-      raw_payload: scrub(payload)
+      raw_payload: Redaction.payload(payload, 500)
     }
 
     Map.put(base, :category, category(base))
@@ -169,16 +169,4 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp category(_row), do: :audit
-
-  defp scrub(%{} = payload) do
-    Map.new(payload, fn {key, value} ->
-      if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub(value)}
-    end)
-  end
-
-  defp scrub(value) when is_binary(value), do: Redaction.credentials(value)
-  defp scrub(value) when is_list(value), do: Enum.map(value, &scrub/1)
-  defp scrub(value), do: value
-
-  defp sensitive_key?(key), do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
 end

@@ -12,6 +12,11 @@ defmodule SymphonyElixir.Redaction do
     |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;\]\}]+/, "\\1[REDACTED]")
   end
 
+  @spec payload(term(), pos_integer()) :: term()
+  def payload(value, max_string_bytes) when is_integer(max_string_bytes) and max_string_bytes > 0 do
+    scrub_payload(value, max_string_bytes)
+  end
+
   @spec sensitive_env_values(String.t(), [String.t()]) :: String.t()
   def sensitive_env_values(output, env_names) when is_binary(output) and is_list(env_names) do
     Enum.reduce(env_names, output, fn name, acc ->
@@ -55,4 +60,24 @@ defmodule SymphonyElixir.Redaction do
       binary_part(value, 0, max_bytes) <> "... (truncated)"
     end
   end
+
+  defp scrub_payload(%DateTime{} = value, _max_string_bytes), do: DateTime.to_iso8601(value)
+
+  defp scrub_payload(%{} = payload, max_string_bytes) do
+    Map.new(payload, fn {key, value} ->
+      if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub_payload(value, max_string_bytes)}
+    end)
+  end
+
+  defp scrub_payload(value, max_string_bytes) when is_binary(value) do
+    value
+    |> credentials()
+    |> truncate_bytes(max_string_bytes)
+  end
+
+  defp scrub_payload(value, max_string_bytes) when is_list(value), do: Enum.map(value, &scrub_payload(&1, max_string_bytes))
+  defp scrub_payload(value, _max_string_bytes), do: value
+
+  defp sensitive_key?(key),
+    do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
 end

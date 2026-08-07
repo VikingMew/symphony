@@ -6,7 +6,7 @@ Merge the four parallel sensitive-field scrubbing implementations into a single 
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -42,20 +42,34 @@ Security-sensitive: unify policy first, then call sites. Do not weaken the stric
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 32 [R] + 2 [D], unchanged from 231)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 679 tests, 0 failures, 2 skipped (full suite, single run; +2 redaction tests)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (redaction.ex + 4 call sites + redaction_test.exs)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Unified truncation policy is 500 bytes (byte_size) with the `"... (truncated)"` suffix for ALL
+  string values. Previous per-site limits were 1200 chars (linear_tool_audit), 1000 bytes (update
+  persisted path), 500 bytes (update debug path), and no truncation (event_presenter,
+  observability_presenter) — the unified 500-byte cap is stricter than every prior behavior,
+  satisfying "do not weaken the strictest current behavior".
+- `Redaction.payload/2` is a new public API: recursive sensitive-key scrubbing (token/secret/
+  authorization/api_key/cookie), string-embedded credential scrubbing via `credentials/1`, DateTime
+  -> ISO8601 conversion (matching update.ex's prior behavior), and the byte cap. All four call sites
+  re-pointed; presenters kept only display duties (inspect/truncate of the final string).
+- ObservabilityPresenter now scrubs credentials inside ordinary strings (previously only sensitive
+  keys) — this closes the divergence the plan called out.
+- linear_tool_audit's separate `bound/1` (1200 chars, String.length) is gone; its `safe_arguments`
+  and `normalize_success_result` now use `Redaction.payload(..., 500)`.
+- New property-style test: two payload shapes pushed through EventPresenter.row, LinearToolAudit
+  audit events, Update debug + persisted paths, and ObservabilityPresenter produce byte-identical
+  scrubbed output with no secret leakage (`ordinary-secret` / `key-secret` / `session-secret`
+  refuted in the inspected output).
 
 ## Dependencies
 

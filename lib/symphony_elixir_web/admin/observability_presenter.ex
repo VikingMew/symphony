@@ -3,6 +3,8 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
   Presentation helpers for AdminLive observability pages.
   """
 
+  alias SymphonyElixir.Redaction
+
   @spec fmt_dt(term()) :: String.t()
   def fmt_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   def fmt_dt(_), do: "n/a"
@@ -38,7 +40,7 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
   @spec safe_event_payload(term()) :: String.t()
   def safe_event_payload(payload) do
     payload
-    |> scrub_payload()
+    |> Redaction.payload(500)
     |> inspect(pretty: true, limit: 20)
     |> truncate(2_000)
   end
@@ -59,21 +61,6 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
   def status_class(status) when status in ["running", "retrying", "leased", "warning"], do: "status-badge status-warning"
   def status_class(status) when status in ["failed", "offline", "expired", "error"], do: "status-badge status-danger"
   def status_class(_), do: "status-badge"
-
-  defp scrub_payload(%{} = payload) do
-    Map.new(payload, fn {key, value} ->
-      key_string = to_string(key)
-
-      if String.contains?(String.downcase(key_string), ["token", "secret", "authorization", "api_key", "cookie"]) do
-        {key, "[REDACTED]"}
-      else
-        {key, scrub_payload(value)}
-      end
-    end)
-  end
-
-  defp scrub_payload(value) when is_list(value), do: Enum.map(value, &scrub_payload/1)
-  defp scrub_payload(value), do: value
 
   defp truncate(value, limit) when is_binary(value) and byte_size(value) > limit do
     binary_part(value, 0, limit) <> "\n... truncated"

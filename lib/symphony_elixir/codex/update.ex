@@ -8,7 +8,6 @@ defmodule SymphonyElixir.Codex.Update do
   alias SymphonyElixir.{Payload, Redaction}
 
   @default_history_limit 100
-  @debug_payload_string_limit 500
   @debug_payload_inspect_limit 2_000
 
   @spec integrate(map(), map(), keyword()) :: {map(), map()}
@@ -60,7 +59,7 @@ defmodule SymphonyElixir.Codex.Update do
       }
     }
     |> drop_blank_debug()
-    |> scrub_persisted_payload()
+    |> Redaction.payload(500)
   end
 
   @spec token_delta(map(), map()) :: map()
@@ -363,35 +362,12 @@ defmodule SymphonyElixir.Codex.Update do
   end
 
   defp bound_debug_payload(value) do
-    scrubbed = scrub_debug_value(value)
+    scrubbed = Redaction.payload(value, 500)
     inspected = inspect(scrubbed, limit: :infinity, printable_limit: :infinity)
     inspect_truncated? = byte_size(inspected) > @debug_payload_inspect_limit
 
     %{value: scrubbed, truncated: inspect_truncated? or debug_value_truncated?(scrubbed)}
   end
-
-  defp scrub_debug_payload(%{} = payload) do
-    Map.new(payload, fn {key, value} ->
-      if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub_debug_value(value)}
-    end)
-  end
-
-  defp scrub_debug_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp scrub_debug_value(value) when is_map(value), do: scrub_debug_payload(value)
-  defp scrub_debug_value(value) when is_list(value), do: Enum.map(value, &scrub_debug_value/1)
-
-  defp scrub_debug_value(value) when is_binary(value) do
-    value
-    |> Redaction.credentials()
-    |> truncate_debug_string()
-  end
-
-  defp scrub_debug_value(value), do: value
-
-  defp truncate_debug_string(value) when byte_size(value) > @debug_payload_string_limit,
-    do: binary_part(value, 0, @debug_payload_string_limit) <> "... (truncated)"
-
-  defp truncate_debug_string(value), do: value
 
   defp debug_value_truncated?(value) when is_binary(value), do: String.ends_with?(value, "... (truncated)")
   defp debug_value_truncated?(value) when is_map(value), do: Enum.any?(value, fn {_key, nested} -> debug_value_truncated?(nested) end)
@@ -427,14 +403,4 @@ defmodule SymphonyElixir.Codex.Update do
     debug = debug |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()
     if map_size(debug) == 0, do: Map.delete(payload, :debug), else: %{payload | debug: debug}
   end
-
-  defp scrub_persisted_payload(%{} = payload), do: payload |> Enum.map(fn {key, value} -> if sensitive_key?(key), do: {key, "[REDACTED]"}, else: {key, scrub_persisted_value(value)} end) |> Map.new()
-  defp scrub_persisted_value(value) when is_binary(value), do: value |> Redaction.credentials() |> truncate_persisted_string()
-  defp scrub_persisted_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp scrub_persisted_value(value) when is_map(value), do: scrub_persisted_payload(value)
-  defp scrub_persisted_value(value) when is_list(value), do: Enum.map(value, &scrub_persisted_value/1)
-  defp scrub_persisted_value(value), do: value
-  defp truncate_persisted_string(value) when byte_size(value) > 1_000, do: binary_part(value, 0, 1_000) <> "... (truncated)"
-  defp truncate_persisted_string(value), do: value
-  defp sensitive_key?(key), do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
 end
