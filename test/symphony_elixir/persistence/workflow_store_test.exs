@@ -1,7 +1,10 @@
 defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias SymphonyElixir.Persistence
+  alias SymphonyElixir.Persistence.Project
   alias SymphonyElixir.Persistence.WorkflowStore
   alias SymphonyElixir.Persistence.WorkflowVersion
 
@@ -22,6 +25,24 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.update_project("project-id", %{}) == {:error, :repo_unavailable}
     assert WorkflowStore.active_workflow_version() == nil
     assert WorkflowStore.list_workflow_versions() == []
+  end
+
+  test "project and workflow query faults are logged and reraised" do
+    _pid = start_repo_stub!()
+    project = %Project{id: "project-id"}
+
+    log =
+      capture_log(fn ->
+        assert_raise ArgumentError, fn -> WorkflowStore.default_project() end
+        assert_raise ArgumentError, fn -> WorkflowStore.list_projects() end
+        assert_raise ArgumentError, fn -> WorkflowStore.active_workflow_version(project) end
+        assert_raise ArgumentError, fn -> WorkflowStore.list_workflow_versions(project) end
+      end)
+
+    assert log =~ "Workflow persistence query failed operation=default_project outcome=failed"
+    assert log =~ "Workflow persistence query failed operation=list_projects outcome=failed"
+    assert log =~ "Workflow persistence query failed operation=active_workflow_version outcome=failed"
+    assert log =~ "Workflow persistence query failed operation=list_workflow_versions outcome=failed"
   end
 
   test "workflow_to_loaded returns runtime shape without a Repo-backed project overlay" do
@@ -73,4 +94,17 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+
+  defp start_repo_stub! do
+    pid =
+      spawn(fn ->
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    true = Process.register(pid, SymphonyElixir.Repo)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :kill) end)
+    pid
+  end
 end

@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   """
 
   import Ecto.Query
+  require Logger
 
   alias SymphonyElixir.Repo
   alias SymphonyElixir.{Persistence, Workflow}
@@ -13,6 +14,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   def default_project do
+    query(:default_project, &default_project!/0)
+  end
+
+  defp default_project! do
     if Persistence.repo_available?() do
       case Repo.get_by(Project, slug: @default_project_slug) do
         nil ->
@@ -26,13 +31,13 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     else
       {:error, :repo_unavailable}
     end
-  rescue
-    _error -> {:error, :repo_unavailable}
   end
 
   @spec list_projects() :: [Project.t()]
   def list_projects do
-    if Persistence.repo_available?(), do: Repo.all(from(p in Project, order_by: [asc: p.name])), else: []
+    query(:list_projects, fn ->
+      if Persistence.repo_available?(), do: Repo.all(from(p in Project, order_by: [asc: p.name])), else: []
+    end)
   end
 
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
@@ -72,25 +77,28 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @spec active_workflow_version(Project.t() | nil) :: WorkflowVersion.t() | nil
   def active_workflow_version(nil) do
-    case default_project() do
-      {:ok, project} -> active_workflow_version(project)
-      _ -> nil
-    end
+    query(:active_workflow_version, fn ->
+      case default_project() do
+        {:ok, project} -> active_workflow_version(project)
+        {:error, :repo_unavailable} -> nil
+        {:error, reason} -> raise_query_error(:active_workflow_version, reason)
+      end
+    end)
   end
 
   def active_workflow_version(%Project{id: project_id}) do
-    if Persistence.repo_available?() do
-      Repo.one(
-        from(w in WorkflowVersion,
-          where: w.project_id == ^project_id and w.active == true,
-          where: ^test_workflow_source_allowed?() or w.source != "test",
-          order_by: [desc: w.version],
-          limit: 1
+    query(:active_workflow_version, fn ->
+      if Persistence.repo_available?() do
+        Repo.one(
+          from(w in WorkflowVersion,
+            where: w.project_id == ^project_id and w.active == true,
+            where: ^test_workflow_source_allowed?() or w.source != "test",
+            order_by: [desc: w.version],
+            limit: 1
+          )
         )
-      )
-    end
-  rescue
-    _error -> nil
+      end
+    end)
   end
 
   @spec workflow_to_loaded(WorkflowVersion.t()) :: Workflow.loaded_workflow()
@@ -131,20 +139,23 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @spec list_workflow_versions(Project.t() | nil) :: [WorkflowVersion.t()]
   def list_workflow_versions(nil) do
-    case default_project() do
-      {:ok, project} -> list_workflow_versions(project)
-      _ -> []
-    end
+    query(:list_workflow_versions, fn ->
+      case default_project() do
+        {:ok, project} -> list_workflow_versions(project)
+        {:error, :repo_unavailable} -> []
+        {:error, reason} -> raise_query_error(:list_workflow_versions, reason)
+      end
+    end)
   end
 
   def list_workflow_versions(%Project{id: project_id}) do
-    if Persistence.repo_available?() do
-      Repo.all(from(w in WorkflowVersion, where: w.project_id == ^project_id, order_by: [desc: w.version]))
-    else
-      []
-    end
-  rescue
-    _error -> []
+    query(:list_workflow_versions, fn ->
+      if Persistence.repo_available?() do
+        Repo.all(from(w in WorkflowVersion, where: w.project_id == ^project_id, order_by: [desc: w.version]))
+      else
+        []
+      end
+    end)
   end
 
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
@@ -160,16 +171,39 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   defp project_for_runtime(project_id) when is_binary(project_id) do
-    if Persistence.repo_available?(), do: Repo.get(Project, project_id), else: nil
-  rescue
-    _error -> nil
+    query(:project_for_runtime, fn ->
+      if Persistence.repo_available?(), do: Repo.get(Project, project_id), else: nil
+    end)
   end
 
   defp project_for_runtime(_project_id) do
-    case default_project() do
-      {:ok, project} -> project
-      _ -> nil
-    end
+    query(:project_for_runtime, fn ->
+      case default_project() do
+        {:ok, project} -> project
+        {:error, :repo_unavailable} -> nil
+        {:error, reason} -> raise_query_error(:project_for_runtime, reason)
+      end
+    end)
+  end
+
+  defp query(operation, fun) do
+    fun.()
+  rescue
+    error ->
+      log_query_failure(operation, :error, error)
+      reraise error, __STACKTRACE__
+  catch
+    kind, reason ->
+      log_query_failure(operation, kind, reason)
+      :erlang.raise(kind, reason, __STACKTRACE__)
+  end
+
+  defp raise_query_error(operation, reason) do
+    raise "Workflow persistence query failed operation=#{operation} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+  end
+
+  defp log_query_failure(operation, kind, reason) do
+    Logger.error("Workflow persistence query failed operation=#{operation} outcome=failed kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
   end
 
   defp update_project_config(config, %Project{} = project) do

@@ -10,6 +10,7 @@ defmodule SymphonyElixir.WorkflowStore do
   """
 
   use GenServer
+  require Logger
 
   alias SymphonyElixir.{PersistenceProvider, Workflow}
 
@@ -44,7 +45,7 @@ defmodule SymphonyElixir.WorkflowStore do
         workflows
 
       _ ->
-        %State{workflows: workflows} = load_state()
+        %State{workflows: workflows} = load_initial_state()
         Map.values(workflows)
     end
   end
@@ -56,7 +57,7 @@ defmodule SymphonyElixir.WorkflowStore do
         GenServer.call(__MODULE__, {:for_project, project_id})
 
       _ ->
-        %State{workflows: workflows} = load_state()
+        %State{workflows: workflows} = load_initial_state()
 
         case Map.get(workflows, project_id) do
           nil -> {:error, :not_found}
@@ -72,7 +73,7 @@ defmodule SymphonyElixir.WorkflowStore do
         GenServer.call(__MODULE__, :force_reload)
 
       _ ->
-        _state = load_state()
+        _state = load_initial_state()
         :ok
     end
   end
@@ -84,13 +85,13 @@ defmodule SymphonyElixir.WorkflowStore do
         payload
 
       _ ->
-        state_payload(load_state())
+        state_payload(load_initial_state())
     end
   end
 
   @impl true
   def init(_opts) do
-    state = load_state()
+    state = load_initial_state()
     schedule_poll()
     {:ok, state}
   end
@@ -135,53 +136,123 @@ defmodule SymphonyElixir.WorkflowStore do
     Process.send_after(self(), :poll, @poll_interval_ms)
   end
 
-  defp reload_state(%State{}) do
-    load_state()
+  defp reload_state(%State{} = state) do
+    case load_state() do
+      {:ok, new_state} ->
+        new_state
+
+      {:error, reason} ->
+        log_reload_failure(:error, reason)
+        state
+    end
+  rescue
+    error ->
+      log_reload_failure(:error, error)
+      state
+  catch
+    kind, reason ->
+      log_reload_failure(kind, reason)
+      state
   end
 
   defp load_state do
     case load_database_workflows() do
-      {:ok, workflows} when map_size(workflows) > 0 ->
-        %State{
-          workflows: workflows,
-          default_project_id: default_project_id(workflows),
-          source: database_source(workflows)
-        }
+      {:ok, workflows, default_project_id} ->
+        {:ok,
+         %State{
+           workflows: workflows,
+           default_project_id: default_project_id,
+           source: database_source(workflows)
+         }}
 
-      _ ->
-        setup_required_state()
+      :setup_required ->
+        {:ok, setup_required_state()}
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  defp load_initial_state do
+    case load_state() do
+      {:ok, state} ->
+        state
+
+      {:error, :repo_unavailable} ->
+        Logger.warning("Workflow database load degraded action=use_error_state reason=repo_unavailable")
+        repo_unavailable_state()
+
+      {:error, reason} ->
+        raise "Workflow database load failed reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    end
+  rescue
+    error ->
+      log_initial_load_failure(:error, error)
+      reraise error, __STACKTRACE__
+  catch
+    kind, reason ->
+      log_initial_load_failure(kind, reason)
+      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp load_database_workflows do
-    if database_workflow_enabled?() do
-      workflows =
-        persistence().list_projects()
-        |> Enum.filter(&Map.get(&1, :enabled, true))
-        |> Enum.reduce(%{}, &load_project_workflow/2)
-
-      if map_size(workflows) == 0, do: :setup_required, else: {:ok, workflows}
-    else
-      :setup_required
-    end
-  rescue
-    _error -> :setup_required
+    if database_workflow_enabled?(), do: load_enabled_database_workflows(), else: :setup_required
   end
 
-  defp load_project_workflow(project, workflows) do
+  defp load_enabled_database_workflows do
+    with {:ok, default_project} <- load_default_project(),
+         {:ok, workflows} <- load_project_workflows() do
+      if map_size(workflows) == 0 do
+        :setup_required
+      else
+        {:ok, workflows, default_project_id(workflows, default_project)}
+      end
+    end
+  end
+
+  defp load_default_project do
+    case persistence().default_project() do
+      {:ok, project} -> {:ok, project}
+      {:error, :repo_unavailable} = error -> error
+      {:error, reason} -> {:error, {:default_project, reason}}
+    end
+  end
+
+  defp load_project_workflows do
+    case persistence().list_projects() do
+      projects when is_list(projects) ->
+        projects
+        |> Enum.filter(&Map.get(&1, :enabled, true))
+        |> Enum.reduce_while({:ok, %{}}, &load_project_workflow/2)
+
+      {:error, :repo_unavailable} = error ->
+        error
+
+      other ->
+        {:error, {:invalid_list_projects_result, other}}
+    end
+  end
+
+  defp load_project_workflow(project, {:ok, workflows}) do
     case persistence().active_workflow_version(project) do
       nil ->
-        workflows
+        {:cont, {:ok, workflows}}
+
+      {:error, :repo_unavailable} = error ->
+        {:halt, error}
+
+      {:error, reason} ->
+        {:halt, {:error, {:active_workflow_version, Map.get(project, :id), reason}}}
 
       workflow_version ->
         loaded = persistence().workflow_to_loaded(workflow_version)
-        Map.put(workflows, Map.fetch!(project, :id), loaded)
+        {:cont, {:ok, Map.put(workflows, Map.fetch!(project, :id), loaded)}}
     end
   end
 
-  defp default_project_id(workflows) do
-    case persistence().default_project() do
-      {:ok, %{id: id}} when is_map_key(workflows, id) -> id
+  defp default_project_id(workflows, default_project) do
+    case default_project do
+      %{id: id} when is_map_key(workflows, id) -> id
       _ -> workflows |> Map.keys() |> List.first()
     end
   end
@@ -204,6 +275,22 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp setup_required_state do
     %State{workflows: %{}, default_project_id: nil, source: %{type: :setup_required}}
+  end
+
+  defp repo_unavailable_state do
+    %State{
+      workflows: %{},
+      default_project_id: nil,
+      source: %{type: :error, reason: :repo_unavailable}
+    }
+  end
+
+  defp log_reload_failure(kind, reason) do
+    Logger.error("Workflow reload failed action=retain_last_known_good kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+  end
+
+  defp log_initial_load_failure(kind, reason) do
+    Logger.error("Workflow database load failed action=propagate kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
   end
 
   defp state_payload(%State{workflows: workflows, default_project_id: default_id, source: source}) do

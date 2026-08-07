@@ -6,7 +6,7 @@ Stop disguising database faults as 'no workflow configured'; preserve last-known
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -43,20 +43,35 @@ Distinguish 'never configured' (setup_required, valid) from 'could not read' (er
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+Executed by Codex CLI (0.147.0, `--sandbox workspace-write`) and independently verified
+by the reviewer:
+
+- `persistence/workflow_store.ex`: all DB-touching functions wrapped in a `query/2`
+  guard that logs structured errors and `reraise`s (stack preserved) — no more blanket
+  `rescue -> nil/[]/:repo_unavailable`. Explicit `Persistence.repo_available?()` checks
+  keep the `:repo_unavailable` degraded path (nil/[]/error) as the ONLY swallowed case.
+- `workflow_store.ex`: `load_state/0` returns `{:ok, state} | :setup_required |
+  {:error, reason}`; `reload_state` retains last-known-good on error (log
+  `action=retain_last_known_good`); `load_initial_state` degrades to an error-state
+  only for `:repo_unavailable` (log `action=use_error_state`), raises for other errors.
+- Tests: `workflow_store_test.exs` (new) + `persistence/workflow_store_test.exs` —
+  covers empty-DB setup-required (no regression), repo-unavailable degraded start,
+  and reload-failure preserving a previously loaded workflow.
+- Gates (reviewer, outside sandbox): `mix test` -> **673 tests, 0 failures, 2 skipped**
+  (669 + 4 new); `mix format --check-formatted` pass (after formatting); `mix credo
+  --strict` 0 [F] (35 [R] + 2 [D] unchanged); `mix compile --warnings-as-errors` pass;
+  `mix specs.check` pass; `mix exec_plans.check` pass.
+- Diff scope: 2 whitelisted lib files + 2 test files (1 modified, 1 new).
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Codex left 3 `Logger.error` multi-line calls unformatted and introduced a credo [F]
+  (`default_project` nested too deep through the `query/2` wrapper). Reviewer ran
+  `mix format` and extracted `default_project!/0` private helper — credo back to 0 [F].
+- Error classification rule (recorded decision): `repo_unavailable` = explicit
+  `Persistence.repo_available?()` guard (the persistence provider's own signal);
+  everything else = log + propagate/raise. No catch-all swallows remain in the touched
+  query paths.
 
 ## Dependencies
 

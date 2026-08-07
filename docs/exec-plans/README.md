@@ -233,11 +233,11 @@ Plans should focus on product and engineering intent rather than full implementa
 226. [226-promote-elixir-to-root.md](completed/226-promote-elixir-to-root.md)
 227. [227-docs-relocation-convergence.md](completed/227-docs-relocation-convergence.md)
 228. [228-fix-falsy-config-reads-false-treated-as-missing.md](completed/228-fix-falsy-config-reads-false-treated-as-missing.md)
+229. [229-workflowstore-error-honesty-no-fake-setup-required.md](completed/229-workflowstore-error-honesty-no-fake-setup-required.md)
 
 ## Active Plans
 
-1. [229-workflowstore-error-honesty-no-fake-setup-required.md](active/229-workflowstore-error-honesty-no-fake-setup-required.md)
-2. [230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md](active/230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md)
+1. [230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md](active/230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md)
 3. [231-wire-nap-operator-results-into-summaries-or-delete.md](active/231-wire-nap-operator-results-into-summaries-or-delete.md)
 4. [232-unify-recursive-redaction-one-sanitizer.md](active/232-unify-recursive-redaction-one-sanitizer.md)
 5. [233-merge-agent-runner-issue-operator-lifecycle.md](active/233-merge-agent-runner-issue-operator-lifecycle.md)
