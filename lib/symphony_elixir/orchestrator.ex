@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Orchestrator do
     Codex.RateLimitGate,
     Codex.Update,
     Config,
+    Payload,
     PersistenceProvider,
     RunLifecycle,
     StatusDashboard,
@@ -1065,63 +1066,118 @@ defmodule SymphonyElixir.Orchestrator do
     with :ok <- ensure_workspace_disk_available(issue) do
       workflow = current_workflow_context()
 
-      case start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
-        {:ok, pid} ->
-          ref = Process.monitor(pid)
-          run_record = persist_run_started(issue, attempt, worker_host)
-
-          Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
-
-          running =
-            Map.put(state.running, issue.id, %{
-              pid: pid,
-              ref: ref,
-              run_id: run_record && run_record.id,
-              identifier: issue.identifier,
-              issue: issue,
-              project_id: Map.get(workflow, :project_id),
-              worker_host: worker_host,
-              workspace_path: nil,
-              session_id: nil,
-              last_codex_message: nil,
-              last_codex_timestamp: nil,
-              last_codex_event: nil,
-              codex_app_server_pid: nil,
-              codex_input_tokens: 0,
-              codex_output_tokens: 0,
-              codex_total_tokens: 0,
-              codex_last_reported_input_tokens: 0,
-              codex_last_reported_output_tokens: 0,
-              codex_last_reported_total_tokens: 0,
-              turn_count: 0,
-              retry_attempt: RetryPolicy.normalize_attempt(attempt),
-              started_at: DateTime.utc_now(),
-              session_history: initial_session_history(issue, attempt, worker_host),
-              session_history_total_count: 1
-            })
-
-          %{
-            state
-            | running: running,
-              claimed: MapSet.put(state.claimed, issue.id),
-              retry_attempts: Map.delete(state.retry_attempts, issue.id)
-          }
+      case persist_run_started(issue, attempt, worker_host) do
+        {:ok, run_record} ->
+          dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record)
 
         {:error, reason} ->
-          Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
-          persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
-          next_attempt = next_spawn_attempt(attempt)
-
-          schedule_issue_retry(state, issue.id, next_attempt, %{
-            identifier: issue.identifier,
-            error: "failed to spawn agent: #{inspect(reason)}",
-            worker_host: worker_host
-          })
+          skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason)
       end
     else
       {:error, reason} ->
         block_issue_for_disk_guard(state, issue, reason, worker_host)
     end
+  end
+
+  defp dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record) do
+    case start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
+      {:ok, pid} ->
+        ref = Process.monitor(pid)
+
+        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+
+        running =
+          Map.put(state.running, issue.id, %{
+            pid: pid,
+            ref: ref,
+            run_id: run_record && run_record.id,
+            identifier: issue.identifier,
+            issue: issue,
+            project_id: Map.get(workflow, :project_id),
+            worker_host: worker_host,
+            workspace_path: nil,
+            session_id: nil,
+            last_codex_message: nil,
+            last_codex_timestamp: nil,
+            last_codex_event: nil,
+            codex_app_server_pid: nil,
+            codex_input_tokens: 0,
+            codex_output_tokens: 0,
+            codex_total_tokens: 0,
+            codex_last_reported_input_tokens: 0,
+            codex_last_reported_output_tokens: 0,
+            codex_last_reported_total_tokens: 0,
+            turn_count: 0,
+            retry_attempt: RetryPolicy.normalize_attempt(attempt),
+            started_at: DateTime.utc_now(),
+            session_history: initial_session_history(issue, attempt, worker_host),
+            session_history_total_count: 1
+          })
+
+        %{
+          state
+          | running: running,
+            claimed: MapSet.put(state.claimed, issue.id),
+            retry_attempts: Map.delete(state.retry_attempts, issue.id)
+        }
+
+      {:error, reason} ->
+        Logger.error("Unable to spawn agent for #{issue_context(issue)}: #{inspect(reason)}")
+        persist_event("run.spawn_failed", issue.identifier, %{issue_id: issue.id, error: inspect(reason)})
+        failure_reason = "failed to spawn agent: #{inspect(reason)}"
+
+        persist_run_finished(
+          %{
+            run_id: run_record && run_record.id,
+            identifier: issue.identifier,
+            issue: issue,
+            session_id: nil
+          },
+          "failed",
+          failure_reason
+        )
+
+        next_attempt = next_spawn_attempt(attempt)
+
+        schedule_issue_retry(state, issue.id, next_attempt, %{
+          identifier: issue.identifier,
+          error: failure_reason,
+          worker_host: worker_host
+        })
+    end
+  end
+
+  defp start_operator_task_after_run(state, started, run) do
+    started = if run, do: %{started | run_id: run.id}, else: started
+
+    case select_worker_host(state, nil) do
+      :no_worker_capacity ->
+        fail_operator_task_start(state, started, "no worker capacity available")
+
+      worker_host ->
+        spawn_operator_task_with_disk_guard(state, started, worker_host)
+    end
+  end
+
+  defp spawn_operator_task_with_disk_guard(state, started, worker_host) do
+    issue = operator_task_issue(started)
+
+    with :ok <- ensure_workspace_disk_available(issue) do
+      spawn_operator_task(state, started, worker_host)
+    else
+      {:error, reason} ->
+        fail_operator_task_start(state, started, format_disk_guard_reason(reason))
+    end
+  end
+
+  defp skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason) do
+    Logger.error("Run-start persistence failed action=skip_dispatch #{issue_context(issue)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+
+    schedule_issue_retry(state, issue.id, next_spawn_attempt(attempt), %{
+      identifier: issue.identifier,
+      error: "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}",
+      worker_host: worker_host
+    })
   end
 
   defp next_spawn_attempt(attempt) when is_integer(attempt), do: attempt + 1
@@ -1717,7 +1773,11 @@ defmodule SymphonyElixir.Orchestrator do
 
     if task.status == :queued do
       {state, started} = start_operator_task(state, task)
-      persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
+
+      if started.status == :running do
+        persist_event("operator_task.started", nil, %{kind: to_string(kind), run_id: started.run_id})
+      end
+
       put_operator_task(state, kind, started)
     else
       state
@@ -1748,22 +1808,23 @@ defmodule SymphonyElixir.Orchestrator do
         summary: %{created: 0, skipped: 0, failed: 0, issues: []}
     }
 
-    run = persist_operator_run_started(started)
-    started = if run, do: %{started | run_id: run.id}, else: started
+    case persist_operator_run_started(started) do
+      {:ok, run} ->
+        start_operator_task_after_run(state, started, run)
 
-    case select_worker_host(state, nil) do
-      :no_worker_capacity ->
-        fail_operator_task_start(state, started, "no worker capacity available")
+      {:error, reason} ->
+        failure_reason = "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+        Logger.error("Operator run-start persistence failed action=fail_task kind=#{task.kind} run_id=#{task.run_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
 
-      worker_host ->
-        issue = operator_task_issue(started)
+        failed = %{
+          started
+          | status: :failed,
+            finished_at: DateTime.utc_now(),
+            failure_reason: failure_reason,
+            summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+        }
 
-        with :ok <- ensure_workspace_disk_available(issue) do
-          spawn_operator_task(state, started, worker_host)
-        else
-          {:error, reason} ->
-            fail_operator_task_start(state, started, format_disk_guard_reason(reason))
-        end
+        {state, failed}
     end
   end
 
@@ -2235,14 +2296,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp rate_limit_gate_allows_dispatch(%State{} = state) do
-    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+    case check_rate_limit_gate(state) do
       :allow -> :allow
       {:block, details} -> {:block, details}
     end
   end
 
   defp refresh_rate_limit_gate(%State{} = state) do
-    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+    case check_rate_limit_gate(state) do
       :allow ->
         %{
           state
@@ -2253,8 +2314,6 @@ defmodule SymphonyElixir.Orchestrator do
       {:block, details} ->
         apply_rate_limit_gate_block(state, details)
     end
-  rescue
-    _error -> %{state | rate_limit_gate: %{status: :allow, reason: :unavailable}}
   end
 
   defp apply_rate_limit_gate_block(%State{} = state, details) when is_map(details) do
@@ -2268,24 +2327,29 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp rate_limit_gate_blocked?(%State{} = state) do
-    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+    case check_rate_limit_gate(state) do
       {:block, _details} -> true
       _ -> false
     end
-  rescue
-    _error -> false
   end
 
   defp rate_limit_gate_snapshot(%State{} = state) do
-    case RateLimitGate.check(state.codex_rate_limits, Config.settings!()) do
+    case check_rate_limit_gate(state) do
       :allow ->
         rate_limit_gate_allow_snapshot(state)
 
       {:block, details} ->
         details
     end
+  end
+
+  defp check_rate_limit_gate(%State{} = state) do
+    RateLimitGate.check(state.codex_rate_limits, Config.settings!())
   rescue
-    _error -> %{status: :allow, reason: :unavailable}
+    error ->
+      reason = Exception.message(error)
+      Logger.error("Rate-limit gate evaluation failed action=block_dispatch status=blocked reason=#{inspect(reason)}")
+      {:block, %{status: :blocked, reason: :evaluation_error, error: reason}}
   end
 
   defp rate_limit_gate_allow_snapshot(%State{} = state) do
@@ -2300,6 +2364,10 @@ defmodule SymphonyElixir.Orchestrator do
       Map.get(details, :resets_at),
       Map.get(details, :resume_after)
     ]
+  end
+
+  defp rate_limit_gate_message(%{reason: :evaluation_error, error: error}) do
+    "Codex session start paused because rate-limit gate evaluation failed: #{error}"
   end
 
   defp rate_limit_gate_message(details) do
@@ -2387,17 +2455,22 @@ defmodule SymphonyElixir.Orchestrator do
     if persistence_enabled?() do
       project_id = Map.get(current_workflow_context(), :project_id)
 
-      Enum.each(issues, fn
-        %Issue{} = issue ->
-          _ = persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
-
-        _ ->
-          :ok
-      end)
+      Enum.each(issues, &persist_polled_issue(&1, project_id))
     end
 
     :ok
   end
+
+  defp persist_polled_issue(%Issue{} = issue, project_id) do
+    case persist_write(:upsert_polled_issue, persistence_context(issue), fn ->
+           persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+         end) do
+      {:ok, _issue_record} -> :ok
+      {:degraded, :repo_unavailable} -> :ok
+    end
+  end
+
+  defp persist_polled_issue(_issue, _project_id), do: :ok
 
   # The workflow context is set by Config.with_workflow_context/2 while the
   # orchestrator iterates enabled projects. Defaults keep single-project
@@ -2413,56 +2486,105 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp context_workflow_version(_workflow), do: persistence().active_workflow_version()
 
-  defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
+  defp persist_run_started_event(issue, run, worker_host) do
+    case persist_event(Events.run_started_event(issue, run, worker_host)) do
+      :ok -> {:ok, run}
+      {:degraded, :repo_unavailable} -> {:ok, run}
+    end
+  end
 
+  defp persist_operator_started_event(task, run) do
+    case persist_event("operator_task.started", nil, %{kind: to_string(task.kind), run_id: run.id}) do
+      :ok -> {:ok, run}
+      {:degraded, :repo_unavailable} -> {:ok, run}
+    end
+  end
+
+  defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
+    if persistence_enabled?() do
+      run_started_persist(issue, attempt, worker_host)
+    else
+      {:ok, nil}
+    end
+  rescue
+    error ->
+      context = persistence_context(issue)
+      log_persistence_failure(:start_run, "fail_task", context, error)
+      {:error, {:start_run, {:exception, error}}}
+  end
+
+  defp run_started_persist(issue, attempt, worker_host) do
     workflow = current_workflow_context()
     project_id = Map.get(workflow, :project_id)
+    context = persistence_context(issue)
 
-    {:ok, issue_record} =
-      persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+    with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
+         workflow_version = context_workflow_version(workflow),
+         run_attrs =
+           issue
+           |> Events.run_attrs(workflow_version, "centralized", attempt)
+           |> Map.put(:issue_id, issue_record.id)
+           |> Map.put_new(:project_id, project_id),
+         {:ok, run} <- persist_create_run(context, run_attrs) do
+      persist_run_started_event(issue, run, worker_host)
+    end
+  end
 
-    workflow_version = context_workflow_version(workflow)
+  defp persist_upsert_issue(context, issue, project_id) do
+    required_persistence_write(:upsert_issue, context, fn -> upsert_issue!(issue, project_id) end)
+  end
 
-    run_attrs =
-      issue
-      |> Events.run_attrs(workflow_version, "centralized", attempt)
-      |> Map.put(:issue_id, issue_record.id)
-      |> Map.put_new(:project_id, project_id)
+  defp persist_create_run(context, run_attrs) do
+    required_persistence_write(:create_run, context, fn -> create_run!(run_attrs) end)
+  end
 
-    {:ok, run} = persistence().create_run(run_attrs)
+  defp upsert_issue!(issue, project_id) do
+    persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+  end
 
-    persist_event(Events.run_started_event(issue, run, worker_host))
-    run
-  rescue
-    _error -> nil
-  catch
-    :persistence_disabled -> nil
+  defp create_run!(run_attrs) do
+    persistence().create_run(run_attrs)
   end
 
   defp persist_operator_run_started(task) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
-
-    workflow_version = context_workflow_version(current_workflow_context())
-
-    {:ok, run} =
-      persistence().create_run(%{
-        kind: to_string(task.kind),
-        profile: to_string(task.kind),
-        label: operator_task_label(task.kind),
-        status: "running",
-        execution_mode: "centralized",
-        attempt: 0,
-        workflow_version_id: workflow_version && workflow_version.id,
-        started_at: task.started_at
-      })
-
-    persist_event("operator_task.started", nil, %{kind: to_string(task.kind), run_id: run.id})
-    run
+    if persistence_enabled?() do
+      operator_run_started_persist(task)
+    else
+      {:ok, nil}
+    end
   rescue
-    _error -> nil
-  catch
-    :persistence_disabled -> nil
+    error ->
+      context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
+      log_persistence_failure(:start_operator_run, "fail_task", context, error)
+      {:error, {:start_operator_run, {:exception, error}}}
+  end
+
+  defp operator_run_started_persist(task) do
+    workflow_version = context_workflow_version(current_workflow_context())
+    context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
+
+    with {:ok, run} <- persist_create_operator_run(context, task, workflow_version) do
+      persist_operator_started_event(task, run)
+    end
+  end
+
+  defp persist_create_operator_run(context, task, workflow_version) do
+    required_persistence_write(:create_operator_run, context, fn ->
+      create_operator_run!(task, workflow_version)
+    end)
+  end
+
+  defp create_operator_run!(task, workflow_version) do
+    persistence().create_run(%{
+      kind: to_string(task.kind),
+      profile: to_string(task.kind),
+      label: operator_task_label(task.kind),
+      status: "running",
+      execution_mode: "centralized",
+      attempt: 0,
+      workflow_version_id: workflow_version && workflow_version.id,
+      started_at: task.started_at
+    })
   end
 
   defp persist_worker_task_queued(%Issue{} = issue, attempt) do
@@ -2504,39 +2626,53 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
+    if persistence_enabled?() do
+      run_id = Map.get(running_entry, :run_id)
+      context = persistence_context(running_entry)
 
-    run_id = Map.get(running_entry, :run_id)
+      case RunLifecycle.finish_run(persistence(), run_id, status, failure_reason) do
+        {:ok, _run} ->
+          persist_event(Events.run_finished_event(running_entry, status, failure_reason))
 
-    case RunLifecycle.finish_run(persistence(), run_id, status, failure_reason) do
-      {:ok, _run} ->
-        persist_event(Events.run_finished_event(running_entry, status, failure_reason))
+        :noop ->
+          :ok
 
-      :noop ->
-        :ok
+        {:error, :repo_unavailable} ->
+          log_persistence_degraded(:finish_run, context)
+          {:degraded, :repo_unavailable}
 
-      {:error, _reason} ->
-        :ok
+        {:error, reason} ->
+          propagate_persistence_failure(:finish_run, context, reason)
+
+        other ->
+          propagate_persistence_failure(:finish_run, context, {:unexpected_result, other})
+      end
+    else
+      :ok
     end
-  catch
-    :persistence_disabled -> :ok
   end
 
   defp persist_workspace_update(running_entry) when is_map(running_entry) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
+    if persistence_enabled?(), do: record_workspace_update(running_entry), else: :ok
+  end
 
+  defp record_workspace_update(running_entry) do
     case Events.workspace_attrs(running_entry) do
-      %{} = attrs ->
-        _ = persistence().record_workspace(attrs)
+      %{} = attrs -> write_workspace_record(running_entry, attrs)
+      _ -> :ok
+    end
+  end
+
+  defp write_workspace_record(running_entry, attrs) do
+    case persist_write(:record_workspace, persistence_context(running_entry), fn ->
+           persistence().record_workspace(attrs)
+         end) do
+      {:ok, _workspace} ->
         persist_event(Events.workspace_created_event(running_entry))
 
-      _ ->
-        :ok
+      {:degraded, :repo_unavailable} = degraded ->
+        degraded
     end
-  rescue
-    _error -> :ok
-  catch
-    :persistence_disabled -> :ok
   end
 
   defp persist_codex_update(running_entry, update) when is_map(running_entry) and is_map(update) do
@@ -2553,16 +2689,120 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp persist_event(%{} = attrs) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
-
-    _ = persistence().record_event(attrs)
-
-    :ok
-  rescue
-    _error -> :ok
-  catch
-    :persistence_disabled -> :ok
+    if persistence_enabled?() do
+      record_event(attrs)
+    else
+      :ok
+    end
   end
+
+  defp record_event(attrs) do
+    case persist_write(:record_event, persistence_context(attrs), fn ->
+           persistence().record_event(attrs)
+         end) do
+      {:ok, _event} -> :ok
+      {:degraded, :repo_unavailable} = degraded -> degraded
+    end
+  end
+
+  defp required_persistence_write(operation, context, fun) when is_function(fun, 0) do
+    result =
+      try do
+        fun.()
+      rescue
+        error -> {:raised, error, __STACKTRACE__}
+      end
+
+    case result do
+      {:ok, record} ->
+        {:ok, record}
+
+      {:error, reason} ->
+        log_persistence_failure(operation, "fail_task", context, reason)
+        {:error, {operation, reason}}
+
+      {:raised, error, stacktrace} ->
+        log_persistence_failure(operation, "fail_task", context, error)
+        {:error, {operation, {:exception, error, stacktrace}}}
+
+      other ->
+        reason = {:unexpected_result, other}
+        log_persistence_failure(operation, "fail_task", context, reason)
+        {:error, {operation, reason}}
+    end
+  end
+
+  defp persist_write(operation, context, fun) when is_function(fun, 0) do
+    result =
+      try do
+        fun.()
+      rescue
+        error ->
+          log_persistence_failure(operation, "propagate", context, error)
+          reraise error, __STACKTRACE__
+      end
+
+    case result do
+      {:ok, record} ->
+        {:ok, record}
+
+      {:error, :repo_unavailable} ->
+        log_persistence_degraded(operation, context)
+        {:degraded, :repo_unavailable}
+
+      {:error, reason} ->
+        propagate_persistence_failure(operation, context, reason)
+
+      other ->
+        propagate_persistence_failure(operation, context, {:unexpected_result, other})
+    end
+  end
+
+  defp propagate_persistence_failure(operation, context, reason) do
+    log_persistence_failure(operation, "propagate", context, reason)
+    :erlang.error({:orchestrator_persistence_failure, operation, reason})
+  end
+
+  defp log_persistence_degraded(operation, context) do
+    Logger.warning("Orchestrator persistence degraded operation=#{operation} action=continue_degraded #{persistence_log_context(context)} reason=repo_unavailable")
+  end
+
+  defp log_persistence_failure(operation, action, context, reason) do
+    Logger.error("Orchestrator persistence failed operation=#{operation} action=#{action} #{persistence_log_context(context)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+  end
+
+  defp persistence_log_context(context) do
+    "issue_id=#{log_field(Map.get(context, :issue_id))} issue_identifier=#{log_field(Map.get(context, :issue_identifier))} session_id=#{log_field(Map.get(context, :session_id))} run_id=#{log_field(Map.get(context, :run_id))}"
+  end
+
+  defp persistence_context(%Issue{} = issue) do
+    %{issue_id: issue.id, issue_identifier: issue.identifier, session_id: nil, run_id: nil}
+  end
+
+  defp persistence_context(%{event_type: _event_type} = attrs) do
+    payload = Map.get(attrs, :payload, %{})
+
+    %{
+      issue_id: Payload.get_any(payload, [:issue_id, "issue_id"], nil),
+      issue_identifier: Map.get(attrs, :issue_identifier),
+      session_id: Payload.get_any(payload, [:session_id, "session_id"], nil),
+      run_id: Map.get(attrs, :run_id)
+    }
+  end
+
+  defp persistence_context(running_entry) when is_map(running_entry) do
+    issue = Map.get(running_entry, :issue)
+
+    %{
+      issue_id: Map.get(running_entry, :issue_id) || if(is_map(issue), do: Map.get(issue, :id)),
+      issue_identifier: Map.get(running_entry, :identifier),
+      session_id: Map.get(running_entry, :session_id),
+      run_id: Map.get(running_entry, :run_id)
+    }
+  end
+
+  defp log_field(nil), do: "n/a"
+  defp log_field(value), do: inspect(value, limit: 5, printable_limit: 200)
 
   defp persistence, do: PersistenceProvider.module()
 

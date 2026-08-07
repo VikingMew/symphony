@@ -9,14 +9,14 @@ defmodule SymphonyElixir.CoreTest do
   end
 
   defmodule NotifyingLinearClient do
-    def fetch_issue_states_by_ids(_issue_ids), do: {:ok, []}
+    def fetch_issue_states_by_ids(_issue_ids), do: {:ok, configured_issues()}
 
     def fetch_candidate_issues do
       if test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid) do
         send(test_pid, :fetch_candidate_issues_called)
       end
 
-      {:ok, []}
+      {:ok, configured_issues()}
     end
 
     def fetch_issues_by_states(_states) do
@@ -26,6 +26,18 @@ defmodule SymphonyElixir.CoreTest do
 
       {:ok, []}
     end
+
+    defp configured_issues do
+      Application.get_env(:symphony_elixir, :linear_client_test_issues, [])
+    end
+  end
+
+  def run(issue, _recipient, _opts) do
+    if test_pid = Application.get_env(:symphony_elixir, :agent_runner_test_pid) do
+      send(test_pid, {:agent_runner_started, issue.id})
+    end
+
+    :ok
   end
 
   test "config defaults and validation checks" do
@@ -606,6 +618,110 @@ defmodule SymphonyElixir.CoreTest do
 
     refute_receive :fetch_candidate_issues_called, 200
     refute_receive :fetch_terminal_issues_called, 200
+  end
+
+  test "rate-limit gate blocks dispatch when headroom is low and logs the block" do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid)
+
+    Application.put_env(:symphony_elixir, :linear_client_module, NotifyingLinearClient)
+    Application.put_env(:symphony_elixir, :linear_client_test_pid, self())
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@example.com:org/repo.git")
+
+    orchestrator_name = Module.concat(__MODULE__, :RateLimitGateBlockOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:linear_client_test_pid, previous_test_pid)
+
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | listening?: true,
+          listening_mode: :listening_all,
+          codex_rate_limits: %{"primary" => %{"window_duration_mins" => 300, "used_percent" => 99}}
+      }
+    end)
+
+    {snapshot, _log} =
+      with_log(fn ->
+        send(pid, :run_poll_cycle)
+        refute_receive :fetch_candidate_issues_called, 100
+        GenServer.call(pid, :snapshot)
+      end)
+
+    assert snapshot.running == []
+    assert snapshot.rate_limit_gate.status == :blocked
+    assert snapshot.rate_limit_gate.reason == :low_rate_limit_headroom
+    assert :sys.get_state(pid).rate_limit_gate.reason == :low_rate_limit_headroom
+  end
+
+  test "run-start persistence failure prevents the agent task from starting" do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :linear_client_test_pid)
+    previous_test_issues = Application.get_env(:symphony_elixir, :linear_client_test_issues)
+    previous_runner = Application.get_env(:symphony_elixir, :agent_runner_module)
+    previous_runner_pid = Application.get_env(:symphony_elixir, :agent_runner_test_pid)
+    previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
+    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+
+    if is_pid(orchestrator_pid) do
+      assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+    end
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:linear_client_test_pid, previous_test_pid)
+      restore_app_env(:linear_client_test_issues, previous_test_issues)
+      restore_app_env(:agent_runner_module, previous_runner)
+      restore_app_env(:agent_runner_test_pid, previous_runner_pid)
+      restore_app_env(:persistence_module, previous_persistence)
+
+      if pid = Process.whereis(SymphonyElixir.Orchestrator), do: GenServer.stop(pid)
+
+      if is_pid(orchestrator_pid) do
+        case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+        end
+      end
+    end)
+
+    issue = %Issue{id: "issue-persistence", identifier: "MT-230", title: "Persistence prerequisite", state: "In Progress"}
+
+    Application.put_env(:symphony_elixir, :linear_client_module, NotifyingLinearClient)
+    Application.put_env(:symphony_elixir, :linear_client_test_pid, self())
+    Application.put_env(:symphony_elixir, :linear_client_test_issues, [issue])
+    Application.put_env(:symphony_elixir, :agent_runner_module, __MODULE__)
+    Application.put_env(:symphony_elixir, :agent_runner_test_pid, self())
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@example.com:org/repo.git")
+
+    {:ok, pid} = Orchestrator.start_link()
+    Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    log =
+      capture_log(fn ->
+        :sys.replace_state(pid, fn state ->
+          %{state | listening?: true, listening_mode: :listening_all}
+        end)
+
+        send(pid, :run_poll_cycle)
+        refute_receive {:agent_runner_started, "issue-persistence"}, 200
+        _state = :sys.get_state(pid)
+      end)
+
+    state = :sys.get_state(pid)
+    assert state.running == %{}
+    assert state.retry_attempts["issue-persistence"].error =~ "run-start persistence failed"
+    assert log =~ "operation=upsert_issue"
+    assert log =~ "action=fail_task"
+    assert log =~ "issue_id=\"issue-persistence\""
+    assert log =~ "Run-start persistence failed action=skip_dispatch"
   end
 
   test "workflow file path defaults to workflow.yml in the current working directory when app env is unset" do

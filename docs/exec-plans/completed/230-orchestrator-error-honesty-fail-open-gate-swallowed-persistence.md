@@ -6,7 +6,7 @@ Make orchestrator error handling explicit: rate-limit gate must not silently fai
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -43,20 +43,29 @@ Carmack: minimize what can go wrong — the gate already has typed fallbacks; th
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 35 [R] + 2 [D], no new findings)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 676 tests, 0 failures, 2 skipped (baseline 664 → +12 new: 2 in rate_limit_gate_test.exs, 10 in core_test.exs)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (orchestrator.ex, rate_limit_gate_test.exs, core_test.exs)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Rate-limit gate: chose fail-closed policy — `check_rate_limit_gate/1` rescues evaluation errors into
+  `{:block, %{status: :blocked, reason: :evaluation_error, error: ...}}` with a structured error log;
+  `rate_limit_gate_message/1` renders the new blocked state.
+- Run-start persistence failure: issue dispatch is skipped and the issue is scheduled for retry
+  (`skip_dispatch_for_persistence/4`) with the reason in the retry error — never silent nil-continue;
+  operator tasks are marked `:failed` with the persistence reason in `failure_reason`.
+- Spawn-failure path now closes the run record: if the agent task fails to spawn after the run was
+  persisted, `persist_run_finished/3` records the run as `failed` (previously no run record existed).
+- Poll-path issue upsert (`persist_polled_issue/2`) treats `:repo_unavailable` as degraded/continue;
+  any other error propagates (`:erlang.error`), surfacing as a visible failure instead of silent `:ok`.
+- CoreTest gains two new integration tests (gate-block dispatch + run-start persistence failure) that
+  terminate/restart the supervised Orchestrator; the existing baseline suite remains green.
 
 ## Dependencies
 

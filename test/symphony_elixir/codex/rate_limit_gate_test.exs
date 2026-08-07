@@ -70,8 +70,10 @@ defmodule SymphonyElixir.Codex.RateLimitGateTest do
     assert :allow = RateLimitGate.check(snapshot, settings, now: DateTime.add(@now, 61, :second))
   end
 
-  test "missing or unrecognized snapshots allow dispatch by default" do
+  test "missing or non-map inputs and unrecognized snapshots allow dispatch by default" do
     assert :allow = RateLimitGate.check(nil, %{}, now: @now)
+    assert :allow = RateLimitGate.check("not-a-map", %{}, now: @now)
+    assert :allow = RateLimitGate.check(%{}, "not-a-map", now: @now)
     assert :allow = RateLimitGate.check(%{"credits" => %{}}, %{}, now: @now)
   end
 
@@ -80,6 +82,12 @@ defmodule SymphonyElixir.Codex.RateLimitGateTest do
     settings = %Schema.Codex{rate_limit_gate_enabled: false}
 
     assert :allow = RateLimitGate.check(snapshot, settings, now: @now)
+  end
+
+  test "malformed snapshot values degrade gracefully instead of crashing" do
+    snapshot = %{"primary" => %{"window_duration_mins" => <<255>>, "used_percent" => 99}}
+
+    assert :allow = RateLimitGate.check(snapshot, %{}, now: @now)
   end
 
   test "custom thresholds from settings are applied" do
