@@ -64,6 +64,8 @@ defmodule SymphonyElixir.Orchestrator do
       listening_mode: :not_listening,
       operator_tasks: %{}
     ]
+
+    @type t :: %__MODULE__{}
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()

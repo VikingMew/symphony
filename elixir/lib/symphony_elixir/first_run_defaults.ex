@@ -116,7 +116,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
   defp interactive? do
     case Application.get_env(:symphony_elixir, :default_yaml_prompt_interactive) do
       value when is_boolean(value) -> value
-      _ -> not IEx.started?()
+      _ -> is_nil(Process.whereis(IEx.Config))
     end
   end
 end

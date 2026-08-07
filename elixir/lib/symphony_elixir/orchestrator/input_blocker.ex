@@ -94,7 +94,7 @@ defmodule SymphonyElixir.Orchestrator.InputBlocker do
 
   defp payload_summary(payload) when is_map(payload) do
     detail = MessageHumanizer.humanize_codex_message(payload)
-    if detail in [nil, ""], do: "", else: "detail=#{inspect(detail)}"
+    if detail == "", do: "", else: "detail=#{inspect(detail)}"
   end
 
   defp blocked_reason_from_method(method, payload) do

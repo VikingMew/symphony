@@ -17,7 +17,7 @@ defmodule SymphonyElixir.Payload do
 
   def get_any(_map, _keys, default), do: default
 
-  @spec get_path(map(), [[atom() | String.t()]], term()) :: term()
+  @spec get_path(map(), [atom() | String.t() | [atom() | String.t()]], term()) :: term()
   def get_path(map, path, default \\ nil)
 
   def get_path(map, path, default) when is_map(map) and is_list(path) do
