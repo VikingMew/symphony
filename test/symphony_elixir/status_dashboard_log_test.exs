@@ -80,6 +80,19 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
     assert StatusDashboard.format_snapshot_content(checking_snapshot, 0.0) == ""
   end
 
+  test "explicit false disables the status dashboard" do
+    previous_mix_env = Mix.env()
+    Mix.env(:prod)
+    on_exit(fn -> Mix.env(previous_mix_env) end)
+
+    write_workflow_file!(Workflow.workflow_file_path(), observability_enabled: false)
+
+    dashboard_name = Module.concat(__MODULE__, :DisabledDashboard)
+    pid = start_supervised!({StatusDashboard, name: dashboard_name})
+
+    refute :sys.get_state(pid).enabled
+  end
+
   test "status dashboard module does not contain the old terminal status format" do
     source =
       "lib/symphony_elixir/status_dashboard.ex"

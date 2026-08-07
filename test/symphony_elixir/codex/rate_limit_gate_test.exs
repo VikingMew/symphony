@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Codex.RateLimitGateTest do
   use ExUnit.Case, async: true
 
   alias SymphonyElixir.Codex.RateLimitGate
+  alias SymphonyElixir.Config.Schema
 
   @now ~U[2026-05-23 00:00:00Z]
 
@@ -72,6 +73,13 @@ defmodule SymphonyElixir.Codex.RateLimitGateTest do
   test "missing or unrecognized snapshots allow dispatch by default" do
     assert :allow = RateLimitGate.check(nil, %{}, now: @now)
     assert :allow = RateLimitGate.check(%{"credits" => %{}}, %{}, now: @now)
+  end
+
+  test "disabled gate allows dispatch for atom-keyed schema settings" do
+    snapshot = %{"primary" => %{"window_duration_mins" => 300, "used_percent" => 100}}
+    settings = %Schema.Codex{rate_limit_gate_enabled: false}
+
+    assert :allow = RateLimitGate.check(snapshot, settings, now: @now)
   end
 
   test "custom thresholds from settings are applied" do

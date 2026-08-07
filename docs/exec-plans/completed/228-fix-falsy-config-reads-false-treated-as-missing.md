@@ -6,7 +6,7 @@ Restore the ability to DISABLE dashboard and rate-limit gate by fixing truthines
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -45,20 +45,30 @@ The gate already has functional fallbacks for missing/non-map inputs; only the f
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+Executed by Codex CLI (0.147.0, `--sandbox workspace-write`) and independently verified
+by the reviewer:
+
+- `lib/symphony_elixir/payload.ex` `get_any/3`: `Enum.find_value` -> `Enum.reduce_while`
+  with `Map.fetch`; halts on a PRESENT value (including `false`/`nil`), continues only on
+  `:error`. API and absent-key semantics unchanged.
+- `lib/symphony_elixir/codex/rate_limit_gate.ex` `setting/2`: `Map.get(atom) ||
+  Map.get(string)` -> `Map.fetch(atom)` with string-key fallback only on `:error`.
+- `lib/symphony_elixir/status_dashboard.ex`: no change needed (reads via Payload);
+  a regression test proves explicit false disables it.
+- Tests added: `payload_test.exs` (false atom-keyed / false string-keyed / nil preserved),
+  rate-limit gate (`%Schema.Codex{rate_limit_gate_enabled: false}` at 100% used -> `:allow`),
+  status dashboard (explicit false disables, `:sys.get_state(pid).enabled` refuted).
+- Gates (reviewer, outside sandbox): `mix test` -> **669 tests, 0 failures, 2 skipped**
+  (664 + 5 new); `mix format --check-formatted` pass; `mix compile --warnings-as-errors`
+  pass; credo 0 [F] (35 [R] + 2 [D] unchanged); `mix exec_plans.check` pass.
+- Diff scope: exactly 4 whitelisted files + 1 new test file.
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Audit of other `Map.get(...) || Map.get(...)` chains: remaining sites are in
+  `event_presenter.ex` (atom/string dual-key fallback for payload fields whose legal values
+  are strings/structs, never `false`) — same-class falsy bug does NOT apply there. No change
+  made; noted for plan 235's shared-extraction work.
 
 ## Dependencies
 

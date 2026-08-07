@@ -7,10 +7,10 @@ defmodule SymphonyElixir.Payload do
   def get_any(map, keys, default \\ nil)
 
   def get_any(map, keys, default) when is_map(map) and is_list(keys) do
-    Enum.find_value(keys, default, fn key ->
+    Enum.reduce_while(keys, default, fn key, _acc ->
       case Map.fetch(map, key) do
-        {:ok, value} -> value
-        :error -> false
+        {:ok, value} -> {:halt, value}
+        :error -> {:cont, default}
       end
     end)
   end

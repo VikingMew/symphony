@@ -151,7 +151,12 @@ defmodule SymphonyElixir.Codex.RateLimitGate do
   defp codex_settings(%{"codex" => codex}), do: codex
   defp codex_settings(codex), do: codex
 
-  defp setting(settings, key) when is_map(settings), do: Map.get(settings, key) || Map.get(settings, to_string(key))
+  defp setting(settings, key) when is_map(settings) do
+    case Map.fetch(settings, key) do
+      {:ok, value} -> value
+      :error -> Map.get(settings, to_string(key))
+    end
+  end
 
   defp setting(settings, key) do
     if function_exported?(settings.__struct__, :__schema__, 1), do: Map.get(settings, key), else: nil
