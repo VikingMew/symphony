@@ -81,12 +81,10 @@ defmodule Mix.Tasks.Docs.Check do
     Enum.reduce_while(lines, {:ok, %{}}, fn line, {:ok, metadata} ->
       trimmed = String.trim(line)
 
-      cond do
-        trimmed == "" or String.starts_with?(trimmed, "#") ->
-          {:cont, {:ok, metadata}}
-
-        true ->
-          parse_metadata_line(line, metadata)
+      if trimmed == "" or String.starts_with?(trimmed, "#") do
+        {:cont, {:ok, metadata}}
+      else
+        parse_metadata_line(line, metadata)
       end
     end)
   end

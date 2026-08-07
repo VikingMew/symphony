@@ -71,7 +71,7 @@ Requirements:
 
 ```bash
 git clone https://github.com/VikingMew/symphony
-cd symphony/elixir
+cd symphony
 mise trust
 mise install
 mise exec -- mix setup
@@ -90,6 +90,14 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 If SQLite has no active workflow version, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates the first workflow.
 
+On a fresh database, Symphony can also offer to import the checked-in `workflow.yml` and
+`profiles.yml` as the first active workflow version. This is a one-time import prompt; the YAML
+files do not become runtime sources. To skip it and remain in setup-required mode, start with:
+
+```bash
+mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
+```
+
 ## Configuration
 
 The runtime source of truth is the SQLite database. `workflow.yml` and `profiles.yml` are import/export artifacts, not files that Symphony watches at runtime.
@@ -102,6 +110,15 @@ mise exec -- ./bin/symphony \
   --database-path /path/to/symphony.db \
   --logs-root /path/to/logs
 ```
+
+- `--port` enables the Phoenix dashboard and JSON API.
+- `--database-path` selects the SQLite file (default: `./symphony.db`).
+- `--logs-root` changes the runtime log directory (default: `./log`).
+- `--no-default-yaml-prompt` disables the first-run package import prompt.
+
+The split package is organized by concern: `workflow.yml` contains tracker, project, state,
+transition, hook, polling, and execution settings; `profiles.yml` contains the base prompt and
+agent profiles. A project repository URL is required before polling and agent work can begin.
 
 Common environment variables:
 
@@ -150,14 +167,53 @@ Logs are structured application logs. There is no TUI status surface.
 
 Symphony does not need to own public TLS, certificate issuance, or a dedicated domain. Put it behind Nginx, Kubernetes Ingress, or another trusted proxy, and enable forwarded headers only at that boundary.
 
-See [elixir/docs/deployment.md](elixir/docs/deployment.md) for Nginx, Kubernetes, WebSocket, health probe, and forwarded-header examples.
+See [docs/deployment.md](docs/deployment.md) for Nginx, Kubernetes, WebSocket, health probe, and forwarded-header examples.
 
-Docker targets are documented in [elixir/README.md](elixir/README.md).
+### Docker
+
+The root `Dockerfile` provides four targets:
+
+| Target | Purpose |
+| --- | --- |
+| `all-in-one` | Phoenix dashboard, SQLite, local workspaces, and Codex CLI in one container. |
+| `dashboard-internal-db` | Dashboard and worker API with SQLite under `/data`; defaults to worker mode. |
+| `dashboard-external-db` | Dashboard using a mounted SQLite file under `/external`. |
+| `worker` | SSH-reachable Codex worker for centralized SSH-host execution. |
+
+Build and run the all-in-one image:
+
+```bash
+docker build --target all-in-one -t symphony-all-in-one .
+docker run --rm -it \
+  -p 4000:4000 \
+  -v symphony-data:/data \
+  -v "$HOME/.codex:/home/symphony/.codex" \
+  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
+  symphony-all-in-one
+```
+
+Builds accept `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`,
+`NPM_REGISTRY`, and `HEX_MIRROR_URL` build arguments for internal registries and mirrors.
+Standard proxy variables can be passed as Docker build arguments and, separately, as runtime
+environment variables. Dashboard images migrate SQLite on startup, write logs under `/data/logs`,
+and expose the dashboard on port 4000.
+
+## Project Layout
+
+- `lib/`: application code and Mix tasks.
+- `test/`: ExUnit coverage for runtime behavior.
+- `config/` and `priv/`: application configuration, migrations, and static assets.
+- `docs/`: architecture, operations, feature designs, and the exec-plan ledger.
+- `workflow.yml` and `profiles.yml`: example import/export workflow package.
+- `bin/symphony`: command-line launcher.
+- `.codex/`: repository-local Codex skills and setup helpers.
+
+Elixir/OTP supervision manages the long-running scheduler and agent processes; Phoenix LiveView
+provides the operator and settings surfaces, and Ecto persists runtime state in SQLite.
 
 ## Development
 
 ```bash
-cd elixir
 mise exec -- mix test
 mise exec -- mix test --cover
 mise exec -- mix lint
@@ -166,23 +222,33 @@ mise exec -- mix exec_plans.check
 
 The main CI workflow runs `make all`, which includes setup, build, formatting check, lint, coverage, and dialyzer.
 
+The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
+run it only with explicit credentials:
+
+```bash
+export LINEAR_API_KEY=...
+make MIX="mise exec -- mix" e2e
+```
+
+Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to a comma-separated host list to exercise existing SSH
+workers. When unset, the SSH scenario starts two disposable local worker containers.
+
 Exec plans are the implementation ledger:
 
-- Active work: [elixir/docs/exec-plans/active](elixir/docs/exec-plans/active)
-- Completed work: [elixir/docs/exec-plans/completed](elixir/docs/exec-plans/completed)
-- Index and rules: [elixir/docs/exec-plans/README.md](elixir/docs/exec-plans/README.md)
+- Active work: [docs/exec-plans/active](docs/exec-plans/active)
+- Completed work: [docs/exec-plans/completed](docs/exec-plans/completed)
+- Index and rules: [docs/exec-plans/README.md](docs/exec-plans/README.md)
 
 ## Documentation
 
-- [SPEC.md](SPEC.md): language-agnostic service specification.
-- [ARCHITECTURE.md](ARCHITECTURE.md): implementation architecture.
-- [CODE_STRUCTURE.md](CODE_STRUCTURE.md): code structure overview.
-- [elixir/README.md](elixir/README.md): Elixir implementation and Docker guide.
-- [elixir/docs/user_guide.zh-CN.md](elixir/docs/user_guide.zh-CN.md): Chinese operator guide.
-- [elixir/docs/persistence_and_auth.md](elixir/docs/persistence_and_auth.md): SQLite and auth details.
-- [elixir/docs/deployment.md](elixir/docs/deployment.md): reverse proxy and Kubernetes deployment.
-- [elixir/docs/documentation_alignment.md](elixir/docs/documentation_alignment.md): long-lived documentation alignment.
-- [elixir/docs/long_term_direction.zh-CN.md](elixir/docs/long_term_direction.zh-CN.md): long-term direction.
+- [docs/SPEC.md](docs/SPEC.md): language-agnostic service specification.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): implementation architecture.
+- [docs/CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md): code structure overview.
+- [docs/user_guide.zh-CN.md](docs/user_guide.zh-CN.md): Chinese operator guide.
+- [docs/persistence_and_auth.md](docs/persistence_and_auth.md): SQLite and auth details.
+- [docs/deployment.md](docs/deployment.md): reverse proxy and Kubernetes deployment.
+- [docs/documentation_alignment.md](docs/documentation_alignment.md): long-lived documentation alignment.
+- [docs/long_term_direction.zh-CN.md](docs/long_term_direction.zh-CN.md): long-term direction.
 
 ## Project Status
 

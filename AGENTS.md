@@ -1,4 +1,4 @@
-# Symphony Elixir
+# Symphony
 
 This directory contains the Elixir agent orchestration service that polls Linear, creates per-issue workspaces, and runs Codex in app-server mode.
 
@@ -14,7 +14,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Runtime config is loaded from the active SQLite workflow version and should be accessed through
   `SymphonyElixir.Config`. `workflow.yml` and `profiles.yml` are split package import/export
   artifacts and examples, not the live runtime source.
-- Keep the implementation aligned with [`../SPEC.md`](../SPEC.md) where practical.
+- Keep the implementation aligned with [`docs/SPEC.md`](docs/SPEC.md) where practical.
   - The implementation may be a superset of the spec.
   - The implementation must not conflict with the spec.
   - If implementation changes meaningfully alter the intended behavior, update the spec in the same
@@ -66,7 +66,7 @@ mix specs.check
 
 ## PR Requirements
 
-- PR body must follow `../.github/pull_request_template.md` exactly.
+- PR body must follow `.github/pull_request_template.md` exactly.
 - Validate PR body locally when needed:
 
 ```bash
@@ -77,8 +77,7 @@ mix pr_body.check --file /path/to/pr_body.md
 
 If behavior/config changes, update docs in the same PR:
 
-- `../README.md` for project concept and goals.
-- `README.md` for Elixir implementation and run instructions.
+- `README.md` for project concepts, goals, and implementation/run instructions.
 - `workflow.yml` and `profiles.yml` when the import/export workflow package
   contract changes. The SQLite active workflow version is the runtime
   authority; local split package files are examples/import artifacts, not the

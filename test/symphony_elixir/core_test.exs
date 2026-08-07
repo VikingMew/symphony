@@ -408,11 +408,11 @@ defmodule SymphonyElixir.CoreTest do
     assert Map.get(project, "repository_url") == "https://github.com/openai/symphony"
 
     assert Map.get(project, "setup_commands") == [
-             "if command -v mise >/dev/null 2>&1; then cd elixir && mise trust && mise exec -- mix deps.get; fi"
+             "if command -v mise >/dev/null 2>&1; then mise trust && mise exec -- mix deps.get; fi"
            ]
 
     assert Map.get(project, "cleanup_commands") == [
-             "cd elixir && mise exec -- mix workspace.before_remove"
+             "mise exec -- mix workspace.before_remove"
            ]
 
     assert String.trim(prompt) != ""
