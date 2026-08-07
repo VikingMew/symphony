@@ -24,7 +24,7 @@ lib/). This plan addresses: Bad smell [2] (high) + redundancy [4] (medium): orch
 
 ## Out of Scope
 
-- Splitting the orchestrator module itself (separate plan 236 candidate); worker-mode changes.
+- Splitting the orchestrator module itself — future candidate, not in this batch; keep this plan focused on state typing.
 
 ## Acceptance Criteria
 
