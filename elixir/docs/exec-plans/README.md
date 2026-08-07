@@ -232,7 +232,9 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-None.
+1. [225-doc-meta-system.md](active/225-doc-meta-system.md)
+2. [226-promote-elixir-to-root.md](active/226-promote-elixir-to-root.md)
+3. [227-docs-relocation-convergence.md](active/227-docs-relocation-convergence.md)
 
 ## Intentional Numbering Gaps
 
