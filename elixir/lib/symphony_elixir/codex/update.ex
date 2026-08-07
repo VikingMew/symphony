@@ -65,7 +65,6 @@ defmodule SymphonyElixir.Codex.Update do
 
   @spec token_delta(map(), map()) :: map()
   def token_delta(running_entry, %{event: _, timestamp: _} = update) do
-    running_entry = running_entry || %{}
     usage = TokenUsage.absolute_usage(update)
 
     input = compute_token_delta(running_entry, :input, usage, :codex_last_reported_input_tokens)
@@ -316,7 +315,6 @@ defmodule SymphonyElixir.Codex.Update do
 
   defp history_label(event), do: event |> to_string() |> String.replace("_", " ") |> String.capitalize()
   defp history_detail(_event, %{message: message}), do: MessageHumanizer.humanize_codex_message(message)
-  defp history_detail(event, _metadata), do: to_string(event)
   defp history_source(_event, _metadata), do: :agent
   defp history_severity(event, _metadata) when event in [:startup_failed, :turn_ended_with_error, :turn_failed], do: :error
   defp history_severity(event, _metadata) when event in [:approval_required, :turn_input_required], do: :warning
@@ -332,8 +330,8 @@ defmodule SymphonyElixir.Codex.Update do
   defp compute_token_delta(running_entry, token_key, usage, reported_key) do
     next_total = TokenUsage.get(usage, token_key)
     prev_reported = Map.get(running_entry, reported_key, 0)
-    delta = if is_integer(next_total) and next_total >= prev_reported, do: next_total - prev_reported, else: 0
-    %{delta: max(delta, 0), reported: if(is_integer(next_total), do: next_total, else: prev_reported)}
+    delta = if next_total >= prev_reported, do: next_total - prev_reported, else: 0
+    %{delta: max(delta, 0), reported: next_total}
   end
 
   defp payload_method(payload) when is_map(payload) do

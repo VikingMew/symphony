@@ -9,21 +9,46 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.State
 
-  @type dispatch_settings :: %{
-          optional(:active_states) => MapSet.t(),
-          optional(:terminal_states) => MapSet.t(),
-          optional(:max_concurrent_agents) => pos_integer(),
-          optional(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
-          optional(:workflow_executor_for_state) => (term() -> String.t() | nil),
-          optional(:human_review_state?) => (term() -> boolean()),
-          optional(:listening_mode) => :not_listening | :listening_all | :listening_refine_only,
-          optional(:refinement_states) => MapSet.t()
-        }
+  @opaque dispatch_settings :: %{
+            optional(:active_states) => MapSet.t(),
+            optional(:terminal_states) => MapSet.t(),
+            optional(:max_concurrent_agents) => pos_integer(),
+            optional(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
+            optional(:workflow_executor_for_state) => (term() -> String.t() | nil),
+            optional(:human_review_state?) => (term() -> boolean()),
+            optional(:listening_mode) => :not_listening | :listening_all | :listening_refine_only,
+            optional(:refinement_states) => MapSet.t()
+          }
+
+  @typep settings_source :: %{
+           required(:active_states) => [term()],
+           required(:terminal_states) => [term()],
+           required(:refinement_states) => [term()],
+           required(:max_concurrent_agents) => pos_integer(),
+           required(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
+           required(:workflow_executor_for_state) => (term() -> String.t() | nil),
+           required(:human_review_state?) => (term() -> boolean()),
+           required(:listening_mode) => :not_listening | :listening_all | :listening_refine_only
+         }
 
   @type worker_settings :: %{
           optional(:ssh_hosts) => [String.t()],
           optional(:max_concurrent_agents_per_host) => pos_integer() | nil
         }
+
+  @spec build_settings(settings_source()) :: dispatch_settings()
+  def build_settings(settings) when is_map(settings) do
+    %{
+      active_states: normalized_state_set(settings.active_states),
+      terminal_states: normalized_state_set(settings.terminal_states),
+      refinement_states: normalized_state_set(settings.refinement_states),
+      listening_mode: settings.listening_mode,
+      max_concurrent_agents: settings.max_concurrent_agents,
+      max_concurrent_agents_for_state: settings.max_concurrent_agents_for_state,
+      workflow_executor_for_state: settings.workflow_executor_for_state,
+      human_review_state?: settings.human_review_state?
+    }
+  end
 
   @spec sort_issues_for_dispatch([term()]) :: [term()]
   def sort_issues_for_dispatch(issues) when is_list(issues) do
@@ -222,15 +247,13 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
 
   def allowed_by_listening_mode?(_state_name, _dispatch_settings), do: false
 
-  @spec normalized_state_set([term()]) :: MapSet.t()
-  def normalized_state_set(states) when is_list(states) do
+  @spec normalized_state_set(term()) :: MapSet.t()
+  def normalized_state_set(states) do
     states
-    |> Enum.map(&normalize_issue_state/1)
-    |> Enum.filter(&(&1 != ""))
-    |> MapSet.new()
+    |> then(&if(is_list(&1), do: &1, else: []))
+    |> MapSet.new(&normalize_issue_state/1)
+    |> MapSet.delete("")
   end
-
-  def normalized_state_set(_states), do: MapSet.new()
 
   defp available_slots(%State{} = state, dispatch_settings) do
     max_agents =

@@ -8,7 +8,7 @@ step of `make all` fully green.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -87,16 +87,51 @@ Drive the remaining warning count to zero:
 
 ## Verification
 
-- `mise exec -- mix dialyzer --format short` (zero warnings, exit 0)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix test`
-- `mise exec -- mix credo --strict` (0 `[F]`)
-- `make MIX="mise exec -- mix" all` (record where it stops; expected: lint exit-6 only)
+Executed by Codex CLI (codex-cli 0.147.0, `--sandbox workspace-write`) and independently
+re-verified by the reviewer outside the sandbox:
+
+- `mise exec -- mix dialyzer --format short` -> **exit 0, ZERO warnings**
+  (`done (passed successfully)`). The dialyzer gate is fully green for the first time
+  (was 117 warnings at plan 222's start).
+- `mise exec -- mix specs.check` -> pass.
+- `mise exec -- mix format --check-formatted` -> pass.
+- `mise exec -- mix test` -> 664 tests, 0 failures, 2 skipped (reviewer run; Codex sandbox
+  run also passed after the known OrchestratorStatusTest flake passed in isolation).
+- `mise exec -- mix credo --strict` -> zero `[F]`; 35 `[R]` + 2 `[D]` remain (pre-existing).
+- `git diff --check` -> pass. Scope: exactly the 10 whitelisted files, +91/-61 lines.
+  `elixir/.dialyzer_ignore.exs` untouched (plan 223 entries intact).
+
+Fixes by category:
+- `pattern_match` / `pattern_match_cov` / `guard_fail`: removed unreachable clauses
+  (input_blocker.ex generic blocked clause, wrapper_events.ex `humanize_item_type` fallbacks,
+  update.ex `history_detail` fallback, run_history.ex `bounded_payload` fallback,
+  project_settings.ex `safe_path_segment` guard + caller fallback, orchestrator.ex
+  `dispatch_policy_settings(_state)` fallback) and aligned expressions with established
+  runtime types (update.ex `compute_token_delta` integer-only paths, run_history.ex
+  `event_payload` map guard).
+- `call_without_opaque` / `contract_with_opaque`: new opaque constructor
+  `DispatchPolicy.build_settings/1` + `@opaque dispatch_settings` with `@typep settings_source`
+  (orchestrator.ex `dispatch_policy_settings` now builds through it); `proxy_headers.ex`
+  constructs external URLs via `URI.new!/1` + `URI.append_path/2` with an `external_origin/3`
+  helper (also brackets IPv6 hosts, a small correctness improvement); app_server.ex
+  `session_policies/2` re-expressed via `Config.settings()` +
+  `Schema.resolve_runtime_turn_sandbox_policy/3`.
 
 ## Completion Deviations
 
-None yet.
+- None blocking. Observations recorded for follow-up:
+  - `app_server.ex` now inlines the same logic as `Config.codex_runtime_settings/2`
+    (resolve_session_policies is line-for-line equivalent; verified against config.ex:181).
+    The duplication could be collapsed back to a `Config.codex_runtime_settings` call if that
+    function's spec is added — but the local form is what satisfies dialyzer under the
+    whitelist, so it stays as-is.
+  - `proxy_headers.ex` now brackets IPv6 hosts in generated external URLs (was previously
+    un-bracketed) — a deliberate correctness improvement surfaced by the opaque-type fix.
+  - `run_history.ex` `event_payload` now returns `%{}` for non-map payloads (previously
+    passed through truthy non-map values); callers treat the result as a map, so this is a
+    strictness improvement, not a regression.
+  - All removed clauses were dialyzer-proven unreachable; the full suite (664 tests) covers
+    the affected modules and passes.
 
 ## Dependencies
 

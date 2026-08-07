@@ -61,12 +61,11 @@ defmodule SymphonyElixirWeb.ProxyHeaders do
     path = normalize_path(path)
     port = external_port(conn)
 
-    %URI{
-      scheme: Atom.to_string(conn.scheme),
-      host: conn.host,
-      port: port,
-      path: prefix <> path
-    }
+    conn.scheme
+    |> Atom.to_string()
+    |> external_origin(conn.host, port)
+    |> URI.new!()
+    |> URI.append_path(prefix <> path)
     |> URI.to_string()
   end
 
@@ -172,6 +171,12 @@ defmodule SymphonyElixirWeb.ProxyHeaders do
   defp external_port(%{scheme: :http, port: 80}), do: nil
   defp external_port(%{port: port}) when is_integer(port), do: port
   defp external_port(_conn), do: nil
+
+  defp external_origin(scheme, host, port) do
+    host = if String.contains?(host, ":") and !String.starts_with?(host, "["), do: "[#{host}]", else: host
+    port_suffix = if is_integer(port), do: ":#{port}", else: ""
+    "#{scheme}://#{host}#{port_suffix}"
+  end
 
   defp default_port("https"), do: 443
   defp default_port("http"), do: 80

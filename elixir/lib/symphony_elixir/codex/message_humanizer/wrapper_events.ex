@@ -156,8 +156,6 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.WrapperEvents do
 
   defp normalize_command(_command), do: nil
 
-  defp humanize_item_type(nil), do: "item"
-
   defp humanize_item_type(type) when is_binary(type) do
     type
     |> String.replace(~r/([a-z0-9])([A-Z])/, "\\1 \\2")
@@ -166,8 +164,6 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.WrapperEvents do
     |> String.downcase()
     |> String.trim()
   end
-
-  defp humanize_item_type(type), do: to_string(type)
 
   defp inline_text(text) when is_binary(text) do
     text

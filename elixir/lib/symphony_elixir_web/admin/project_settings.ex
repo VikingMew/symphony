@@ -167,8 +167,8 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
     "#{safe_path_segment(Path.basename(value(project, :repository_url) || "project", ".git"))}-#{digest}"
   end
 
-  defp safe_path_segment(value) do
-    String.replace(value || "project", ~r/[^a-zA-Z0-9._-]/, "_")
+  defp safe_path_segment(value) when is_binary(value) do
+    String.replace(value, ~r/[^a-zA-Z0-9._-]/, "_")
   end
 
   defp normalize_value(value) when is_binary(value) do

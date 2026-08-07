@@ -962,21 +962,19 @@ defmodule SymphonyElixir.Orchestrator do
   defp dispatch_policy_settings(%State{} = state) do
     config = Config.settings!()
 
-    %{
-      active_states: DispatchPolicy.normalized_state_set(config.tracker.active_states),
-      terminal_states: DispatchPolicy.normalized_state_set(config.tracker.terminal_states),
-      refinement_states: refinement_state_set(config),
+    DispatchPolicy.build_settings(%{
+      active_states: config.tracker.active_states,
+      terminal_states: config.tracker.terminal_states,
+      refinement_states: refinement_states(config),
       listening_mode: listening_mode_atom(state),
       max_concurrent_agents: config.agent.max_concurrent_agents,
       max_concurrent_agents_for_state: &Config.max_concurrent_agents_for_state/1,
       workflow_executor_for_state: &Config.workflow_executor_for_state/1,
       human_review_state?: &Config.human_review_state?/1
-    }
+    })
   end
 
-  defp dispatch_policy_settings(_state), do: dispatch_policy_settings(%State{listening?: true, listening_mode: :listening_all})
-
-  defp refinement_state_set(config) do
+  defp refinement_states(config) do
     routed_states =
       config.workflow
       |> Map.get("states", %{})
@@ -985,9 +983,10 @@ defmodule SymphonyElixir.Orchestrator do
         {state_name, %{profile: "refinement"}} when is_binary(state_name) -> [state_name]
         _ -> []
       end)
-      |> DispatchPolicy.normalized_state_set()
+      |> Enum.map(&normalize_issue_state/1)
+      |> Enum.reject(&(&1 == ""))
 
-    if MapSet.size(routed_states) > 0, do: routed_states, else: MapSet.new(["refining"])
+    if routed_states == [], do: ["refining"], else: routed_states
   end
 
   defp worker_policy_settings do
@@ -1894,7 +1893,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp operator_task_label(kind), do: to_string(kind)
 
   defp finish_operator_task(%State{} = state, running_entry, status, failure_reason)
-       when status in [:completed, :failed, :stopped] do
+       when status in [:completed, :failed] do
     case operator_kind_from_running_entry(running_entry) do
       nil ->
         state
@@ -1918,7 +1917,6 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_task_summary(:completed, _failure_reason), do: %{created: 0, skipped: 0, failed: 0, issues: []}
-  defp operator_task_summary(:stopped, _failure_reason), do: %{created: 0, skipped: 0, failed: 0, issues: [], stopped: true}
   defp operator_task_summary(:failed, failure_reason), do: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
 
   defp operator_kind_from_running_entry(%{kind: "nap"}), do: :nap
@@ -2405,10 +2403,8 @@ defmodule SymphonyElixir.Orchestrator do
   # orchestrator iterates enabled projects. Defaults keep single-project
   # behavior intact when no context is active (e.g. operator tasks).
   defp current_workflow_context do
-    case Config.current_workflow() do
-      {:ok, %{config: _config} = workflow} -> workflow
-      _ -> %{config: %{}, prompt: "", prompt_template: "", project_id: nil, workflow_version_id: nil}
-    end
+    {:ok, workflow} = Config.current_workflow()
+    workflow
   end
 
   defp context_workflow_version(%{workflow_version_id: version_id}) when is_binary(version_id) do

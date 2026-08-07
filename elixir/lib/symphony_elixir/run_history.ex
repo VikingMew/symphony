@@ -72,7 +72,13 @@ defmodule SymphonyElixir.RunHistory do
   defp normalize_limit(_limit), do: @default_limit
 
   defp event_type(event), do: event |> value([:event_type, "event_type", :event, "event"]) |> to_string()
-  defp event_payload(event), do: value(event, [:payload, "payload"]) || %{}
+
+  defp event_payload(event) do
+    case value(event, [:payload, "payload"]) do
+      payload when is_map(payload) -> payload
+      _ -> %{}
+    end
+  end
 
   defp event_time(event) do
     payload = event_payload(event)
@@ -366,8 +372,6 @@ defmodule SymphonyElixir.RunHistory do
     |> Enum.map(fn {key, value} -> {key, bound_value(value)} end)
     |> Map.new()
   end
-
-  defp bounded_payload(_payload), do: %{}
 
   defp bound_value(value) when is_binary(value) do
     if String.length(value) > @max_payload_chars, do: String.slice(value, 0, @max_payload_chars) <> "...", else: value

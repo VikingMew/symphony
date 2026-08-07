@@ -16,6 +16,8 @@ defmodule SymphonyElixir.Codex.AppServer do
     SSH
   }
 
+  alias SymphonyElixir.Config.Schema
+
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
@@ -375,11 +377,23 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp session_policies(workspace, nil) do
-    Config.codex_runtime_settings(workspace)
+    resolve_session_policies(workspace, [])
   end
 
   defp session_policies(workspace, worker_host) when is_binary(worker_host) do
-    Config.codex_runtime_settings(workspace, remote: true)
+    resolve_session_policies(workspace, remote: true)
+  end
+
+  defp resolve_session_policies(workspace, opts) do
+    with {:ok, settings} <- Config.settings(),
+         {:ok, turn_sandbox_policy} <- Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
+      {:ok,
+       %{
+         approval_policy: settings.codex.approval_policy,
+         thread_sandbox: settings.codex.thread_sandbox,
+         turn_sandbox_policy: turn_sandbox_policy
+       }}
+    end
   end
 
   defp do_start_session(port, workspace, session_policies, startup_context) do

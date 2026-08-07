@@ -66,9 +66,6 @@ defmodule SymphonyElixir.Orchestrator.InputBlocker do
       {:blocked, :turn_input_required, _payload} ->
         "turn blocked: waiting for user input"
 
-      {:blocked, _event, payload} when map_size(payload) > 0 ->
-        MessageHumanizer.humanize_codex_message(payload)
-
       :retryable ->
         "not blocked"
     end

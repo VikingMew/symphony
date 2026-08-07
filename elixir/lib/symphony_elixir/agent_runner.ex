@@ -462,10 +462,7 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp operator_profile_policy(profile) do
-    case Config.workflow_profile(profile) do
-      nil -> {:error, {:operator_profile_missing, profile}}
-      profile_policy -> {:ok, profile_policy}
-    end
+    {:ok, Config.workflow_profile(profile)}
   end
 
   defp rate_limit_gate_allows_session_start(opts) do
