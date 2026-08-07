@@ -2,7 +2,7 @@
 
 - **genre**: design
 - **domain**: [meta, documentation]
-- **status**: proposed
+- **status**: landed
 - **language**: zh-CN
 - **updated**: 2026-08-07
 - **related**: [letsinflu-server docs model](https://github.com/VikingMew/letsinflu-server/blob/main/AGENTS.md) (L0-L5 layer model), exec-plans lifecycle

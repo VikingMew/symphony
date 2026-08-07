@@ -1,3 +1,12 @@
+---
+title: Deploying Symphony Behind a Reverse Proxy
+genre: guide
+domain: [deployment, operations]
+status: current
+language: en
+updated: 2026-08-07
+---
+
 # Deploying Symphony Behind a Reverse Proxy
 
 Symphony is an internal Phoenix service. Nginx, Kubernetes Ingress, or the platform edge should own public TLS, domain routing, and certificate renewal.
@@ -113,4 +122,3 @@ Run the container or process with:
 ```sh
 SYMPHONY_TRUST_X_FORWARDED_HEADERS=true ./bin/symphony --port 4000
 ```
-

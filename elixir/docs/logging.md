@@ -1,3 +1,13 @@
+---
+title: Logging Best Practices
+genre: spec
+domain: [observability, logging]
+status: current
+language: en
+owner: SymphonyElixir.LogFile
+updated: 2026-08-07
+---
+
 # Logging Best Practices
 
 This guide defines logging conventions for Symphony so Codex can diagnose failures quickly.

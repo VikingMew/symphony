@@ -26,6 +26,22 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Orchestrator behavior is stateful and concurrency-sensitive; preserve retry, reconciliation, and cleanup semantics.
 - Follow `docs/logging.md` for logging conventions and required issue/session context fields.
 
+## Documentation Layers
+
+| Layer | Purpose |
+| --- | --- |
+| L0 | Governance: contributor rules, decisions, and exec-plan history. |
+| L1 | System architecture: topology, boundaries, invariants, and long-term direction. |
+| L2 | Backend design: package layout, implementation conventions, and the feature-design index. |
+| L3 | Feature designs: one concern and one owned contract per design document. |
+| L4 | Normative contracts: specifications and reference tables without roadmap narrative. |
+| L5 | Operational guides: procedures validated by whether an operator can run them. |
+
+- Each contract has exactly one owning document; other documents link, not restate.
+- Every new document must be placed in exactly one layer and registered in `docs/README.md`.
+- L2, L4, and L5 describe current behavior; future intent belongs in an L3 design with an explicit status.
+- L1 and L4 use English; L3 and L5 may use zh-CN when declared in frontmatter.
+
 ## Tests and Validation
 
 Run targeted tests while iterating, then run full gates before handoff.

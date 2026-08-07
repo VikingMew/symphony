@@ -229,12 +229,12 @@ Plans should focus on product and engineering intent rather than full implementa
 222. [217-multi-project-orchestrator-dispatch.md](completed/217-multi-project-orchestrator-dispatch.md)
 223. [218-admin-ui-project-filtering.md](completed/218-admin-ui-project-filtering.md)
 224. [219-settings-project-switching.md](completed/219-settings-project-switching.md)
+225. [225-doc-meta-system.md](completed/225-doc-meta-system.md)
 
 ## Active Plans
 
-1. [225-doc-meta-system.md](active/225-doc-meta-system.md)
-2. [226-promote-elixir-to-root.md](active/226-promote-elixir-to-root.md)
-3. [227-docs-relocation-convergence.md](active/227-docs-relocation-convergence.md)
+1. [226-promote-elixir-to-root.md](active/226-promote-elixir-to-root.md)
+2. [227-docs-relocation-convergence.md](active/227-docs-relocation-convergence.md)
 
 ## Intentional Numbering Gaps
 

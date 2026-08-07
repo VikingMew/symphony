@@ -1,3 +1,13 @@
+---
+title: Workflow 页面设计目标
+genre: design
+domain: [settings, workflow]
+status: current
+design_status: proposed
+language: zh-CN
+updated: 2026-08-07
+---
+
 # Workflow 页面设计目标
 
 本文维护 Settings 中 Workflow、Agents 和相关 Project 配置入口的长期目标状态。它关注 Web UI 如何编辑、验证、上传导入、导出和版本化完整 workflow package，同时明确哪些配置属于 project 记录而不是 workflow draft。

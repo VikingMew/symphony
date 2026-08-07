@@ -1,3 +1,12 @@
+---
+title: Symphony 用户运行指南
+genre: guide
+domain: [operations, configuration]
+status: current
+language: zh-CN
+updated: 2026-08-07
+---
+
 # Symphony 用户运行指南
 
 这份指南说明如何在 macOS 和 Ubuntu 上安装依赖、配置环境变量、初始化 SQLite，并启动 Symphony Web 服务。

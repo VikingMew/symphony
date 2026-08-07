@@ -9,7 +9,7 @@ machine verification for document structure — before any physical reorganizati
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -77,14 +77,27 @@ meta-layer in place (no file moves yet — those are plans 226/227).
 
 ## Verification
 
-- `mise exec -- mix docs.check`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix exec_plans.check`
-- `mise exec -- mix test` (664 expected, 0 failures)
+Executed by Codex CLI (codex-cli 0.147.0, `--sandbox workspace-write`) and independently
+re-verified by the reviewer:
+
+- `mise exec -- mix docs.check` -> **5 passed, 14 skipped, 0 failed** (seed set = 5 docs;
+  docs without frontmatter correctly SKIP not fail; full sweep is plan 227). Negative test
+  (invalid genre) exits non-zero and names the document, then restored.
+- `mise exec -- mix compile --warnings-as-errors` -> pass.
+- `mise exec -- mix exec_plans.check` -> pass.
+- `mise exec -- mix test` -> 664 tests, 0 failures, 2 skipped (reviewer rerun).
+- `git diff --check` -> pass. Scope: exactly the 10 whitelisted files (7 modified, 3 new:
+  docs/README.md, docs/decisions.md, lib/mix/tasks/docs.check.ex).
+- Deliverables reviewed: AGENTS.md L0-L5 table + rules; docs/README.md indexes all 19
+  documents with layer assignment and pending-227 notes; decisions.md records 7 accepted
+  ADRs (fork divergence, SQLite runtime authority, per-project versions, exec-plan
+  lifecycle, quality-gate debt cleanup, elixir/ promotion, L0-L5 adoption); docs.check
+  is dependency-free (~150 lines) with frontmatter/genre/status/index/owner-anchor
+  validation; 5 seed docs carry valid frontmatter.
 
 ## Completion Deviations
 
-- To be filled after implementation.
+- None. `documentation-system-design.md` status updated to landed.
 
 ## Dependencies
 

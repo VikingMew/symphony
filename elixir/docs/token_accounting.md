@@ -1,3 +1,13 @@
+---
+title: Codex Token Accounting
+genre: reference
+domain: [codex, observability]
+status: current
+language: en
+owner: TokenUsage
+updated: 2026-08-07
+---
+
 # Codex Token Accounting
 
 This document explains how Codex reports token usage through the app-server protocol and how Symphony should account for it.
