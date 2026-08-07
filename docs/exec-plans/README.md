@@ -237,11 +237,11 @@ Plans should focus on product and engineering intent rather than full implementa
 230. [230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md](completed/230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md)
 231. [231-wire-nap-operator-results-into-summaries-or-delete.md](completed/231-wire-nap-operator-results-into-summaries-or-delete.md)
 232. [232-unify-recursive-redaction-one-sanitizer.md](completed/232-unify-recursive-redaction-one-sanitizer.md)
+233. [233-merge-agent-runner-issue-operator-lifecycle.md](completed/233-merge-agent-runner-issue-operator-lifecycle.md)
 
 ## Active Plans
 
-1. [233-merge-agent-runner-issue-operator-lifecycle.md](active/233-merge-agent-runner-issue-operator-lifecycle.md)
-6. [234-type-orchestrator-running-state-single-listening-source.md](active/234-type-orchestrator-running-state-single-listening-source.md)
+1. [234-type-orchestrator-running-state-single-listening-source.md](active/234-type-orchestrator-running-state-single-listening-source.md)
 7. [235-normalize-codex-protocol-events-shared-parsing.md](active/235-normalize-codex-protocol-events-shared-parsing.md)
 8. [236-split-adminlive-into-focused-components.md](active/236-split-adminlive-into-focused-components.md)
 9. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](active/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)

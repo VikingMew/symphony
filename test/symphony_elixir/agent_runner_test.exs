@@ -1,6 +1,20 @@
 defmodule SymphonyElixir.AgentRunnerTest do
   use SymphonyElixir.TestSupport
 
+  test "builds canonical operator task identities" do
+    assert AgentRunner.operator_task_identity(:nap, "operator-123") == %{
+             identifier: "NAP-operator-123",
+             label: "Nap",
+             description: "Audit project context and create focused backlog issues without modifying the repository."
+           }
+
+    assert AgentRunner.operator_task_identity(:day_dreaming, "operator-123") == %{
+             identifier: "DAY-DREAMING-operator-123",
+             label: "Day dreaming",
+             description: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
+           }
+  end
+
   test "agent runner keeps workspace after successful codex run" do
     test_root =
       Path.join(

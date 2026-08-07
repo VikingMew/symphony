@@ -1879,14 +1879,16 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_running_entry(task, pid, ref, worker_host) do
+    identity = AgentRunner.operator_task_identity(task.kind, task.run_id)
+
     running_entry = %{
       kind: to_string(task.kind),
       profile: to_string(task.kind),
-      label: operator_task_label(task.kind),
+      label: identity.label,
       pid: pid,
       ref: ref,
       run_id: task.run_id,
-      identifier: operator_task_identifier(task.kind, task.run_id),
+      identifier: identity.identifier,
       issue_id: nil,
       issue: nil,
       state: to_string(task.status),
@@ -1911,7 +1913,7 @@ defmodule SymphonyElixir.Orchestrator do
           at: task.started_at,
           source: :system,
           event: "operator_task.started",
-          label: operator_task_label(task.kind),
+          label: identity.label,
           detail: "Operator task started",
           severity: :info
         }
@@ -1923,36 +1925,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_task_issue(task) do
+    identity = AgentRunner.operator_task_identity(task.kind, task.run_id)
+
     %Issue{
       id: task.run_id,
-      identifier: operator_task_identifier(task.kind, task.run_id),
-      title: operator_task_label(task.kind),
-      description: "Operator task #{operator_task_label(task.kind)}",
-      state: operator_task_label(task.kind),
+      identifier: identity.identifier,
+      title: identity.label,
+      description: identity.description,
+      state: identity.label,
       assigned_to_worker: false,
       labels: ["operator", to_string(task.kind)]
     }
   end
 
-  defp operator_task_identifier(kind, run_id) when is_binary(run_id) do
-    suffix =
-      run_id
-      |> String.replace(~r/[^A-Za-z0-9]+/, "-")
-      |> String.trim("-")
-      |> String.slice(-12, 12)
-
-    kind
-    |> to_string()
-    |> String.replace("_", "-")
-    |> String.upcase()
-    |> Kernel.<>("-#{suffix}")
-  end
-
-  defp operator_task_identifier(kind, _run_id), do: to_string(kind)
-
-  defp operator_task_label(:nap), do: "Nap"
-  defp operator_task_label(:day_dreaming), do: "Day dreaming"
-  defp operator_task_label(kind), do: to_string(kind)
+  defp operator_task_label(kind), do: AgentRunner.operator_task_identity(kind, nil).label
 
   defp finish_operator_task(%State{} = state, running_entry, status, failure_reason)
        when status in [:completed, :failed] do

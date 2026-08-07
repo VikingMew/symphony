@@ -73,6 +73,10 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert is_reference(running_entry.ref)
     assert running_entry.kind == "nap"
 
+    identity = AgentRunner.operator_task_identity(:nap, run_id)
+    assert running_entry.identifier == identity.identifier
+    assert running_entry.label == identity.label
+
     send(runner_pid, :emit_operator_updates)
 
     snapshot =
