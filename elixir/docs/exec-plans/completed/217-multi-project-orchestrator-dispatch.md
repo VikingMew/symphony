@@ -9,7 +9,7 @@ project's workflow policy, and binds persisted runs/issues to the originating `p
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -95,6 +95,8 @@ uses the originating project's configuration.
 - `mise exec -- mix lint`
 - `mise exec -- mix exec_plans.check`
 - `make all` at the end of the 217-219 sequence.
+
+- Closed with plan 219 (multi-project line complete). Final gate state after plans 221-224: 664 tests / 0 failures, format + specs pass, credo 0 `[F]`, dialyzer 0 warnings, exec_plans.check pass.
 
 ## Completion Deviations
 

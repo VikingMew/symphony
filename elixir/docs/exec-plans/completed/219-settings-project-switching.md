@@ -9,7 +9,7 @@ the repository's written intent matches the multi-project runtime after plans 21
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -107,15 +107,43 @@ the selected project through the settings data paths, then finishes the plan-215
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix test` (new settings-switch tests + full suite regression)
-- `mise exec -- mix lint`
-- `mise exec -- mix exec_plans.check`
-- `make all` (first run at the end of the 217-219 sequence; record coverage/dialyzer results).
+Implemented across plans 216-219 and verified by the reviewer:
+
+- Settings project switcher: Settings header renders the shared `Layouts.project_switcher/1`
+  (plan 218); the `project` query param scopes the workflow/agents/runtime/import data paths
+  in `AdminLive` (`refresh/1` resolves the selected project's active workflow version,
+  `workflow_form/2`, version history filtered to the selected project, save/import and
+  version restore against the selected project). No `project` param keeps default-project
+  behavior. Settings tests: `settings_fake_persistence_test.exs`,
+  `settings_import_fake_persistence_test.exs`, `project_settings_test.exs`,
+  `settings_check_test.exs` + multi-project tests from 216-218.
+- `mise exec -- mix test` -> 664 tests, 0 failures, 2 skipped (verified repeatedly across
+  plans 221-224; known intermittent `OrchestratorStatusTest` `:sys.get_state` timeout flake
+  passes in isolation).
+- `mise exec -- mix format --check-formatted` -> pass; `mise exec -- mix specs.check` -> pass;
+  `mise exec -- mix exec_plans.check` -> pass.
+- `make all` first run (end of 217-219): format/compile pass; lint stopped at credo
+  `--strict` with 14 `[F]`; dialyzer crashed on `:exact_compare` with 117 warnings. Debt split
+  into follow-up plans 220 (specs), 221 (credo `[F]` -> 0), 222-224 (dialyzer -> 0 warnings,
+  exit 0). After 221-224: dialyzer green; lint still exits 6 from pre-existing
+  35 `[R]` + 2 `[D]` (recorded in plan 221, out of scope).
+- Documentation sweep: `documentation_alignment.md` verified clean; `user_guide.zh-CN.md`
+  page list + Settings narrative updated (project switching, runs filtering);
+  `long_term_direction.zh-CN.md` version-history filtering / Settings evolution / stage-4
+  multi-project status updated; `workflow_page_design.zh-CN.md` "shared policy" ->
+  project-scoped. `worker_panel_decoupling_design.zh-CN.md` and
+  `workspace_source_layout.zh-CN.md` reviewed — no stale single-project claims. Root
+  `README.md` and `elixir/README.md` verified clean.
 
 ## Completion Deviations
 
-- To be filled after implementation.
+- `make all` did not pass at this plan's completion: the first run surfaced 14 credo `[F]`
+  and the dialyzer formatter crash + 117 warnings. Rather than expanding this plan, the debt
+  was executed as follow-up plans 220-224 (see Verification). The only remaining `make all`
+  blocker is the pre-existing credo readability/design debt (35 `[R]` + 2 `[D]`, lint exit 6),
+  explicitly out of scope since plan 221.
+- The zh-CN doc sweep was completed in this closing pass; `worker_panel_decoupling_design` and
+  `workspace_source_layout` needed no changes after review.
 
 ## Dependencies
 

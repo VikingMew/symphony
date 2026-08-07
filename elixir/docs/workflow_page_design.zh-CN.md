@@ -25,7 +25,7 @@ Settings 必须覆盖完整 runtime contract，而不是只覆盖 prompt。不�
 Settings 长期应提供几个互相一致的 tab/入口：
 
 - `/settings/projects` 项目设置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、source strategy 和 enabled 状态；共享 Linear discovery 结果可辅助复制 project slug。workspace source 路径模型由 `docs/workspace_source_layout.zh-CN.md` 维护，repository base root 和 worktree base root 是共享 workspace/runtime 设置，不是 project-level 设置。
-- `/settings/workflow` 结构化编辑：按 tracker、bootstrap、workspace、hooks、agent、codex、workflow routing 等区域编辑共享策略。
+- `/settings/workflow` 结构化编辑：按 tracker、bootstrap、workspace、hooks、agent、codex、workflow routing 等区域编辑策略（通过 Settings 顶部 project 选择器限定到指定 project）。
 - `/settings/agents` 结构化编辑：编辑 base prompt、profiles、profile prompt policy、allowed updates、executor policy。
 - `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。
 - Split package 导入：`/settings/import` 可粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，显示 staged diff 和校验结果。导入根据 YAML 字段自动识别 package 类型；确认导入只修改 editable draft，运行时只有正常 Save 后才变化。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure，并阻止运行时监听。

@@ -9,7 +9,7 @@ persistence record and settings UI, and overlay them onto the loaded workflow co
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -92,6 +92,8 @@ inventories the design/documentation changes; this plan lands the runtime store 
 - `mise exec -- mix specs.check`
 - `mise exec -- mix exec_plans.check`
 - `make all`
+
+- Closed with plan 219 (multi-project line complete). Final gate state after plans 221-224: 664 tests / 0 failures, format + specs pass, credo 0 `[F]`, dialyzer 0 warnings, exec_plans.check pass.
 
 ## Completion Deviations
 

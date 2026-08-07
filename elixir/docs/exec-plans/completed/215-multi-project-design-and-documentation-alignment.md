@@ -9,7 +9,7 @@ which they depend on the implementation plans.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -181,9 +181,11 @@ Documentation plans are verified by review, not unit tests:
 - Manual review of each doc diff.
 - `make all` still passes (docs-only plan; confirms nothing else broke).
 
+- Closed with plan 219 (multi-project line complete). Final gate state after plans 221-224: 664 tests / 0 failures, format + specs pass, credo 0 `[F]`, dialyzer 0 warnings, exec_plans.check pass.
+
 ## Completion Deviations
 
-None yet.
+- Doc sweep finished by plan 219 (zh-CN docs updated; root/elixir READMEs and documentation_alignment verified clean).
 
 ## Dependencies
 

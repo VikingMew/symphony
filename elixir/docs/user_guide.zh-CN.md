@@ -325,7 +325,9 @@ source strategy 会先完成 source preparation，`project.setup_commands` 再�
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
 Web UI 的 `/settings/workflow` tab 管理 workflow/routing，`/settings/agents` tab 管理 base
-prompt 和 profiles。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
+prompt 和 profiles。Settings 顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时
+保持默认 project 行为）；`/settings/projects` tab 始终列出全部 project 用于 enable/disable
+编辑。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
 prompt 来源。
 
 `codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
@@ -411,13 +413,13 @@ mise exec -- ./bin/symphony \
 
 ```text
 /             当前运行状态 dashboard
-/runs         持久化 run 历史
+/runs         持久化 run 历史（支持按 project 过滤）
 /workers      worker、task、lease 状态；集中式部署下可为空
 /settings     Settings 入口，默认打开 Projects tab
 /settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
-/settings/workflow workflow/routing/runtime 共享结构化配置和版本历史
-/settings/agents agent profile、base prompt、profile prompt、allowed updates 配置
-/settings/runtime tracker/config 摘要
+/settings/workflow workflow/routing/runtime 结构化配置和版本历史（顶部 project 选择器限定到指定 project；版本历史只显示该 project 的版本）
+/settings/agents agent profile、base prompt、profile prompt、allowed updates 配置（project 选择器限定）
+/settings/runtime tracker/config 摘要（project 选择器限定）
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
 ```

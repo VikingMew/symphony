@@ -224,14 +224,15 @@ Plans should focus on product and engineering intent rather than full implementa
 217. [222-dialyzer-gate-unblock.md](completed/222-dialyzer-gate-unblock.md)
 218. [223-dialyzer-unused-functions.md](completed/223-dialyzer-unused-functions.md)
 219. [224-dialyzer-remaining-warnings.md](completed/224-dialyzer-remaining-warnings.md)
+220. [215-multi-project-design-and-documentation-alignment.md](completed/215-multi-project-design-and-documentation-alignment.md)
+221. [216-multi-project-runtime-workflow-store.md](completed/216-multi-project-runtime-workflow-store.md)
+222. [217-multi-project-orchestrator-dispatch.md](completed/217-multi-project-orchestrator-dispatch.md)
+223. [218-admin-ui-project-filtering.md](completed/218-admin-ui-project-filtering.md)
+224. [219-settings-project-switching.md](completed/219-settings-project-switching.md)
 
 ## Active Plans
 
-1. [215-multi-project-design-and-documentation-alignment.md](active/215-multi-project-design-and-documentation-alignment.md)
-2. [216-multi-project-runtime-workflow-store.md](active/216-multi-project-runtime-workflow-store.md)
-3. [217-multi-project-orchestrator-dispatch.md](active/217-multi-project-orchestrator-dispatch.md)
-4. [218-admin-ui-project-filtering.md](active/218-admin-ui-project-filtering.md)
-5. [219-settings-project-switching.md](active/219-settings-project-switching.md)
+None.
 
 ## Intentional Numbering Gaps
 

@@ -165,8 +165,8 @@ secrets_metadata（后续）
 
 ### 5.3 workflow_versions
 
-保存完整 workflow package 的运行时版本。Web UI 会按 settings 页面做历史过滤：
-Workflow 页面显示 workflow 设置保存，Agents 页面显示 profile/prompt 保存。
+保存完整 workflow package 的运行时版本。Web UI 会按 settings 页面和当前选中的 project 做历史过滤：
+Workflow 页面显示该 project 的 workflow 设置保存，Agents 页面显示该 project 的 profile/prompt 保存。
 从页面历史恢复时只恢复该页面负责的字段，并写入一个新的完整 active workflow version，
 而不是直接激活旧版本覆盖其它页面负责的字段。
 
@@ -242,7 +242,8 @@ events
 ### 阶段 2：Web UI 管理配置
 
 当前 Settings 已从早期 raw editor 演进为 tabbed configuration：`/settings/projects` 承载 project 设置，`/settings/workflow` 承载结构化 workflow/routing draft form，`/settings/agents` 承载 profile 设置，`/settings/runtime` 承载运行时摘要。可以从数据库 workflow
-version 和 projects 表生成表单，编辑后保存为新的数据库版本或 project 记录。这个阶段仍是 `部分落地`：页面已经不再只是一个巨大纯文本框，但还没有完整覆盖字段级
+version 和 projects 表生成表单，编辑后保存为新的数据库版本或 project 记录。Settings 顶部提供 project 选择器：
+选中 project 后，workflow/agents/runtime 表单和版本历史都限定到该 project；Projects tab 仍列出全部 project 用于 enable/disable 编辑。这个阶段仍是 `部分落地`：页面已经不再只是一个巨大纯文本框，但还没有完整覆盖字段级
 verification、diff 审计、导出按钮和所有配置域的高级编辑。后续目标是继续把 workflow package 拆成更
 完整的可编辑数据模型。拆分时必须覆盖整个运行时 contract，而不是只覆盖 prompt：
 
@@ -265,8 +266,8 @@ Settings 页面长期应提供几个互相一致的 tab/入口：
 
 - `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
 - `/settings/workflow` 结构化编辑：按 tracker policy、bootstrap、workspace、hooks、agent、codex、
-  workflow routing、human review states、allowed transitions 等共享区域编辑。project repository 和 Linear project slug 不在这里编辑。
-- `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy。
+  workflow routing、human review states、allowed transitions 等区域编辑（通过 Settings 顶部 project 选择器限定到指定 project）。project repository 和 Linear project slug 不在这里编辑。
+- `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy（project 选择器限定到指定 project）。
 - `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
 - Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，根据 YAML 字段自动识别 package 类型，显示 staged diff 和校验结果。确认导入只修改 editable draft；字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
@@ -449,13 +450,13 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 
 ### 阶段 4：多项目和多 worker
 
-当前已经有默认 project、projects 页面、Panel 侧 worker/session/task/lease 数据模型和
-worker HTTP API。这是 `部分落地`：数据模型和基础页面存在，但运行时仍以默认项目和当前 active
-workflow 为主，完整多项目生产隔离还没完成。后续需要把这些能力从默认项目模型扩展到完整多项目生产路径：
+当前已经有 projects 页面、Panel 侧 worker/session/task/lease 数据模型和 worker HTTP API。
+运行时已支持按 project 隔离的 workflow version 和 orchestrator dispatch（plan 216-219 落地，
+Settings 顶部有 project 选择器），但多 worker 生产隔离还没完成。后续需要把这些能力扩展到完整多项目生产路径：
 
-- 多 project。
-- 每个 project 独立 tracker 配置。
-- 每个 project 独立 workflow version。
+- 多 project。✅ 已落地
+- 每个 project 独立 tracker 配置。✅ 已落地
+- 每个 project 独立 workflow version。✅ 已落地
 - 多 worker runtime。
 - 不同 worker 的资源限制和安全策略。
 
