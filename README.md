@@ -241,13 +241,13 @@ Exec plans are the implementation ledger:
 
 ## Documentation
 
-- [docs/SPEC.md](docs/SPEC.md): language-agnostic service specification.
+- [docs/spec.md](docs/spec.md): language-agnostic service specification (overview; domain contracts in `docs/spec-*.md`).
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): implementation architecture.
-- [docs/CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md): code structure overview.
-- [docs/user_guide.zh-CN.md](docs/user_guide.zh-CN.md): Chinese operator guide.
+- [docs/design.md](docs/design.md): code structure overview and feature-design index.
+- [docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md): Chinese operator guide.
 - [docs/persistence_and_auth.md](docs/persistence_and_auth.md): SQLite and auth details.
 - [docs/deployment.md](docs/deployment.md): reverse proxy and Kubernetes deployment.
-- [docs/documentation_alignment.md](docs/documentation_alignment.md): long-lived documentation alignment.
+- [docs/documentation-alignment.md](docs/documentation-alignment.md): long-lived documentation alignment.
 - [docs/long_term_direction.zh-CN.md](docs/long_term_direction.zh-CN.md): long-term direction.
 
 ## Project Status

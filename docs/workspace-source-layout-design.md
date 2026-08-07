@@ -1,3 +1,13 @@
+---
+title: Workspace Source Layout 设计
+genre: design
+domain: [workspace]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Workspace Source Layout 设计
 
 本文维护 Symphony 在本地准备代码目录时的长期设计。它只讨论 repository cache、issue worktree、clone workspace 和 sandbox root 的路径模型，不承载通用产品方向。

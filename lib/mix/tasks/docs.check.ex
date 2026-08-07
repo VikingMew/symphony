@@ -62,7 +62,9 @@ defmodule Mix.Tasks.Docs.Check do
   end
 
   defp frontmatter(content) do
-    case String.split(content, ~r/\R/, trim: false) do
+    # NOTE: do NOT use ~r/\R/ here — \R matches U+0085 (NEL), which appears inside
+    # UTF-8 multi-byte characters (e.g. "配" = E9 85 8D) and would split them.
+    case String.split(content, ~r/\r?\n/, trim: false) do
       ["---" | lines] -> parse_frontmatter(lines)
       _lines -> :missing
     end

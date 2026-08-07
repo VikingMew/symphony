@@ -1,3 +1,13 @@
+---
+title: Persistence and Authentication
+genre: reference
+domain: [persistence, auth]
+status: current
+language: en
+updated: 2026-08-07
+owner: SymphonyElixir.Persistence
+---
+
 # Persistence and Authentication
 
 Symphony uses local SQLite-backed persistence for runtime/configuration state and supports optional
@@ -10,7 +20,7 @@ The application uses `Ecto` with `ecto_sqlite3`.
 Default database path:
 
 ```text
-elixir/symphony.db
+symphony.db
 ```
 
 Override the path:
@@ -104,7 +114,7 @@ while Agents history lists profile/prompt saves. Restoring a history row is sect
 and writes a new complete active workflow version instead of directly activating an older complete
 package. Runtime reads the SQLite active workflow version; split
 `workflow.yml`/`profiles.yml` packages are import/export artifacts. See
-[Workflow 页面设计目标](workflow_page_design.zh-CN.md).
+[Workflow 页面设计目标](workflow-page-design.md).
 
 ## Worker State
 

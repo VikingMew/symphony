@@ -14,7 +14,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Runtime config is loaded from the active SQLite workflow version and should be accessed through
   `SymphonyElixir.Config`. `workflow.yml` and `profiles.yml` are split package import/export
   artifacts and examples, not the live runtime source.
-- Keep the implementation aligned with [`docs/SPEC.md`](docs/SPEC.md) where practical.
+- Keep the implementation aligned with [`docs/spec.md`](docs/spec.md) where practical.
   - The implementation may be a superset of the spec.
   - The implementation must not conflict with the spec.
   - If implementation changes meaningfully alter the intended behavior, update the spec in the same

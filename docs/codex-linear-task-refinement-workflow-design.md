@@ -1,3 +1,13 @@
+---
+title: Codex / Linear 任务细化工作流
+genre: design
+domain: [codex, linear]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Codex / Linear 任务细化工作流
 
 本文维护 `pull -> read -> update task detail -> comment -> transit` 这条工作流。它覆盖从 Linear 拉取候选 task，到 Codex 读取任务、细化需求、更新任务详情、评论说明并请求状态流转的行为契约。

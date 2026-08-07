@@ -1,3 +1,13 @@
+---
+title: Dashboard 配色系统设计
+genre: design
+domain: [dashboard, ui]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Dashboard 配色系统设计
 
 ## 1. 背景

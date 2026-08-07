@@ -1,3 +1,13 @@
+---
+title: Symphony Architecture Design
+genre: architecture
+domain: [architecture, runtime]
+status: current
+language: en
+updated: 2026-08-07
+owner: SymphonyElixir.Orchestrator
+---
+
 # Symphony Architecture Design
 
 ## 1. Overview
@@ -9,7 +19,7 @@ App Server session in that workspace, and lets the agent execute the repository-
 The repository contains two major parts:
 
 - `SPEC.md`: language-agnostic service specification.
-- `elixir/`: experimental Elixir/OTP reference implementation.
+- The repository root is the Elixir/Phoenix implementation (promoted from `elixir/` in plan 226).
 
 The current implementation targets Linear as the tracker and Codex App Server as the coding-agent
 runtime.
@@ -111,9 +121,9 @@ sequenceDiagram
 
 ### 6.1 CLI
 
-Location: `elixir/lib/symphony_elixir/cli.ex`
+Location: `lib/symphony_elixir/cli.ex`
 
-The CLI is the escript entrypoint built as `elixir/bin/symphony`. It accepts:
+The CLI is the escript entrypoint built as `bin/symphony`. It accepts:
 
 - `--logs-root <path>` to choose the log output root
 - `--port <port>` to enable the Phoenix observability server
@@ -127,8 +137,8 @@ the Settings UI creates the first active workflow.
 
 Locations:
 
-- `elixir/lib/symphony_elixir/workflow.ex`
-- `elixir/lib/symphony_elixir/workflow_store.ex`
+- `lib/symphony_elixir/workflow.ex`
+- `lib/symphony_elixir/workflow_store.ex`
 
 The workflow store caches the active SQLite `workflow_versions` row **for every enabled project**
 (keyed by project id), parses each saved workflow package, and keeps the prompt body as the shared
@@ -142,8 +152,8 @@ agents. Workspace isolation is per repository, which keeps multiple projects' wo
 
 Locations:
 
-- `elixir/lib/symphony_elixir/config.ex`
-- `elixir/lib/symphony_elixir/config/schema.ex`
+- `lib/symphony_elixir/config.ex`
+- `lib/symphony_elixir/config/schema.ex`
 
 The config layer applies defaults and converts workflow settings into typed runtime values. It
 handles tracker settings, polling interval, workspace paths, hooks, agent concurrency, Codex command
@@ -153,10 +163,10 @@ settings, sandbox settings, worker SSH host settings, and optional server settin
 
 Locations:
 
-- `elixir/lib/symphony_elixir/tracker.ex`
-- `elixir/lib/symphony_elixir/linear/adapter.ex`
-- `elixir/lib/symphony_elixir/linear/client.ex`
-- `elixir/lib/symphony_elixir/linear/issue.ex`
+- `lib/symphony_elixir/tracker.ex`
+- `lib/symphony_elixir/linear/adapter.ex`
+- `lib/symphony_elixir/linear/client.ex`
+- `lib/symphony_elixir/linear/issue.ex`
 
 The tracker layer normalizes external issue data into Symphony's internal issue model. The Linear
 adapter fetches candidate issues, fetches issue state for reconciliation, and identifies terminal
@@ -166,8 +176,8 @@ issues during cleanup.
 
 Locations:
 
-- `elixir/lib/symphony_elixir/orchestrator.ex`
-- `elixir/lib/symphony_elixir/status_dashboard.ex`
+- `lib/symphony_elixir/orchestrator.ex`
+- `lib/symphony_elixir/status_dashboard.ex`
 
 The orchestrator owns the runtime loop. It polls the tracker, dispatches issues, enforces
 concurrency, tracks active runs, handles retries, releases completed work, stops ineligible work,
@@ -179,8 +189,8 @@ through `/api/worker/v1/*`.
 
 Locations:
 
-- `elixir/lib/symphony_elixir/workspace.ex`
-- `elixir/lib/symphony_elixir/path_safety.ex`
+- `lib/symphony_elixir/workspace.ex`
+- `lib/symphony_elixir/path_safety.ex`
 
 The workspace manager maps issue identifiers to deterministic filesystem paths. It creates
 workspaces, runs lifecycle hooks, and removes workspaces for terminal issues. Workspace isolation is
@@ -192,8 +202,8 @@ host.
 
 Locations:
 
-- `elixir/lib/symphony_elixir/agent_runner.ex`
-- `elixir/lib/symphony_elixir/prompt_builder.ex`
+- `lib/symphony_elixir/agent_runner.ex`
+- `lib/symphony_elixir/prompt_builder.ex`
 
 The agent runner prepares the prompt for a specific issue and starts the Codex App Server client. It
 reports run lifecycle events and outcomes back to the orchestrator.
@@ -202,8 +212,8 @@ reports run lifecycle events and outcomes back to the orchestrator.
 
 Locations:
 
-- `elixir/lib/symphony_elixir/codex/app_server.ex`
-- `elixir/lib/symphony_elixir/codex/dynamic_tool.ex`
+- `lib/symphony_elixir/codex/app_server.ex`
+- `lib/symphony_elixir/codex/dynamic_tool.ex`
 
 This layer launches and communicates with Codex App Server. It exposes restricted task-scoped
 Linear tools (`linear_task_read` and `linear_task_update`) to Codex. Raw Linear GraphQL remains an
@@ -213,9 +223,9 @@ internal Symphony backend/client implementation detail and is not a Codex-visibl
 
 Locations:
 
-- `elixir/lib/symphony_elixir/log_file.ex`
-- `elixir/lib/symphony_elixir/http_server.ex`
-- `elixir/lib/symphony_elixir_web/*`
+- `lib/symphony_elixir/log_file.ex`
+- `lib/symphony_elixir/http_server.ex`
+- `lib/symphony_elixir_web/*`
 
 Symphony exposes runtime visibility through structured logs and an optional Phoenix service. When a
 port is configured, the service provides:
@@ -232,9 +242,9 @@ port is configured, the service provides:
 
 Locations:
 
-- `elixir/lib/symphony_elixir/persistence.ex`
-- `elixir/lib/symphony_elixir/persistence/*`
-- `elixir/lib/symphony_elixir_web/controllers/worker_api_controller.ex`
+- `lib/symphony_elixir/persistence.ex`
+- `lib/symphony_elixir/persistence/*`
+- `lib/symphony_elixir_web/controllers/worker_api_controller.ex`
 
 The persistence context owns SQLite-backed records for projects, workflow versions, runs, agent
 turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
@@ -304,10 +314,10 @@ Symphony is designed for long-running operation and transient failure recovery:
 Two operator-facing areas are intentionally planned rather than current architecture:
 
 - Historical time-range Analytics/Stats is owned by
-  `elixir/docs/exec-plans/active/158-runtime-results-analytics-page.md`. Current dashboard state is
+  `docs/exec-plans/active/158-runtime-results-analytics-page.md`. Current dashboard state is
   live runtime state; `/runs` and `/events` provide persisted per-run and audit views.
 - Reverse-proxy/Kubernetes edge behavior is owned by
-  `elixir/docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md`. Current Docker and
+  `docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md`. Current Docker and
   local deployment docs do not mean Symphony owns public TLS, domains, or ingress policy.
 
 ## 10. Security and Trust Model

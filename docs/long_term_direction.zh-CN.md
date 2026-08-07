@@ -1,3 +1,12 @@
+---
+title: Symphony 长期开发方向与技术选型
+genre: roadmap
+domain: [roadmap, strategy]
+status: current
+language: zh-CN
+updated: 2026-08-07
+---
+
 # Symphony 长期开发方向与技术选型
 
 本文档记录 Symphony Elixir 参考实现的长期开发方向、技术选型和阶段性演进计划。目标是在安全性、性能、开发成本、调试成本之间取得平衡，同时让 Symphony 从当前的实验性编排服务演进为可长期运行、可观测、可配置的 Web 服务。
@@ -53,7 +62,7 @@ Elixir / Phoenix Web Service
 - `已落地`：独立历史 Analytics 页面已由 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md) 落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
 - `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已由 [159 Reverse Proxy and Kubernetes Deployment](exec-plans/completed/159-reverse-proxy-and-kubernetes-deployment.md) 落地，部署说明维护在 [Deployment Guide](deployment.md)。
 - `已落地`：GitHub 风格顶层 README 重写已由 [161 GitHub Style Project README](exec-plans/completed/161-github-style-project-readme.md) 落地，顶层 README 是项目入口文档。
-- 文档和 exec plan 的对齐矩阵维护在 [Documentation Alignment Matrix](documentation_alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的计划完成时，应同步更新该矩阵或对应 canonical docs。
+- 文档和 exec plan 的对齐矩阵维护在 [Documentation Alignment Matrix](documentation-alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的计划完成时，应同步更新该矩阵或对应 canonical docs。
 - `文档偏差检查点`：凡是写成“当前已经”或“已支持”的句子，必须能在代码或测试中找到对应实现；否则应改成“目标”、“后续”或“部分落地”。
 
 ## 2. 技术选型结论
@@ -273,7 +282,7 @@ Settings 页面长期应提供几个互相一致的 tab/入口：
 
 这些入口必须写入同一个 workflow version 模型。导入文件写入 DB version；导出文件来自 DB version；运行时只读取 DB active version，避免 UI 配置、文件配置和运行时配置分裂。
 详细页面结构、verification 分层、上传导入流程和导出定位维护在
-[Workflow 页面设计目标](workflow_page_design.zh-CN.md)。
+[Workflow 页面设计目标](workflow-page-design.md)。
 
 #### Settings 保存和校验原则
 
@@ -464,7 +473,7 @@ Settings 顶部有 project 选择器），但多 worker 生产隔离还没完成
 
 Web UI 应优先服务运维、配置和调试，不做营销型页面。
 
-Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面级颜色。推荐采用 [Dashboard 配色系统设计](dashboard_color_system_design.zh-CN.md)：以杰尼龟蓝、小火龙橙、妙蛙种子绿和皮卡丘黄作为灵感来源，落地为 primary、warning、success、accent 等低饱和 CSS token。UI 不使用角色图片、商标素材或游戏化大面积装饰。
+Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面级颜色。推荐采用 [Dashboard 配色系统设计](dashboard-color-system-design.md)：以杰尼龟蓝、小火龙橙、妙蛙种子绿和皮卡丘黄作为灵感来源，落地为 primary、warning、success、accent 等低饱和 CSS token。UI 不使用角色图片、商标素材或游戏化大面积装饰。
 
 建议页面：
 
@@ -541,7 +550,7 @@ Codex 不应直接持有 Linear API Key，也不应获得对 Linear 的通用 Gr
 应由 Symphony 后端托管 Linear API 访问，并向 Codex 暴露窄权限、语义化的 task tools，例如读取当前
 任务、追加当前任务评论、请求受控状态流转。
 
-详细行为契约维护在 [Codex 与 Linear 交互行为设计](codex_linear_interaction.zh-CN.md)。
+详细行为契约维护在 [Codex 与 Linear 交互行为设计](codex-linear-interaction-design.md)。
 
 ## 9. 性能方向
 
@@ -663,7 +672,7 @@ lib/symphony_elixir_web/
 - 已支持 Panel / Worker 解耦的 Panel 侧路径：Panel 负责调度、配置、持久化和 UI，Worker 主动连接 Panel、握手、心跳、领取任务并回传结果。
 - `SYMPHONY_EXECUTION_MODE=worker` 已使 orchestrator 将 issue 入队为外部 worker task。
 - 生产 worker 按前序技术选型方向使用 Rust 或独立进程实现，并通过稳定 JSON/HTTP 协议接入 Panel。
-- 详细设计见 [Panel / Worker 解耦设计](worker_panel_decoupling_design.zh-CN.md)。
+- 详细设计见 [Panel / Worker 解耦设计](worker-panel-decoupling-design.md)。
 - 已增加 worker identity、worker session、task queue、task lease、heartbeat、capability matching 和 dashboard worker 状态。
 - 已实现 worker API 协议版本、预共享注册 token、租约续期、任务取消/requeue、task event 上报。
 - 保留 local worker。

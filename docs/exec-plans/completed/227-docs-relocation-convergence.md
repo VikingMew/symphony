@@ -10,7 +10,7 @@ green across ALL documents.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -92,15 +92,41 @@ the convention, stale paths die, and the content convergence items from the desi
 
 ## Verification
 
-- `mise exec -- mix docs.check` (all docs)
-- `grep -rn "elixir/" docs/ AGENTS.md README.md` -> no matches
-- `mise exec -- mix test`
-- `mise exec -- mix exec_plans.check`
-- `make MIX="mise exec -- mix" all` (record where it stops)
+Executed by the reviewer (Hermes) directly (documentation-heavy plan):
+
+- Naming normalization: 8 feature designs renamed to `<concern>-design.md`; `user_guide.zh-CN.md`
+  -> `user-guide.zh-CN.md`; `documentation_alignment.md` -> `documentation-alignment.md` (git mv,
+  history preserved).
+- SPEC split: `SPEC.md` (2184 lines) split into `spec.md` (overview + domain navigation) and 8
+  domain contracts (domain-model, workflow-config, orchestration, agent-runner, linear-integration,
+  observability, reliability-security, conformance). All "Section N.N" cross-references rewired to
+  cross-file links; in-file references preserved. External references in AGENTS.md / README.md
+  updated.
+- CODE_STRUCTURE merge: `design.md` created (L2) with repository layout, package conventions,
+  module map, routes, mix tasks, and a **Feature Design Index**; `CODE_STRUCTURE.md` and
+  `CODE_STRUCTURE.zh-CN.md` deleted (zh-CN duplicate removed per language rule).
+- Frontmatter sweep: all 30 documents under `docs/` (excluding `exec-plans/`) carry valid
+  frontmatter with layer registration in `docs/README.md` (rewritten as the L0-L5 index).
+- `documentation-alignment.md` rewritten as the claim-level consistency matrix (canonical topic
+  -> owning document); Plan-160 findings retained as a historical section.
+- `documentation-system-design.md` layer table + migration status updated to the landed state.
+- Gates: `mix docs.check` -> **30 passed, 0 skipped, 0 failed**; `mix test` -> 664/0/2;
+  `mix format --check-formatted` pass; `mix specs.check` pass; `mix compile --warnings-as-errors`
+  pass; credo 0 `[F]`; `mix exec_plans.check` pass. Old filename references across docs: zero
+  remaining.
 
 ## Completion Deviations
 
-- To be filled after implementation.
+- **docs.check bug fixed**: `String.split(content, ~r/\R/)` matched U+0085 (NEL), which occurs
+  inside UTF-8 multi-byte characters (e.g. "配" = E9 85 8D), splitting them and crashing on any
+  Chinese document containing such bytes (hit on `dashboard-color-system-design.md`). Changed to
+  `~r/\r?\n/` with a comment; 225's checker now handles CJK frontmatter.
+- SPEC split produced 9 files (plan anticipated ~7): §11 Linear and §13 Observability each kept
+  their own contract for cohesion.
+- `grep "elixir/"` finds 6 remaining mentions, all intentional historical/decision prose, not
+  path anchors: ARCHITECTURE.md (plan-226 reference), documentation-system-design.md (migration
+  history, 4), decisions.md (ADR title). All `elixir/lib`, `elixir/docs` style path anchors are
+  gone.
 
 ## Dependencies
 

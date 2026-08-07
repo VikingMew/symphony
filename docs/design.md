@@ -1,55 +1,78 @@
-# Symphony Code Structure
+---
+title: Symphony Backend Design
+genre: design
+domain: [backend, layout, conventions]
+status: current
+language: en
+owner: SymphonyElixir
+updated: 2026-08-07
+---
 
-This document explains how the repository is organized and where to start when reading or changing
-the code.
+## Feature Design Index
+
+Feature designs live one concern per document (L3); each owns its contracts. Status follows
+`design_status` in each document's frontmatter.
+
+| Design | Subject | Status |
+| --- | --- | --- |
+| [workflow-page-design.md](workflow-page-design.md) | Workflow settings page goals | landed |
+| [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary | landed |
+| [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout | landed |
+| [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior | landed |
+| [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow | landed |
+| [codex-linear-task-refinement-workflow-design.md](codex-linear-task-refinement-workflow-design.md) | Codex/Linear task refinement workflow | landed |
+| [dashboard-color-system-design.md](dashboard-color-system-design.md) | Dashboard color system | landed |
+| [hot-update-design.md](hot-update-design.md) | Hot-update capability | landed |
+
+This document (L2) owns implementation conventions — repository layout, package rules, and the
+module map below. System topology, boundaries, and direction are owned by
+[ARCHITECTURE.md](ARCHITECTURE.md) (L1); normative contracts are owned by `spec*.md` (L4);
+operator runbooks by [deployment.md](deployment.md) and [user-guide.zh-CN.md](user-guide.zh-CN.md)
+(L5). When adding a document, place it in exactly one layer per
+[AGENTS.md](../AGENTS.md) and register it in [README.md](README.md).
+
+# Symphony Backend Design
 
 ## 1. Repository Layout
 
 ```text
 .
 ├── README.md
-├── SPEC.md
-├── ARCHITECTURE.md
-├── CODE_STRUCTURE.md
+├── AGENTS.md
+├── Makefile
+├── mise.toml
+├── mix.exs
+├── workflow.yml
+├── profiles.yml
 ├── LICENSE
 ├── NOTICE
 ├── .codex/
 │   ├── skills/
 │   └── worktree_init.sh
-└── elixir/
-    ├── README.md
-    ├── workflow.yml
-    ├── profiles.yml
-    ├── AGENTS.md
-    ├── Makefile
-    ├── mise.toml
-    ├── mix.exs
-    ├── mix.lock
-    ├── config/
-    ├── docs/
-    ├── lib/
-    ├── priv/
-    └── test/
+├── config/
+├── docs/
+├── lib/
+├── priv/
+└── test/
 ```
 
 Root-level files describe the product and its language-agnostic contract. The executable reference
-implementation lives under `elixir/`.
+implementation lives under the repository root.
 
 ## 2. Root Files
 
 | Path | Purpose |
 | --- | --- |
 | `README.md` | Product overview and pointer to the Elixir implementation. |
-| `SPEC.md` | Language-independent Symphony service specification. |
+| `spec.md` + `spec-*.md` | Language-independent Symphony service specification (domain-split). |
 | `ARCHITECTURE.md` | High-level architecture and runtime design. |
 | `CODE_STRUCTURE.md` | Code-oriented map of the repository. |
 | `.codex/skills/*` | Repository-local Codex skills used by the workflow prompt. |
 | `.codex/worktree_init.sh` | Helper script for Codex worktree initialization. |
 
-## 3. Elixir Project Root
+## 3. Project Root
 
 ```text
-elixir/
 ├── README.md
 ├── workflow.yml
 ├── profiles.yml
@@ -59,36 +82,37 @@ elixir/
 ├── mix.exs
 ├── mix.lock
 ├── config/config.exs
+├── docs/
 ├── lib/
 └── test/
 ```
 
 | Path | Purpose |
 | --- | --- |
-| `elixir/README.md` | Setup, run, configuration, testing, and FAQ for the Elixir implementation. |
-| `elixir/workflow.yml` | Example/import package for shared workflow routing and runtime settings. |
-| `elixir/profiles.yml` | Example/import package for shared base prompt and agent profiles. |
-| `elixir/AGENTS.md` | Agent-facing repository guidance. |
-| `elixir/Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
-| `elixir/mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
-| `elixir/mix.exs` | Mix project definition, dependencies, aliases, and escript build config. |
-| `elixir/config/config.exs` | Phoenix/Bandit endpoint and JSON configuration. |
-| `elixir/priv/repo/migrations` | SQLite/Ecto migrations. |
-| `elixir/docs` | Operator, design, logging, token accounting, and completed plan docs. |
+| `README.md` | Setup, run, configuration, testing, and FAQ for the Elixir implementation. |
+| `workflow.yml` | Example/import package for shared workflow routing and runtime settings. |
+| `profiles.yml` | Example/import package for shared base prompt and agent profiles. |
+| `AGENTS.md` | Agent-facing repository guidance. |
+| `Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
+| `mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
+| `mix.exs` | Mix project definition, dependencies, aliases, and escript build config. |
+| `config/config.exs` | Phoenix/Bandit endpoint and JSON configuration. |
+| `priv/repo/migrations` | SQLite/Ecto migrations. |
+| `docs` | Operator, design, logging, token accounting, and completed plan docs. |
 
 ## 4. Application Startup
 
 Primary files:
 
-- `elixir/lib/symphony_elixir.ex`
-- `elixir/lib/symphony_elixir/cli.ex`
+- `lib/symphony_elixir.ex`
+- `lib/symphony_elixir/cli.ex`
 
-`SymphonyElixir.CLI` is the command-line entrypoint compiled into `elixir/bin/symphony`. It parses
+`SymphonyElixir.CLI` is the command-line entrypoint compiled into `bin/symphony`. It parses
 runtime CLI options such as `--port` and `--db`, stores runtime overrides, and starts the OTP
 application. Workflow authority is loaded from the SQLite active workflow version rather than a
 startup workflow path.
 
-`SymphonyElixir.Application` is defined in `elixir/lib/symphony_elixir.ex`. It starts the supervision
+`SymphonyElixir.Application` is defined in `lib/symphony_elixir.ex`. It starts the supervision
 tree:
 
 ```text
@@ -108,7 +132,7 @@ The plain `SymphonyElixir` module is a small convenience wrapper around
 ## 5. Core Runtime Modules
 
 ```text
-elixir/lib/symphony_elixir/
+lib/symphony_elixir/
 ├── agent_runner.ex
 ├── cli.ex
 ├── config.ex
@@ -157,7 +181,7 @@ elixir/lib/symphony_elixir/
 ## 6. Tracker and Linear Integration
 
 ```text
-elixir/lib/symphony_elixir/linear/
+lib/symphony_elixir/linear/
 ├── adapter.ex
 ├── client.ex
 ├── diagnostics.ex
@@ -183,7 +207,7 @@ dispatch logic separate from external API details.
 ## 7. Codex Integration
 
 ```text
-elixir/lib/symphony_elixir/codex/
+lib/symphony_elixir/codex/
 ├── app_server.ex
 └── dynamic_tool.ex
 ```
@@ -199,7 +223,7 @@ GraphQL operations from inside an agent session.
 ## 8. Web Observability Modules
 
 ```text
-elixir/lib/symphony_elixir_web/
+lib/symphony_elixir_web/
 ├── components/layouts.ex
 ├── controllers/
 │   ├── observability_api_controller.ex
@@ -266,7 +290,7 @@ POST /api/worker/v1/tasks/:id/events Worker task event reporting
 ## 9. Mix Tasks
 
 ```text
-elixir/lib/mix/tasks/
+lib/mix/tasks/
 ├── pr_body.check.ex
 ├── specs.check.ex
 ├── symphony.build.ex
@@ -279,11 +303,12 @@ elixir/lib/mix/tasks/
 | `mix specs.check` | Checks implementation/spec consistency. |
 | `mix symphony.build` | Builds the escript executable used by `mix build`. |
 | `mix workspace.before_remove` | Hook task intended for workspace cleanup before removal. |
+| `mix docs.check` | Validates documentation frontmatter, layer registration, and owner anchors. |
 
 ## 10. Tests
 
 ```text
-elixir/test/
+test/
 ├── mix/tasks/
 ├── support/
 └── symphony_elixir/
@@ -343,7 +368,7 @@ SymphonyElixir.Orchestrator
 
 | Task | Start Here |
 | --- | --- |
-| Change CLI flags or startup behavior | `elixir/lib/symphony_elixir/cli.ex` |
+| Change CLI flags or startup behavior | `lib/symphony_elixir/cli.ex` |
 | Change workflow parsing or reload behavior | `workflow.ex`, `workflow_store.ex` |
 | Add config fields or defaults | `config.ex`, `config/schema.ex` |
 | Change polling, dispatch, retry, or cleanup behavior | `orchestrator.ex` |
@@ -363,7 +388,7 @@ SymphonyElixir.Orchestrator
 
 ## 13. Development Commands
 
-From `elixir/`:
+From the repository root:
 
 ```bash
 mise exec -- mix setup
@@ -378,3 +403,4 @@ Live external end-to-end test:
 export LINEAR_API_KEY=...
 mise exec -- make e2e
 ```
+

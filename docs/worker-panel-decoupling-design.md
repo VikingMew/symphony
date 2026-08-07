@@ -1,3 +1,13 @@
+---
+title: Panel / Worker 解耦设计
+genre: design
+domain: [worker, architecture]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Panel / Worker 解耦设计
 
 ## 1. 背景

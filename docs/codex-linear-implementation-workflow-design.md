@@ -1,3 +1,13 @@
+---
+title: Codex / Linear 代码实现工作流
+genre: design
+domain: [codex, linear]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Codex / Linear 代码实现工作流
 
 本文维护 `pull -> worktree -> test -> code -> verify -> push to branch -> comment -> transit` 这条工作流。它覆盖已确认需求从 Linear 进入实现阶段后，Codex 如何准备 workspace、执行测试、修改代码、验证结果、推送分支、评论并请求状态流转。
@@ -133,7 +143,7 @@ Workspace Manager 为 issue 准备独立 workspace 或 git worktree。
 推荐规则：
 
 - workspace 路径由 issue identifier 派生，稳定且可审计。
-- worktree 模式下，base repository path 由 repository base root 和 repo cache name 派生；issue worktree path 由 worktree base root 和 issue identifier 派生。详细规则见 `workspace_source_layout.zh-CN.md`。
+- worktree 模式下，base repository path 由 repository base root 和 repo cache name 派生；issue worktree path 由 worktree base root 和 issue identifier 派生。详细规则见 `workspace-source-layout-design.md`。
 - 每次 agent run 创建 issue worktree 前，托管 base repository 会按 project `default_branch` fetch 并更新本地 base branch，避免 agent 从旧 commit 启动。
 - 不删除用户未提交改动。
 - 创建或复用 feature branch。

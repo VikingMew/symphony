@@ -1,15 +1,16 @@
-# Symphony 文档体系设计
-
-- **genre**: design
-- **domain**: [meta, documentation]
-- **status**: landed
-- **language**: zh-CN
-- **updated**: 2026-08-07
-- **related**: [letsinflu-server docs model](https://github.com/VikingMew/letsinflu-server/blob/main/AGENTS.md) (L0-L5 layer model), exec-plans lifecycle
+---
+title: Symphony 文档体系设计
+genre: design
+domain: [meta, documentation]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
 
 ## 1. 背景与问题
 
-现状(17 篇文档平铺在 `elixir/docs/` + 根级 SPEC/ARCHITECTURE/CODE_STRUCTURE)存在四个结构病:
+迁移前,17 篇文档平铺在 `elixir/docs/` + 根级 SPEC/ARCHITECTURE/CODE_STRUCTURE,存在四个结构病(plan 227 后已按本设计归位):
 
 1. **无分类结构**:设计/规范/参考/指南/路线图 5 种体裁混在一个目录,找文档靠文件名记忆。
 2. **语言双轨混乱**:规范用 EN、设计用 zh-CN,无成文规则;CODE_STRUCTURE 是唯一 EN+zh 双份,同步维护成本高。
@@ -31,15 +32,15 @@
 
 ## 3. Symphony 层模型
 
-未来形态(根级 `docs/`,无 `elixir/` 子目录;elixir/ 提升见 exec plan 226):
+当前形态(根级 `docs/`,无 `elixir/` 子目录;elixir/ 提升已由 exec plan 226 完成):
 
 | 层 | 文档 | 说明 |
 |---|---|---|
-| L0 | `AGENTS.md`(根)、`docs/decisions.md`、`docs/exec-plans/` | 决策日志(ADR)新建;exec-plans 保留现有生命周期 |
-| L1 | `docs/architecture.md`(原 ARCHITECTURE.md) | 收敛为拓扑/边界/不变量/方向;方向叙事可引 `long_term_direction` |
-| L2 | `docs/design.md`(新建) | Elixir 包布局与约定 + **Feature Design Index**;CODE_STRUCTURE 并入 |
-| L3 | `docs/*-design.md`(现有 8 篇归位) | workflow_page_design、worker_panel_decoupling_design、workspace_source_layout、codex_linear_interaction、codex_linear_implementation_workflow、codex_linear_task_refinement_workflow、dashboard_color_system_design、hot_update;每篇标 `status: landed/partial/proposed` |
-| L4 | `docs/spec.md`(原 SPEC.md)、`docs/logging.md`、`docs/token_accounting.md`、`docs/persistence_and_auth.md`、`docs/test_database_isolation.md` | SPEC 2184 行评估按域拆分(产出拆分建议或直接拆) |
+| L0 | `AGENTS.md`(根)、`docs/README.md`、`docs/decisions.md`、`docs/documentation-alignment.md`、`docs/documentation-system-design.md`、`docs/exec-plans/` | 治理:贡献规则、决策日志(ADR)、一致性矩阵、本设计、计划生命周期 |
+| L1 | `docs/ARCHITECTURE.md`、`docs/long_term_direction.zh-CN.md` | 拓扑/边界/不变量/方向;收敛为系统级,不含包级细节 |
+| L2 | `docs/design.md` | 包布局与约定 + **Feature Design Index**;原 CODE_STRUCTURE 已并入 |
+| L3 | `docs/*-design.md`(8 篇,已规范化命名) | workflow-page-design、worker-panel-decoupling-design、workspace-source-layout-design、codex-linear-interaction-design、codex-linear-implementation-workflow-design、codex-linear-task-refinement-workflow-design、dashboard-color-system-design、hot-update-design;每篇标 `design_status: landed/partial/proposed` |
+| L4 | `docs/spec.md`(总纲)+ `docs/spec-*.md`(8 个域契约)、`docs/logging.md`、`docs/token_accounting.md`、`docs/persistence_and_auth.md`、`docs/test_database_isolation.md` | SPEC 已按域拆分(§4 域模型、§5-6 工作流/配置、§7-9 编排、§10/12 Agent Runner、§11 Linear、§13 观测、§14-15 可靠性/安全、§16 参考算法、§17-18 一致性) |
 | L5 | `docs/user-guide.zh-CN.md`、`docs/deployment.md` | 操作指南 |
 
 ## 4. 命名约定
@@ -83,8 +84,8 @@ translation_of: <path>       # 可选
 
 ## 8. 迁移路径(exec plans)
 
-- **225 文档元体系**:层模型写入 AGENTS.md、`docs/README.md` 导航、`decisions.md` 建立、`mix docs.check` 工具、design.md 创建。
-- **226 elixir/ 提升为根**:代码移根、README 合并、Makefile/mise 从根跑、CI 路径更新。
-- **227 文档物理归位**:全部文档进根 docs/、锚点去 elixir/ 前缀、SPEC 拆分评估、CODE_STRUCTURE 合并、语言规则落地、全量贴 frontmatter。
+- **225 文档元体系**(✅ 已完成):层模型写入 AGENTS.md、`docs/README.md` 导航、`decisions.md` 建立、`mix docs.check` 工具。
+- **226 elixir/ 提升为根**(✅ 已完成):代码移根、README 合并、Makefile/mise 从根跑、CI 路径更新。
+- **227 文档物理归位**(✅ 已完成):全部文档进根 docs/、锚点去 elixir/ 前缀、SPEC 按域拆分、CODE_STRUCTURE 并入 design.md、语言规则落地、全量贴 frontmatter。
 
 顺序逻辑:225 纯设计不依赖路径 → 226 动代码(锚点一次改对)→ 227 物理归位(不二次移动)。精确性机制在 225 就位,迁移全程有 `docs.check` 护航。

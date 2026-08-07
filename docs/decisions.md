@@ -1,3 +1,12 @@
+---
+title: Decision Log
+genre: meta
+domain: [governance, decisions]
+status: current
+language: en
+updated: 2026-08-07
+---
+
 # Decision Log
 
 ### Elixir/Phoenix control plane for the diverged fork

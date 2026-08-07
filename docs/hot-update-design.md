@@ -1,3 +1,13 @@
+---
+title: Symphony 热更新说明
+genre: design
+domain: [hot-update, runtime]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Symphony 热更新说明
 
 本文说明 Symphony 当前可以做到哪些“热更新”，哪些只是 Elixir/OTP 理论能力，以及如果后续要支持真正不停机代码升级需要补哪些工程能力。

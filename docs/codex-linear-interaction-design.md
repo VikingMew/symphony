@@ -1,3 +1,13 @@
+---
+title: Codex 与 Linear 交互行为设计
+genre: design
+domain: [codex, linear]
+status: current
+language: zh-CN
+updated: 2026-08-07
+design_status: landed
+---
+
 # Codex 与 Linear 交互行为设计
 
 本文维护 Symphony 中 Codex agent 与 Linear task 交互的行为契约。目标是让 Codex 能读取任务、汇报进展、推动受控状态流转，同时不直接接触 Linear API Key，也不获得任意 Linear API 权限。
@@ -51,8 +61,8 @@ Codex 只能读取当前任务上下文并提交经过 Symphony 后端 policy �
 
 ## 维护的工作流
 
-- [Codex / Linear 任务细化工作流](codex_linear_task_refinement_workflow.zh-CN.md)：维护 `pull -> read -> update task detail -> comment -> transit`。
-- [Codex / Linear 代码实现工作流](codex_linear_implementation_workflow.zh-CN.md)：维护 `pull -> worktree -> test -> code -> verify -> push to branch -> comment -> transit`。
+- [Codex / Linear 任务细化工作流](codex-linear-task-refinement-workflow-design.md)：维护 `pull -> read -> update task detail -> comment -> transit`。
+- [Codex / Linear 代码实现工作流](codex-linear-implementation-workflow-design.md)：维护 `pull -> worktree -> test -> code -> verify -> push to branch -> comment -> transit`。
 
 ## 需要修改的系统范围
 

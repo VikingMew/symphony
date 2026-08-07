@@ -231,10 +231,11 @@ Plans should focus on product and engineering intent rather than full implementa
 224. [219-settings-project-switching.md](completed/219-settings-project-switching.md)
 225. [225-doc-meta-system.md](completed/225-doc-meta-system.md)
 226. [226-promote-elixir-to-root.md](completed/226-promote-elixir-to-root.md)
+227. [227-docs-relocation-convergence.md](completed/227-docs-relocation-convergence.md)
 
 ## Active Plans
 
-1. [227-docs-relocation-convergence.md](active/227-docs-relocation-convergence.md)
+None.
 
 ## Intentional Numbering Gaps
 

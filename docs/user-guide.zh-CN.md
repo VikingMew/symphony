@@ -22,7 +22,7 @@ Symphony Elixir 需要：
 - Codex CLI，且支持 `codex app-server`
 - SQLite，本地持久化使用
 
-项目声明的运行时版本在 `elixir/mise.toml`：
+项目声明的运行时版本在 `mise.toml`：
 
 ```toml
 [tools]
@@ -168,8 +168,8 @@ workflow。
 是运行时 fallback。这个 package 由两个文件组成：
 
 ```text
-elixir/workflow.yml
-elixir/profiles.yml
+workflow.yml
+profiles.yml
 ```
 
 空数据库第一次配置时，在 Settings 的 Workflow 页面使用 `Import Settings Package`
@@ -277,7 +277,7 @@ workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动
 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 
 如果同一个本地机器会同时处理很多同仓库任务，可以在 Project Settings 里把 source strategy 设为
-`worktree`。长期路径模型见 `docs/workspace_source_layout.zh-CN.md`：共享 Workspace/Runtime Settings
+`worktree`。长期路径模型见 `docs/workspace-source-layout-design.md`：共享 Workspace/Runtime Settings
 应分别配置 repository base root 和 worktree base root。Project Settings 只配置 repository URL、
 default branch、checkout depth、source strategy 等项目自身信息。Symphony 会把 `project.repository_url` clone/fetch 到
 `repository_base_root / repo_cache_name`，再为每个 issue 创建
