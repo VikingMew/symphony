@@ -26,6 +26,29 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Orchestrator behavior is stateful and concurrency-sensitive; preserve retry, reconciliation, and cleanup semantics.
 - Follow `docs/logging.md` for logging conventions and required issue/session context fields.
 
+## Code Value Principles (Linus & Carmack)
+
+Evaluate every change — and every existing line — against the value it provides, with the
+discipline of Linus Torvalds and John Carmack:
+
+- **Linus: remove complexity, keep good taste.** The kernel philosophy: a change that makes the
+  system simpler is better than one that makes it more elaborate. Refuse architecture-astronaut
+  abstractions — layers with one implementation, config nobody reads, indirection with no
+  consumer. Code must earn its place.
+- **Linus: talk is cheap, show me the code.** Prefer concrete, working, minimal changes over
+  design essays. When in doubt, delete the branch nobody exercises and see whether anything
+  breaks — that is the test of value.
+- **Carmack: minimize the number of things that can go wrong.** Every feature, flag, abstraction,
+  and catch-all rescue is a thing that can go wrong. No speculative config keys, no catch-all
+  rescues that hide real failures, no dual representation of one fact (`listening?` + mode, two
+  lifecycle implementations, string-discriminated state maps).
+- **Carmack: hard to make simple is still worth it.** Code that is hard to understand is hard to
+  make correct. If a reviewer needs a tour through a 2000-line LiveView or a five-way conditional,
+  that is debt — simplify, don't document around it.
+- **Explicit errors over silent tolerance.** Failures must be visible (structured logs) and
+  typed. Never disguise a database fault as "setup required", never swallow a crash to keep a
+  pipeline alive with no record, never fail open on a rate-limit gate.
+
 ## Documentation Layers
 
 | Layer | Purpose |

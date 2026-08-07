@@ -235,7 +235,16 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-None.
+1. [228-fix-falsy-config-reads-false-treated-as-missing.md](active/228-fix-falsy-config-reads-false-treated-as-missing.md)
+2. [229-workflowstore-error-honesty-no-fake-setup-required.md](active/229-workflowstore-error-honesty-no-fake-setup-required.md)
+3. [230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md](active/230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md)
+4. [231-wire-nap-operator-results-into-summaries-or-delete.md](active/231-wire-nap-operator-results-into-summaries-or-delete.md)
+5. [232-unify-recursive-redaction-one-sanitizer.md](active/232-unify-recursive-redaction-one-sanitizer.md)
+6. [233-merge-agent-runner-issue-operator-lifecycle.md](active/233-merge-agent-runner-issue-operator-lifecycle.md)
+7. [234-type-orchestrator-running-state-single-listening-source.md](active/234-type-orchestrator-running-state-single-listening-source.md)
+8. [235-normalize-codex-protocol-events-shared-parsing.md](active/235-normalize-codex-protocol-events-shared-parsing.md)
+9. [236-split-adminlive-into-focused-components.md](active/236-split-adminlive-into-focused-components.md)
+10. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](active/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)
 
 ## Intentional Numbering Gaps
 
