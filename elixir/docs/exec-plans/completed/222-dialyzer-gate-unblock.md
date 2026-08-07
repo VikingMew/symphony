@@ -175,10 +175,11 @@ lib/symphony_elixir_web/admin/project_settings.ex:171:guard_fail
 lib/symphony_elixir_web/proxy_headers.ex:64:5:call_without_opaque to_string/1
 ```
 
-Category counts at baseline: 32 `unused_fun` (plan 223), 14 `pattern_match`/`pattern_match_cov`,
-9 `call_without_opaque`, 1 `contract_with_opaque`, 1 `guard_fail` (plan 224). The
-`unused_fun` count was 32 in the original 117 and is still 32 — plan 222 deliberately did not
-touch unused functions.
+Category counts at baseline: 17 `unused_fun` (plan 223 — all in `agent_runner.ex` and
+`codex/app_server.ex`), 11 `pattern_match`, 5 `pattern_match_cov`, 11 `call_without_opaque`,
+1 `contract_with_opaque`, 1 `guard_fail` (plan 224). Note: the original 117-warning breakdown
+(from the default formatter) reported 32 `unused_fun`; the short-format baseline after plan 222
+is 17, which is the authoritative count the gate uses.
 
 ## Completion Deviations
 

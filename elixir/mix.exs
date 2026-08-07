@@ -20,6 +20,7 @@ defmodule SymphonyElixir.MixProject do
         "test/support/test_support.exs"
       ],
       dialyzer: [
+        ignore_warnings: ".dialyzer_ignore.exs",
         plt_add_apps: [:mix]
       ],
       aliases: aliases(),
