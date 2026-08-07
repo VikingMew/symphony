@@ -9,7 +9,7 @@ root-level `docs/` layout of the documentation redesign (plan 227).
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -81,15 +81,37 @@ elixir/ = implementation guide); `AGENTS.md` exists only under `elixir/`.
 
 ## Verification
 
-- `mise exec -- mix test` (root) -> 664/0/2
-- `mise exec -- mix docs.check` (root)
-- `mise exec -- mix exec_plans.check` (root)
-- `make MIX="mise exec -- mix" all` (root; record where it stops)
-- `grep -rn "elixir/" .github/` -> no matches
+Executed by Codex CLI (codex-cli 0.147.0, `--sandbox workspace-write`) and independently
+verified by the reviewer outside the sandbox:
+
+- Layout: `elixir/` removed; 529 renames detected (history preserved); root is now the
+  Elixir project (`mix.exs`, `mise.toml`, `Makefile`, `lib/`, `test/`, `docs/` at root).
+- `mise exec -- mix test` (root) -> 664 tests, 0 failures, 2 skipped. One real regression
+  found and fixed: `core_test.exs` asserted the old `cd elixir && ...` workflow.yml
+  setup/cleanup commands; assertions updated to the promoted commands.
+- `mise exec -- mix docs.check` (root) -> 5 passed, 18 skipped, 0 failed.
+- `mise exec -- mix exec_plans.check` (root) -> all indexed.
+- `mise exec -- mix compile --warnings-as-errors` -> pass.
+- `make MIX="mise exec -- mix" all` (root) -> stops at lint as expected (known pre-existing
+  credo `[R]`/`[D]` exit 6); one new `[F]` from plan 225's docs.check.ex (cond with single
+  condition) found and fixed (cond -> if); credo back to zero `[F]`.
+- `.github/` grep for `elixir/` -> no matches; workflows use root paths.
+- `bin/symphony` executable at root, tracked (`.gitignore` exception added).
+- `.codex/skills/debug/SKILL.md` two stale `elixir/docs/` references fixed (sandbox
+  couldn't write `.codex`; reviewer fixed post-run).
+- `mise trust` recorded for the promoted root `mise.toml`.
+- Residual `elixir/` mentions in `docs/ARCHITECTURE.md` (3) and historical
+  `docs/exec-plans/completed/**` are intentionally left for plan 227 (docs-internal
+  prefix cleanup) and never-touch historical records respectively.
 
 ## Completion Deviations
 
-- To be filled after implementation.
+- Codex could not run the mix gates in-sandbox (Mix.PubSub TCP socket denial) and could
+  not commit (`.git/index.lock: Operation not permitted`); all moves were staged. The
+  reviewer ran the full gate sequence outside the sandbox, fixed the core_test regression,
+  the docs.check.ex credo `[F]`, and the `.codex` path references, then committed.
+- `workflow.yml` (import/export artifact) setup/cleanup commands updated to drop
+  `cd elixir` — behavior-equivalent for the promoted layout, asserted by core_test.
 
 ## Dependencies
 
