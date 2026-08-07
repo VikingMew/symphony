@@ -3,38 +3,36 @@ defmodule SymphonyElixir.NapTest do
 
   alias SymphonyElixir.Nap.Results
 
-  test "deduplicates findings within one run and counts outcomes" do
-    finding = %{
-      "title" => "Remove compatibility shim",
-      "category" => "compatibility code",
-      "path" => "lib/example.ex",
-      "evidence" => "The shim is no longer used."
-    }
+  test "aggregates issue creation audit outcomes" do
+    events = [
+      audit_event(%{status: "success", result: %{"identifier" => "CCR-10"}}),
+      audit_event(%{"status" => "skipped"}),
+      audit_event(%{status: "failure", error: %{class: "linear_graphql_error"}}),
+      audit_event(%{status: "success", result: %{"identifier" => "CCR-11"}})
+    ]
 
-    summary =
-      Results.aggregate([finding, finding, Map.put(finding, "title", "Missing product affordance")], fn payload ->
-        {:ok, %{"identifier" => "CCR-#{payload["title"]}"}}
-      end)
-
-    assert summary.created == 2
-    assert summary.skipped == 1
-    assert summary.failed == 0
-    assert Enum.map(summary.results, & &1.status) == [:created, :skipped_duplicate, :created]
+    assert Results.aggregate(events) == %{
+             created: 2,
+             skipped: 1,
+             failed: 1,
+             issues: [%{"identifier" => "CCR-10"}, %{"identifier" => "CCR-11"}]
+           }
   end
 
-  test "records validation and create failures" do
-    summary =
-      Results.aggregate(
-        [
-          %{"title" => "", "category" => "bad smell", "evidence" => "missing title"},
-          %{"title" => "API gap", "category" => "product gap", "evidence" => "docs mention it"}
-        ],
-        fn _payload -> {:error, :linear_down} end
-      )
+  test "ignores audit events that are not issue creation outcomes" do
+    events = [
+      audit_event(%{tool: "linear_task_update", status: "success"}),
+      %{event_type: "codex.update", payload: %{tool: "linear_issue_create", status: "success"}},
+      audit_event(%{status: "unknown"})
+    ]
 
-    assert summary.created == 0
-    assert summary.skipped == 0
-    assert summary.failed == 2
-    assert Enum.map(summary.results, & &1.status) == [:validation_failed, :create_failed]
+    assert Results.aggregate(events) == %{created: 0, skipped: 0, failed: 0, issues: []}
+  end
+
+  defp audit_event(payload) do
+    %{
+      event_type: "linear.tool_call",
+      payload: Map.put_new(payload, :tool, "linear_issue_create")
+    }
   end
 end

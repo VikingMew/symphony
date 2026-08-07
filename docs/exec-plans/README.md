@@ -235,11 +235,11 @@ Plans should focus on product and engineering intent rather than full implementa
 228. [228-fix-falsy-config-reads-false-treated-as-missing.md](completed/228-fix-falsy-config-reads-false-treated-as-missing.md)
 229. [229-workflowstore-error-honesty-no-fake-setup-required.md](completed/229-workflowstore-error-honesty-no-fake-setup-required.md)
 230. [230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md](completed/230-orchestrator-error-honesty-fail-open-gate-swallowed-persistence.md)
+231. [231-wire-nap-operator-results-into-summaries-or-delete.md](completed/231-wire-nap-operator-results-into-summaries-or-delete.md)
 
 ## Active Plans
 
-1. [231-wire-nap-operator-results-into-summaries-or-delete.md](active/231-wire-nap-operator-results-into-summaries-or-delete.md)
-4. [232-unify-recursive-redaction-one-sanitizer.md](active/232-unify-recursive-redaction-one-sanitizer.md)
+1. [232-unify-recursive-redaction-one-sanitizer.md](active/232-unify-recursive-redaction-one-sanitizer.md)
 5. [233-merge-agent-runner-issue-operator-lifecycle.md](active/233-merge-agent-runner-issue-operator-lifecycle.md)
 6. [234-type-orchestrator-running-state-single-listening-source.md](active/234-type-orchestrator-running-state-single-listening-source.md)
 7. [235-normalize-codex-protocol-events-shared-parsing.md](active/235-normalize-codex-protocol-events-shared-parsing.md)

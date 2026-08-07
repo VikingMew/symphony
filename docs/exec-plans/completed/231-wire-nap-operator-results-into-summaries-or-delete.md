@@ -6,7 +6,7 @@ Make operator-task completion summaries reflect real created issues; wire Nap.Re
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -42,20 +42,30 @@ Prefer wiring over deletion if the audit data is trustworthy; if the count seman
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 32 [R] + 2 [D], down from 35 [R] baseline)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 677 tests, 0 failures, 2 skipped (full suite; first two runs hit known
+  flaky OrchestratorStatusTest timeout, third run fully green; flaky files run in isolation: 41 tests, 0 failures)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (results.ex, orchestrator.ex, nap_test.exs, orchestrator_operator_tasks_test.exs)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Chose wiring over deletion: audit trail (`linear.tool_call` events with tool `linear_issue_create`)
+  is trustworthy; `operator_task_summary/2` became `/3` and queries events by run_id via
+  `Persistence.list_events/1` (supports run_id/event_type/order/limit), then aggregates with `Nap.Results`.
+- `Nap.Results.aggregate/1` is a new contract: it aggregates issue-creation audit events
+  (status success/skipped/failure) instead of the old `aggregate/2` finding-dedup + create-callback
+  shape. The old fingerprint/validation semantics had no production consumer and were replaced, not deleted.
+- Failed operator tasks now keep `failed: max(count, 1)` plus the `error` field, and still reflect any
+  created/skipped issues from the run's audit trail (previously hard-coded `%{created: 0, ...}` on failure).
+- Summary `issues` entries are the audit event result maps (e.g. `%{"identifier" => "CCR-10"}`),
+  not finding payloads; non-operator run summaries are untouched.
+- `operator_task_results/1` caps the query at 10 000 events ascending; a non-binary run_id yields an
+  empty summary.
 
 ## Dependencies
 

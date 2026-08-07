@@ -96,6 +96,35 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert completed.operator_tasks.nap.run_id == run_id
   end
 
+  test "completed operator task summarizes issues created in its audit trail" do
+    {:ok, pid} = start_operator_orchestrator(:NapResults)
+
+    reply = GenServer.call(pid, {:request_operator_task, :nap})
+    run_id = reply.run_id
+    assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
+
+    FakePersistence.put_events([
+      linear_issue_create_event(run_id, "success", %{"identifier" => "CCR-10"}),
+      linear_issue_create_event(run_id, "success", %{"identifier" => "CCR-11"}),
+      linear_issue_create_event(run_id, "skipped"),
+      linear_issue_create_event("another-run", "success", %{"identifier" => "CCR-12"})
+    ])
+
+    send(runner_pid, {:finish_operator_runner, :ok})
+
+    completed =
+      wait_for_snapshot(pid, fn snapshot ->
+        snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "completed"
+      end)
+
+    assert completed.operator_tasks.nap.summary == %{
+             created: 2,
+             skipped: 1,
+             failed: 0,
+             issues: [%{"identifier" => "CCR-10"}, %{"identifier" => "CCR-11"}]
+           }
+  end
+
   test "operator runner failures clear running state and mark the task failed" do
     {:ok, pid} = start_operator_orchestrator(:FailedNap)
 
@@ -221,6 +250,18 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
         do_wait_for_snapshot(pid, predicate, deadline_ms)
       end
     end
+  end
+
+  defp linear_issue_create_event(run_id, status, result \\ nil) do
+    %{
+      run_id: run_id,
+      event_type: "linear.tool_call",
+      payload: %{
+        tool: "linear_issue_create",
+        status: status,
+        result: result
+      }
+    }
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

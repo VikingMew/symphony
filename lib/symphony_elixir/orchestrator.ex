@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Orchestrator do
     Codex.RateLimitGate,
     Codex.Update,
     Config,
+    Nap.Results,
     Payload,
     PersistenceProvider,
     RunLifecycle,
@@ -1970,15 +1971,28 @@ defmodule SymphonyElixir.Orchestrator do
             run_id: Map.get(running_entry, :run_id),
             finished_at: now,
             failure_reason: failure_reason,
-            summary: operator_task_summary(status, failure_reason)
+            summary: operator_task_summary(status, failure_reason, Map.get(running_entry, :run_id))
           })
 
         put_operator_task(state, kind, task)
     end
   end
 
-  defp operator_task_summary(:completed, _failure_reason), do: %{created: 0, skipped: 0, failed: 0, issues: []}
-  defp operator_task_summary(:failed, failure_reason), do: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+  defp operator_task_summary(:completed, _failure_reason, run_id), do: operator_task_results(run_id)
+
+  defp operator_task_summary(:failed, failure_reason, run_id) do
+    run_id
+    |> operator_task_results()
+    |> Map.update!(:failed, &max(&1, 1))
+    |> Map.put(:error, failure_reason)
+  end
+
+  defp operator_task_results(run_id) when is_binary(run_id) do
+    persistence().list_events(run_id: run_id, event_type: "linear.tool_call", order: :asc, limit: 10_000)
+    |> Results.aggregate()
+  end
+
+  defp operator_task_results(_run_id), do: Results.aggregate([])
 
   defp operator_kind_from_running_entry(%{kind: "nap"}), do: :nap
   defp operator_kind_from_running_entry(%{kind: "day_dreaming"}), do: :day_dreaming
