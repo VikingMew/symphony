@@ -117,10 +117,9 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
     polling = Map.get(payload, :polling, %{})
 
     case Map.get(polling, :listening_mode) || Map.get(polling, "listening_mode") do
-      mode when mode in ["listening_all", :listening_all] -> "listening_all"
-      mode when mode in ["listening_refine_only", :listening_refine_only] -> "listening_refine_only"
-      mode when mode in ["not_listening", :not_listening] -> "not_listening"
-      _ -> if Map.get(polling, :listening?, Map.get(polling, "listening?", false)), do: "listening_all", else: "not_listening"
+      mode when is_atom(mode) -> Atom.to_string(mode)
+      mode when is_binary(mode) -> mode
+      _ -> "not_listening"
     end
   end
 

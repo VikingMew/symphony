@@ -42,8 +42,7 @@ defmodule SymphonyElixir.OrchestratorRateLimitGateTest do
     :sys.replace_state(pid, fn state ->
       %{
         state
-        | listening?: true,
-          listening_mode: :listening_all,
+        | listening_mode: :listening_all,
           codex_rate_limits: %{
             "primary" => %{
               "window_duration_mins" => 300,

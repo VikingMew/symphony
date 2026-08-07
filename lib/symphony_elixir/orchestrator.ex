@@ -39,6 +39,80 @@ defmodule SymphonyElixir.Orchestrator do
     seconds_running: 0
   }
 
+  defmodule RunningIssue do
+    @moduledoc false
+
+    defstruct [
+      :pid,
+      :ref,
+      :run_id,
+      :identifier,
+      :issue,
+      :project_id,
+      :worker_host,
+      :workspace_path,
+      :session_id,
+      :last_codex_message,
+      :last_codex_timestamp,
+      :last_codex_event,
+      :codex_app_server_pid,
+      :started_at,
+      :agent_result,
+      kind: :issue,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      turn_count: 0,
+      retry_attempt: 0,
+      session_history: [],
+      session_history_total_count: 0,
+      linear_state_transitions: []
+    ]
+
+    @type t :: %__MODULE__{}
+  end
+
+  defmodule RunningOperator do
+    @moduledoc false
+
+    defstruct [
+      :kind,
+      :profile,
+      :label,
+      :pid,
+      :ref,
+      :run_id,
+      :identifier,
+      :issue_id,
+      :issue,
+      :state,
+      :worker_host,
+      :workspace_path,
+      :session_id,
+      :last_codex_message,
+      :last_codex_timestamp,
+      :last_codex_event,
+      :codex_app_server_pid,
+      :started_at,
+      :agent_result,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      turn_count: 0,
+      retry_attempt: 0,
+      session_history: [],
+      session_history_total_count: 0
+    ]
+
+    @type t :: %__MODULE__{}
+  end
+
   defmodule State do
     @moduledoc """
     Runtime state for the orchestrator polling loop.
@@ -62,7 +136,6 @@ defmodule SymphonyElixir.Orchestrator do
       rate_limit_gate: nil,
       rate_limit_gate_event_fingerprint: nil,
       last_config_error: nil,
-      listening?: false,
       listening_mode: :not_listening,
       operator_tasks: %{}
     ]
@@ -112,8 +185,7 @@ defmodule SymphonyElixir.Orchestrator do
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
             codex_rate_limit_observation: nil,
-            last_config_error: reason,
-            listening?: false
+            last_config_error: reason
           }
           |> schedule_tick(30_000)
       end
@@ -271,7 +343,7 @@ defmodule SymphonyElixir.Orchestrator do
         updated_entry =
           running_entry
           |> Map.put(:linear_state_transitions, transitions)
-          |> put_in([:issue, Access.key(:state)], Map.get(transition, :to_state))
+          |> put_in([Access.key(:issue), Access.key(:state)], Map.get(transition, :to_state))
           |> append_session_history(:linear_state_transition, "Linear state moved", %{
             from_state: Map.get(transition, :from_state),
             to_state: Map.get(transition, :to_state),
@@ -308,13 +380,12 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, state}
   end
 
-  defp handle_worker_down_reason(state, issue_id, running_entry, reason, session_id)
-       when is_map(running_entry) do
-    if operator_running_entry?(running_entry) do
-      handle_operator_down_reason(state, issue_id, running_entry, reason, session_id)
-    else
-      handle_issue_worker_down_reason(state, issue_id, running_entry, reason, session_id)
-    end
+  defp handle_worker_down_reason(state, run_id, %RunningOperator{} = running_entry, reason, session_id) do
+    handle_operator_down_reason(state, run_id, running_entry, reason, session_id)
+  end
+
+  defp handle_worker_down_reason(state, issue_id, %RunningIssue{} = running_entry, reason, session_id) do
+    handle_issue_worker_down_reason(state, issue_id, running_entry, reason, session_id)
   end
 
   defp handle_issue_worker_down_reason(state, issue_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
@@ -351,13 +422,13 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_operator_down_reason(state, run_id, %{agent_result: :ok} = running_entry, :normal, session_id) do
-    Logger.info("Operator task completed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id}")
+    Logger.info("Operator task completed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id}")
 
     running_entry =
       append_session_history(running_entry, :operator_task_completed, "Operator task completed", %{
         source: :system,
         run_id: run_id,
-        kind: Map.get(running_entry, :kind)
+        kind: running_entry_kind(running_entry)
       })
 
     persist_run_finished(running_entry, "completed", nil)
@@ -366,13 +437,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp handle_operator_down_reason(state, run_id, %{agent_result: {:error, reason}} = running_entry, :normal, session_id) do
     summary = agent_failure_summary(reason)
-    Logger.warning("Operator task failed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id} #{summary}")
+    Logger.warning("Operator task failed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id} #{summary}")
 
     running_entry =
       append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
         source: :system,
         run_id: run_id,
-        kind: Map.get(running_entry, :kind),
+        kind: running_entry_kind(running_entry),
         reason: summary
       })
 
@@ -381,20 +452,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_operator_down_reason(state, run_id, running_entry, :normal, session_id) do
-    Logger.info("Operator task completed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id}")
+    Logger.info("Operator task completed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id}")
     persist_run_finished(running_entry, "completed", nil)
     finish_operator_task(state, running_entry, :completed, nil)
   end
 
   defp handle_operator_down_reason(state, run_id, running_entry, reason, session_id) do
     summary = "operator task crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
-    Logger.warning("Operator task crashed run_id=#{run_id} kind=#{Map.get(running_entry, :kind)} session_id=#{session_id} #{summary}")
+    Logger.warning("Operator task crashed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id} #{summary}")
 
     running_entry =
       append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
         source: :system,
         run_id: run_id,
-        kind: Map.get(running_entry, :kind),
+        kind: running_entry_kind(running_entry),
         reason: summary
       })
 
@@ -433,7 +504,7 @@ defmodule SymphonyElixir.Orchestrator do
         %{message: blocked_payload(reason), source: :agent}
       )
 
-    blocked_entry = InputBlocker.entry(issue_id, updated_running_entry, reason)
+    blocked_entry = InputBlocker.entry(issue_id, Map.from_struct(updated_running_entry), reason)
 
     persist_event("run.blocked", running_entry.identifier, %{issue_id: issue_id, reason: summary}, Map.get(running_entry, :run_id))
     persist_run_finished(updated_running_entry, "blocked", summary)
@@ -855,33 +926,34 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
-    if operator_running_entry?(running_entry) do
-      state
-    else
-      case {InputBlocker.blocked_reason(blocking_signal(running_entry)), RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)} do
-        {{:blocked, reason, payload}, {:stalled, decision}} ->
-          Logger.warning(
-            "Issue stalled while waiting for input: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; marking blocked"
-          )
+  defp restart_stalled_issue(state, _run_id, %RunningOperator{}, _now, _timeout_ms), do: state
 
-          stop_running_process(running_entry)
+  defp restart_stalled_issue(state, issue_id, %RunningIssue{} = running_entry, now, timeout_ms) do
+    blocking_reason = InputBlocker.blocked_reason(blocking_signal(running_entry))
+    stall_decision = RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)
 
-          state
-          |> record_session_completion_totals(running_entry)
-          |> Map.update!(:running, &Map.delete(&1, issue_id))
-          |> block_issue_for_input(issue_id, running_entry, {reason, payload}, decision.session_id)
+    case {blocking_reason, stall_decision} do
+      {{:blocked, reason, payload}, {:stalled, decision}} ->
+        Logger.warning(
+          "Issue stalled while waiting for input: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; marking blocked"
+        )
 
-        {_input_state, {:stalled, decision}} ->
-          Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
+        stop_running_process(running_entry)
 
-          state
-          |> terminate_running_issue(issue_id, false)
-          |> schedule_issue_retry(issue_id, decision.attempt, decision.metadata)
+        state
+        |> record_session_completion_totals(running_entry)
+        |> Map.update!(:running, &Map.delete(&1, issue_id))
+        |> block_issue_for_input(issue_id, running_entry, {reason, payload}, decision.session_id)
 
-        {_input_state, :active} ->
-          state
-      end
+      {_input_state, {:stalled, decision}} ->
+        Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
+
+        state
+        |> terminate_running_issue(issue_id, false)
+        |> schedule_issue_retry(issue_id, decision.attempt, decision.metadata)
+
+      {_input_state, :active} ->
+        state
     end
   end
 
@@ -1088,7 +1160,7 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
 
         running =
-          Map.put(state.running, issue.id, %{
+          Map.put(state.running, issue.id, %RunningIssue{
             pid: pid,
             ref: ref,
             run_id: run_record && run_record.id,
@@ -1555,7 +1627,7 @@ defmodule SymphonyElixir.Orchestrator do
       |> Enum.map(fn {issue_id, metadata} ->
         %{
           issue_id: Map.get(metadata, :issue_id, issue_id),
-          kind: Map.get(metadata, :kind, "issue"),
+          kind: running_entry_kind(metadata),
           profile: Map.get(metadata, :profile),
           label: Map.get(metadata, :label),
           run_id: Map.get(metadata, :run_id),
@@ -1642,8 +1714,8 @@ defmodule SymphonyElixir.Orchestrator do
          coalesced: true,
          requested_at: DateTime.utc_now(),
          operations: [],
-         listening?: false,
-         listening_mode: "not_listening"
+         listening?: listening?(state),
+         listening_mode: listening_mode_string(state)
        }, state}
     end
   end
@@ -1651,47 +1723,83 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_call(:start_listening, _from, state) do
     case runtime_config() do
       {:ok, _config} ->
-        state = %{state | listening?: true, listening_mode: :listening_all, last_config_error: nil}
+        state = %{state | listening_mode: :listening_all, last_config_error: nil}
         state = schedule_tick(state, 0)
         persist_event("orchestrator.listening_started", nil, %{mode: "listening_all"})
         notify_dashboard()
-        {:reply, %{listening?: true, listening_mode: "listening_all", changed_at: DateTime.utc_now()}, state}
+
+        reply = %{
+          listening?: listening?(state),
+          listening_mode: listening_mode_string(state),
+          changed_at: DateTime.utc_now()
+        }
+
+        {:reply, reply, state}
 
       {:error, reason} ->
-        state = log_config_error_once(%{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}, reason)
+        state = log_config_error_once(%{state | listening_mode: :not_listening, poll_check_in_progress: false}, reason)
         notify_dashboard()
-        {:reply, %{listening?: false, listening_mode: "not_listening", error: inspect(reason), changed_at: DateTime.utc_now()}, state}
+
+        reply = %{
+          listening?: listening?(state),
+          listening_mode: listening_mode_string(state),
+          error: inspect(reason),
+          changed_at: DateTime.utc_now()
+        }
+
+        {:reply, reply, state}
     end
   end
 
   def handle_call(:start_refine_only_listening, _from, state) do
     case runtime_config() do
       {:ok, _config} ->
-        state = %{state | listening?: true, listening_mode: :listening_refine_only, last_config_error: nil}
+        state = %{state | listening_mode: :listening_refine_only, last_config_error: nil}
         state = schedule_tick(state, 0)
         persist_event("orchestrator.listening_started", nil, %{mode: "listening_refine_only"})
         notify_dashboard()
-        {:reply, %{listening?: true, listening_mode: "listening_refine_only", changed_at: DateTime.utc_now()}, state}
+
+        reply = %{
+          listening?: listening?(state),
+          listening_mode: listening_mode_string(state),
+          changed_at: DateTime.utc_now()
+        }
+
+        {:reply, reply, state}
 
       {:error, reason} ->
-        state = log_config_error_once(%{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}, reason)
+        state = log_config_error_once(%{state | listening_mode: :not_listening, poll_check_in_progress: false}, reason)
         notify_dashboard()
-        {:reply, %{listening?: false, listening_mode: "not_listening", error: inspect(reason), changed_at: DateTime.utc_now()}, state}
+
+        reply = %{
+          listening?: listening?(state),
+          listening_mode: listening_mode_string(state),
+          error: inspect(reason),
+          changed_at: DateTime.utc_now()
+        }
+
+        {:reply, reply, state}
     end
   end
 
   def handle_call(:stop_listening, _from, state) do
     previous_mode = listening_mode_string(state)
-    state = %{state | listening?: false, listening_mode: :not_listening, poll_check_in_progress: false}
+    state = %{state | listening_mode: :not_listening, poll_check_in_progress: false}
     persist_event("orchestrator.listening_stopped", nil, %{previous_mode: previous_mode})
     notify_dashboard()
-    {:reply, %{listening?: false, listening_mode: "not_listening", changed_at: DateTime.utc_now()}, state}
+
+    reply = %{
+      listening?: listening?(state),
+      listening_mode: listening_mode_string(state),
+      changed_at: DateTime.utc_now()
+    }
+
+    {:reply, reply, state}
   end
 
   def handle_call(:force_stop_all, _from, state) do
     {state, rollback_results} =
       state
-      |> Map.put(:listening?, false)
       |> Map.put(:listening_mode, :not_listening)
       |> clear_operator_tasks(:stopped)
       |> cancel_retry_timers()
@@ -1703,8 +1811,8 @@ defmodule SymphonyElixir.Orchestrator do
 
     {:reply,
      %{
-       listening?: false,
-       listening_mode: "not_listening",
+       listening?: listening?(state),
+       listening_mode: listening_mode_string(state),
        stopped_agents: length(rollback_results),
        cancelled_tasks: cancelled_tasks,
        rollback_results: rollback_results,
@@ -1731,7 +1839,7 @@ defmodule SymphonyElixir.Orchestrator do
        coalesced: coalesced,
        requested_at: DateTime.utc_now(),
        operations: ["poll", "reconcile"],
-       listening?: true,
+       listening?: listening?(state),
        listening_mode: listening_mode_string(state)
      }, state}
   end
@@ -1881,8 +1989,8 @@ defmodule SymphonyElixir.Orchestrator do
   defp operator_running_entry(task, pid, ref, worker_host) do
     identity = AgentRunner.operator_task_identity(task.kind, task.run_id)
 
-    running_entry = %{
-      kind: to_string(task.kind),
+    running_entry = %RunningOperator{
+      kind: task.kind,
       profile: to_string(task.kind),
       label: identity.label,
       pid: pid,
@@ -1980,10 +2088,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp operator_task_results(_run_id), do: Results.aggregate([])
 
-  defp operator_kind_from_running_entry(%{kind: "nap"}), do: :nap
-  defp operator_kind_from_running_entry(%{kind: "day_dreaming"}), do: :day_dreaming
-  defp operator_kind_from_running_entry(%{kind: :nap}), do: :nap
-  defp operator_kind_from_running_entry(%{kind: :day_dreaming}), do: :day_dreaming
+  defp operator_kind_from_running_entry(%RunningOperator{kind: kind}) when kind in [:nap, :day_dreaming], do: kind
   defp operator_kind_from_running_entry(_running_entry), do: nil
 
   defp clear_operator_tasks(%State{} = state, status) do
@@ -1999,28 +2104,20 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp runtime_busy?(%State{} = state), do: Enum.any?(state.running, fn {_id, entry} -> runtime_entry_active?(entry) end)
 
-  defp runtime_entry_active?(entry) when is_map(entry) do
-    cond do
-      !operator_running_entry?(entry) ->
-        true
+  defp runtime_entry_active?(%RunningIssue{}), do: true
 
-      is_pid(Map.get(entry, :pid)) and Process.alive?(Map.get(entry, :pid)) ->
-        true
-
-      is_binary(Map.get(entry, :session_id)) ->
-        true
-
-      true ->
-        false
-    end
+  defp runtime_entry_active?(%RunningOperator{pid: pid, session_id: session_id}) do
+    (is_pid(pid) and Process.alive?(pid)) or is_binary(session_id)
   end
 
   defp runtime_entry_active?(_entry), do: false
 
   defp issue_running_ids(running) when is_map(running) do
     running
-    |> Enum.reject(fn {_id, entry} -> operator_running_entry?(entry) end)
-    |> Enum.map(fn {id, _entry} -> id end)
+    |> Enum.flat_map(fn
+      {id, %RunningIssue{}} -> [id]
+      {_id, %RunningOperator{}} -> []
+    end)
   end
 
   defp reconcile_stale_operator_entries(%State{} = state) do
@@ -2032,11 +2129,17 @@ defmodule SymphonyElixir.Orchestrator do
           append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
             source: :system,
             run_id: run_id,
-            kind: Map.get(running_entry, :kind),
+            kind: running_entry_kind(running_entry),
             reason: reason
           })
 
-        persist_event("operator_task.stale_failed", nil, %{kind: Map.get(running_entry, :kind), run_id: run_id, reason: reason}, Map.get(running_entry, :run_id))
+        persist_event(
+          "operator_task.stale_failed",
+          nil,
+          %{kind: running_entry_kind(running_entry), run_id: run_id, reason: reason},
+          running_entry.run_id
+        )
+
         persist_run_finished(failed_entry, "failed", reason)
 
         state_acc
@@ -2048,9 +2151,7 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp stale_operator_running_entry?(running_entry) when is_map(running_entry) do
-    operator_running_entry?(running_entry) and !runtime_entry_active?(running_entry)
-  end
+  defp stale_operator_running_entry?(%RunningOperator{} = running_entry), do: !runtime_entry_active?(running_entry)
 
   defp stale_operator_running_entry?(_running_entry), do: false
 
@@ -2120,14 +2221,13 @@ defmodule SymphonyElixir.Orchestrator do
     {%{state | running: %{}, claimed: MapSet.new()}, Enum.reverse(results)}
   end
 
-  defp rollback_running_entry(issue_id, running_entry) do
-    if operator_running_entry?(running_entry) do
-      persist_event("run.force_stopped", nil, %{run_id: Map.get(running_entry, :run_id), kind: Map.get(running_entry, :kind)})
-      %{run_id: Map.get(running_entry, :run_id), kind: Map.get(running_entry, :kind), status: "stopped", reason: "operator_task"}
-    else
-      rollback_issue_running_entry(issue_id, running_entry)
-    end
+  defp rollback_running_entry(_run_id, %RunningOperator{} = running_entry) do
+    kind = running_entry_kind(running_entry)
+    persist_event("run.force_stopped", nil, %{run_id: running_entry.run_id, kind: kind})
+    %{run_id: running_entry.run_id, kind: kind, status: "stopped", reason: "operator_task"}
   end
+
+  defp rollback_running_entry(issue_id, %RunningIssue{} = running_entry), do: rollback_issue_running_entry(issue_id, running_entry)
 
   defp rollback_issue_running_entry(issue_id, running_entry) do
     transitions = Map.get(running_entry, :linear_state_transitions, [])
@@ -2140,8 +2240,6 @@ defmodule SymphonyElixir.Orchestrator do
     persist_event("run.force_stopped", Map.get(running_entry, :identifier), %{issue_id: issue_id, rollback: result})
     result
   end
-
-  defp operator_running_entry?(running_entry), do: Map.get(running_entry, :kind) in ["nap", "day_dreaming"]
 
   defp rollback_transition(nil, issue_id, running_entry) do
     %{issue_id: issue_id, issue_identifier: Map.get(running_entry, :identifier), status: "skipped", reason: "no_symphony_owned_transition"}
@@ -2272,22 +2370,16 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} ->
         state
         |> log_config_error_once(reason)
-        |> Map.merge(%{listening?: false, listening_mode: :not_listening, poll_check_in_progress: false, max_concurrent_agents: 0})
+        |> Map.merge(%{listening_mode: :not_listening, poll_check_in_progress: false, max_concurrent_agents: 0})
     end
   end
 
-  defp listening?(%State{listening_mode: mode}) when mode in [:listening_all, :listening_refine_only], do: true
-  defp listening?(%State{listening?: true}), do: true
-  defp listening?(_state), do: false
+  defp listening?(%State{listening_mode: :not_listening}), do: false
+  defp listening?(%State{}), do: true
 
-  defp listening_mode_string(%State{listening_mode: :listening_refine_only}), do: "listening_refine_only"
-  defp listening_mode_string(%State{listening_mode: :listening_all}), do: "listening_all"
-  defp listening_mode_string(%State{listening?: true}), do: "listening_all"
-  defp listening_mode_string(_state), do: "not_listening"
+  defp listening_mode_string(%State{listening_mode: mode}) when is_atom(mode), do: Atom.to_string(mode)
 
-  defp listening_mode_atom(%State{listening?: true, listening_mode: :listening_refine_only}), do: :listening_refine_only
-  defp listening_mode_atom(%State{listening?: true}), do: :listening_all
-  defp listening_mode_atom(_state), do: :not_listening
+  defp listening_mode_atom(%State{listening_mode: mode}), do: mode
 
   defp runtime_config, do: Config.settings()
 
@@ -2450,6 +2542,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp running_entry_state(%{issue: %{state: state}}), do: state
   defp running_entry_state(metadata), do: Map.get(metadata, :state, "running")
+
+  defp running_entry_kind(%RunningIssue{kind: kind}), do: Atom.to_string(kind)
+  defp running_entry_kind(%RunningOperator{kind: kind}), do: Atom.to_string(kind)
 
   defp persist_polled_issues(issues) do
     if persistence_enabled?() do

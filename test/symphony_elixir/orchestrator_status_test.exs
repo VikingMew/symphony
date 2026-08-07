@@ -72,7 +72,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       identifier: issue.identifier,
@@ -176,7 +176,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       if Process.alive?(pid), do: :sys.replace_state(pid, fn _ -> initial_state end)
     end)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       identifier: issue.identifier,
@@ -253,7 +253,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       identifier: issue.identifier,
@@ -320,7 +320,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       identifier: issue.identifier,
@@ -380,7 +380,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     initial_state = :sys.get_state(pid)
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       identifier: issue.identifier,
@@ -456,7 +456,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -554,7 +554,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -629,7 +629,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -742,7 +742,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -823,7 +823,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -911,7 +911,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -985,7 +985,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     process_ref = make_ref()
     started_at = DateTime.utc_now()
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
       identifier: issue.identifier,
@@ -1242,7 +1242,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: make_ref(),
       identifier: "MT-STALL",
@@ -1258,7 +1258,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       initial_state
       |> Map.put(:running, %{issue_id => running_entry})
       |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
-      |> Map.put(:listening?, true)
+      |> Map.put(:listening_mode, :listening_all)
     end)
 
     send(pid, :tick)
@@ -1295,7 +1295,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     ref = make_ref()
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: ref,
       identifier: "MT-BLOCK",
@@ -1357,7 +1357,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: make_ref(),
       identifier: "MT-STALL-BLOCK",
@@ -1375,7 +1375,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       initial_state
       |> Map.put(:running, %{issue_id => running_entry})
       |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
-      |> Map.put(:listening?, true)
+      |> Map.put(:listening_mode, :listening_all)
     end)
 
     send(pid, :tick)
@@ -1419,7 +1419,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     started_at = DateTime.add(DateTime.utc_now(), -5, :second)
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: make_ref(),
       identifier: "MT-PRE-CODEX",
@@ -1435,7 +1435,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       initial_state
       |> Map.put(:running, %{issue_id => running_entry})
       |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
-      |> Map.put(:listening?, true)
+      |> Map.put(:listening_mode, :listening_all)
     end)
 
     send(pid, :tick)
@@ -1479,7 +1479,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     issue_id = "issue-rollback"
     issue = %Issue{id: issue_id, identifier: "MT-ROLLBACK", state: "In Progress", title: "Rollback"}
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: make_ref(),
       identifier: issue.identifier,
@@ -1497,7 +1497,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn state ->
       state
-      |> Map.put(:listening?, true)
+      |> Map.put(:listening_mode, :listening_all)
       |> Map.put(:running, %{issue_id => running_entry})
       |> Map.put(:claimed, MapSet.put(state.claimed, issue_id))
     end)
@@ -1546,7 +1546,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     :sys.replace_state(pid, fn state ->
       Map.put(state, :running, %{
-        issue_id => %{
+        issue_id => %Orchestrator.RunningIssue{
           pid: worker_pid,
           ref: make_ref(),
           identifier: issue.identifier,

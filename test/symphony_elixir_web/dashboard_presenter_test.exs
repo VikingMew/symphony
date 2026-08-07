@@ -31,11 +31,11 @@ defmodule SymphonyElixirWeb.DashboardPresenterTest do
     assert DashboardPresenter.state_badge_class("failed") =~ "state-badge-danger"
     assert DashboardPresenter.state_badge_class("queued") =~ "state-badge-warning"
 
-    assert DashboardPresenter.listening_enabled?(%{polling: %{listening?: true}})
+    assert DashboardPresenter.listening_enabled?(%{polling: %{listening_mode: "listening_all"}})
     assert DashboardPresenter.listening_label(%{polling: %{listening_mode: "listening_all"}}) == "all active work"
     assert DashboardPresenter.listening_label(%{polling: %{listening_mode: "listening_refine_only"}}) == "refinement only"
     assert DashboardPresenter.listening_badge_class(%{polling: %{listening_mode: "listening_refine_only"}}) == "status-badge status-warning"
-    assert DashboardPresenter.listening_badge_class(%{polling: %{listening?: false}}) == "status-badge status-danger"
+    assert DashboardPresenter.listening_badge_class(%{polling: %{listening_mode: "not_listening"}}) == "status-badge status-danger"
   end
 
   test "formats session history keys summaries and source badges" do

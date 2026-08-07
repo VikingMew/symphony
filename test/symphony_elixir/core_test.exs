@@ -641,8 +641,7 @@ defmodule SymphonyElixir.CoreTest do
     :sys.replace_state(pid, fn state ->
       %{
         state
-        | listening?: true,
-          listening_mode: :listening_all,
+        | listening_mode: :listening_all,
           codex_rate_limits: %{"primary" => %{"window_duration_mins" => 300, "used_percent" => 99}}
       }
     end)
@@ -707,7 +706,7 @@ defmodule SymphonyElixir.CoreTest do
     log =
       capture_log(fn ->
         :sys.replace_state(pid, fn state ->
-          %{state | listening?: true, listening_mode: :listening_all}
+          %{state | listening_mode: :listening_all}
         end)
 
         send(pid, :run_poll_cycle)
@@ -888,7 +887,7 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          issue_id => %{
+          issue_id => %Orchestrator.RunningIssue{
             pid: agent_pid,
             ref: nil,
             identifier: issue_identifier,
@@ -951,7 +950,7 @@ defmodule SymphonyElixir.CoreTest do
 
       state = %Orchestrator.State{
         running: %{
-          issue_id => %{
+          issue_id => %Orchestrator.RunningIssue{
             pid: agent_pid,
             ref: nil,
             identifier: issue_identifier,
@@ -1033,7 +1032,7 @@ defmodule SymphonyElixir.CoreTest do
 
       initial_state = :sys.get_state(pid)
 
-      running_entry = %{
+      running_entry = %Orchestrator.RunningIssue{
         pid: agent_pid,
         ref: nil,
         identifier: issue_identifier,
@@ -1046,7 +1045,7 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:running, %{issue_id => running_entry})
         |> Map.put(:claimed, MapSet.new([issue_id]))
         |> Map.put(:retry_attempts, %{})
-        |> Map.put(:listening?, true)
+        |> Map.put(:listening_mode, :listening_all)
       end)
 
       send(pid, :tick)
@@ -1068,7 +1067,7 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        issue_id => %{
+        issue_id => %Orchestrator.RunningIssue{
           pid: self(),
           ref: nil,
           identifier: "MT-557",
@@ -1114,7 +1113,7 @@ defmodule SymphonyElixir.CoreTest do
 
     state = %Orchestrator.State{
       running: %{
-        issue_id => %{
+        issue_id => %Orchestrator.RunningIssue{
           pid: agent_pid,
           ref: nil,
           identifier: "MT-561",
@@ -1163,7 +1162,7 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: ref,
       identifier: "MT-558",
@@ -1204,7 +1203,7 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: ref,
       identifier: "MT-559",
@@ -1245,7 +1244,7 @@ defmodule SymphonyElixir.CoreTest do
 
     initial_state = :sys.get_state(pid)
 
-    running_entry = %{
+    running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: ref,
       identifier: "MT-560",
@@ -1324,7 +1323,7 @@ defmodule SymphonyElixir.CoreTest do
       tick_token: stale_tick_token,
       codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
       codex_rate_limits: nil,
-      listening?: true
+      listening_mode: :listening_all
     }
 
     assert {:reply, %{queued: true, coalesced: false}, refreshed_state} =
@@ -1345,7 +1344,7 @@ defmodule SymphonyElixir.CoreTest do
   test "dispatch policy skips full ssh hosts under the shared per-host cap" do
     state = %Orchestrator.State{
       running: %{
-        "issue-1" => %{worker_host: "worker-a"}
+        "issue-1" => %Orchestrator.RunningIssue{worker_host: "worker-a"}
       }
     }
 
@@ -1355,8 +1354,8 @@ defmodule SymphonyElixir.CoreTest do
   test "dispatch policy returns no_worker_capacity when every ssh host is full" do
     state = %Orchestrator.State{
       running: %{
-        "issue-1" => %{worker_host: "worker-a"},
-        "issue-2" => %{worker_host: "worker-b"}
+        "issue-1" => %Orchestrator.RunningIssue{worker_host: "worker-a"},
+        "issue-2" => %Orchestrator.RunningIssue{worker_host: "worker-b"}
       }
     }
 
@@ -1366,8 +1365,8 @@ defmodule SymphonyElixir.CoreTest do
   test "dispatch policy keeps the preferred ssh host when it still has capacity" do
     state = %Orchestrator.State{
       running: %{
-        "issue-1" => %{worker_host: "worker-a"},
-        "issue-2" => %{worker_host: "worker-b"}
+        "issue-1" => %Orchestrator.RunningIssue{worker_host: "worker-a"},
+        "issue-2" => %Orchestrator.RunningIssue{worker_host: "worker-b"}
       }
     }
 

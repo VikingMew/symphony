@@ -67,11 +67,11 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
 
     state = :sys.get_state(pid)
-    assert %{^run_id => running_entry} = state.running
+    assert %{^run_id => %Orchestrator.RunningOperator{} = running_entry} = state.running
     assert is_pid(running_entry.pid)
     assert Process.alive?(running_entry.pid)
     assert is_reference(running_entry.ref)
-    assert running_entry.kind == "nap"
+    assert running_entry.kind == :nap
 
     identity = AgentRunner.operator_task_identity(:nap, run_id)
     assert running_entry.identifier == identity.identifier
@@ -152,8 +152,8 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     stale_run_id = "operator-nap-stale"
 
     :sys.replace_state(pid, fn state ->
-      stale_entry = %{
-        kind: "nap",
+      stale_entry = %Orchestrator.RunningOperator{
+        kind: :nap,
         profile: "nap",
         label: "Nap",
         pid: nil,

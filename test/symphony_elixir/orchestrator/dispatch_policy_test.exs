@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
     state = %Orchestrator.State{
       max_concurrent_agents: 2,
       running: %{
-        "running-ready" => %{issue: issue("running-ready", "Ready")}
+        "running-ready" => %Orchestrator.RunningIssue{issue: issue("running-ready", "Ready")}
       },
       claimed: MapSet.new()
     }

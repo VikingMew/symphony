@@ -28,7 +28,7 @@ defmodule SymphonyElixirWeb.Presenter do
           rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
           linear_status: Health.latest() |> LinearStatusSignal.from_health(),
           operator_tasks: Map.get(snapshot, :operator_tasks, %{}),
-          polling: Map.get(snapshot, :polling, %{listening?: false})
+          polling: Map.get(snapshot, :polling, %{listening_mode: "not_listening"})
         }
 
       :timeout ->
@@ -143,7 +143,7 @@ defmodule SymphonyElixirWeb.Presenter do
     }
 
     payload
-    |> maybe_put_non_default(:kind, Map.get(entry, :kind), "issue")
+    |> maybe_put_non_default(:kind, running_entry_kind(entry), "issue")
     |> maybe_put_present(:profile, Map.get(entry, :profile))
     |> maybe_put_present(:label, Map.get(entry, :label))
     |> maybe_put_present(:run_id, Map.get(entry, :run_id))
@@ -152,6 +152,9 @@ defmodule SymphonyElixirWeb.Presenter do
   defp maybe_put_non_default(map, _key, default, default), do: map
   defp maybe_put_non_default(map, _key, nil, _default), do: map
   defp maybe_put_non_default(map, key, value, _default), do: Map.put(map, key, value)
+
+  defp running_entry_kind(%{kind: kind}), do: kind
+  defp running_entry_kind(_entry), do: "issue"
 
   defp maybe_put_present(map, _key, nil), do: map
   defp maybe_put_present(map, _key, ""), do: map
