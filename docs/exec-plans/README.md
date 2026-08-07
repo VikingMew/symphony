@@ -239,11 +239,11 @@ Plans should focus on product and engineering intent rather than full implementa
 232. [232-unify-recursive-redaction-one-sanitizer.md](completed/232-unify-recursive-redaction-one-sanitizer.md)
 233. [233-merge-agent-runner-issue-operator-lifecycle.md](completed/233-merge-agent-runner-issue-operator-lifecycle.md)
 234. [234-type-orchestrator-running-state-single-listening-source.md](completed/234-type-orchestrator-running-state-single-listening-source.md)
+235. [235-normalize-codex-protocol-events-shared-parsing.md](completed/235-normalize-codex-protocol-events-shared-parsing.md)
 
 ## Active Plans
 
-1. [235-normalize-codex-protocol-events-shared-parsing.md](active/235-normalize-codex-protocol-events-shared-parsing.md)
-8. [236-split-adminlive-into-focused-components.md](active/236-split-adminlive-into-focused-components.md)
+1. [236-split-adminlive-into-focused-components.md](active/236-split-adminlive-into-focused-components.md)
 9. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](active/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)
 
 ## Intentional Numbering Gaps

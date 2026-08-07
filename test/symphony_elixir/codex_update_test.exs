@@ -27,6 +27,27 @@ defmodule SymphonyElixir.CodexUpdateTest do
     assert length(entry.session_history) == 2
   end
 
+  test "integrate uses normalized mixed-key streaming fields" do
+    update = %{
+      event: :notification,
+      session_id: "thread-1",
+      timestamp: DateTime.utc_now(),
+      payload: %{
+        :method => "item/agentMessage/delta",
+        "params" => %{
+          itemId: "item-1",
+          msg: %{"payload" => %{delta: "hello"}}
+        }
+      }
+    }
+
+    {entry, _delta} = Update.integrate(%{session_history: []}, update)
+
+    assert [event] = entry.session_history
+    assert event.detail == "agent message streaming: hello"
+    assert event.metadata.coalescing_key == "thread-1:item/agentMessage/delta:item-1"
+  end
+
   test "token delta prefers absolute token usage paths" do
     update = %{
       event: :notification,
@@ -86,6 +107,14 @@ defmodule SymphonyElixir.CodexUpdateTest do
              "primary" => %{"resets_at" => 1_779_341_757, "used_percent" => 65, "window_duration_mins" => 300},
              "secondary" => %{"resets_at" => 1_779_848_319, "used_percent" => 18, "window_duration_mins" => 10_080}
            }
+  end
+
+  test "rate-limit update detection uses the normalized nested method" do
+    assert Update.rate_limit_update_event?(%{
+             "payload" => %{
+               params: %{method: "account/rateLimits/updated"}
+             }
+           })
   end
 
   test "event payload redacts and truncates sensitive debug content" do

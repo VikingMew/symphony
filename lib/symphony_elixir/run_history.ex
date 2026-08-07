@@ -3,7 +3,8 @@ defmodule SymphonyElixir.RunHistory do
   Presentation boundary for historical run session events.
   """
 
-  alias SymphonyElixir.Codex.MessageHumanizer
+  alias SymphonyElixir.Codex.{MessageHumanizer, Protocol}
+  alias SymphonyElixir.Codex.Protocol.Event
   alias SymphonyElixir.{Payload, RunSummary, StateName}
 
   @default_limit 100
@@ -45,10 +46,11 @@ defmodule SymphonyElixir.RunHistory do
   def from_event(event) do
     type = event_type(event)
     payload = event_payload(event)
-    detail = detail(type, payload)
+    protocol_event = protocol_event(type, payload)
+    detail = detail(type, payload, protocol_event)
 
     %{
-      at: event_time(event),
+      at: event_time(event, protocol_event),
       event: type,
       label: label(type, payload),
       detail: detail,
@@ -57,9 +59,9 @@ defmodule SymphonyElixir.RunHistory do
       phase: payload_value(payload, ["phase", :phase]),
       operation:
         payload_value(payload, ["operation", :operation, "hook", :hook, "hook_name", :hook_name]) ||
-          codex_operation(type, payload),
+          codex_operation(type, payload, protocol_event),
       low_signal: low_signal?(type, payload, detail),
-      metadata: metadata(type, payload)
+      metadata: metadata(type, payload, protocol_event)
     }
   end
 
@@ -81,9 +83,13 @@ defmodule SymphonyElixir.RunHistory do
   end
 
   defp event_time(event) do
+    type = event_type(event)
     payload = event_payload(event)
+    event_time(event, protocol_event(type, payload))
+  end
 
-    protocol_time(payload) ||
+  defp event_time(event, protocol_event) do
+    protocol_timestamp(protocol_event) ||
       value(event, [:occurred_at, "occurred_at", :at, "at"])
   end
 
@@ -139,14 +145,17 @@ defmodule SymphonyElixir.RunHistory do
     linear_tool_call_detail(status, tool, payload)
   end
 
-  defp detail("codex.update", payload), do: codex_update_detail(payload) || empty_codex_detail(payload) || "codex.update"
-
   defp detail(type, payload) do
     payload_value(payload, ["detail", :detail]) ||
       payload_value(payload, ["output", :output, "recent_output", :recent_output]) ||
       payload_message(payload) ||
       type
   end
+
+  defp detail("codex.update", payload, protocol_event),
+    do: codex_update_detail(payload, protocol_event) || empty_codex_detail(payload) || "codex.update"
+
+  defp detail(type, payload, _protocol_event), do: detail(type, payload)
 
   defp linear_tool_call_detail("success", tool, payload) do
     created = payload_value(payload, ["result", :result]) || %{}
@@ -187,44 +196,39 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
-  defp codex_update_detail(payload) do
+  defp codex_update_detail(payload, %Event{} = protocol_event) do
     event = payload |> payload_value(["event", :event]) |> normalize_codex_event()
 
     case payload_value(payload, ["message", :message]) do
       nil ->
         nil
 
-      message ->
-        codex_method_detail(message, payload) ||
-          message
+      _message ->
+        codex_method_detail(protocol_event) ||
+          protocol_event
           |> then(&MessageHumanizer.humanize_codex_message(%{event: event, message: &1}))
-          |> append_response_error_context(message)
+          |> append_response_error_context(protocol_event)
     end
   end
 
-  defp codex_method_detail(message, payload) do
-    method = Payload.get_any(message, ["method", :method])
-
-    case method do
-      "item/completed" -> completed_item_detail(message)
-      "thread/tokenUsage/updated" -> token_usage_detail(message, payload)
-      "account/rateLimits/updated" -> rate_limit_detail(message)
-      "turn/completed" -> turn_completed_detail(message)
+  defp codex_method_detail(%Event{} = event) do
+    case event.method do
+      "item/completed" -> completed_item_detail(event)
+      "thread/tokenUsage/updated" -> token_usage_detail(event)
+      "account/rateLimits/updated" -> rate_limit_detail(event)
+      "turn/completed" -> turn_completed_detail(event)
       _ -> nil
     end
   end
 
-  defp completed_item_detail(message) do
-    item = Payload.get_path(message, ["params", "item"]) || Payload.get_path(message, [:params, :item]) || %{}
-    item_type = Payload.get_any(item, ["type", :type])
-    phase = Payload.get_any(item, ["phase", :phase])
-    text = item |> Payload.get_any(["text", :text]) |> normalize_text()
+  defp completed_item_detail(%Event{} = event) do
+    text = normalize_text(event.item_text)
 
     cond do
-      item_type == "agentMessage" and phase == "final_answer" and is_binary(text) ->
+      event.item_type == "agentMessage" and event.item_phase == "final_answer" and is_binary(text) ->
         "agent final answer: #{text}"
 
-      item_type == "agentMessage" and is_binary(text) ->
+      event.item_type == "agentMessage" and is_binary(text) ->
         "agent message completed: #{text}"
 
       true ->
@@ -232,25 +236,16 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
-  defp token_usage_detail(message, payload) do
-    usage =
-      Payload.get_path(message, ["params", "tokenUsage", "total"]) ||
-        Payload.get_path(message, [:params, :tokenUsage, :total]) ||
-        token_usage_from_raw(payload)
-
-    case token_usage_summary(usage) do
+  defp token_usage_detail(%Event{} = event) do
+    case token_usage_summary(event.usage) do
       nil -> nil
       summary -> "thread token usage updated (#{summary})"
     end
   end
 
-  defp rate_limit_detail(message) do
-    rate_limits =
-      Payload.get_path(message, ["params", "rateLimits"]) ||
-        Payload.get_path(message, [:params, :rateLimits])
-
-    primary = rate_limit_bucket(rate_limits, "primary")
-    secondary = rate_limit_bucket(rate_limits, "secondary")
+  defp rate_limit_detail(%Event{} = event) do
+    primary = rate_limit_bucket(event.rate_limits, "primary")
+    secondary = rate_limit_bucket(event.rate_limits, "secondary")
 
     if primary || secondary do
       ["rate limits updated:", primary, secondary]
@@ -259,19 +254,15 @@ defmodule SymphonyElixir.RunHistory do
     end
   end
 
-  defp turn_completed_detail(message) do
-    turn = Payload.get_path(message, ["params", "turn"]) || Payload.get_path(message, [:params, :turn]) || %{}
-    status = Payload.get_any(turn, ["status", :status]) || "completed"
-    duration = Payload.get_any(turn, ["durationMs", :durationMs])
-
+  defp turn_completed_detail(%Event{} = event) do
     suffix =
-      if is_integer(duration) do
-        " in #{format_duration_ms(duration)}"
+      if is_integer(event.turn_duration_ms) do
+        " in #{format_duration_ms(event.turn_duration_ms)}"
       else
         ""
       end
 
-    "turn completed (#{status})#{suffix}"
+    "turn completed (#{event.turn_status || "completed"})#{suffix}"
   end
 
   defp empty_codex_detail(payload) do
@@ -285,13 +276,9 @@ defmodule SymphonyElixir.RunHistory do
       is_nil(payload_value(payload, ["message", :message]))
   end
 
-  defp append_response_error_context(detail, message) do
-    response_message =
-      Payload.get_path(message, [:response_error, "message"]) ||
-        Payload.get_path(message, ["response_error", "message"])
-
-    if is_binary(response_message) and !String.contains?(detail, response_message) do
-      "#{detail}: #{response_message}"
+  defp append_response_error_context(detail, %Event{} = event) do
+    if is_binary(event.response_error_message) and !String.contains?(detail, event.response_error_message) do
+      "#{detail}: #{event.response_error_message}"
     else
       detail
     end
@@ -377,101 +364,50 @@ defmodule SymphonyElixir.RunHistory do
     if String.length(value) > @max_payload_chars, do: String.slice(value, 0, @max_payload_chars) <> "...", else: value
   end
 
+  defp bound_value(%Event{raw: raw}), do: bound_value(raw)
   defp bound_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
   defp bound_value(value) when is_map(value), do: bounded_payload(value)
   defp bound_value(value) when is_list(value), do: Enum.map(value, &bound_value/1)
   defp bound_value(value), do: value
 
-  defp metadata(type, payload) do
+  defp metadata(type, payload, protocol_event) do
     payload
     |> bounded_payload()
-    |> Map.merge(derived_metadata(type, payload))
+    |> Map.merge(derived_metadata(type, payload, protocol_event))
   end
 
-  defp derived_metadata("codex.update", payload) do
-    message = payload_value(payload, ["message", :message]) || %{}
-    method = Payload.get_any(message, ["method", :method])
-    thread_id = payload_thread_id(message)
-    turn_id = payload_turn_id(message)
-    session_id = payload_value(payload, ["session_id", :session_id]) || derived_session_id(thread_id, turn_id)
+  defp derived_metadata("codex.update", payload, %Event{} = event) do
+    session_id = payload_value(payload, ["session_id", :session_id]) || derived_session_id(event.thread_id, event.turn_id)
 
     %{}
-    |> put_present("method", method)
-    |> put_present("thread_id", thread_id)
-    |> put_present("turn_id", turn_id)
+    |> put_present("method", event.method)
+    |> put_present("thread_id", event.thread_id)
+    |> put_present("turn_id", event.turn_id)
     |> put_present("session_id", session_id)
-    |> put_present("item_id", payload_item_id(message))
+    |> put_present("item_id", event.item_id)
   end
 
-  defp derived_metadata(_type, _payload), do: %{}
+  defp derived_metadata(_type, _payload, _protocol_event), do: %{}
 
   defp put_present(map, _key, nil), do: map
   defp put_present(map, _key, ""), do: map
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
-  defp payload_thread_id(message) do
-    Payload.get_path(message, ["params", "threadId"]) ||
-      Payload.get_path(message, [:params, :threadId]) ||
-      Payload.get_path(message, ["params", "thread", "id"]) ||
-      Payload.get_path(message, [:params, :thread, :id])
-  end
-
-  defp payload_turn_id(message) do
-    Payload.get_path(message, ["params", "turnId"]) ||
-      Payload.get_path(message, [:params, :turnId]) ||
-      Payload.get_path(message, ["params", "turn", "id"]) ||
-      Payload.get_path(message, [:params, :turn, :id])
-  end
-
-  defp payload_item_id(message) do
-    Payload.get_path(message, ["params", "item", "id"]) ||
-      Payload.get_path(message, [:params, :item, :id]) ||
-      Payload.get_path(message, ["params", "id"]) ||
-      Payload.get_path(message, [:params, :id])
-  end
-
   defp derived_session_id(thread_id, turn_id) when is_binary(thread_id) and is_binary(turn_id), do: "#{thread_id}-#{turn_id}"
   defp derived_session_id(thread_id, _turn_id) when is_binary(thread_id), do: thread_id
   defp derived_session_id(_thread_id, _turn_id), do: nil
 
-  defp protocol_time(payload) do
-    payload
-    |> payload_value(["message", :message])
-    |> case do
-      message when is_map(message) ->
-        protocol_timestamp(message)
-
-      _ ->
-        nil
-    end
-  end
-
-  defp protocol_timestamp(message) do
-    ms = protocol_timestamp_ms(message)
-    seconds = protocol_timestamp_seconds(message)
-
+  defp protocol_timestamp(%Event{} = event) do
     cond do
-      is_integer(ms) -> DateTime.from_unix!(ms, :millisecond)
-      is_integer(seconds) -> DateTime.from_unix!(seconds, :second)
+      is_integer(event.timestamp_ms) -> DateTime.from_unix!(event.timestamp_ms, :millisecond)
+      is_integer(event.timestamp_seconds) -> DateTime.from_unix!(event.timestamp_seconds, :second)
       true -> nil
     end
   rescue
     _error -> nil
   end
 
-  defp protocol_timestamp_ms(message) do
-    Payload.get_path(message, ["params", "completedAtMs"]) ||
-      Payload.get_path(message, [:params, :completedAtMs]) ||
-      Payload.get_path(message, ["params", "startedAtMs"]) ||
-      Payload.get_path(message, [:params, :startedAtMs])
-  end
-
-  defp protocol_timestamp_seconds(message) do
-    Payload.get_path(message, ["params", "turn", "completedAt"]) ||
-      Payload.get_path(message, [:params, :turn, :completedAt]) ||
-      Payload.get_path(message, ["params", "turn", "startedAt"]) ||
-      Payload.get_path(message, [:params, :turn, :startedAt])
-  end
+  defp protocol_timestamp(_protocol_event), do: nil
 
   defp normalize_text(value) when is_binary(value) do
     value
@@ -481,15 +417,6 @@ defmodule SymphonyElixir.RunHistory do
   end
 
   defp normalize_text(_value), do: nil
-
-  defp token_usage_from_raw(message) do
-    with raw when is_binary(raw) <- Payload.get_path(message, ["debug", "raw"]) || Payload.get_path(message, [:debug, :raw]),
-         {:ok, decoded} <- Jason.decode(raw) do
-      Payload.get_path(decoded, ["params", "tokenUsage", "total"])
-    else
-      _ -> nil
-    end
-  end
 
   defp token_usage_summary(usage) when is_map(usage) do
     total = Payload.get_any(usage, ["totalTokens", :totalTokens, "total_tokens", :total_tokens])
@@ -559,16 +486,22 @@ defmodule SymphonyElixir.RunHistory do
 
   defp blank?(value), do: StateName.blank_string?(value) or (not is_binary(value) and SymphonyElixir.Text.blankish?(value))
 
-  defp codex_operation("codex.update", payload) do
-    message = payload_value(payload, ["message", :message])
-
-    Payload.get_any(message || %{}, ["method", :method]) ||
-      Payload.get_path(message || %{}, ["params", "tool"]) ||
-      Payload.get_path(message || %{}, [:params, :tool]) ||
+  defp codex_operation("codex.update", payload, %Event{} = event) do
+    event.method ||
+      event.tool ||
       payload_value(payload, ["event", :event])
   end
 
-  defp codex_operation(_type, _payload), do: nil
+  defp codex_operation(_type, _payload, _protocol_event), do: nil
+
+  defp protocol_event("codex.update", payload) do
+    case payload_value(payload, ["message", :message]) do
+      %Event{} = event -> event
+      _message -> Protocol.normalize_event(payload)
+    end
+  end
+
+  defp protocol_event(_type, _payload), do: nil
 
   defp low_signal?("codex.update", payload, _detail), do: empty_codex_notification?(payload)
   defp low_signal?(_type, _payload, _detail), do: false

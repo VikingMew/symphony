@@ -1,7 +1,106 @@
 defmodule SymphonyElixir.Codex.ProtocolTest do
   use ExUnit.Case, async: true
 
+  alias SymphonyElixir.Codex.MessageHumanizer.Methods
   alias SymphonyElixir.Codex.Protocol
+  alias SymphonyElixir.RunHistory
+
+  describe "event normalization" do
+    test "one normalized event shape drives history and humanizer formatting" do
+      cases = [
+        %{
+          payload: %{
+            method: "turn/completed",
+            params: %{
+              threadId: "thread-1",
+              turn: %{id: "turn-1", status: "completed", durationMs: 125},
+              usage: %{inputTokens: 10, outputTokens: 5, totalTokens: 15}
+            }
+          },
+          fields: %{method: "turn/completed", thread_id: "thread-1", turn_id: "turn-1", input_tokens: 10, output_tokens: 5, total_tokens: 15},
+          humanized: "turn completed (completed) (in 10, out 5, total 15)",
+          history: "turn completed (completed) in 125ms"
+        },
+        %{
+          payload: %{
+            "method" => "item/completed",
+            :params => %{
+              "item" => %{
+                "type" => "agentMessage",
+                "status" => "completed",
+                id: "item-1",
+                phase: "final_answer",
+                text: "Done"
+              }
+            }
+          },
+          fields: %{method: "item/completed", item_id: "item-1", item_type: "agentMessage", item_status: "completed", item_phase: "final_answer"},
+          humanized: "item completed: agent message (item-1, completed)",
+          history: "agent final answer: Done"
+        },
+        %{
+          payload: %{
+            :method => "thread/tokenUsage/updated",
+            "params" => %{
+              tokenUsage: %{
+                "total" => %{"outputTokens" => 3, input_tokens: 8, totalTokens: 11}
+              }
+            }
+          },
+          fields: %{method: "thread/tokenUsage/updated", input_tokens: 8, output_tokens: 3, total_tokens: 11},
+          humanized: "thread token usage updated (in 8, out 3, total 11)",
+          history: "thread token usage updated (total 11, in 8, out 3)"
+        },
+        %{
+          payload: %{
+            "method" => "account/rateLimits/updated",
+            params: %{
+              rateLimits: %{
+                primary: %{usedPercent: 42, windowDurationMins: 300}
+              }
+            }
+          },
+          fields: %{method: "account/rateLimits/updated"},
+          humanized: "rate limits updated: primary 42% / 300m",
+          history: "rate limits updated: primary 42% / 300m"
+        }
+      ]
+
+      Enum.each(cases, fn test_case ->
+        event = Protocol.normalize_event(test_case.payload)
+
+        assert Map.take(Map.from_struct(event), Map.keys(test_case.fields)) == test_case.fields
+        assert Methods.humanize(event) == test_case.humanized
+
+        history_event =
+          RunHistory.from_event(%{
+            event_type: "codex.update",
+            payload: %{"event" => "notification", "message" => event}
+          })
+
+        assert history_event.detail == test_case.history
+        assert history_event.metadata["method"] == event.method
+        assert history_event.metadata["item_id"] == event.item_id
+        assert history_event.metadata["thread_id"] == event.thread_id
+        assert history_event.metadata["turn_id"] == event.turn_id
+      end)
+    end
+
+    test "normalizes atom method names and nested per-level key variants" do
+      event =
+        Protocol.normalize_event(%{
+          :method => :turn_completed,
+          "params" => %{
+            turn: %{"id" => "turn-2", status: "completed"},
+            token_usage: %{input_tokens: 2, output_tokens: 1, total_tokens: 3}
+          }
+        })
+
+      assert event.method == "turn/completed"
+      assert event.turn_id == "turn-2"
+      assert %{input_tokens: 2, output_tokens: 1, total_tokens: 3} = event
+    end
+  end
 
   describe "message framing" do
     test "encodes JSON-RPC messages as newline-delimited JSON" do

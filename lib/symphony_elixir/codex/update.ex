@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.Update do
   Normalizes Codex app-server updates into run metadata, history, and persisted payloads.
   """
 
-  alias SymphonyElixir.Codex.{MessageHumanizer, TokenUsage}
+  alias SymphonyElixir.Codex.{MessageHumanizer, Protocol, TokenUsage}
   alias SymphonyElixir.Codex.RateLimitParser
   alias SymphonyElixir.{Payload, Redaction}
 
@@ -82,22 +82,15 @@ defmodule SymphonyElixir.Codex.Update do
 
   @spec rate_limits(map()) :: map() | nil
   def rate_limits(update) do
-    rate_limits_from_payload(update[:rate_limits]) ||
-      rate_limits_from_payload(Map.get(update, "rate_limits")) ||
-      rate_limits_from_payload(Map.get(update, :rate_limits)) ||
-      rate_limits_from_payload(update[:payload]) ||
-      rate_limits_from_payload(Map.get(update, "payload")) ||
+    rate_limits_from_payload(Protocol.normalize_event(update).rate_limits) ||
+      rate_limits_from_payload(Payload.get_any(update, ["rate_limits", :rate_limits])) ||
+      rate_limits_from_payload(Payload.get_any(update, ["payload", :payload])) ||
       rate_limits_from_payload(update)
   end
 
   @spec rate_limit_update_event?(map()) :: boolean()
   def rate_limit_update_event?(update) when is_map(update) do
-    method =
-      update
-      |> Map.get(:payload)
-      |> payload_method()
-
-    method == "account/rateLimits/updated"
+    Protocol.normalize_event(update).method == "account/rateLimits/updated"
   end
 
   def rate_limit_update_event?(_update), do: false
@@ -238,11 +231,11 @@ defmodule SymphonyElixir.Codex.Update do
   defp streaming_detail(text, count), do: "agent message streaming: #{text} (#{count} fragments)"
 
   defp streaming_agent_message_fragment(%{payload: payload} = update) when is_map(payload) do
-    method = Payload.get_any(payload, ["method", :method])
+    event = Protocol.normalize_event(payload)
 
-    if method in ["item/agentMessage/delta", "codex/event/agent_message_delta", "codex/event/agent_message_content_delta"] do
-      case extract_streaming_delta(payload) do
-        fragment when is_binary(fragment) and fragment != "" -> {:ok, fragment, streaming_key(update, payload, method)}
+    if event.method in ["item/agentMessage/delta", "codex/event/agent_message_delta", "codex/event/agent_message_content_delta"] do
+      case normalize_delta(event.delta) do
+        fragment when is_binary(fragment) and fragment != "" -> {:ok, fragment, streaming_key(update, event)}
         _ -> :error
       end
     else
@@ -252,34 +245,10 @@ defmodule SymphonyElixir.Codex.Update do
 
   defp streaming_agent_message_fragment(_update), do: :error
 
-  defp streaming_key(update, payload, method) do
-    item_id =
-      Payload.get_path(payload, ["params", "id"]) ||
-        Payload.get_path(payload, [:params, :id]) ||
-        Payload.get_path(payload, ["params", "itemId"]) ||
-        Payload.get_path(payload, [:params, :itemId]) ||
-        Payload.get_path(payload, ["params", "msg", "id"]) ||
-        Payload.get_path(payload, [:params, :msg, :id])
-
-    [Map.get(update, :session_id), method, item_id]
+  defp streaming_key(update, event) do
+    [Map.get(update, :session_id), event.method, event.item_id]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(":")
-  end
-
-  defp extract_streaming_delta(payload) do
-    [
-      ["params", "delta"],
-      [:params, :delta],
-      ["params", "msg", "delta"],
-      [:params, :msg, :delta],
-      ["params", "msg", "payload", "delta"],
-      [:params, :msg, :payload, :delta],
-      ["params", "msg", "payload", "text"],
-      [:params, :msg, :payload, :text],
-      ["params", "msg", "payload", "content"],
-      [:params, :msg, :payload, :content]
-    ]
-    |> Enum.find_value(fn path -> payload |> Payload.get_path(path) |> normalize_delta() end)
   end
 
   defp normalize_delta(value) when is_binary(value) do
@@ -333,14 +302,6 @@ defmodule SymphonyElixir.Codex.Update do
     %{delta: max(delta, 0), reported: next_total}
   end
 
-  defp payload_method(payload) when is_map(payload) do
-    Payload.get_any(payload, ["method", :method]) ||
-      Payload.get_path(payload, ["params", "method"]) ||
-      Payload.get_path(payload, [:params, :method])
-  end
-
-  defp payload_method(_payload), do: nil
-
   defp rate_limit_debug_candidate(update) do
     candidates = [
       {"update.payload.params.msg.payload", Payload.get_path(update, [["payload", :payload], ["params", :params], ["msg", :msg], ["payload", :payload]])},
@@ -357,7 +318,7 @@ defmodule SymphonyElixir.Codex.Update do
     %{
       path: path,
       value: value,
-      method: payload_method(Map.get(update, :payload) || Map.get(update, "payload") || value)
+      method: Protocol.normalize_event(update).method
     }
   end
 

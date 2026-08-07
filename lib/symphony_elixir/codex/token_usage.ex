@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.TokenUsage do
   Extracts absolute Codex token usage from app-server and wrapper payloads.
   """
 
-  alias SymphonyElixir.Payload
+  alias SymphonyElixir.Codex.Protocol
 
   @zero %{input_tokens: 0, output_tokens: 0, total_tokens: 0}
 
@@ -12,19 +12,13 @@ defmodule SymphonyElixir.Codex.TokenUsage do
 
   @spec absolute_usage(map()) :: map()
   def absolute_usage(update) when is_map(update) do
-    payloads = [
-      update[:usage],
-      Map.get(update, "usage"),
-      Map.get(update, :usage),
-      update[:payload],
-      Map.get(update, "payload"),
-      update
-    ]
+    event = Protocol.normalize_event(update)
 
-    (Enum.find_value(payloads, &absolute_usage_from_payload/1) ||
-       Enum.find_value(payloads, &turn_completed_usage_from_payload/1) ||
-       @zero)
-    |> normalize()
+    normalize(%{
+      input_tokens: event.input_tokens,
+      output_tokens: event.output_tokens,
+      total_tokens: event.total_tokens
+    })
   end
 
   def absolute_usage(_update), do: @zero
@@ -73,80 +67,6 @@ defmodule SymphonyElixir.Codex.TokenUsage do
   end
 
   def normalize(_usage), do: @zero
-
-  defp absolute_usage_from_payload(payload) when is_map(payload) do
-    explicit_map_at_paths(payload, [
-      ["params", "msg", "payload", "info", "total_token_usage"],
-      [:params, :msg, :payload, :info, :total_token_usage],
-      ["params", "msg", "info", "total_token_usage"],
-      [:params, :msg, :info, :total_token_usage],
-      ["params", "tokenUsage", "total"],
-      [:params, :tokenUsage, :total],
-      ["tokenUsage", "total"],
-      [:tokenUsage, :total],
-      ["tokens"],
-      [:tokens],
-      ["params", "tokens"],
-      [:params, :tokens],
-      ["params", "total_token_usage"],
-      [:params, :total_token_usage],
-      ["message", "params", "tokens"],
-      [:message, :params, :tokens],
-      ["message", "params", "total_token_usage"],
-      [:message, :params, :total_token_usage]
-    ])
-  end
-
-  defp absolute_usage_from_payload(_payload), do: nil
-
-  defp turn_completed_usage_from_payload(payload) when is_map(payload) do
-    method = Payload.get_any(payload, ["method", :method])
-
-    direct =
-      Payload.get_any(payload, ["usage", :usage]) ||
-        Payload.get_path(payload, ["params", "usage"]) ||
-        Payload.get_path(payload, [:params, :usage])
-
-    if method in ["turn/completed", :turn_completed] and is_map(direct) and token_map?(direct), do: direct
-  end
-
-  defp turn_completed_usage_from_payload(_payload), do: nil
-
-  defp explicit_map_at_paths(payload, paths) do
-    Enum.find_value(paths, fn path ->
-      value = Payload.get_path(payload, path)
-      if is_map(value) and token_map?(value), do: value
-    end)
-  end
-
-  defp token_map?(payload) do
-    [
-      :input_tokens,
-      :output_tokens,
-      :total_tokens,
-      :prompt_tokens,
-      :completion_tokens,
-      :inputTokens,
-      :outputTokens,
-      :totalTokens,
-      :promptTokens,
-      :completionTokens,
-      "input_tokens",
-      "output_tokens",
-      "total_tokens",
-      "prompt_tokens",
-      "completion_tokens",
-      "inputTokens",
-      "outputTokens",
-      "totalTokens",
-      "promptTokens",
-      "completionTokens"
-    ]
-    |> Enum.any?(fn field ->
-      value = payload_get(payload, field)
-      is_integer(value)
-    end)
-  end
 
   defp payload_get(payload, fields) when is_list(fields), do: Enum.find_value(fields, fn field -> map_integer_value(payload, field) end)
   defp payload_get(payload, field), do: map_integer_value(payload, field)

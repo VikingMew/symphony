@@ -6,7 +6,7 @@ One protocol-event normalization path shared by run history, message humanizer, 
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -42,20 +42,40 @@ Start with shared field extraction; full struct normalization can follow. Don't 
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 22 [R] + 1 [D], down from 23 [R] + 2 [D])
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 684 tests, 3 failures (full suite). The 3 failures are the SAME
+  pre-existing cross-file concurrency race already documented in plan 233 (CoreTest
+  "run-start persistence failure" + WorkflowStoreTest x2), identical to the plan-232 control run.
+  No new failures. Isolated runs all green: workflow_store_test + core_test + protocol_test +
+  codex_update_test + methods_test + token_usage_test together = 63 tests, 0 failures.
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (protocol.ex, run_history.ex, token_usage.ex,
+  update.ex, message_humanizer/methods.ex + 2 test files)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Shared layer implemented by EXTENDING the existing `Codex.Protocol` boundary (the plan allowed
+  either) with `normalize_event/2` returning a typed `%Protocol.Event{}` struct. The struct keeps
+  `raw` + `params` and exposes canonical fields (method normalized to "turn/completed"-style
+  strings, id/session/thread/turn/item ids, item/turn status/phase/text, token counts, rate limits,
+  delta, plan entries, command, change count, question, auth mode, tool, errors, timestamps), each
+  extracted with `Payload.get_any/get_path` per-level candidate keys covering atom/string/camelCase
+  variants.
+- `TokenUsage.absolute_usage/1` collapsed its hand-rolled 17-path lookup matrix into a single
+  `Protocol.normalize_event` call; run_history and message_humanizer/methods extraction re-pointed
+  at the normalized event (per-consumer copy/formatting kept unchanged — no user-visible copy
+  changed).
+- `update.ex` event classification (`codex_operation/3`, rate-limit update detection) now reads the
+  normalized nested method instead of hand-walking payload paths.
+- New tests: protocol_test.exs normalize_event coverage (atom method names -> canonical strings,
+  nested per-level key variants, absolute-usage extraction); codex_update_test.exs mixed-key
+  streaming-field integration + normalized nested rate-limit detection. Test baseline 680 -> 684.
+- Codex hit and fixed a credo fatal complexity finding on the Event struct during the run (split
+  extraction into semantic helpers); final credo is 0 [F].
 
 ## Dependencies
 
