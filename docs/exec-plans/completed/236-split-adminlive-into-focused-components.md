@@ -6,7 +6,7 @@ Break the 2172-line AdminLive monolith into per-page LiveComponents/LiveViews wi
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -42,20 +42,38 @@ Pure extraction — no behavior change allowed. Prefer LiveComponent with `send`
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 22 [R] + 1 [D], none in the extracted modules)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 684 tests, 2 failures (full suite). Both failures are the pre-existing
+  WorkflowStoreTest concurrency race already documented in plans 233/235 (identical to the plan-232
+  control run); the CoreTest persistence race did not trigger this run. No new failures. All
+  admin/settings route tests (web_fake_persistence_test, auth_persistence_web_test,
+  settings_import_fake_persistence_test, observability_fake_persistence_test) pass.
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (admin_live.ex shrinks 2172 -> 170 lines; 14 new
+  modules under live/admin_live/; no routes touched)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- Split shape: `admin_live.ex` is a 170-line thin shell (mount/refresh delegation + nav); page
+  modules live under `lib/symphony_elixir_web/live/admin_live/`:
+  settings/projects.ex (222), settings/workflow.ex (351), settings/agents.ex (238),
+  settings/runtime.ex (30), settings/import.ex (211), settings/workflow_discovery.ex (120),
+  workflow_state.ex (321, shared form/validation state), settings_shell.ex (210, settings nav +
+  shared settings context), runs.ex (76), run_detail.ex (151), issue_detail.ex (59), events.ex (165),
+  state.ex (110, shared assigns/persistence plumbing). Largest module 351 lines — under the ~500
+  acceptance cap.
+- The plan's "Projects/Workflow/Agents/Runtime/Import components" map to the `settings/*` modules;
+  the observability surface (runs/run_detail/issue_detail/events) was extracted alongside since the
+  monolith carried both. `SettingsLive` remains the unchanged route boundary forwarding to the
+  AdminLive shell; all `/settings*` and `/runs*` routes behave identically (existing suites green).
+- Pure extraction: no behavior change; event handler logic moved with its page. Test baseline stays
+  684; no assertions changed.
+- Codex iterated twice inside the sandbox (route-focused validation after a governance fix, then the
+  full five-command sequence); final gates green.
 
 ## Dependencies
 
