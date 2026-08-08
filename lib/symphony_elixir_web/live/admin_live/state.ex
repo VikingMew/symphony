@@ -41,7 +41,6 @@ defmodule SymphonyElixirWeb.AdminLive.State do
       :workflow_versions,
       (selected_project && persistence().list_workflow_versions(selected_project)) || []
     )
-    |> assign(:tracker_configs, persistence().list_tracker_configs())
     |> assign(:workflow_form, workflow_form)
     |> WorkflowState.assign_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)

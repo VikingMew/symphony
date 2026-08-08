@@ -23,7 +23,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
           </ul>
         </aside>
       <% end %>
-      <pre class="code-panel"><%= inspect(@tracker_configs, pretty: true) %></pre>
     </section>
     """
   end

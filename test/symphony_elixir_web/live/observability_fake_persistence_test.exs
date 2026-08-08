@@ -267,10 +267,6 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     FakePersistence.put_issues([%{identifier: "MT-1", state: "In Progress", title: "Issue detail"}])
     FakePersistence.put_workflow_versions([workflow_version], workflow_version)
 
-    FakePersistence.put_agent_turns([
-      %{run_id: "run-1", turn_index: 1, status: "failed", summary: "Turn failed", started_at: now, finished_at: now}
-    ])
-
     FakePersistence.put_events([
       %{
         run_id: "run-1",
@@ -306,7 +302,6 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert run_html =~ "Run failed"
     assert run_html =~ "Codex startup failed"
     assert run_html =~ "unknown variant reject"
-    assert run_html =~ "Turn failed"
     assert run_html =~ "[REDACTED]"
     refute run_html =~ "secret"
 
@@ -390,7 +385,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     refute linear_html =~ "run.failed"
   end
 
-  test "run detail summarizes codex history when no structured agent turns exist" do
+  test "run detail summarizes codex turn history from events" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
@@ -440,13 +435,12 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert html =~ "Agent Summary"
     assert html =~ "Final message"
     assert html =~ "Tools"
-    assert html =~ "No structured agent turns recorded. Session history below is the source of truth for this run."
+    assert html =~ "Session History"
     assert html =~ "dynamic tool call requested (linear_task_read)"
     assert html =~ "linear_task_read x1"
     assert html =~ "agent message streaming: Finished the task."
     assert html =~ "2 empty Codex notifications; detailed payload was not persisted"
     assert html =~ "thread-history"
-    refute html =~ "No agent turns recorded."
   end
 
   test "runs page filters by project query parameter" do

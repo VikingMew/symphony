@@ -138,11 +138,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
               <input id={workflow_field_id("workspace_min_free_gib")} class={workflow_field_class(@workflow_field_errors, "workspace_min_free_gib")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "workspace_min_free_gib")} type="number" min="0" step="0.1" name="workflow[workspace_min_free_gib]" value={@workflow_form["workspace_min_free_gib"]} />
               <.workflow_field_error field="workspace_min_free_gib" errors={@workflow_field_errors} />
             </label>
-            <label class="checkbox-row">
-              <input type="hidden" name="workflow[workspace_auto_cleanup]" value="false" />
-              <input type="checkbox" name="workflow[workspace_auto_cleanup]" value="true" checked={@workflow_form["workspace_auto_cleanup"] == "true"} />
-              <span>Auto cleanup before blocking</span>
-            </label>
             <div class="settings-derived-preview">
               <span class="metric-label">Derived paths</span>
               <code><%= ProjectSettings.repository_preview(@workflow_form, @projects) %></code>

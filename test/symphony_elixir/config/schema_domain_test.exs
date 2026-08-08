@@ -2,7 +2,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
   use SymphonyElixir.TestSupport
   alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Config.Schema.{Codex, StringOrMap}
+  alias SymphonyElixir.Config.Schema.StringOrMap
 
   test "config reads defaults for optional settings" do
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
@@ -14,7 +14,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       max_concurrent_agents: nil,
       codex_approval_policy: nil,
       codex_thread_sandbox: nil,
-      codex_turn_sandbox_policy: nil,
+      turn_sandbox_policy: nil,
       codex_turn_timeout_ms: nil,
       codex_read_timeout_ms: nil,
       codex_stall_timeout_ms: nil,
@@ -34,18 +34,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert config.codex.pre_start_commands == []
     assert config.codex.approval_policy == "never"
     assert config.codex.thread_sandbox == "workspace-write"
-
-    assert {:ok, canonical_default_workspace_root} =
-             SymphonyElixir.PathSafety.canonicalize(Path.join(System.tmp_dir!(), "symphony_workspaces"))
-
-    assert Config.codex_turn_sandbox_policy() == %{
-             "type" => "workspaceWrite",
-             "writableRoots" => [canonical_default_workspace_root],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
-             "networkAccess" => false,
-             "excludeTmpdirEnvVar" => false,
-             "excludeSlashTmp" => false
-           }
 
     assert config.codex.turn_timeout_ms == 3_600_000
     assert config.codex.read_timeout_ms == 5_000
@@ -80,7 +68,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       workspace_root: explicit_root,
       codex_approval_policy: "on-request",
       codex_thread_sandbox: "workspace-write",
-      codex_turn_sandbox_policy: %{
+      turn_sandbox_policy: %{
         type: "workspaceWrite",
         writableRoots: [explicit_workspace, explicit_cache]
       }
@@ -90,7 +78,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert config.codex.approval_policy == "on-request"
     assert config.codex.thread_sandbox == "workspace-write"
 
-    assert Config.codex_turn_sandbox_policy(explicit_workspace) == %{
+    assert config.codex.turn_sandbox_policy == %{
              "type" => "workspaceWrite",
              "writableRoots" => [explicit_workspace, explicit_cache]
            }
@@ -157,7 +145,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert :ok = Config.validate!()
     assert Config.settings!().codex.thread_sandbox == ""
 
-    write_workflow_file!(Workflow.workflow_file_path(), codex_turn_sandbox_policy: "bad")
+    write_workflow_file!(Workflow.workflow_file_path(), turn_sandbox_policy: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.turn_sandbox_policy"
 
@@ -188,7 +176,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
       codex_thread_sandbox: "future-sandbox",
-      codex_turn_sandbox_policy: %{
+      turn_sandbox_policy: %{
         type: "futureSandbox",
         nested: %{flag: true}
       }
@@ -196,12 +184,13 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
 
     config = Config.settings!()
     assert config.codex.thread_sandbox == "future-sandbox"
-    assert :ok = Config.validate!()
 
-    assert Config.codex_turn_sandbox_policy() == %{
+    assert config.codex.turn_sandbox_policy == %{
              "type" => "futureSandbox",
              "nested" => %{"flag" => true}
            }
+
+    assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
     assert Config.settings!().codex.command == "codex app-server"
@@ -415,43 +404,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert message =~ "profiles.implementation.allowed_updates.target_states"
   end
 
-  test "schema resolves sandbox policies from explicit and default workspaces" do
-    explicit_policy = %{"type" => "workspaceWrite", "writableRoots" => ["/tmp/explicit"]}
-
-    assert Schema.resolve_turn_sandbox_policy(%Schema{
-             codex: %Codex{turn_sandbox_policy: explicit_policy},
-             workspace: %Schema.Workspace{root: "/tmp/ignored"}
-           }) == explicit_policy
-
-    assert Schema.resolve_turn_sandbox_policy(%Schema{
-             codex: %Codex{turn_sandbox_policy: nil},
-             workspace: %Schema.Workspace{root: ""}
-           }) == %{
-             "type" => "workspaceWrite",
-             "writableRoots" => [Path.expand(Path.join(System.tmp_dir!(), "symphony_workspaces"))],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
-             "networkAccess" => false,
-             "excludeTmpdirEnvVar" => false,
-             "excludeSlashTmp" => false
-           }
-
-    assert Schema.resolve_turn_sandbox_policy(
-             %Schema{
-               codex: %Codex{turn_sandbox_policy: nil},
-               workspace: %Schema.Workspace{root: "/tmp/ignored"}
-             },
-             "/tmp/workspace"
-           ) == %{
-             "type" => "workspaceWrite",
-             "writableRoots" => [Path.expand("/tmp/workspace")],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
-             "networkAccess" => false,
-             "excludeTmpdirEnvVar" => false,
-             "excludeSlashTmp" => false
-           }
-  end
-
-  test "schema keeps workspace roots raw while sandbox helpers expand only for local use" do
+  test "schema keeps workspace roots raw while runtime resolution preserves remote roots" do
     assert {:ok, settings} =
              Schema.parse(%{
                workspace: %{root: "~/.symphony-workspaces"},
@@ -459,15 +412,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
              })
 
     assert settings.workspace.root == "~/.symphony-workspaces"
-
-    assert Schema.resolve_turn_sandbox_policy(settings) == %{
-             "type" => "workspaceWrite",
-             "writableRoots" => [Path.expand("~/.symphony-workspaces")],
-             "readOnlyAccess" => %{"type" => "fullAccess"},
-             "networkAccess" => false,
-             "excludeTmpdirEnvVar" => false,
-             "excludeSlashTmp" => false
-           }
 
     assert {:ok, remote_policy} =
              Schema.resolve_runtime_turn_sandbox_policy(settings, nil, remote: true)
@@ -480,54 +424,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
              "excludeTmpdirEnvVar" => false,
              "excludeSlashTmp" => false
            }
-  end
-
-  test "runtime sandbox policy resolution passes explicit policies through unchanged" do
-    test_root =
-      Path.join(
-        System.tmp_dir!(),
-        "symphony-elixir-runtime-sandbox-#{System.unique_integer([:positive])}"
-      )
-
-    try do
-      workspace_root = Path.join(test_root, "workspaces")
-      issue_workspace = Path.join(workspace_root, "MT-100")
-      File.mkdir_p!(issue_workspace)
-
-      write_workflow_file!(Workflow.workflow_file_path(),
-        workspace_root: workspace_root,
-        codex_turn_sandbox_policy: %{
-          type: "workspaceWrite",
-          writableRoots: ["relative/path"],
-          networkAccess: true
-        }
-      )
-
-      assert {:ok, runtime_settings} = Config.codex_runtime_settings(issue_workspace)
-
-      assert runtime_settings.turn_sandbox_policy == %{
-               "type" => "workspaceWrite",
-               "writableRoots" => ["relative/path"],
-               "networkAccess" => true
-             }
-
-      write_workflow_file!(Workflow.workflow_file_path(),
-        workspace_root: workspace_root,
-        codex_turn_sandbox_policy: %{
-          type: "futureSandbox",
-          nested: %{flag: true}
-        }
-      )
-
-      assert {:ok, runtime_settings} = Config.codex_runtime_settings(issue_workspace)
-
-      assert runtime_settings.turn_sandbox_policy == %{
-               "type" => "futureSandbox",
-               "nested" => %{"flag" => true}
-             }
-    after
-      File.rm_rf(test_root)
-    end
   end
 
   test "path safety returns errors for invalid path segments" do

@@ -55,24 +55,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
           <p class="empty-state">No workflow version is attached to this run.</p>
         <% end %>
 
-        <h2 class="section-title">Agent Turns</h2>
-        <%= if @run_detail.turns == [] do %>
-          <p class="empty-state">No structured agent turns recorded. Session history below is the source of truth for this run.</p>
-        <% else %>
-          <table class="data-table">
-            <thead><tr><th>Turn</th><th>Status</th><th>Started</th><th>Finished</th><th>Summary</th></tr></thead>
-            <tbody>
-              <tr :for={turn <- @run_detail.turns}>
-                <td><%= turn.turn_index %></td>
-                <td><%= turn.status %></td>
-                <td class="mono"><%= ObservabilityPresenter.fmt_dt(turn.started_at) %></td>
-                <td class="mono"><%= ObservabilityPresenter.fmt_dt(turn.finished_at) %></td>
-                <td><%= turn.summary || "n/a" %></td>
-              </tr>
-            </tbody>
-          </table>
-        <% end %>
-
         <h2 class="section-title">Session History</h2>
         <%= if @run_detail.session_history == [] do %>
           <p class="empty-state">No session history recorded for this run.</p>
@@ -120,7 +102,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
     assign(socket, :run_detail, %{
       run: run,
       workflow_version: workflow_version,
-      turns: if(run, do: persistence().list_agent_turns_for_run(run.id), else: []),
       session_history: session_history,
       summary: RunHistory.summarize(run, session_history),
       events: if(run, do: persistence().list_events(run_id: run.id, limit: 100), else: [])
@@ -132,7 +113,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
       %{
         run: nil,
         workflow_version: nil,
-        turns: [],
         session_history: [],
         summary: RunHistory.summarize(nil, []),
         events: []

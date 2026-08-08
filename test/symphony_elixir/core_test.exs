@@ -128,7 +128,7 @@ defmodule SymphonyElixir.CoreTest do
 
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
-      codex_turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["relative/path"]}
+      turn_sandbox_policy: %{type: "workspaceWrite", writableRoots: ["relative/path"]}
     )
 
     assert :ok = Config.validate!()
@@ -1048,7 +1048,7 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:listening_mode, :listening_all)
       end)
 
-      send(pid, :tick)
+      send(pid, {:tick, initial_state.tick_token})
       Process.sleep(100)
       state = :sys.get_state(pid)
 

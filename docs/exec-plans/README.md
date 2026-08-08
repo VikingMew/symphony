@@ -241,10 +241,11 @@ Plans should focus on product and engineering intent rather than full implementa
 234. [234-type-orchestrator-running-state-single-listening-source.md](completed/234-type-orchestrator-running-state-single-listening-source.md)
 235. [235-normalize-codex-protocol-events-shared-parsing.md](completed/235-normalize-codex-protocol-events-shared-parsing.md)
 236. [236-split-adminlive-into-focused-components.md](completed/236-split-adminlive-into-focused-components.md)
+237. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](completed/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)
 
 ## Active Plans
 
-1. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](active/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)
+Plans 230-237 (Codex static-analysis cleanup batch) are all completed and archived. No active plans remain.
 
 ## Intentional Numbering Gaps
 

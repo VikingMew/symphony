@@ -9,12 +9,10 @@ defmodule SymphonyElixir.Persistence do
   alias SymphonyElixir.{RunLifecycle, Workflow}
 
   alias SymphonyElixir.Persistence.{
-    AgentTurn,
     EventRecord,
     IssueRecord,
     Project,
     RunRecord,
-    TrackerConfig,
     User,
     WorkerQueue,
     WorkflowStore,
@@ -126,15 +124,6 @@ defmodule SymphonyElixir.Persistence do
     end
   end
 
-  @spec list_agent_turns_for_run(String.t()) :: [AgentTurn.t()]
-  def list_agent_turns_for_run(run_id) when is_binary(run_id) do
-    if repo_available?() do
-      Repo.all(from(t in AgentTurn, where: t.run_id == ^run_id, order_by: [asc: t.turn_index]))
-    else
-      []
-    end
-  end
-
   @spec record_event(map()) :: {:ok, EventRecord.t()} | {:error, term()}
   def record_event(attrs) do
     if repo_available?() do
@@ -143,11 +132,6 @@ defmodule SymphonyElixir.Persistence do
     else
       {:error, :repo_unavailable}
     end
-  end
-
-  @spec record_agent_turn(map()) :: {:ok, AgentTurn.t()} | {:error, term()}
-  def record_agent_turn(attrs) do
-    if repo_available?(), do: %AgentTurn{} |> AgentTurn.changeset(attrs) |> Repo.insert(), else: {:error, :repo_unavailable}
   end
 
   @spec record_workspace(map()) :: {:ok, WorkspaceRecord.t()} | {:error, term()}
@@ -319,11 +303,6 @@ defmodule SymphonyElixir.Persistence do
     else
       {:error, :repo_unavailable}
     end
-  end
-
-  @spec list_tracker_configs() :: [TrackerConfig.t()]
-  def list_tracker_configs do
-    if repo_available?(), do: Repo.all(from(t in TrackerConfig, order_by: [asc: t.inserted_at])), else: []
   end
 
   @spec worker_protocol_version() :: String.t()

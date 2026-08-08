@@ -97,13 +97,12 @@ defmodule SymphonyElixir.Config.Schema do
       field(:worktree_base_root, :string)
       field(:initialize_timeout_ms, :integer, default: 60_000)
       field(:min_free_bytes, :integer, default: 1_073_741_824)
-      field(:auto_cleanup, :boolean, default: false)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes, :auto_cleanup], empty_values: [])
+      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes], empty_values: [])
       |> validate_optional_non_blank(:repository_base_root)
       |> validate_optional_non_blank(:worktree_base_root)
       |> validate_number(:initialize_timeout_ms, greater_than: 0)
@@ -399,20 +398,6 @@ defmodule SymphonyElixir.Config.Schema do
 
       {:error, changeset} ->
         {:error, {:invalid_workflow_config, format_errors(changeset)}}
-    end
-  end
-
-  @spec resolve_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil) :: map()
-  def resolve_turn_sandbox_policy(settings, workspace \\ nil) do
-    case settings.codex.turn_sandbox_policy do
-      %{} = policy ->
-        policy
-
-      _ ->
-        workspace
-        |> RuntimeResolver.default_workspace_root(settings.workspace.root)
-        |> RuntimeResolver.expand_local_workspace_root()
-        |> RuntimeResolver.default_turn_sandbox_policy()
     end
   end
 

@@ -39,7 +39,6 @@ defmodule SymphonyElixir.WorkflowForm do
       "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"], ""),
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
       "workspace_min_free_gib" => min_free_gib_string(get_in(display_config, ["workspace", "min_free_bytes"])),
-      "workspace_auto_cleanup" => get_boolean_string(display_config, ["workspace", "auto_cleanup"], false),
       "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
       "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
@@ -104,7 +103,7 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, rate_limit_gate_7d_threshold} <- parse_percent(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold"),
          {:ok, rate_limit_gate_post_reset_delay_ms} <- parse_non_negative_integer(draft, "codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
-         {:ok, turn_sandbox_policy} <- codex_turn_sandbox_policy(draft) do
+         {:ok, turn_sandbox_policy} <- turn_sandbox_policy_from_draft(draft) do
       config =
         draft
         |> Map.get("_base_config", %{})
@@ -121,7 +120,6 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_optional_path(["workspace", "worktree_base_root"], Map.get(draft, "workspace_worktree_base_root", ""))
         |> put_path(["workspace", "initialize_timeout_ms"], initialize_timeout_ms)
         |> put_path(["workspace", "min_free_bytes"], workspace_min_free_bytes)
-        |> put_path(["workspace", "auto_cleanup"], truthy?(Map.get(draft, "workspace_auto_cleanup")))
         |> put_path(["agent", "max_concurrent_agents"], max_agents)
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
@@ -319,13 +317,13 @@ defmodule SymphonyElixir.WorkflowForm do
   end
 
   defp put_turn_sandbox_error(errors, draft) do
-    case codex_turn_sandbox_policy(draft) do
+    case turn_sandbox_policy_from_draft(draft) do
       {:ok, _policy} -> errors
       {:error, message} -> Map.put(errors, "codex_turn_sandbox_json", message)
     end
   end
 
-  defp codex_turn_sandbox_policy(draft) do
+  defp turn_sandbox_policy_from_draft(draft) do
     case Map.get(draft, "codex_turn_sandbox_preset", "workspace_write_no_network") do
       "workspace_write_network" ->
         {:ok, workspace_write_policy(true)}

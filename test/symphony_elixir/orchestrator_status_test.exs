@@ -1261,7 +1261,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, :tick)
+    send(pid, {:tick, initial_state.tick_token})
     Process.sleep(100)
     state = :sys.get_state(pid)
 
@@ -1378,7 +1378,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, :tick)
+    send(pid, {:tick, initial_state.tick_token})
     Process.sleep(100)
     state = :sys.get_state(pid)
 
@@ -1438,7 +1438,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, :tick)
+    send(pid, {:tick, initial_state.tick_token})
     Process.sleep(100)
     state = :sys.get_state(pid)
 

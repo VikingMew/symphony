@@ -281,7 +281,7 @@ defmodule SymphonyElixir.AppServerStartupTest do
         codex_command: "#{codex_binary} app-server",
         codex_approval_policy: "on-request",
         codex_thread_sandbox: "workspace-write",
-        codex_turn_sandbox_policy: %{
+        turn_sandbox_policy: %{
           type: "workspaceWrite",
           writableRoots: [Path.expand(workspace), workspace_cache]
         }

@@ -6,7 +6,7 @@ Delete confirmed-dead config keys, unreachable code paths, and test-only shadow 
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -47,20 +47,39 @@ Linus: if nothing breaks when you delete it, it wasn't earning its place — but
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (664 baseline, 0 failures, 2 skipped; known flaky:
-  OrchestratorStatusTest `:sys.get_state` timeout, HookRunnerTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- grep acceptance: `auto_cleanup` / `record_agent_turn` / `codex_turn_sandbox_policy` /
+  `resolve_turn_sandbox_policy` / `TrackerConfig` -> zero references across lib + test
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 22 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 682 tests, 3 failures (full suite). The 3 failures are the SAME
+  pre-existing cross-file concurrency race documented in plans 233/235/236 (CoreTest
+  "run-start persistence failure" + WorkflowStoreTest x2), identical to the plan-232 control run.
+  No new failures. Run-detail page test updated to prove turn history renders from events
+  ("run detail summarizes codex turn history from events" passes).
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: 19 files, net -335 lines; deletions only + mechanical test updates
 
 ## Completion Deviations
 
-To be filled after implementation.
+- `record_agent_turn/1` + `AgentTurn` read path DELETED: run-detail turn visibility is fully
+  covered by generic codex.update events (verified — observability_fake_persistence_test's
+  run-detail test now asserts turn history renders from events, and the
+  "No structured agent turns recorded" fallback copy was removed). The plan's conditional
+  ("delete IF events cover turn visibility") was satisfied, so no wiring was needed.
+- `workspace.auto_cleanup` deleted from schema/form/UI (default decision per plan; cleanup policy
+  lives in WorkspaceCleanupPolicy). `TrackerConfig` schema + list API + admin panel deleted
+  (runtime config comes from WorkflowVersion).
+- Sandbox shadow API set deleted: `resolve_turn_sandbox_policy/2`, `codex_turn_sandbox_policy/1`,
+  `codex_runtime_settings/2` and their isolated tests (schema_domain_test -124 lines);
+  `Schema.resolve_runtime_turn_sandbox_policy/3` retained as the single entry (AppServer's path).
+  The `codex_runtime_settings` @type is gone with its function.
+- Bare `handle_info(:tick, state)` clause removed; remaining tests use the token form.
+- Tests updated mechanically (fake_persistence.exs dropped put_agent_turns, app-server startup
+  tests re-pointed at the retained sandbox API); baseline 684 -> 682 (-2 removed with the dead
+  surfaces).
 
 ## Dependencies
 

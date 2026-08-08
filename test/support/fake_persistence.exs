@@ -42,11 +42,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :issues, issues))
   end
 
-  def put_agent_turns(turns) when is_list(turns) do
-    ensure_started()
-    Agent.update(@name, &Map.put(&1, :agent_turns, turns))
-  end
-
   def put_workflow_versions(versions, active_version \\ nil) when is_list(versions) do
     ensure_started()
 
@@ -315,10 +310,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
-  def list_tracker_configs do
-    []
-  end
-
   def export_workflow(%{raw_workflow_md: raw}), do: raw
 
   def activate_workflow_version(version) do
@@ -448,11 +439,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def list_runs_for_issue(identifier, _opts \\ []) do
     ensure_started()
     Agent.get(@name, fn state -> Enum.filter(state.runs, &(Map.get(&1, :issue_identifier) == identifier)) end)
-  end
-
-  def list_agent_turns_for_run(run_id) do
-    ensure_started()
-    Agent.get(@name, fn state -> Enum.filter(state.agent_turns, &(Map.get(&1, :run_id) == run_id)) end)
   end
 
   def get_user(username) do
@@ -633,7 +619,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       tasks: [],
       task_leases: [],
       issues: [],
-      agent_turns: [],
       workflow_versions: [],
       active_workflow_version: nil,
       next_import_workflow_error: nil,
