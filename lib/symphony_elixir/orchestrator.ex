@@ -1266,7 +1266,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp ensure_workspace_disk_available(issue) do
-    case WorkspaceDiskGuard.check(Config.settings!()) do
+    case workspace_disk_guard().check(Config.settings!()) do
       {:ok, _summary} ->
         :ok
 
@@ -1276,8 +1276,23 @@ defmodule SymphonyElixir.Orchestrator do
     end
   rescue
     error ->
-      Logger.warning("Unable to evaluate workspace disk guard for #{issue_context(issue)}: #{Exception.message(error)}")
-      :ok
+      reason = %{
+        reason: :disk_guard_evaluation_failed,
+        exception: error.__struct__,
+        detail: Exception.message(error)
+      }
+
+      Logger.error("Workspace disk guard evaluation failed action=disk_guard_failed #{disk_guard_log_context(issue)} exception=#{inspect(reason.exception)} reason=#{inspect(reason.detail)}")
+
+      {:error, reason}
+  end
+
+  defp disk_guard_log_context(%Issue{id: run_id, assigned_to_worker: false, labels: ["operator" | _]}), do: "run_id=#{run_id}"
+
+  defp disk_guard_log_context(%Issue{} = issue), do: issue_context(issue)
+
+  defp workspace_disk_guard do
+    Application.get_env(:symphony_elixir, :workspace_disk_guard_module, WorkspaceDiskGuard)
   end
 
   defp block_issue_for_disk_guard(%State{} = state, %Issue{} = issue, reason, worker_host) do

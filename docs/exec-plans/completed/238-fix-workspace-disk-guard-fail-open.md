@@ -6,7 +6,7 @@ Stop the workspace disk-safety gate from passing when its own evaluation fails.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -60,18 +60,32 @@ and the issue/run context per docs/logging.md.
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 22 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 686 tests, 2 failures (full suite). Both failures are the PRE-EXISTING
+  WorkflowStoreTest concurrency race documented in plans 233/235/236/237 (identical to the plan-232
+  control run); NOT introduced by this plan. Isolated runs green: workflow_store + core +
+  orchestrator_workspace_disk_guard together = 47 tests, 0 failures.
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (orchestrator.ex + new
+  test/symphony_elixir/orchestrator_workspace_disk_guard_test.exs)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- `ensure_workspace_disk_available/1` rescue is now fail-closed: any exception produces
+  `{:error, %{reason: :disk_guard_evaluation_failed, exception: <struct>, detail: <message>}}`
+  and a structured `Logger.error` with `action=disk_guard_failed`. The error flows into the
+  existing blocked/failure machinery — no `:ok` pass-through remains.
+- Guard module is injectable via `Application.get_env(:symphony_elixir, :workspace_disk_guard_module)`
+  (defaults to `WorkspaceDiskGuard`) so tests stub both denial and exceptions.
+- Log context distinguishes operator tasks (`run_id=...`) from issues (`issue_context/1`).
+- New test file covers all four acceptance scenarios: exception -> issue blocked (no agent spawned,
+  log carries action=disk_guard_failed + issue context), exception -> operator task failed
+  (reply.status == "failed", no operator runner spawned), normal denial keeps the existing blocked
+  path, normal allow proceeds. Test baseline 682 -> 686 (+4).
+
+## Dependencies
 
