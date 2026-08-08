@@ -1050,23 +1050,24 @@ defmodule SymphonyElixir.Workspace do
   defp validate_workspace_path(workspace, nil) when is_binary(workspace) do
     expanded_workspace = Path.expand(workspace)
     expanded_root = Path.expand(workspace_root())
-    expanded_root_prefix = expanded_root <> "/"
 
     with {:ok, canonical_workspace} <- PathSafety.canonicalize(expanded_workspace),
          {:ok, canonical_root} <- PathSafety.canonicalize(expanded_root) do
-      canonical_root_prefix = canonical_root <> "/"
-
-      cond do
-        canonical_workspace == canonical_root ->
+      case PathSafety.classify_strict_descendant(
+             canonical_workspace,
+             expanded_workspace,
+             [{expanded_root, canonical_root}]
+           ) do
+        {:exact_root, _canonical_root} ->
           {:error, {:workspace_equals_root, canonical_workspace, canonical_root}}
 
-        String.starts_with?(canonical_workspace <> "/", canonical_root_prefix) ->
+        {:inside, _canonical_root} ->
           :ok
 
-        String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
-          {:error, {:workspace_symlink_escape, expanded_workspace, canonical_root}}
+        {:symlink_escape, symlink_root} ->
+          {:error, {:workspace_symlink_escape, expanded_workspace, symlink_root}}
 
-        true ->
+        :outside ->
           {:error, {:workspace_outside_root, canonical_workspace, canonical_root}}
       end
     else

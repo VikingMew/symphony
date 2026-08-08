@@ -235,28 +235,21 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp validate_workspace_against_roots(canonical_workspace, expanded_workspace, roots) do
-    exact_root = Enum.find(roots, fn {_expanded_root, canonical_root} -> canonical_workspace == canonical_root end)
-    matching_root = Enum.find(roots, fn {_expanded_root, canonical_root} -> under_root?(canonical_workspace, canonical_root) end)
-    symlink_root = Enum.find(roots, fn {expanded_root, _canonical_root} -> under_root?(expanded_workspace, expanded_root) end)
-
-    cond do
-      exact_root ->
+    case PathSafety.classify_strict_descendant(canonical_workspace, expanded_workspace, roots) do
+      {:exact_root, _canonical_root} ->
         {:error, {:invalid_workspace_cwd, :workspace_root, canonical_workspace}}
 
-      matching_root ->
+      {:inside, _canonical_root} ->
         {:ok, canonical_workspace}
 
-      symlink_root ->
-        {_expanded_root, canonical_root} = symlink_root
+      {:symlink_escape, canonical_root} ->
         {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
 
-      true ->
+      :outside ->
         {_expanded_root, canonical_root} = List.first(roots)
         {:error, {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
     end
   end
-
-  defp under_root?(path, root), do: String.starts_with?(path <> "/", root <> "/")
 
   defp blank?(value), do: SymphonyElixir.Text.blank?(value)
 

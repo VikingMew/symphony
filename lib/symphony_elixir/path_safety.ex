@@ -1,6 +1,13 @@
 defmodule SymphonyElixir.PathSafety do
   @moduledoc false
 
+  @type canonical_root :: {Path.t(), Path.t()}
+  @type strict_descendant_classification ::
+          {:inside, Path.t()}
+          | {:exact_root, Path.t()}
+          | {:symlink_escape, Path.t()}
+          | :outside
+
   @spec canonicalize(Path.t()) :: {:ok, Path.t()} | {:error, term()}
   def canonicalize(path) when is_binary(path) do
     expanded_path = Path.expand(path)
@@ -12,6 +19,43 @@ defmodule SymphonyElixir.PathSafety do
 
       {:error, reason} ->
         {:error, {:path_canonicalize_failed, expanded_path, reason}}
+    end
+  end
+
+  @spec classify_strict_descendant(Path.t(), Path.t(), [canonical_root()]) ::
+          strict_descendant_classification()
+  def classify_strict_descendant(canonical_path, expanded_path, roots)
+      when is_binary(canonical_path) and is_binary(expanded_path) and is_list(roots) do
+    exact_root =
+      Enum.find(roots, fn {_expanded_root, canonical_root} ->
+        canonical_path == canonical_root
+      end)
+
+    matching_root =
+      Enum.find(roots, fn {_expanded_root, canonical_root} ->
+        strictly_inside?(canonical_path, canonical_root)
+      end)
+
+    symlink_root =
+      Enum.find(roots, fn {expanded_root, _canonical_root} ->
+        strictly_inside?(expanded_path, expanded_root)
+      end)
+
+    cond do
+      exact_root ->
+        {_expanded_root, canonical_root} = exact_root
+        {:exact_root, canonical_root}
+
+      matching_root ->
+        {_expanded_root, canonical_root} = matching_root
+        {:inside, canonical_root}
+
+      symlink_root ->
+        {_expanded_root, canonical_root} = symlink_root
+        {:symlink_escape, canonical_root}
+
+      true ->
+        :outside
     end
   end
 
@@ -46,5 +90,9 @@ defmodule SymphonyElixir.PathSafety do
 
   defp join_path(root, segments) when is_list(segments) do
     Enum.reduce(segments, root, fn segment, acc -> Path.join(acc, segment) end)
+  end
+
+  defp strictly_inside?(path, root) do
+    path != root and String.starts_with?(path <> "/", root <> "/")
   end
 end

@@ -347,6 +347,34 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
     end
   end
 
+  test "workspace remove preserves the symlink escape error mapping" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-workspace-remove-symlink-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      outside_root = Path.join(test_root, "outside")
+      symlink_path = Path.join(workspace_root, "MT-SYM")
+
+      File.mkdir_p!(workspace_root)
+      File.mkdir_p!(outside_root)
+      File.ln_s!(outside_root, symlink_path)
+
+      write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
+
+      assert {:ok, canonical_workspace_root} =
+               SymphonyElixir.PathSafety.canonicalize(workspace_root)
+
+      assert {:error, {:workspace_symlink_escape, ^symlink_path, ^canonical_workspace_root}, ""} =
+               Workspace.remove(symlink_path)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace canonicalizes symlinked workspace roots before creating issue directories" do
     test_root =
       Path.join(

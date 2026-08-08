@@ -7,7 +7,7 @@ primitive in `PathSafety`, locked by table-driven tests.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -54,18 +54,30 @@ security tests after each swap.
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 20 [R] + 1 [D], unchanged from plan 247)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 703 tests, 1 failure (full suite). The single failure is the KNOWN
+  flaky OrchestratorStatusTest timeout (documented in the plan baseline); the file passes in
+  isolation (41 tests, 0 failures). Not related to this plan (touches no orchestrator code).
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (path_safety.ex + 3 call-site modules +
+  path_safety_test.exs (new) + source_preparation_test.exs)
+- grep acceptance: no direct `String.starts_with?(path <> "/", root <> "/")` checks remain in
+  workspace.ex / app_server.ex / workspace_cleanup_policy.ex (all through PathSafety)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- New `PathSafety.classify_strict_descendant/3`: canonical path + expanded path + root list ->
+  `{:inside, root} | {:exact_root, root} | {:symlink_escape, root} | :outside`, with the
+  strict-descendant logic (`strictly_inside?/2`, exact-root excluded) private to PathSafety.
+- Workspace (remove/cleanup), AppServer (validate_workspace_against_roots) and
+  WorkspaceCleanupPolicy now case-dispatch on the classification; each boundary keeps its own
+  error mapping (workspace_symlink_escape / invalid_workspace_cwd:{:workspace_root | :symlink_escape
+  | :outside_workspace_root} / cleanup semantics). No local/remote policy merged, no policy DSL.
+- New table-driven path_safety_test.exs (exact root, nonexistent leaf, relative symlink, absolute
+  symlink, outside-root, empty-root list) + workspace symlink-escape error-mapping test.
+  Test baseline 701 -> 703 (+2).
 

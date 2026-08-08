@@ -85,7 +85,7 @@ defmodule SymphonyElixir.WorkspaceCleanupPolicy do
   end
 
   defp require_inside_root(delete_path, roots) do
-    if Enum.any?(roots, &inside?(delete_path, &1)) do
+    if inside_any?(delete_path, roots) do
       :ok
     else
       {:error, {:cleanup_path_outside_roots, delete_path, roots}}
@@ -100,7 +100,7 @@ defmodule SymphonyElixir.WorkspaceCleanupPolicy do
         delete_path == protected_path ->
           {:error, {:cleanup_path_equals_protected_path, delete_path}}
 
-        inside?(protected_path, delete_path) ->
+        inside_any?(protected_path, [delete_path]) ->
           {:error, {:cleanup_path_contains_protected_path, delete_path, protected_path}}
 
         true ->
@@ -109,7 +109,14 @@ defmodule SymphonyElixir.WorkspaceCleanupPolicy do
     end)
   end
 
-  defp inside?(path, root) do
-    String.starts_with?(path <> "/", root <> "/")
+  defp inside?(path, root), do: inside_any?(path, [root])
+
+  defp inside_any?(path, roots) do
+    root_pairs = Enum.map(roots, &{&1, &1})
+
+    match?(
+      {:inside, _canonical_root},
+      PathSafety.classify_strict_descendant(path, path, root_pairs)
+    )
   end
 end
