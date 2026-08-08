@@ -20,6 +20,9 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
       <% end %>
 
       <h2 class="section-title">Runs</h2>
+      <%= if @issue_detail.runs_error do %>
+        <p class="error-copy">Data unavailable: persisted runs for this issue could not be loaded.</p>
+      <% else %>
       <%= if @issue_detail.runs == [] do %>
         <p class="empty-state">No persisted runs for this issue.</p>
       <% else %>
@@ -35,24 +38,43 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
           </tbody>
         </table>
       <% end %>
+      <% end %>
 
       <h2 class="section-title">Events</h2>
-      <.event_table events={@issue_detail.events} />
+      <%= if @issue_detail.events_error do %>
+        <p class="error-copy">Data unavailable: persisted events for this issue could not be loaded.</p>
+      <% else %>
+        <.event_table events={@issue_detail.events} />
+      <% end %>
     </section>
     """
   end
 
   @spec assign_data(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def assign_data(%{assigns: %{live_action: :issue_detail, route_params: %{"identifier" => identifier}}} = socket) do
+    {runs, runs_error} = read_list(fn -> persistence().list_runs_for_issue(identifier, limit: 100) end)
+    {events, events_error} = read_list(fn -> persistence().list_events(issue_identifier: identifier, limit: 100) end)
+
     assign(socket, :issue_detail, %{
       issue: persistence().get_issue_by_identifier(identifier),
-      runs: persistence().list_runs_for_issue(identifier, limit: 100),
-      events: persistence().list_events(issue_identifier: identifier, limit: 100)
+      runs: runs,
+      runs_error: runs_error,
+      events: events,
+      events_error: events_error
     })
   end
 
   def assign_data(socket) do
-    assign_new(socket, :issue_detail, fn -> %{issue: nil, runs: [], events: []} end)
+    assign_new(socket, :issue_detail, fn ->
+      %{issue: nil, runs: [], runs_error: nil, events: [], events_error: nil}
+    end)
+  end
+
+  defp read_list(fun) do
+    case PersistenceProvider.read(fun) do
+      records when is_list(records) -> {records, nil}
+      {:error, reason} -> {[], reason}
+    end
   end
 
   defp persistence, do: PersistenceProvider.module()

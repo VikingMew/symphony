@@ -16,6 +16,12 @@ defmodule SymphonyElixirWeb.AdminLive.Runs do
         <h1 class="section-title">Runs</h1>
         <SymphonyElixirWeb.Layouts.project_switcher projects={@projects} current={@event_filters.project_id} base_path="/runs" />
       </div>
+      <%= if @runs_error || @persistence_error do %>
+        <div class="error-card" role="status">
+          <h2 class="error-title">Data unavailable</h2>
+          <p class="error-copy">Persisted runs could not be loaded. Please retry after database access is restored.</p>
+        </div>
+      <% else %>
       <%= if @runs == [] do %>
         <p class="empty-state">No persisted runs yet.</p>
       <% else %>
@@ -40,6 +46,7 @@ defmodule SymphonyElixirWeb.AdminLive.Runs do
           <span :if={!@runs_has_more} class="muted">All matching runs are loaded.</span>
         </div>
       <% end %>
+      <% end %>
     </section>
     """
   end
@@ -49,19 +56,32 @@ defmodule SymphonyElixirWeb.AdminLive.Runs do
     reset = Keyword.get(opts, :reset, true)
     cursor = if reset, do: nil, else: Map.get(socket.assigns, :runs_next_cursor)
 
-    page =
-      persistence().list_runs_page(
-        page_size: @runs_page_size,
-        cursor: cursor,
-        project_id: project_filter(socket)
-      )
+    page_result =
+      PersistenceProvider.read(fn ->
+        persistence().list_runs_page(
+          page_size: @runs_page_size,
+          cursor: cursor,
+          project_id: project_filter(socket)
+        )
+      end)
 
     existing = if reset, do: [], else: Map.get(socket.assigns, :runs, [])
 
-    socket
-    |> assign(:runs, existing ++ page.entries)
-    |> assign(:runs_next_cursor, page.next_cursor)
-    |> assign(:runs_has_more, page.has_more?)
+    case page_result do
+      %{entries: entries, next_cursor: next_cursor, has_more?: has_more?} ->
+        socket
+        |> assign(:runs, existing ++ entries)
+        |> assign(:runs_next_cursor, next_cursor)
+        |> assign(:runs_has_more, has_more?)
+        |> assign(:runs_error, nil)
+
+      {:error, reason} ->
+        socket
+        |> assign(:runs, existing)
+        |> assign(:runs_next_cursor, nil)
+        |> assign(:runs_has_more, false)
+        |> assign(:runs_error, reason)
+    end
   end
 
   defp project_filter(%{assigns: %{route_params: params}}) do

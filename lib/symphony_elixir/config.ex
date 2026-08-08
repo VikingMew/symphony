@@ -29,6 +29,12 @@ defmodule SymphonyElixir.Config do
 
       {:ok, %{config: config}} when is_map(config) ->
         Schema.parse(config)
+
+      {:error, :no_active_workflow} ->
+        {:error, :setup_required}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -59,7 +65,9 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  @spec current_workflow() :: {:ok, Workflow.loaded_workflow()}
+  @spec current_workflow() ::
+          {:ok, Workflow.loaded_workflow()}
+          | {:error, :no_active_workflow | :repo_unavailable | {:query_failed, term()}}
   def current_workflow do
     case Process.get(@workflow_context_key) do
       %{config: _config} = workflow -> {:ok, workflow}
@@ -203,6 +211,15 @@ defmodule SymphonyElixir.Config do
 
       {:invalid_workflow_config, message} ->
         "Invalid workflow config: #{message}"
+
+      :repo_unavailable ->
+        "Runtime configuration unavailable: database repository is unavailable."
+
+      {:query_failed, query_reason} ->
+        "Runtime configuration unavailable: database query failed: #{inspect(query_reason)}"
+
+      other ->
+        "Runtime configuration unavailable: #{inspect(other)}"
     end
   end
 end

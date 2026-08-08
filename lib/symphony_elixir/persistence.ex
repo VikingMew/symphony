@@ -5,8 +5,7 @@ defmodule SymphonyElixir.Persistence do
 
   import Ecto.Query
 
-  alias SymphonyElixir.Repo
-  alias SymphonyElixir.{RunLifecycle, Workflow}
+  alias SymphonyElixir.{PersistenceProvider, Repo, RunLifecycle, Workflow}
 
   alias SymphonyElixir.Persistence.{
     EventRecord,
@@ -23,11 +22,13 @@ defmodule SymphonyElixir.Persistence do
   @spec repo_available?() :: boolean()
   def repo_available?, do: Process.whereis(Repo) != nil
 
+  @type read_error :: :repo_unavailable | {:query_failed, term()}
+
   @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   defdelegate default_project(), to: WorkflowStore
 
-  @spec list_projects() :: [Project.t()]
-  defdelegate list_projects(), to: WorkflowStore
+  @spec list_projects() :: [Project.t()] | {:error, read_error()}
+  def list_projects, do: read(fn -> WorkflowStore.list_projects() end)
 
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   defdelegate create_project(attrs), to: WorkflowStore
@@ -113,15 +114,13 @@ defmodule SymphonyElixir.Persistence do
     if repo_available?(), do: Repo.get_by(IssueRecord, identifier: identifier)
   end
 
-  @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()]
+  @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if repo_available?() do
+    read(fn ->
       Repo.all(from(r in RunRecord, where: r.issue_identifier == ^identifier, order_by: [desc: r.started_at], limit: ^limit))
-    else
-      []
-    end
+    end)
   end
 
   @spec record_event(map()) :: {:ok, EventRecord.t()} | {:error, term()}
@@ -144,27 +143,27 @@ defmodule SymphonyElixir.Persistence do
     end
   end
 
-  @spec list_runs(keyword()) :: [RunRecord.t()]
+  @spec list_runs(keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if repo_available?() do
+    read(fn ->
       RunRecord
       |> run_filters(opts)
       |> order_runs()
       |> limit(^limit)
       |> Repo.all()
-    else
-      []
-    end
+    end)
   end
 
-  @spec list_runs_page(keyword()) :: %{entries: [RunRecord.t()], has_more?: boolean(), next_cursor: String.t() | nil}
+  @spec list_runs_page(keyword()) ::
+          %{entries: [RunRecord.t()], has_more?: boolean(), next_cursor: String.t() | nil}
+          | {:error, read_error()}
   def list_runs_page(opts \\ []) do
     page_size = opts |> Keyword.get(:page_size, 25) |> max(1)
     cursor = Keyword.get(opts, :cursor)
 
-    if repo_available?() do
+    read(fn ->
       entries =
         RunRecord
         |> run_filters(opts)
@@ -180,16 +179,14 @@ defmodule SymphonyElixir.Persistence do
         has_more?: overflow != [],
         next_cursor: next_run_cursor(List.last(page_entries), overflow != [])
       }
-    else
-      %{entries: [], has_more?: false, next_cursor: nil}
-    end
+    end)
   end
 
-  @spec list_events(keyword()) :: [EventRecord.t()]
+  @spec list_events(keyword()) :: [EventRecord.t()] | {:error, read_error()}
   def list_events(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if repo_available?() do
+    read(fn ->
       EventRecord
       |> maybe_filter_event_issue(Keyword.get(opts, :issue_identifier))
       |> maybe_filter_event_run(Keyword.get(opts, :run_id))
@@ -198,8 +195,14 @@ defmodule SymphonyElixir.Persistence do
       |> order_events(Keyword.get(opts, :order, :desc))
       |> limit(^limit)
       |> Repo.all()
+    end)
+  end
+
+  defp read(fun) do
+    if repo_available?() do
+      PersistenceProvider.read(fun)
     else
-      []
+      {:error, :repo_unavailable}
     end
   end
 

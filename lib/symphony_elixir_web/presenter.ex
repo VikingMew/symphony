@@ -13,23 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
 
     case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
       %{} = snapshot ->
-        %{
-          generated_at: generated_at,
-          counts: %{
-            running: length(snapshot.running),
-            retrying: length(snapshot.retrying),
-            blocked: length(Map.get(snapshot, :blocked, []))
-          },
-          running: Enum.map(snapshot.running, &running_entry_payload/1),
-          retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
-          blocked: Enum.map(Map.get(snapshot, :blocked, []), &blocked_entry_payload/1),
-          codex_totals: snapshot.codex_totals,
-          rate_limits: snapshot.rate_limits,
-          rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
-          linear_status: Health.latest() |> LinearStatusSignal.from_health(),
-          operator_tasks: Map.get(snapshot, :operator_tasks, %{}),
-          polling: Map.get(snapshot, :polling, %{listening_mode: "not_listening"})
-        }
+        state_snapshot_payload(snapshot, generated_at)
 
       :timeout ->
         %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}
@@ -37,6 +21,36 @@ defmodule SymphonyElixirWeb.Presenter do
       :unavailable ->
         %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
     end
+  end
+
+  defp state_snapshot_payload(%{config_error: %{unavailable: true} = error}, generated_at) do
+    %{
+      generated_at: generated_at,
+      error: %{
+        code: "database_unavailable",
+        message: "Data unavailable: #{Map.get(error, :message, "database read failed")}"
+      }
+    }
+  end
+
+  defp state_snapshot_payload(snapshot, generated_at) do
+    %{
+      generated_at: generated_at,
+      counts: %{
+        running: length(snapshot.running),
+        retrying: length(snapshot.retrying),
+        blocked: length(Map.get(snapshot, :blocked, []))
+      },
+      running: Enum.map(snapshot.running, &running_entry_payload/1),
+      retrying: Enum.map(snapshot.retrying, &retry_entry_payload/1),
+      blocked: Enum.map(Map.get(snapshot, :blocked, []), &blocked_entry_payload/1),
+      codex_totals: snapshot.codex_totals,
+      rate_limits: snapshot.rate_limits,
+      rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
+      linear_status: Health.latest() |> LinearStatusSignal.from_health(),
+      operator_tasks: Map.get(snapshot, :operator_tasks, %{}),
+      polling: Map.get(snapshot, :polling, %{listening_mode: "not_listening"})
+    }
   end
 
   @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}

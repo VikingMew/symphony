@@ -138,6 +138,17 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     refute html =~ "Force stop all agents"
   end
 
+  test "runs page renders data unavailable instead of an empty store when persistence is down" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/runs")
+
+    assert html =~ "Data unavailable"
+    refute html =~ "No persisted runs yet."
+  end
+
   test "runs page loads additional run pages without duplicating rows" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()

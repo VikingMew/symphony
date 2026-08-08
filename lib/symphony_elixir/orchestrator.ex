@@ -2081,8 +2081,16 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_task_results(run_id) when is_binary(run_id) do
-    persistence().list_events(run_id: run_id, event_type: "linear.tool_call", order: :asc, limit: 10_000)
-    |> Results.aggregate()
+    case PersistenceProvider.read(fn ->
+           persistence().list_events(run_id: run_id, event_type: "linear.tool_call", order: :asc, limit: 10_000)
+         end) do
+      events when is_list(events) ->
+        Results.aggregate(events)
+
+      {:error, reason} ->
+        Results.aggregate([])
+        |> Map.merge(%{unavailable: true, error: inspect(reason)})
+    end
   end
 
   defp operator_task_results(_run_id), do: Results.aggregate([])
@@ -2470,9 +2478,14 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_error_payload(reason) do
     %{
       reason: inspect(reason),
-      message: config_validation_error_message(reason)
+      message: config_validation_error_message(reason),
+      unavailable: database_read_error?(reason)
     }
   end
+
+  defp database_read_error?(:repo_unavailable), do: true
+  defp database_read_error?({:query_failed, _reason}), do: true
+  defp database_read_error?(_reason), do: false
 
   defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do
     DispatchPolicy.dispatch_slots_available?(issue, state, dispatch_policy_settings(state))

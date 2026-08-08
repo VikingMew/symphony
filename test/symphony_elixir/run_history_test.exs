@@ -25,6 +25,12 @@ defmodule SymphonyElixir.RunHistoryTest do
     defp sort_events(events, _order), do: events |> sort_events(:asc) |> Enum.reverse()
   end
 
+  defmodule RaisingPersistence do
+    @moduledoc false
+
+    def list_events(_opts), do: raise("events query failed")
+  end
+
   setup do
     TestPersistence.put_events([])
     :ok
@@ -48,6 +54,11 @@ defmodule SymphonyElixir.RunHistoryTest do
                source: :system
              }
            ] = RunHistory.list_run_session_events(TestPersistence, "run-a")
+  end
+
+  test "returns a typed error instead of empty history when event reads fail" do
+    assert {:error, {:query_failed, %RuntimeError{message: "events query failed"}}} =
+             RunHistory.list_run_session_events(RaisingPersistence, "run-a")
   end
 
   test "transforms workspace and codex-style events into readable rows" do

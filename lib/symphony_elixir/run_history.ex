@@ -5,7 +5,7 @@ defmodule SymphonyElixir.RunHistory do
 
   alias SymphonyElixir.Codex.{MessageHumanizer, Protocol}
   alias SymphonyElixir.Codex.Protocol.Event
-  alias SymphonyElixir.{Payload, RunSummary, StateName}
+  alias SymphonyElixir.{Payload, PersistenceProvider, RunSummary, StateName}
 
   @default_limit 100
   @max_payload_chars 800
@@ -24,14 +24,16 @@ defmodule SymphonyElixir.RunHistory do
           evidence_quality: :complete | :partial | :low_signal
         }
 
-  @spec list_run_session_events(module(), String.t(), keyword()) :: [map()]
+  @spec list_run_session_events(module(), String.t(), keyword()) ::
+          [map()] | {:error, PersistenceProvider.read_error()}
   def list_run_session_events(persistence, run_id, opts \\ [])
       when is_atom(persistence) and is_binary(run_id) do
     limit = opts |> Keyword.get(:limit, @default_limit) |> normalize_limit()
 
-    persistence.list_events(run_id: run_id, limit: limit, order: :asc)
-    |> Enum.map(&from_event/1)
-    |> coalesce_rows()
+    case PersistenceProvider.read(fn -> persistence.list_events(run_id: run_id, limit: limit, order: :asc) end) do
+      events when is_list(events) -> events |> Enum.map(&from_event/1) |> coalesce_rows()
+      {:error, _reason} = error -> error
+    end
   end
 
   @spec from_events([term()]) :: [map()]

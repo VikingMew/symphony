@@ -4,11 +4,30 @@ defmodule SymphonyElixir.AnalyticsTest do
   alias SymphonyElixir.Analytics
   alias SymphonyElixir.TestSupport.FakePersistence
 
+  defmodule FaultPersistence do
+    @moduledoc false
+
+    def list_runs(_opts), do: read(:runs)
+    def list_events(_opts), do: read(:events)
+    def list_projects, do: read(:projects)
+
+    defp read(name) do
+      if Application.get_env(:symphony_elixir, :analytics_fault_reader) == name do
+        raise "#{name} query failed"
+      else
+        []
+      end
+    end
+  end
+
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
 
-    on_exit(fn -> restore_app_env(:persistence_module, previous_persistence) end)
+    on_exit(fn ->
+      restore_app_env(:persistence_module, previous_persistence)
+      Application.delete_env(:symphony_elixir, :analytics_fault_reader)
+    end)
 
     :ok
   end
@@ -53,6 +72,7 @@ defmodule SymphonyElixir.AnalyticsTest do
 
     summary = Analytics.summary(range: "24h", now: now)
 
+    assert summary.status == :available
     assert summary.total_runs == 0
     assert summary.status_rows == []
     assert summary.duration.average_seconds == 0
@@ -101,6 +121,19 @@ defmodule SymphonyElixir.AnalyticsTest do
     summary = Analytics.summary(range: "7d", now: now)
 
     assert summary.tokens == %{input_tokens: 29, output_tokens: 11, total_tokens: 40}
+  end
+
+  test "surfaces each failed persistence reader as unavailable instead of zero analytics" do
+    Enum.each([:runs, :events, :projects], fn reader ->
+      Application.put_env(:symphony_elixir, :analytics_fault_reader, reader)
+
+      assert %{
+               status: :unavailable,
+               error: {:query_failed, %RuntimeError{message: message}}
+             } = Analytics.summary(persistence: FaultPersistence)
+
+      assert message == "#{reader} query failed"
+    end)
   end
 
   defp run(id, issue_identifier, status, started_at, finished_at, failure_reason \\ nil) do

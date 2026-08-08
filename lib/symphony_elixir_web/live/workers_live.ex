@@ -41,6 +41,11 @@ defmodule SymphonyElixirWeb.WorkersLive do
     <section class="dashboard-shell">
       <SymphonyElixirWeb.Layouts.app_nav current={:workers} />
 
+      <section :if={@projects_error} class="error-card" role="status">
+        <h2 class="error-title">Data unavailable</h2>
+        <p class="error-copy">Persisted project data could not be loaded. Please retry after database access is restored.</p>
+      </section>
+
       <%= if @execution_mode == :centralized do %>
         <section class="section-card">
           <div class="section-header">
@@ -120,13 +125,22 @@ defmodule SymphonyElixirWeb.WorkersLive do
 
   defp refresh(socket) do
     filter = project_filter(socket)
+    {projects, projects_error} = read_projects()
 
     socket
     |> assign(:workers, persistence().list_workers(limit: 100))
-    |> assign(:projects, persistence().list_projects())
+    |> assign(:projects, projects)
+    |> assign(:projects_error, projects_error)
     |> assign(:project_filter, filter)
     |> assign(:tasks, persistence().list_tasks(limit: 100, project_id: filter))
     |> assign(:execution_mode, Config.execution_mode())
+  end
+
+  defp read_projects do
+    case PersistenceProvider.read(fn -> persistence().list_projects() end) do
+      projects when is_list(projects) -> {projects, nil}
+      {:error, reason} -> {[], reason}
+    end
   end
 
   defp project_filter(%{assigns: %{route_params: params}}) do

@@ -28,6 +28,11 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
       <.settings_tabs active={@settings_tab} project={@event_filters.project_id} />
     </section>
 
+    <aside :if={@persistence_error} class="error-card" role="status">
+      <h2 class="error-title">Data unavailable</h2>
+      <p class="error-copy">Persisted project and workflow data could not be loaded. Please retry after database access is restored.</p>
+    </aside>
+
     <.linear_discovery_panel
       :if={@settings_tab in [:projects, :workflow]}
       status={@linear_discovery_status}

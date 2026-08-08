@@ -31,8 +31,12 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
           </tbody>
         </table>
 
-        <h2 class="section-title">Agent Summary</h2>
-        <table class="data-table">
+        <%= if @run_detail.history_error do %>
+          <h2 class="section-title">Agent Summary</h2>
+          <p class="error-copy">Data unavailable: persisted session history could not be loaded.</p>
+        <% else %>
+          <h2 class="section-title">Agent Summary</h2>
+          <table class="data-table">
           <tbody>
             <tr><th>Outcome</th><td><%= @run_detail.summary.outcome %></td></tr>
             <tr><th>Final message</th><td><%= @run_detail.summary.final_message || "No final agent message was persisted." %></td></tr>
@@ -46,7 +50,8 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
             <tr><th>Sessions</th><td><%= list_summary(@run_detail.summary.sessions) %></td></tr>
             <tr><th>Evidence</th><td><%= @run_detail.summary.evidence_quality %></td></tr>
           </tbody>
-        </table>
+          </table>
+        <% end %>
 
         <h2 class="section-title">Workflow Version</h2>
         <%= if @run_detail.workflow_version do %>
@@ -56,6 +61,9 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
         <% end %>
 
         <h2 class="section-title">Session History</h2>
+        <%= if @run_detail.history_error do %>
+          <p class="error-copy">Data unavailable: persisted session history could not be loaded.</p>
+        <% else %>
         <%= if @run_detail.session_history == [] do %>
           <p class="empty-state">No session history recorded for this run.</p>
         <% else %>
@@ -77,9 +85,14 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
             </tbody>
           </table>
         <% end %>
+        <% end %>
 
         <h2 class="section-title">Raw Events</h2>
-        <.event_table events={@run_detail.events} />
+        <%= if @run_detail.events_error do %>
+          <p class="error-copy">Data unavailable: persisted events could not be loaded.</p>
+        <% else %>
+          <.event_table events={@run_detail.events} />
+        <% end %>
       <% else %>
         <p class="empty-state">Run not found.</p>
       <% end %>
@@ -97,14 +110,28 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
         _ -> nil
       end
 
-    session_history = if(run, do: RunHistory.list_run_session_events(persistence(), run.id, limit: 100), else: [])
+    {session_history, history_error} =
+      if run do
+        read_list(fn -> RunHistory.list_run_session_events(persistence(), run.id, limit: 100) end)
+      else
+        {[], nil}
+      end
+
+    {events, events_error} =
+      if run do
+        read_list(fn -> persistence().list_events(run_id: run.id, limit: 100) end)
+      else
+        {[], nil}
+      end
 
     assign(socket, :run_detail, %{
       run: run,
       workflow_version: workflow_version,
       session_history: session_history,
+      history_error: history_error,
       summary: RunHistory.summarize(run, session_history),
-      events: if(run, do: persistence().list_events(run_id: run.id, limit: 100), else: [])
+      events: events,
+      events_error: events_error
     })
   end
 
@@ -114,10 +141,19 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
         run: nil,
         workflow_version: nil,
         session_history: [],
+        history_error: nil,
         summary: RunHistory.summarize(nil, []),
-        events: []
+        events: [],
+        events_error: nil
       }
     end)
+  end
+
+  defp read_list(fun) do
+    case PersistenceProvider.read(fun) do
+      records when is_list(records) -> {records, nil}
+      {:error, reason} -> {[], reason}
+    end
   end
 
   defp run_label(run) do

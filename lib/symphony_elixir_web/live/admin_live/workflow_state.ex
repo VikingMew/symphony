@@ -176,6 +176,9 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   end
 
   @spec load_form(map() | nil, term()) :: {map(), boolean()}
+  def load_form(nil, {:error, :no_active_workflow}), do: {WorkflowForm.empty(), true}
+  def load_form(nil, {:error, _reason}), do: {WorkflowForm.empty(), false}
+
   def load_form(nil, {:ok, %{workflow: workflow}}) do
     if Map.get(workflow, :setup_required, false) do
       {WorkflowForm.empty(), true}

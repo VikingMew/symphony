@@ -243,18 +243,18 @@ Plans should focus on product and engineering intent rather than full implementa
 236. [236-split-adminlive-into-focused-components.md](completed/236-split-adminlive-into-focused-components.md)
 237. [237-dead-config-dead-paths-and-shadow-sandbox-apis.md](completed/237-dead-config-dead-paths-and-shadow-sandbox-apis.md)
 238. [238-fix-workspace-disk-guard-fail-open.md](completed/238-fix-workspace-disk-guard-fail-open.md)
+239. [239-typed-errors-for-db-reads-no-fake-setup-required.md](completed/239-typed-errors-for-db-reads-no-fake-setup-required.md)
 240. [240-unify-audit-event-write-semantics.md](completed/240-unify-audit-event-write-semantics.md)
 
 ## Active Plans
 
-1. [239-typed-errors-for-db-reads-no-fake-setup-required.md](active/239-typed-errors-for-db-reads-no-fake-setup-required.md) — H1: typed errors at DB read exits
-2. [241-single-source-config-defaults.md](active/241-single-source-config-defaults.md) — M1: single source for config defaults
-3. [242-force-stop-partial-failure-honesty.md](active/242-force-stop-partial-failure-honesty.md) — M2: Force Stop partial-failure honesty
-4. [243-merge-path-safety-algorithms.md](active/243-merge-path-safety-algorithms.md) — M3: merge path-safety algorithms
-5. [244-remove-web-compile-cycle.md](active/244-remove-web-compile-cycle.md) — M4: remove Web compile cycle
-6. [245-settings-single-direction-deps-drop-wrapper.md](active/245-settings-single-direction-deps-drop-wrapper.md) — M5: Settings single-direction deps
-7. [246-remove-db-only-source-selector.md](active/246-remove-db-only-source-selector.md) — M6: remove DB-only source selector
-8. [247-persistence-facade-internal-boundaries.md](active/247-persistence-facade-internal-boundaries.md) — M7: Persistence internal boundaries (after 239)
+1. [241-single-source-config-defaults.md](active/241-single-source-config-defaults.md) — M1: single source for config defaults
+2. [242-force-stop-partial-failure-honesty.md](active/242-force-stop-partial-failure-honesty.md) — M2: Force Stop partial-failure honesty
+3. [243-merge-path-safety-algorithms.md](active/243-merge-path-safety-algorithms.md) — M3: merge path-safety algorithms
+4. [244-remove-web-compile-cycle.md](active/244-remove-web-compile-cycle.md) — M4: remove Web compile cycle
+5. [245-settings-single-direction-deps-drop-wrapper.md](active/245-settings-single-direction-deps-drop-wrapper.md) — M5: Settings single-direction deps
+6. [246-remove-db-only-source-selector.md](active/246-remove-db-only-source-selector.md) — M6: remove DB-only source selector
+7. [247-persistence-facade-internal-boundaries.md](active/247-persistence-facade-internal-boundaries.md) — M7: Persistence internal boundaries (after 239)
 
 ## Intentional Numbering Gaps
 

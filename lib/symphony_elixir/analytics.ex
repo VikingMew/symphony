@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Analytics do
   """
 
   alias SymphonyElixir.Codex.TokenUsage
-  alias SymphonyElixir.Persistence
+  alias SymphonyElixir.{Persistence, PersistenceProvider}
 
   @default_limit 2_000
   @range_presets %{
@@ -18,6 +18,7 @@ defmodule SymphonyElixir.Analytics do
   }
 
   @type summary :: %{
+          status: :available,
           range: map(),
           generated_at: DateTime.t(),
           total_runs: non_neg_integer(),
@@ -33,25 +34,36 @@ defmodule SymphonyElixir.Analytics do
           tokens: map()
         }
 
-  @spec summary(keyword()) :: summary()
+  @type unavailable_summary :: %{
+          status: :unavailable,
+          range: map(),
+          generated_at: DateTime.t(),
+          error: PersistenceProvider.read_error()
+        }
+
+  @spec summary(keyword()) :: summary() | unavailable_summary()
   def summary(opts \\ []) do
     now = Keyword.get(opts, :now, DateTime.utc_now())
     persistence = Keyword.get(opts, :persistence, persistence())
     range = range(Keyword.get(opts, :range, "7d"), now)
 
-    runs =
-      persistence
-      |> safe_list_runs(Keyword.get(opts, :limit, @default_limit))
-      |> Enum.filter(&in_range?(run_time(&1), range))
+    with {:ok, runs} <- safe_list_runs(persistence, Keyword.get(opts, :limit, @default_limit)),
+         {:ok, events} <- safe_list_events(persistence, Keyword.get(opts, :event_limit, @default_limit)),
+         {:ok, projects} <- safe_list_projects(persistence) do
+      available_summary(runs, events, projects, range, now)
+    else
+      {:error, reason} ->
+        %{status: :unavailable, range: range, generated_at: now, error: reason}
+    end
+  end
 
-    events =
-      persistence
-      |> safe_list_events(Keyword.get(opts, :event_limit, @default_limit))
-      |> Enum.filter(&in_range?(Map.get(&1, :occurred_at), range))
-
-    projects = Map.new(safe_list_projects(persistence), &{Map.get(&1, :id), &1})
+  defp available_summary(all_runs, all_events, all_projects, range, now) do
+    runs = Enum.filter(all_runs, &in_range?(run_time(&1), range))
+    events = Enum.filter(all_events, &in_range?(Map.get(&1, :occurred_at), range))
+    projects = Map.new(all_projects, &{Map.get(&1, :id), &1})
 
     %{
+      status: :available,
       range: range,
       generated_at: now,
       total_runs: length(runs),
@@ -87,28 +99,20 @@ defmodule SymphonyElixir.Analytics do
   end
 
   defp safe_list_runs(persistence, limit) do
-    persistence.list_runs(limit: limit)
-  rescue
-    _ -> []
-  catch
-    _, _ -> []
+    normalize_list_read(PersistenceProvider.read(fn -> persistence.list_runs(limit: limit) end))
   end
 
   defp safe_list_events(persistence, limit) do
-    persistence.list_events(limit: limit)
-  rescue
-    _ -> []
-  catch
-    _, _ -> []
+    normalize_list_read(PersistenceProvider.read(fn -> persistence.list_events(limit: limit) end))
   end
 
   defp safe_list_projects(persistence) do
-    persistence.list_projects()
-  rescue
-    _ -> []
-  catch
-    _, _ -> []
+    normalize_list_read(PersistenceProvider.read(fn -> persistence.list_projects() end))
   end
+
+  defp normalize_list_read(records) when is_list(records), do: {:ok, records}
+  defp normalize_list_read({:error, _reason} = error), do: error
+  defp normalize_list_read(other), do: {:error, {:query_failed, {:invalid_read_result, other}}}
 
   defp grouped_rows(records, key_fun, href_prefix) do
     records

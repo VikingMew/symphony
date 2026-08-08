@@ -60,7 +60,13 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
         </div>
       </section>
 
-      <section class="metric-grid">
+      <%= if @summary.status == :unavailable do %>
+        <section class="error-card" role="status">
+          <h2 class="error-title">Data unavailable</h2>
+          <p class="error-copy">Persisted analytics data could not be loaded. Please retry after database access is restored.</p>
+        </section>
+      <% else %>
+        <section class="metric-grid">
         <article class="metric-card">
           <p class="metric-label">Runs</p>
           <p class="metric-value numeric"><%= int(@summary.total_runs) %></p>
@@ -94,21 +100,22 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
             p50 <%= duration(@summary.duration.p50_seconds) %> / p95 <%= duration(@summary.duration.p95_seconds) %>
           </p>
         </article>
-      </section>
+        </section>
 
-      <%= if @summary.total_runs == 0 and @summary.event_rows == [] do %>
-        <section class="section-card">
-          <p class="empty-state">No persisted analytics data for this range.</p>
-        </section>
-      <% else %>
-        <section class="analytics-grid">
-          <.breakdown title="Status" rows={@summary.status_rows} show_status_columns={false} />
-          <.breakdown title="Projects" rows={@summary.project_rows} />
-          <.breakdown title="Issues" rows={@summary.issue_rows} />
-          <.breakdown title="Execution Mode" rows={@summary.execution_mode_rows} />
-          <.breakdown title="Failures" rows={@summary.failure_rows} />
-          <.breakdown title="Events" rows={@summary.event_rows} />
-        </section>
+        <%= if @summary.total_runs == 0 and @summary.event_rows == [] do %>
+          <section class="section-card">
+            <p class="empty-state">No persisted analytics data for this range.</p>
+          </section>
+        <% else %>
+          <section class="analytics-grid">
+            <.breakdown title="Status" rows={@summary.status_rows} show_status_columns={false} />
+            <.breakdown title="Projects" rows={@summary.project_rows} />
+            <.breakdown title="Issues" rows={@summary.issue_rows} />
+            <.breakdown title="Execution Mode" rows={@summary.execution_mode_rows} />
+            <.breakdown title="Failures" rows={@summary.failure_rows} />
+            <.breakdown title="Events" rows={@summary.event_rows} />
+          </section>
+        <% end %>
       <% end %>
     </section>
     """

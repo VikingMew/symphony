@@ -1,9 +1,14 @@
 defmodule SymphonyElixir.WorkflowStoreTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.Persistence
+  alias SymphonyElixir.{Config, Persistence, Workflow, WorkflowStore}
   alias SymphonyElixir.TestSupport.FakePersistence
-  alias SymphonyElixir.{Workflow, WorkflowStore}
+
+  defmodule RaisingPersistence do
+    @moduledoc false
+
+    def default_project, do: raise("database read failed")
+  end
 
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
@@ -44,9 +49,45 @@ defmodule SymphonyElixir.WorkflowStoreTest do
 
   test "an empty database still yields setup required" do
     assert :ok = WorkflowStore.force_reload()
-    assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
-    assert workflow.setup_required
-    assert source.type == :setup_required
+
+    assert {:ok, %{workflow: %{setup_required: true}, source: %{type: :setup_required}}} =
+             WorkflowStore.current_with_source()
+
+    assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+    assert {:error, :setup_required} = Config.settings()
+  end
+
+  test "database query faults are returned and never reported as setup required" do
+    assert :ok = WorkflowStore.force_reload()
+    assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+
+    Application.put_env(:symphony_elixir, :persistence_module, RaisingPersistence)
+    assert :ok = WorkflowStore.force_reload()
+
+    assert {:error, {:query_failed, %RuntimeError{message: "database read failed"}}} =
+             WorkflowStore.current_with_source()
+
+    assert {:error, {:query_failed, %RuntimeError{message: "database read failed"}}} =
+             WorkflowStore.current()
+
+    assert {:error, {:query_failed, %RuntimeError{message: "database read failed"}}} =
+             Config.settings()
+
+    assert_raise ArgumentError, ~r/Runtime configuration unavailable: database query failed/, fn ->
+      Config.settings!()
+    end
+  end
+
+  test "repo unavailability after an empty read is returned and never reported as setup required" do
+    assert :ok = WorkflowStore.force_reload()
+    assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+
+    Application.put_env(:symphony_elixir, :persistence_module, Persistence)
+    refute Process.whereis(SymphonyElixir.Repo)
+    assert :ok = WorkflowStore.force_reload()
+
+    assert {:error, :repo_unavailable} = WorkflowStore.current()
+    assert {:error, :repo_unavailable} = Config.settings()
   end
 
   test "repo unavailable starts degraded and preserves a loaded workflow on reload" do

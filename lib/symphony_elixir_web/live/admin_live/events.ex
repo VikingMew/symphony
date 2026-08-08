@@ -72,6 +72,12 @@ defmodule SymphonyElixirWeb.AdminLive.Events do
         <a class="subtle-button" href="/events?source=agent&hide_low_signal=false">Codex raw</a>
       </div>
 
+      <%= if @events_error || @persistence_error do %>
+        <div class="error-card" role="status">
+          <h2 class="error-title">Data unavailable</h2>
+          <p class="error-copy">Persisted events could not be loaded. Please retry after database access is restored.</p>
+        </div>
+      <% else %>
       <%= if @event_rows == [] do %>
         <p class="empty-state">No events recorded.</p>
       <% else %>
@@ -108,6 +114,7 @@ defmodule SymphonyElixirWeb.AdminLive.Events do
           </tbody>
         </table>
       <% end %>
+      <% end %>
     </section>
     """
   end
@@ -116,14 +123,22 @@ defmodule SymphonyElixirWeb.AdminLive.Events do
   def assign_data(socket) do
     filters = filters(socket)
 
-    events =
-      persistence().list_events(
-        issue_identifier: blank_as_nil(filters.issue_identifier),
-        run_id: blank_as_nil(filters.run_id),
-        event_type: blank_as_nil(filters.event_type),
-        project_id: filters.project_id,
-        limit: filters.limit
-      )
+    events_result =
+      PersistenceProvider.read(fn ->
+        persistence().list_events(
+          issue_identifier: blank_as_nil(filters.issue_identifier),
+          run_id: blank_as_nil(filters.run_id),
+          event_type: blank_as_nil(filters.event_type),
+          project_id: filters.project_id,
+          limit: filters.limit
+        )
+      end)
+
+    {events, events_error} =
+      case events_result do
+        events when is_list(events) -> {events, nil}
+        {:error, reason} -> {[], reason}
+      end
 
     rows =
       EventPresenter.rows(events,
@@ -134,6 +149,7 @@ defmodule SymphonyElixirWeb.AdminLive.Events do
 
     socket
     |> assign(:events, events)
+    |> assign(:events_error, events_error)
     |> assign(:event_filters, filters)
     |> assign(:event_rows, rows.visible)
     |> assign(:hidden_low_signal_event_count, rows.hidden_low_signal_count)

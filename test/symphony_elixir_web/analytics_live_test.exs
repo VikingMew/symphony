@@ -91,6 +91,18 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
     assert project_headers == ["Name", "Runs", "Completed", "Failed", "Blocked"]
   end
 
+  test "renders data unavailable instead of zero metrics when persistence is down" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/analytics")
+
+    assert html =~ "Data unavailable"
+    refute html =~ "No persisted analytics data for this range."
+    refute html =~ "Persisted runs in range"
+  end
+
   defp table_headers(document, title) do
     document
     |> Floki.find("section.section-card")

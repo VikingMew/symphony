@@ -16,6 +16,8 @@ defmodule SymphonyElixir.WorkflowStore do
 
   @poll_interval_ms 1_000
 
+  @type current_error :: :no_active_workflow | :repo_unavailable | {:query_failed, term()}
+
   defmodule State do
     @moduledoc false
 
@@ -27,14 +29,17 @@ defmodule SymphonyElixir.WorkflowStore do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @spec current() :: {:ok, Workflow.loaded_workflow()}
+  @spec current() :: {:ok, Workflow.loaded_workflow()} | {:error, current_error()}
   def current do
-    {:ok, current_with_source_payload().workflow}
+    with {:ok, %{workflow: workflow}} <- current_with_source() do
+      {:ok, workflow}
+    end
   end
 
-  @spec current_with_source() :: {:ok, %{workflow: Workflow.loaded_workflow(), source: map()}}
+  @spec current_with_source() ::
+          {:ok, %{workflow: Workflow.loaded_workflow(), source: map()}} | {:error, current_error()}
   def current_with_source do
-    {:ok, current_with_source_payload()}
+    current_with_source_payload()
   end
 
   @spec list_enabled() :: [Workflow.loaded_workflow()]
@@ -81,12 +86,22 @@ defmodule SymphonyElixir.WorkflowStore do
   defp current_with_source_payload do
     case Process.whereis(__MODULE__) do
       pid when is_pid(pid) ->
-        {:ok, payload} = GenServer.call(__MODULE__, :current_with_source)
-        payload
+        GenServer.call(__MODULE__, :current_with_source)
 
       _ ->
-        state_payload(load_initial_state())
+        load_current_state()
     end
+  end
+
+  defp load_current_state do
+    case load_state() do
+      {:ok, state} -> state_payload(state)
+      {:error, reason} -> {:error, normalize_current_error(reason)}
+    end
+  rescue
+    error -> {:error, {:query_failed, error}}
+  catch
+    kind, reason -> {:error, {:query_failed, {kind, reason}}}
   end
 
   @impl true
@@ -99,7 +114,7 @@ defmodule SymphonyElixir.WorkflowStore do
   @impl true
   def handle_call(:current_with_source, _from, %State{} = state) do
     new_state = reload_state(state)
-    {:reply, {:ok, state_payload(new_state)}, new_state}
+    {:reply, state_payload(new_state), new_state}
   end
 
   def handle_call(:list_enabled, _from, %State{} = state) do
@@ -143,16 +158,24 @@ defmodule SymphonyElixir.WorkflowStore do
 
       {:error, reason} ->
         log_reload_failure(:error, reason)
-        state
+        retain_loaded_or_mark_error(state, reason)
     end
   rescue
     error ->
       log_reload_failure(:error, error)
-      state
+      retain_loaded_or_mark_error(state, {:query_failed, error})
   catch
     kind, reason ->
       log_reload_failure(kind, reason)
-      state
+      retain_loaded_or_mark_error(state, {:query_failed, {kind, reason}})
+  end
+
+  defp retain_loaded_or_mark_error(%State{workflows: workflows} = state, _reason)
+       when map_size(workflows) > 0,
+       do: state
+
+  defp retain_loaded_or_mark_error(%State{} = state, reason) do
+    %{state | source: %{type: :error, reason: normalize_current_error(reason)}}
   end
 
   defp load_state do
@@ -225,8 +248,8 @@ defmodule SymphonyElixir.WorkflowStore do
         |> Enum.filter(&Map.get(&1, :enabled, true))
         |> Enum.reduce_while({:ok, %{}}, &load_project_workflow/2)
 
-      {:error, :repo_unavailable} = error ->
-        error
+      {:error, reason} ->
+        {:error, reason}
 
       other ->
         {:error, {:invalid_list_projects_result, other}}
@@ -293,16 +316,22 @@ defmodule SymphonyElixir.WorkflowStore do
     Logger.error("Workflow database load failed action=propagate kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
   end
 
-  defp state_payload(%State{workflows: workflows, default_project_id: default_id, source: source}) do
-    workflow =
-      case Map.get(workflows, default_id) do
-        nil ->
-          Workflow.setup_required_workflow(Application.get_env(:symphony_elixir, :server_port_override))
+  defp state_payload(%State{source: %{type: :error, reason: reason}}),
+    do: {:error, normalize_current_error(reason)}
 
-        workflow ->
-          workflow
-      end
-
-    %{workflow: workflow, source: source}
+  defp state_payload(%State{source: %{type: :setup_required} = source}) do
+    workflow = Workflow.setup_required_workflow(Application.get_env(:symphony_elixir, :server_port_override))
+    {:ok, %{workflow: workflow, source: source}}
   end
+
+  defp state_payload(%State{workflows: workflows, default_project_id: default_id, source: source}) do
+    case Map.get(workflows, default_id) do
+      nil -> {:error, :no_active_workflow}
+      workflow -> {:ok, %{workflow: workflow, source: source}}
+    end
+  end
+
+  defp normalize_current_error(:repo_unavailable), do: :repo_unavailable
+  defp normalize_current_error({:query_failed, _reason} = error), do: error
+  defp normalize_current_error(reason), do: {:query_failed, reason}
 end

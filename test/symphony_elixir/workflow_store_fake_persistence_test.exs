@@ -1,8 +1,8 @@
 defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.{Config, Workflow, WorkflowStore}
   alias SymphonyElixir.TestSupport.FakePersistence
-  alias SymphonyElixir.{Workflow, WorkflowStore}
 
   setup do
     previous_source = Application.get_env(:symphony_elixir, :workflow_source)
@@ -43,23 +43,28 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     refute Map.get(workflow, :setup_required, false)
   end
 
-  test "database source returns setup required when active workflow is missing even if local package exists" do
+  test "database source reports no active workflow when the database is empty even if local package exists" do
     assert :ok = WorkflowStore.force_reload()
-    assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
-    assert workflow.setup_required
-    assert source.type == :setup_required
+
+    assert {:ok, %{workflow: %{setup_required: true}, source: %{type: :setup_required}}} =
+             WorkflowStore.current_with_source()
+
+    assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+    assert {:error, :setup_required} = Config.settings()
     refute FakePersistence.active_workflow_version()
   end
 
-  test "database source provides setup workflow when file and active workflow are missing" do
+  test "database source keeps setup-required semantics at the Config boundary when files and workflow are missing" do
     missing_path = Path.join(System.tmp_dir!(), "missing-workflow-#{System.unique_integer([:positive])}.md")
     Workflow.set_workflow_file_path(missing_path)
 
     assert :ok = WorkflowStore.force_reload()
-    assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
-    assert workflow.setup_required
-    assert source.type == :setup_required
-    assert get_in(workflow.config, ["tracker", "kind"]) == "linear"
+
+    assert {:ok, %{workflow: %{setup_required: true}, source: %{type: :setup_required}}} =
+             WorkflowStore.current_with_source()
+
+    assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+    assert {:error, :setup_required} = Config.settings()
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

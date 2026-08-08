@@ -901,6 +901,26 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "snapshot_unavailable"
   end
 
+  test "dashboard liveview renders database faults as unavailable instead of zero metrics" do
+    snapshot =
+      static_snapshot()
+      |> Map.put(:config_error, %{
+        reason: ":repo_unavailable",
+        message: "database repository is unavailable",
+        unavailable: true
+      })
+
+    orchestrator_name = Module.concat(__MODULE__, :DatabaseUnavailableDashboardOrchestrator)
+    {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
+    start_test_endpoint(orchestrator: orchestrator_name)
+
+    {:ok, _view, html} = live(build_conn(), "/")
+
+    assert html =~ "Data unavailable"
+    assert html =~ "database_unavailable"
+    refute html =~ "Active issue sessions in the current runtime."
+  end
+
   test "http server serves embedded assets, accepts form posts, and rejects invalid hosts" do
     spec = HttpServer.child_spec(port: 0)
     assert spec.id == HttpServer

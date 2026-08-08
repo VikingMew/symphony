@@ -86,7 +86,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     version = %WorkflowVersion{raw_workflow_md: "raw workflow"}
 
     assert Persistence.default_project() == WorkflowStore.default_project()
-    assert Persistence.list_projects() == WorkflowStore.list_projects()
+    assert Persistence.list_projects() == {:error, :repo_unavailable}
+    assert WorkflowStore.list_projects() == []
     assert Persistence.active_workflow_version() == WorkflowStore.active_workflow_version()
     assert Persistence.list_workflow_versions() == WorkflowStore.list_workflow_versions()
     assert Persistence.export_workflow(version) == WorkflowStore.export_workflow(version)

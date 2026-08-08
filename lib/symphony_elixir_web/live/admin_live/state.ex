@@ -16,19 +16,21 @@ defmodule SymphonyElixirWeb.AdminLive.State do
 
   @spec refresh(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def refresh(socket) do
-    projects = persistence().list_projects()
-    default_project = default_project()
+    {projects, projects_error} = projects()
+    {default_project, default_project_error} = default_project()
     selected_project = selected_project(socket, projects, default_project)
-    active = selected_project && persistence().active_workflow_version(selected_project)
+    {active, active_error} = active_workflow_version(selected_project)
     runtime = WorkflowStore.current_with_source()
     {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(active, runtime)
     workflow_form = WorkflowState.refreshed_form(socket, loaded_workflow_form)
+    persistence_error = projects_error || default_project_error || active_error
 
     configuration_items =
       ProjectSettings.configuration_missing_items(workflow_setup_required, default_project)
 
     socket
     |> assign(:projects, projects)
+    |> assign(:persistence_error, persistence_error)
     |> assign(:default_project, default_project)
     |> assign(:selected_project, selected_project)
     |> assign(:active_workflow_version, active)
@@ -62,10 +64,27 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> IssueDetail.assign_data()
   end
 
+  defp projects do
+    case PersistenceProvider.read(fn -> persistence().list_projects() end) do
+      projects when is_list(projects) -> {projects, nil}
+      {:error, reason} -> {[], reason}
+    end
+  end
+
   defp default_project do
-    case persistence().default_project() do
-      {:ok, project} -> project
-      _ -> nil
+    case PersistenceProvider.read(fn -> persistence().default_project() end) do
+      {:ok, project} -> {project, nil}
+      {:error, :not_found} -> {nil, nil}
+      {:error, reason} -> {nil, reason}
+    end
+  end
+
+  defp active_workflow_version(nil), do: {nil, nil}
+
+  defp active_workflow_version(project) do
+    case PersistenceProvider.read(fn -> persistence().active_workflow_version(project) end) do
+      {:error, reason} -> {nil, reason}
+      version -> {version, nil}
     end
   end
 
@@ -86,6 +105,11 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   end
 
   defp runtime_source_summary({:ok, %{source: source}}), do: source_summary(source)
+  defp runtime_source_summary({:error, :no_active_workflow}), do: %{type: "setup_required", detail: "setup required"}
+
+  defp runtime_source_summary({:error, reason}) do
+    %{type: "unavailable", detail: inspect(reason)}
+  end
 
   defp source_summary(%{type: type} = source) do
     %{type: to_string(type), detail: source_detail(source)}
