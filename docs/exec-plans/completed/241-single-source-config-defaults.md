@@ -7,7 +7,7 @@ Stop three-way default-value drift between Config.Schema, setup sentinel, and Wo
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -61,18 +61,31 @@ display/formatting in the form modules.
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 20 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 706 tests, 0 failures, 2 skipped (FULL SUITE GREEN — first fully
+  green run of the 238-247 batch; +3 tests from this plan)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (schema.ex, runtime_resolver.ex, workflow.ex,
+  workflow_form.ex, project_settings.ex + 3 test files)
+- grep acceptance: `/tmp/symphony-workspaces` in lib/ -> zero hits
 
 ## Completion Deviations
 
-To be filled after implementation.
+- New `Config.Schema.defaults/0`: dumps the embedded schema defaults to one external-config map
+  (via `to_external_config/1`; strips api_key, drops nils). This is now THE single source of
+  typed defaults.
+- `WorkflowForm` and `ProjectSettings` no longer carry fallback literals: empty-form values
+  deep-merge `Schema.defaults()` instead of hard-coded `/tmp/symphony-workspaces` / concurrency 1;
+  the per-helper `default` args of get_string/get_integer_string were removed with them.
+- `setup_required_workflow/1` is now a projection of `Schema.defaults()` (tracker kind/project_slug
+  forced to linear/empty, server port override kept) — no more hand-written duplicate defaults.
+- Schema workspace-root default resolved through `%Workspace{}.root` (schema field default) instead
+  of a second `Path.join(System.tmp_dir!(), ...)` literal.
+- FIRST-RUN POLICY DECISION: the old concurrency 1 fallback was drift, not intent — forms now
+  converge on the Schema default (max_concurrent_agents 10) per the spec; no separate first-run
+  policy was created. Tests updated to assert the converged defaults. Test baseline 703 -> 706 (+3).
 

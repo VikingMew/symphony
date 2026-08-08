@@ -1,6 +1,7 @@
 defmodule SymphonyElixirWeb.Admin.ProjectSettingsTest do
   use ExUnit.Case, async: false
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixirWeb.Admin.ProjectSettings
 
   test "builds project attrs from form params" do
@@ -62,6 +63,16 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettingsTest do
 
     assert ProjectSettings.repository_preview(form, [project]) =~ ~r|^/repos/repo-[a-f0-9]{12}$|
     assert ProjectSettings.worktree_preview(form) == "/worktrees/CCR-5"
+  end
+
+  test "derives empty-form previews from the schema workspace default" do
+    workspace_root = get_in(Schema.defaults(), ["workspace", "root"])
+
+    assert ProjectSettings.repository_preview(%{}, []) ==
+             Path.join([workspace_root, "repositories", "project-<hash>"])
+
+    assert ProjectSettings.worktree_preview(%{}) ==
+             Path.join([workspace_root, "worktrees", "CCR-5"])
   end
 
   test "scopes configuration checklist items" do

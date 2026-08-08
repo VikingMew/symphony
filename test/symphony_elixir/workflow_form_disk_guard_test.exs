@@ -1,7 +1,27 @@
 defmodule SymphonyElixir.WorkflowFormDiskGuardTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.WorkflowForm
+  alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.{Workflow, WorkflowForm}
+
+  test "empty form and first save use schema defaults" do
+    defaults = Schema.defaults()
+    setup_config = Workflow.setup_required_workflow().config
+    draft = WorkflowForm.empty()
+
+    assert get_in(setup_config, ["workspace", "root"]) ==
+             get_in(defaults, ["workspace", "root"])
+
+    assert get_in(setup_config, ["agent", "max_concurrent_agents"]) == 10
+    assert draft["workspace_root"] == get_in(defaults, ["workspace", "root"])
+
+    assert draft["agent_max_concurrent_agents"] ==
+             defaults |> get_in(["agent", "max_concurrent_agents"]) |> Integer.to_string()
+
+    assert {:ok, config} = WorkflowForm.to_config(draft)
+    assert get_in(config, ["workspace", "root"]) == get_in(defaults, ["workspace", "root"])
+    assert get_in(config, ["agent", "max_concurrent_agents"]) == 10
+  end
 
   test "displays existing byte threshold as GiB" do
     draft =

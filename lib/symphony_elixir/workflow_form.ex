@@ -21,41 +21,41 @@ defmodule SymphonyElixir.WorkflowForm do
     display_config = normalized_display_config(config)
 
     %{
-      "tracker_project_slug" => get_string(display_config, ["tracker", "project_slug"], ""),
-      "tracker_assignee" => get_string(display_config, ["tracker", "assignee"], ""),
+      "tracker_project_slug" => get_string(display_config, ["tracker", "project_slug"]),
+      "tracker_assignee" => get_string(display_config, ["tracker", "assignee"]),
       "active_states" => get_list_text(display_config, ["tracker", "active_states"]),
       "terminal_states" => get_list_text(display_config, ["tracker", "terminal_states"]),
-      "polling_interval_ms" => get_integer_string(display_config, ["polling", "interval_ms"], 30_000),
-      "project_repository_url" => get_string(display_config, ["project", "repository_url"], ""),
-      "project_default_branch" => get_string(display_config, ["project", "default_branch"], "main"),
-      "project_checkout_depth" => get_integer_string(display_config, ["project", "checkout_depth"], 1),
-      "project_source_strategy" => get_string(display_config, ["project", "source_strategy"], "clone"),
-      "project_worktree_fetch" => get_boolean_string(display_config, ["project", "worktree_fetch"], true),
-      "project_worktree_cleanup" => get_boolean_string(display_config, ["project", "worktree_cleanup"], true),
+      "polling_interval_ms" => get_integer_string(display_config, ["polling", "interval_ms"]),
+      "project_repository_url" => get_string(display_config, ["project", "repository_url"]),
+      "project_default_branch" => get_string(display_config, ["project", "default_branch"]),
+      "project_checkout_depth" => get_integer_string(display_config, ["project", "checkout_depth"]),
+      "project_source_strategy" => get_string(display_config, ["project", "source_strategy"]),
+      "project_worktree_fetch" => get_boolean_string(display_config, ["project", "worktree_fetch"]),
+      "project_worktree_cleanup" => get_boolean_string(display_config, ["project", "worktree_cleanup"]),
       "project_setup_commands" => get_list_text(display_config, ["project", "setup_commands"]),
       "project_cleanup_commands" => get_list_text(display_config, ["project", "cleanup_commands"]),
-      "workspace_root" => get_string(display_config, ["workspace", "root"], "/tmp/symphony-workspaces"),
-      "workspace_repository_base_root" => get_string(display_config, ["workspace", "repository_base_root"], ""),
-      "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"], ""),
-      "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"], 60_000),
+      "workspace_root" => get_string(display_config, ["workspace", "root"]),
+      "workspace_repository_base_root" => get_string(display_config, ["workspace", "repository_base_root"]),
+      "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"]),
+      "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"]),
       "workspace_min_free_gib" => min_free_gib_string(get_in(display_config, ["workspace", "min_free_bytes"])),
-      "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"], 1),
-      "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"], 20),
-      "codex_command" => get_string(display_config, ["codex", "command"], "codex app-server"),
+      "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"]),
+      "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"]),
+      "codex_command" => get_string(display_config, ["codex", "command"]),
       "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
       "codex_approval_policy" => get_codex_approval_policy(display_config),
-      "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"], "workspace-write"),
+      "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"]),
       "codex_turn_sandbox_preset" => get_codex_turn_sandbox_preset(display_config),
       "codex_turn_sandbox_json" => get_codex_turn_sandbox_json(display_config),
-      "codex_rate_limit_gate_enabled" => get_boolean_string(display_config, ["codex", "rate_limit_gate_enabled"], true),
-      "codex_rate_limit_gate_5h_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_5h_threshold_percent"], 5.0),
-      "codex_rate_limit_gate_7d_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_7d_threshold_percent"], 3.0),
-      "codex_rate_limit_gate_post_reset_delay_ms" => get_integer_string(display_config, ["codex", "rate_limit_gate_post_reset_delay_ms"], 1_200_000),
-      "hook_after_create" => get_string(display_config, ["hooks", "after_create"], ""),
-      "hook_before_run" => get_string(display_config, ["hooks", "before_run"], ""),
-      "hook_after_run" => get_string(display_config, ["hooks", "after_run"], ""),
-      "hook_before_remove" => get_string(display_config, ["hooks", "before_remove"], ""),
-      "hook_timeout_ms" => get_integer_string(display_config, ["hooks", "timeout_ms"], 60_000),
+      "codex_rate_limit_gate_enabled" => get_boolean_string(display_config, ["codex", "rate_limit_gate_enabled"]),
+      "codex_rate_limit_gate_5h_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_5h_threshold_percent"]),
+      "codex_rate_limit_gate_7d_threshold_percent" => get_number_string(display_config, ["codex", "rate_limit_gate_7d_threshold_percent"]),
+      "codex_rate_limit_gate_post_reset_delay_ms" => get_integer_string(display_config, ["codex", "rate_limit_gate_post_reset_delay_ms"]),
+      "hook_after_create" => get_string(display_config, ["hooks", "after_create"]),
+      "hook_before_run" => get_string(display_config, ["hooks", "before_run"]),
+      "hook_after_run" => get_string(display_config, ["hooks", "after_run"]),
+      "hook_before_remove" => get_string(display_config, ["hooks", "before_remove"]),
+      "hook_timeout_ms" => get_integer_string(display_config, ["hooks", "timeout_ms"]),
       "profiles" => profiles_form(display_config),
       "workflow_states" => workflow_states_form(display_config),
       "human_review_states" => get_list_text(display_config, ["workflow", "human_review_states"]),
@@ -404,13 +404,21 @@ defmodule SymphonyElixir.WorkflowForm do
   defp normalized_display_config(config) do
     case Schema.parse(config) do
       {:ok, settings} ->
-        config
-        |> put_path(["workflow"], settings.workflow)
-        |> put_path(["profiles"], settings.profiles)
+        deep_merge(config, Schema.to_external_config(settings))
 
       {:error, _reason} ->
-        config
+        deep_merge(Schema.defaults(), config)
     end
+  end
+
+  defp deep_merge(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _key, left_value, right_value ->
+      if is_map(left_value) and is_map(right_value) do
+        deep_merge(left_value, right_value)
+      else
+        right_value
+      end
+    end)
   end
 
   defp parse_positive_integer(draft, key, label) do
@@ -494,6 +502,8 @@ defmodule SymphonyElixir.WorkflowForm do
     end
   end
 
+  defp get_string(config, path), do: get_string(config, path, "")
+
   defp get_string(config, path, default) do
     case get_in(config, path) do
       value when is_binary(value) -> value
@@ -502,20 +512,20 @@ defmodule SymphonyElixir.WorkflowForm do
     end
   end
 
-  defp get_integer_string(config, path, default) do
+  defp get_integer_string(config, path) do
     case get_in(config, path) do
       value when is_integer(value) -> Integer.to_string(value)
       value when is_binary(value) -> value
-      _ -> Integer.to_string(default)
+      _ -> ""
     end
   end
 
-  defp get_number_string(config, path, default) do
+  defp get_number_string(config, path) do
     case get_in(config, path) do
       value when is_integer(value) -> Integer.to_string(value)
       value when is_float(value) -> value |> Float.to_string() |> trim_trailing_decimal()
       value when is_binary(value) -> value
-      _ -> default |> Float.to_string() |> trim_trailing_decimal()
+      _ -> ""
     end
   end
 
@@ -545,6 +555,14 @@ defmodule SymphonyElixir.WorkflowForm do
     |> Decimal.div(Decimal.new(@gib_bytes))
     |> Decimal.normalize()
     |> Decimal.to_string(:normal)
+  end
+
+  defp get_boolean_string(config, path) do
+    case get_in(config, path) do
+      value when is_boolean(value) -> to_string(value)
+      value when is_binary(value) -> value
+      _ -> ""
+    end
   end
 
   defp get_boolean_string(config, path, default) do

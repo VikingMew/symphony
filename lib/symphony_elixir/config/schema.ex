@@ -385,6 +385,24 @@ defmodule SymphonyElixir.Config.Schema do
     field(:profiles, :map, default: %{})
   end
 
+  @spec defaults() :: map()
+  def defaults do
+    %__MODULE__{
+      workflow: default_workflow_policy(),
+      profiles: default_profiles()
+    }
+    |> to_external_config()
+  end
+
+  @spec to_external_config(%__MODULE__{}) :: map()
+  def to_external_config(%__MODULE__{} = settings) do
+    settings
+    |> Ecto.embedded_dump(:json)
+    |> normalize_keys()
+    |> Map.update!("tracker", &Map.delete(&1, "api_key"))
+    |> drop_nil_values()
+  end
+
   @spec parse(map()) :: {:ok, %__MODULE__{}} | {:error, {:invalid_workflow_config, String.t()}}
   def parse(config) when is_map(config) do
     config
@@ -580,7 +598,7 @@ defmodule SymphonyElixir.Config.Schema do
 
     workspace = %{
       settings.workspace
-      | root: RuntimeResolver.resolve_path_value(settings.workspace.root, Path.join(System.tmp_dir!(), "symphony_workspaces")),
+      | root: RuntimeResolver.resolve_path_value(settings.workspace.root, %Workspace{}.root),
         repository_base_root: RuntimeResolver.resolve_optional_path_value(settings.workspace.repository_base_root),
         worktree_base_root: RuntimeResolver.resolve_optional_path_value(settings.workspace.worktree_base_root)
     }

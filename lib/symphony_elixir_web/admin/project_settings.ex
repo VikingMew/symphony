@@ -3,6 +3,7 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
   Pure project settings helpers used by the admin LiveView.
   """
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Text
 
   @compare_fields [
@@ -148,14 +149,21 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
   defp repository_base_root(form) do
     case Map.get(form, "workspace_repository_base_root") do
       value when is_binary(value) and value != "" -> value
-      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "repositories")
+      _ -> Path.join(workspace_root(form), "repositories")
     end
   end
 
   defp worktree_base_root(form) do
     case Map.get(form, "workspace_worktree_base_root") do
       value when is_binary(value) and value != "" -> value
-      _ -> Path.join(Map.get(form, "workspace_root", "/tmp/symphony-workspaces"), "worktrees")
+      _ -> Path.join(workspace_root(form), "worktrees")
+    end
+  end
+
+  defp workspace_root(form) do
+    case Map.get(form, "workspace_root") do
+      value when is_binary(value) and value != "" -> value
+      _ -> get_in(Schema.defaults(), ["workspace", "root"])
     end
   end
 

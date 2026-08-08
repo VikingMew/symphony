@@ -4,6 +4,16 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.StringOrMap
 
+  test "projects schema defaults to external config" do
+    defaults = Schema.defaults()
+
+    assert get_in(defaults, ["workspace", "root"]) ==
+             Path.join(System.tmp_dir!(), "symphony_workspaces")
+
+    assert get_in(defaults, ["agent", "max_concurrent_agents"]) == 10
+    refute Map.has_key?(defaults["tracker"], "api_key")
+  end
+
   test "config reads defaults for optional settings" do
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
     on_exit(fn -> restore_env("LINEAR_API_KEY", previous_linear_api_key) end)

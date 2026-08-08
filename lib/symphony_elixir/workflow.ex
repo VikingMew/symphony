@@ -71,26 +71,18 @@ defmodule SymphonyElixir.Workflow do
 
   @spec setup_required_workflow(non_neg_integer() | nil) :: loaded_workflow()
   def setup_required_workflow(port \\ nil) do
+    defaults = Schema.defaults()
+
     %{
       config: %{
-        "tracker" => %{
-          "kind" => "linear",
-          "endpoint" => "https://api.linear.app/graphql",
-          "project_slug" => "",
-          "active_states" => ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
-          "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
-        },
-        "polling" => %{"interval_ms" => 30_000},
-        "server" => %{"host" => "127.0.0.1", "port" => port},
-        "agent" => %{"max_concurrent_agents" => 1, "max_turns" => 20},
-        "codex" => %{
-          "command" => "codex app-server",
-          "pre_start_commands" => [],
-          "approval_policy" => "never",
-          "thread_sandbox" => "workspace-write"
-        },
-        "workflow" => Schema.default_workflow_policy(),
-        "profiles" => Schema.default_profiles()
+        "tracker" => defaults["tracker"] |> Map.put("kind", "linear") |> Map.put("project_slug", ""),
+        "polling" => defaults["polling"],
+        "server" => Map.put(defaults["server"], "port", port),
+        "workspace" => defaults["workspace"],
+        "agent" => Map.take(defaults["agent"], ["max_concurrent_agents", "max_turns"]),
+        "codex" => Map.take(defaults["codex"], ["command", "pre_start_commands", "approval_policy", "thread_sandbox"]),
+        "workflow" => defaults["workflow"],
+        "profiles" => defaults["profiles"]
       },
       prompt: "",
       prompt_template: "",

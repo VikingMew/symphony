@@ -3,9 +3,8 @@ defmodule SymphonyElixir.Config.RuntimeResolver do
   Runtime/environment resolution for parsed settings.
   """
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.PathSafety
-
-  @default_workspace_root Path.join(System.tmp_dir!(), "symphony_workspaces")
 
   @spec env_secret(String.t()) :: String.t() | nil
   def env_secret(env_name), do: normalize_secret_value(System.get_env(env_name))
@@ -58,7 +57,11 @@ defmodule SymphonyElixir.Config.RuntimeResolver do
     Path.expand(workspace_root)
   end
 
-  def expand_local_workspace_root(_workspace_root), do: Path.expand(@default_workspace_root)
+  def expand_local_workspace_root(_workspace_root) do
+    Schema.defaults()
+    |> get_in(["workspace", "root"])
+    |> Path.expand()
+  end
 
   @spec default_turn_sandbox_policy(String.t()) :: map()
   def default_turn_sandbox_policy(workspace) do
