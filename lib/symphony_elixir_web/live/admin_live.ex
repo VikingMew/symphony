@@ -16,6 +16,7 @@ defmodule SymphonyElixirWeb.AdminLive do
   }
 
   alias SymphonyElixirWeb.AdminLive.Settings.{Import, Projects}
+  alias SymphonyElixirWeb.WebRuntime
 
   @settings_actions [
     :settings,
@@ -112,7 +113,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("start_listening", _params, socket) do
-    result = SymphonyElixir.Orchestrator.start_listening(orchestrator())
+    result = SymphonyElixir.Orchestrator.start_listening(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -122,7 +123,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("stop_listening", _params, socket) do
-    result = SymphonyElixir.Orchestrator.stop_listening(orchestrator())
+    result = SymphonyElixir.Orchestrator.stop_listening(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -132,7 +133,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("force_stop_all", _params, socket) do
-    result = SymphonyElixir.Orchestrator.force_stop_all(orchestrator())
+    result = SymphonyElixir.Orchestrator.force_stop_all(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -163,8 +164,4 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp nav_current(action) when action in @settings_actions, do: :settings
   defp nav_current(action), do: action
-
-  defp orchestrator do
-    SymphonyElixirWeb.Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
-  end
 end

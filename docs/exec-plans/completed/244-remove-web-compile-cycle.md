@@ -7,7 +7,7 @@ Make `Endpoint` depend only on `Router`; stop LiveViews/Controllers from calling
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -53,18 +53,29 @@ cost; do not grow it into a registry.
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 20 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix xref graph --format cycles` — PASS: `endpoint` no longer appears in ANY
+  cycle (grep count 0); the length-6 (1 compile) Endpoint/Router/AdminLive/DashboardLive/
+  SettingsLive/API cycle is GONE.
+- `mise exec -- mix test` — 710 tests, 0 failures, 2 skipped (FULL SUITE GREEN)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (3 consumer modules + new
+  lib/symphony_elixir_web/web_runtime.ex)
+- grep acceptance: `Endpoint.config` consumers in lib/symphony_elixir_web/ -> zero hits outside
+  the new accessor
 
 ## Completion Deviations
 
-To be filled after implementation.
+- New `SymphonyElixirWeb.WebRuntime` (21 lines): `orchestrator/0` + `snapshot_timeout_ms/0`
+  reading the endpoint config from Application env (same keys tests already injected) — the ONE
+  narrow accessor; no service locator.
+- DashboardLive, AdminLive, ObservabilityApiController now call `WebRuntime.orchestrator()` /
+  `WebRuntime.snapshot_timeout_ms()`; the duplicated `Endpoint.config(...) || default`
+  resolution (3-4 copies) is deleted.
+- Test injection preserved: tests still set the same endpoint env keys, so custom
+  orchestrator/timeout tests pass unchanged. Test baseline unchanged at 710.
 

@@ -6,16 +6,20 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
-  alias SymphonyElixirWeb.{Endpoint, Presenter}
+  alias SymphonyElixirWeb.{Presenter, WebRuntime}
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
-    json(conn, Presenter.state_payload(orchestrator(), snapshot_timeout_ms()))
+    json(conn, Presenter.state_payload(WebRuntime.orchestrator(), WebRuntime.snapshot_timeout_ms()))
   end
 
   @spec issue(Conn.t(), map()) :: Conn.t()
   def issue(conn, %{"issue_identifier" => issue_identifier}) do
-    case Presenter.issue_payload(issue_identifier, orchestrator(), snapshot_timeout_ms()) do
+    case Presenter.issue_payload(
+           issue_identifier,
+           WebRuntime.orchestrator(),
+           WebRuntime.snapshot_timeout_ms()
+         ) do
       {:ok, payload} ->
         json(conn, payload)
 
@@ -26,7 +30,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
   @spec refresh(Conn.t(), map()) :: Conn.t()
   def refresh(conn, _params) do
-    case Presenter.refresh_payload(orchestrator()) do
+    case Presenter.refresh_payload(WebRuntime.orchestrator()) do
       {:ok, payload} ->
         conn
         |> put_status(202)
@@ -51,13 +55,5 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
     conn
     |> put_status(status)
     |> json(%{error: %{code: code, message: message}})
-  end
-
-  defp orchestrator do
-    Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
-  end
-
-  defp snapshot_timeout_ms do
-    Endpoint.config(:snapshot_timeout_ms) || 15_000
   end
 end

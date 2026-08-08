@@ -7,7 +7,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   import SymphonyElixirWeb.DashboardPresenter
 
-  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
+  alias SymphonyElixirWeb.{ObservabilityPubSub, Presenter, WebRuntime}
   @runtime_tick_ms 1_000
 
   @impl true
@@ -51,7 +51,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("start_listening", _params, socket) do
-    result = SymphonyElixir.Orchestrator.start_listening(orchestrator())
+    result = SymphonyElixir.Orchestrator.start_listening(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -61,7 +61,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("start_refine_only_listening", _params, socket) do
-    result = SymphonyElixir.Orchestrator.start_refine_only_listening(orchestrator())
+    result = SymphonyElixir.Orchestrator.start_refine_only_listening(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -71,7 +71,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("stop_listening", _params, socket) do
-    result = SymphonyElixir.Orchestrator.stop_listening(orchestrator())
+    result = SymphonyElixir.Orchestrator.stop_listening(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -81,7 +81,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("force_stop_all", _params, socket) do
-    result = SymphonyElixir.Orchestrator.force_stop_all(orchestrator())
+    result = SymphonyElixir.Orchestrator.force_stop_all(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -91,7 +91,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("request_nap", _params, socket) do
-    result = SymphonyElixir.Orchestrator.request_nap(orchestrator())
+    result = SymphonyElixir.Orchestrator.request_nap(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -101,7 +101,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("request_day_dreaming", _params, socket) do
-    result = SymphonyElixir.Orchestrator.request_day_dreaming(orchestrator())
+    result = SymphonyElixir.Orchestrator.request_day_dreaming(WebRuntime.orchestrator())
 
     {:noreply,
      socket
@@ -526,21 +526,13 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp load_payload do
-    Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
+    Presenter.state_payload(WebRuntime.orchestrator(), WebRuntime.snapshot_timeout_ms())
   end
 
   defp refresh_payload(socket) do
     socket
     |> assign(:payload, load_payload())
     |> assign(:now, DateTime.utc_now())
-  end
-
-  defp orchestrator do
-    Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator
-  end
-
-  defp snapshot_timeout_ms do
-    Endpoint.config(:snapshot_timeout_ms) || 15_000
   end
 
   defp schedule_runtime_tick do

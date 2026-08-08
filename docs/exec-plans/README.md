@@ -247,12 +247,12 @@ Plans should focus on product and engineering intent rather than full implementa
 240. [240-unify-audit-event-write-semantics.md](completed/240-unify-audit-event-write-semantics.md)
 241. [241-single-source-config-defaults.md](completed/241-single-source-config-defaults.md)
 242. [242-force-stop-partial-failure-honesty.md](completed/242-force-stop-partial-failure-honesty.md)
+244. [244-remove-web-compile-cycle.md](completed/244-remove-web-compile-cycle.md)
 243. [243-merge-path-safety-algorithms.md](completed/243-merge-path-safety-algorithms.md)
 247. [247-persistence-facade-internal-boundaries.md](completed/247-persistence-facade-internal-boundaries.md)
 
 ## Active Plans
 
-4. [244-remove-web-compile-cycle.md](active/244-remove-web-compile-cycle.md) — M4: remove Web compile cycle
 5. [245-settings-single-direction-deps-drop-wrapper.md](active/245-settings-single-direction-deps-drop-wrapper.md) — M5: Settings single-direction deps
 6. [246-remove-db-only-source-selector.md](active/246-remove-db-only-source-selector.md) — M6: remove DB-only source selector
 
