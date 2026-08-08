@@ -1447,6 +1447,75 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Map.has_key?(state.retry_attempts, issue_id)
   end
 
+  test "force stop reports an empty successful task cancellation result" do
+    FakePersistence.put_tasks([%{id: "task-completed", status: "completed"}])
+
+    cancellation = %{cancelled: 0, failed: [], status: :ok}
+
+    assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()
+    assert [event] = FakePersistence.list_events(event_type: "orchestrator.force_stop_all")
+    assert event.payload.cancelled_tasks == cancellation
+  end
+
+  test "force stop reports all successful task cancellations" do
+    FakePersistence.put_tasks([
+      %{id: "task-queued", status: "queued"},
+      %{id: "task-leased", status: "leased"},
+      %{id: "task-running", status: "running"},
+      %{id: "task-completed", status: "completed"}
+    ])
+
+    cancellation = %{cancelled: 3, failed: [], status: :ok}
+
+    assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()
+    assert [event] = FakePersistence.list_events(event_type: "orchestrator.force_stop_all")
+    assert event.payload.cancelled_tasks == cancellation
+  end
+
+  test "force stop reports and persists partial task cancellation failure" do
+    FakePersistence.put_tasks([
+      %{id: "task-cancelled", status: "running"},
+      %{id: "task-failed", status: "leased"}
+    ])
+
+    FakePersistence.put_cancel_task_errors(%{"task-failed" => :database_unavailable})
+
+    cancellation = %{
+      cancelled: 1,
+      failed: [%{task_id: "task-failed", reason: ":database_unavailable"}],
+      status: :partial
+    }
+
+    assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()
+    assert [event] = FakePersistence.list_events(event_type: "orchestrator.force_stop_all")
+    assert event.payload.cancelled_tasks == cancellation
+  end
+
+  test "force stop reports all failed task cancellations as an error" do
+    FakePersistence.put_tasks([
+      %{id: "task-failed-1", status: "queued"},
+      %{id: "task-failed-2", status: "running"}
+    ])
+
+    FakePersistence.put_cancel_task_errors(%{
+      "task-failed-1" => :database_unavailable,
+      "task-failed-2" => :conflict
+    })
+
+    cancellation = %{
+      cancelled: 0,
+      failed: [
+        %{task_id: "task-failed-1", reason: ":database_unavailable"},
+        %{task_id: "task-failed-2", reason: ":conflict"}
+      ],
+      status: :error
+    }
+
+    assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()
+    assert [event] = FakePersistence.list_events(event_type: "orchestrator.force_stop_all")
+    assert event.payload.cancelled_tasks == cancellation
+  end
+
   test "force stop all agents disables listening and rolls back symphony-owned state when unchanged" do
     previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
     previous_test_pid = Application.get_env(:symphony_elixir, :rollback_linear_test_pid)

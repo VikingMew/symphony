@@ -37,6 +37,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :tasks, tasks))
   end
 
+  def put_cancel_task_errors(errors) when is_map(errors) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :cancel_task_errors, errors))
+  end
+
   def put_issues(issues) when is_list(issues) do
     ensure_started()
     Agent.update(@name, &Map.put(&1, :issues, issues))
@@ -321,8 +326,15 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def cancel_task(id, reason \\ "cancelled") do
     ensure_started()
     task = %{id: id, status: "cancelled", payload: %{"reason" => reason}}
-    Agent.update(@name, &record_call(&1, {:cancel_task, id, reason}))
-    {:ok, task}
+
+    Agent.get_and_update(@name, fn state ->
+      state = record_call(state, {:cancel_task, id, reason})
+
+      case Map.fetch(state.cancel_task_errors, id) do
+        {:ok, error} -> {{:error, error}, state}
+        :error -> {{:ok, task}, state}
+      end
+    end)
   end
 
   def requeue_task(id) do
@@ -617,6 +629,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       workers: [],
       worker_sessions: [],
       tasks: [],
+      cancel_task_errors: %{},
       task_leases: [],
       issues: [],
       workflow_versions: [],

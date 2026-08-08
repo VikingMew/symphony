@@ -2286,16 +2286,53 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp cancel_active_worker_tasks do
-    PersistenceProvider.module().list_tasks(limit: 1_000)
-    |> Enum.filter(&(Map.get(&1, :status) in ["queued", "leased", "running"]))
-    |> Enum.reduce(0, fn task, count ->
-      case PersistenceProvider.module().cancel_task(task.id, "force_stop_all") do
-        {:ok, _task} -> count + 1
-        _ -> count
-      end
-    end)
+    persistence = PersistenceProvider.module()
+
+    case PersistenceProvider.read(fn -> persistence.list_tasks(limit: 1_000) end) do
+      tasks when is_list(tasks) ->
+        tasks
+        |> Enum.filter(&(Map.get(&1, :status) in ["queued", "leased", "running"]))
+        |> Enum.reduce({0, []}, &accumulate_task_cancellation(&1, persistence, &2))
+        |> then(fn {cancelled, failed} -> cancellation_result(cancelled, Enum.reverse(failed)) end)
+
+      {:error, reason} ->
+        cancellation_result(0, [%{task_id: nil, reason: inspect(reason)}])
+
+      other ->
+        cancellation_result(0, [%{task_id: nil, reason: inspect({:unexpected_result, other})}])
+    end
+  end
+
+  defp accumulate_task_cancellation(task, persistence, {cancelled, failed}) do
+    task_id = Map.get(task, :id)
+
+    case cancel_worker_task(persistence, task_id) do
+      :ok -> {cancelled + 1, failed}
+      {:error, reason} -> {cancelled, [%{task_id: task_id, reason: reason} | failed]}
+    end
+  end
+
+  defp cancel_worker_task(persistence, task_id) do
+    case persistence.cancel_task(task_id, "force_stop_all") do
+      {:ok, _task} -> :ok
+      {:error, reason} -> {:error, inspect(reason)}
+      other -> {:error, inspect({:unexpected_result, other})}
+    end
   rescue
-    _ -> 0
+    error -> {:error, inspect(error)}
+  catch
+    kind, reason -> {:error, inspect({kind, reason})}
+  end
+
+  defp cancellation_result(cancelled, failed) do
+    status =
+      cond do
+        failed == [] -> :ok
+        cancelled == 0 -> :error
+        true -> :partial
+      end
+
+    %{cancelled: cancelled, failed: failed, status: status}
   end
 
   defp integrate_codex_update(running_entry, %{event: _event, timestamp: _timestamp} = update) do
