@@ -245,7 +245,16 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-Plans 230-237 (Codex static-analysis cleanup batch) are all completed and archived. No active plans remain.
+1. [238-fix-workspace-disk-guard-fail-open.md](active/238-fix-workspace-disk-guard-fail-open.md) — H2: disk guard fail-open (top value/risk)
+2. [239-typed-errors-for-db-reads-no-fake-setup-required.md](active/239-typed-errors-for-db-reads-no-fake-setup-required.md) — H1: typed errors at DB read exits
+3. [240-unify-audit-event-write-semantics.md](active/240-unify-audit-event-write-semantics.md) — H3: unify audit-event write semantics
+4. [241-single-source-config-defaults.md](active/241-single-source-config-defaults.md) — M1: single source for config defaults
+5. [242-force-stop-partial-failure-honesty.md](active/242-force-stop-partial-failure-honesty.md) — M2: Force Stop partial-failure honesty
+6. [243-merge-path-safety-algorithms.md](active/243-merge-path-safety-algorithms.md) — M3: merge path-safety algorithms
+7. [244-remove-web-compile-cycle.md](active/244-remove-web-compile-cycle.md) — M4: remove Web compile cycle
+8. [245-settings-single-direction-deps-drop-wrapper.md](active/245-settings-single-direction-deps-drop-wrapper.md) — M5: Settings single-direction deps
+9. [246-remove-db-only-source-selector.md](active/246-remove-db-only-source-selector.md) — M6: remove DB-only source selector
+10. [247-persistence-facade-internal-boundaries.md](active/247-persistence-facade-internal-boundaries.md) — M7: Persistence internal boundaries (after 239)
 
 ## Intentional Numbering Gaps
 
