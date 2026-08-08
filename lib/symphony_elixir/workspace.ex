@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workspace do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, PathSafety, PersistenceProvider, WorkspaceCleanupPolicy}
+  alias SymphonyElixir.{Config, PathSafety, PersistenceEventWriter, WorkspaceCleanupPolicy}
   alias SymphonyElixir.Workspace.{HookRunner, Remote, SourcePreparation}
 
   @hook_recent_output_bytes 4_096
@@ -981,13 +981,14 @@ defmodule SymphonyElixir.Workspace do
         payload
       )
 
-    PersistenceProvider.module().record_event(%{
-      issue_identifier: Map.get(issue_context, :issue_identifier),
-      event_type: event_type,
-      payload: payload
-    })
-
-    :ok
+    record_telemetry_event(
+      %{
+        issue_identifier: Map.get(issue_context, :issue_identifier),
+        event_type: event_type,
+        payload: payload
+      },
+      issue_context
+    )
   end
 
   defp phase_for_hook("project_bootstrap"), do: "workspace_bootstrap"
@@ -1014,15 +1015,30 @@ defmodule SymphonyElixir.Workspace do
         payload
       )
 
-    PersistenceProvider.module().record_event(%{
-      issue_identifier: Map.get(issue_context, :issue_identifier),
-      event_type: "run.phase",
-      payload: payload
-    })
+    record_telemetry_event(
+      %{
+        issue_identifier: Map.get(issue_context, :issue_identifier),
+        event_type: "run.phase",
+        payload: payload
+      },
+      issue_context
+    )
+  end
 
-    :ok
-  rescue
-    _ -> :ok
+  # Hook and phase events are best-effort telemetry: persistence failure is
+  # visible but must not change the workspace action being measured.
+  defp record_telemetry_event(attrs, issue_context) do
+    case PersistenceEventWriter.record(attrs, issue_context) do
+      :ok ->
+        :ok
+
+      {_outcome, reason} ->
+        Logger.warning(
+          "Workspace event persistence degraded action=continue_degraded event_type=#{Map.get(attrs, :event_type)} #{issue_log_context(issue_context)} session_id=n/a run_id=n/a outcome=#{inspect({:degraded, reason}, limit: 20, printable_limit: 1_000)}"
+        )
+
+        :ok
+    end
   end
 
   defp command_preview(nil), do: nil

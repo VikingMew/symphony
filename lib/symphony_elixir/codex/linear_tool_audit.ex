@@ -3,7 +3,9 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
   Structured audit events for Symphony-owned restricted Linear tools.
   """
 
-  alias SymphonyElixir.{Payload, PersistenceProvider, Redaction}
+  require Logger
+
+  alias SymphonyElixir.{Payload, PersistenceEventWriter, Redaction}
 
   @linear_tools ~w(linear_task_read linear_task_update linear_issue_create)
 
@@ -11,7 +13,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
   def linear_tool?(tool) when tool in @linear_tools, do: true
   def linear_tool?(_tool), do: false
 
-  @spec record(String.t(), term(), map(), keyword()) :: :ok
+  @spec record(String.t(), term(), map(), keyword()) :: :ok | {:error, term()}
   def record(tool, arguments, response, opts) when is_binary(tool) and is_map(response) do
     if linear_tool?(tool) do
       started_at = Keyword.get(opts, :audit_started_at) || DateTime.utc_now()
@@ -38,17 +40,24 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
         }
         |> drop_nil_values()
 
-      PersistenceProvider.module().record_event(%{
+      attrs = %{
         run_id: Keyword.get(opts, :run_id),
         issue_identifier: issue_identifier(opts),
         event_type: "linear.tool_call",
         payload: payload
-      })
-    end
+      }
 
-    :ok
-  rescue
-    _error -> :ok
+      # Restricted Linear tool events are critical audit records. The current
+      # fire-and-forget caller cannot act on the result, so failures are returned
+      # and logged at error level here instead of being reported as success.
+      case PersistenceEventWriter.record(attrs, payload) do
+        :ok -> :ok
+        {:degraded, reason} -> audit_write_error(tool, payload, reason)
+        {:error, reason} -> audit_write_error(tool, payload, reason)
+      end
+    else
+      :ok
+    end
   end
 
   def record(_tool, _arguments, _response, _opts), do: :ok
@@ -152,6 +161,16 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
       %{"id" => id} when is_binary(id) -> id
       _ -> Keyword.get(opts, :issue_id)
     end
+  end
+
+  defp audit_write_error(tool, payload, reason) do
+    result = {:error, {:linear_tool_audit_write_failed, reason}}
+
+    Logger.error(
+      "Linear tool audit persistence failed action=surface_error tool=#{tool} issue_id=#{inspect(Map.get(payload, :issue_id))} issue_identifier=#{inspect(Map.get(payload, :issue_identifier))} session_id=#{inspect(Map.get(payload, :session_id))} run_id=#{inspect(Map.get(payload, :run_id))} outcome=#{inspect(result, limit: 20, printable_limit: 1_000)}"
+    )
+
+    result
   end
 
   defp contains?(value, needle) when is_binary(value), do: String.contains?(value, needle)

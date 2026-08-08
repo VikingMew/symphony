@@ -8,7 +8,7 @@ strong/weak consistency.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -64,18 +64,37 @@ strong/weak policy explicit in the calling module (documented in a comment, not 
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 22 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 692 tests, 1 failure (full suite). The single failure
+  ("worktree bootstrap clone uses initialize timeout", Workspace.SourcePreparationTest) is a
+  timing-sensitive flake under full-suite load — the file passes in isolation (30 tests, 0
+  failures). Not related to this plan (which touches no workspace bootstrap code).
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (4 lib modules + new
+  lib/symphony_elixir/persistence_event_writer.ex + new audit_event_write_semantics_test.exs)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- New `SymphonyElixir.PersistenceEventWriter` (`record/2`): returns `:ok | {:degraded, reason} |
+  {:error, reason}` where `:repo_unavailable` -> `{:degraded, :repo_unavailable}` (warning log),
+  other errors/raised exceptions/unexpected results -> `{:error, ...}` (error log, exception kept
+  in the reason). Logs carry issue_id/issue_identifier/session_id/run_id extracted from attrs,
+  payload, or explicit context.
+- Three telemetry sites (agent_runner emit_phase/emit_branch_event, workspace persist_hook_event,
+  merge_executor record_phase) use the writer with explicit best-effort policy: degraded/error is
+  logged at warning level (`action=continue_degraded`) and the caller continues — visible but not
+  crashing.
+- The critical audit site (linear_tool_audit.record/4) returns `:ok | {:error, ...}`; failures are
+  logged at error level (`action=surface_error`, full issue/run/session context) and returned as
+  `{:error, {:linear_tool_audit_write_failed, reason}}`. The fire-and-forget caller cannot act on
+  it yet, so surfacing + error log is the implemented semantics (per plan's fallback).
+- All four `rescue _ -> :ok` audit writers removed (grep zero in the four modules); the five
+  remaining rescues in workspace.ex are pre-existing non-audit paths (clone/hook error handling),
+  untouched. Test baseline 686 -> 692 (+6: writer unit tests + per-site degradation tests).
+
+## Dependencies
 

@@ -4,7 +4,7 @@ defmodule SymphonyElixir.MergeExecutor do
   """
 
   require Logger
-  alias SymphonyElixir.{BranchName, Config, Git, Linear.Issue, PersistenceProvider, Tracker}
+  alias SymphonyElixir.{BranchName, Config, Git, Linear.Issue, PersistenceEventWriter, Tracker}
 
   @merge_profile "merge"
 
@@ -195,7 +195,7 @@ defmodule SymphonyElixir.MergeExecutor do
   defp record_phase(%Issue{} = issue, phase, status, payload) do
     Logger.info("Run phase phase=#{phase} status=#{status} issue_id=#{issue.id} issue_identifier=#{issue.identifier}")
 
-    PersistenceProvider.module().record_event(%{
+    attrs = %{
       issue_identifier: issue.identifier,
       event_type: "run.phase",
       payload:
@@ -208,11 +208,21 @@ defmodule SymphonyElixir.MergeExecutor do
           },
           payload
         )
-    })
+    }
 
-    :ok
-  rescue
-    _ -> :ok
+    # Merge phase events are best-effort telemetry: persistence failure is
+    # visible but must not change the merge action being measured.
+    case PersistenceEventWriter.record(attrs, %{issue_id: issue.id, issue_identifier: issue.identifier}) do
+      :ok ->
+        :ok
+
+      {_outcome, reason} ->
+        Logger.warning(
+          "Merge phase persistence degraded action=continue_degraded event_type=run.phase issue_id=#{inspect(issue.id)} issue_identifier=#{inspect(issue.identifier)} session_id=n/a run_id=n/a outcome=#{inspect({:degraded, reason}, limit: 20, printable_limit: 1_000)}"
+        )
+
+        :ok
+    end
   end
 
   defp normalize_state(state), do: SymphonyElixir.StateName.normalize(state)

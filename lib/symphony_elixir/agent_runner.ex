@@ -14,7 +14,7 @@ defmodule SymphonyElixir.AgentRunner do
     Git,
     Linear.Issue,
     MergeExecutor,
-    PersistenceProvider,
+    PersistenceEventWriter,
     PromptBuilder,
     Tracker,
     Workspace
@@ -546,15 +546,19 @@ defmodule SymphonyElixir.AgentRunner do
       "Run phase phase=#{payload.phase} status=#{payload.status} issue_id=#{Map.get(payload, :issue_id)} issue_identifier=#{Map.get(payload, :issue_identifier)} worker_host=#{payload.worker_host} attempt=#{inspect(payload.attempt)}"
     )
 
-    PersistenceProvider.module().record_event(%{
-      issue_identifier: Map.get(payload, :issue_identifier),
-      event_type: "run.phase",
-      payload: payload
-    })
-
-    :ok
-  rescue
-    _ -> :ok
+    record_telemetry_event(
+      %{
+        issue_identifier: Map.get(payload, :issue_identifier),
+        event_type: "run.phase",
+        payload: payload
+      },
+      %{
+        issue_id: Map.get(payload, :issue_id),
+        issue_identifier: Map.get(payload, :issue_identifier),
+        session_id: Keyword.get(opts, :session_id),
+        run_id: Keyword.get(opts, :run_id)
+      }
+    )
   end
 
   defp issue_phase_payload(%Issue{id: issue_id, identifier: identifier}) do
@@ -564,23 +568,38 @@ defmodule SymphonyElixir.AgentRunner do
   defp issue_phase_payload(_issue), do: %{}
 
   defp emit_branch_event(%Issue{} = issue, phase, status, payload) do
-    PersistenceProvider.module().record_event(%{
-      issue_identifier: issue.identifier,
-      event_type: "run.phase",
-      payload:
-        Map.merge(
-          %{
-            phase: to_string(phase),
-            status: to_string(status),
-            issue_id: issue.id,
-            issue_identifier: issue.identifier
-          },
-          payload
-        )
-    })
+    record_telemetry_event(
+      %{
+        issue_identifier: issue.identifier,
+        event_type: "run.phase",
+        payload:
+          Map.merge(
+            %{
+              phase: to_string(phase),
+              status: to_string(status),
+              issue_id: issue.id,
+              issue_identifier: issue.identifier
+            },
+            payload
+          )
+      },
+      %{issue_id: issue.id, issue_identifier: issue.identifier}
+    )
+  end
 
-    :ok
-  rescue
-    _ -> :ok
+  # Phase events are best-effort telemetry: persistence failure is visible but
+  # must not change the agent action being measured.
+  defp record_telemetry_event(attrs, context) do
+    case PersistenceEventWriter.record(attrs, context) do
+      :ok ->
+        :ok
+
+      {_outcome, reason} ->
+        Logger.warning(
+          "Run phase persistence degraded action=continue_degraded event_type=#{Map.get(attrs, :event_type)} issue_id=#{inspect(Map.get(context, :issue_id))} issue_identifier=#{inspect(Map.get(context, :issue_identifier))} session_id=#{inspect(Map.get(context, :session_id))} run_id=#{inspect(Map.get(context, :run_id))} outcome=#{inspect({:degraded, reason}, limit: 20, printable_limit: 1_000)}"
+        )
+
+        :ok
+    end
   end
 end
