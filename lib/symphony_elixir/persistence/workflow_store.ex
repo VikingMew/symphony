@@ -6,8 +6,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   import Ecto.Query
   require Logger
 
-  alias SymphonyElixir.Repo
-  alias SymphonyElixir.{Persistence, Workflow}
+  alias SymphonyElixir.{Repo, Workflow}
+
   alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
 
   @default_project_slug "default"
@@ -18,7 +18,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   defp default_project! do
-    if Persistence.repo_available?() do
+    if repo_available?() do
       case Repo.get_by(Project, slug: @default_project_slug) do
         nil ->
           %Project{}
@@ -36,23 +36,23 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   @spec list_projects() :: [Project.t()]
   def list_projects do
     query(:list_projects, fn ->
-      if Persistence.repo_available?(), do: Repo.all(from(p in Project, order_by: [asc: p.name])), else: []
+      if repo_available?(), do: Repo.all(from(p in Project, order_by: [asc: p.name])), else: []
     end)
   end
 
   @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   def create_project(attrs) do
-    if Persistence.repo_available?(), do: %Project{} |> Project.changeset(attrs) |> Repo.insert(), else: {:error, :repo_unavailable}
+    if repo_available?(), do: %Project{} |> Project.changeset(attrs) |> Repo.insert(), else: {:error, :repo_unavailable}
   end
 
   @spec update_project(Project.t() | String.t(), map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   def update_project(%Project{} = project, attrs) do
-    if Persistence.repo_available?(), do: project |> Project.changeset(attrs) |> Repo.update(), else: {:error, :repo_unavailable}
+    if repo_available?(), do: project |> Project.changeset(attrs) |> Repo.update(), else: {:error, :repo_unavailable}
   end
 
   def update_project(id, attrs) when is_binary(id) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          %Project{} = project <- Repo.get(Project, id) || {:error, :not_found} do
       update_project(project, attrs)
     end
@@ -88,7 +88,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   def active_workflow_version(%Project{id: project_id}) do
     query(:active_workflow_version, fn ->
-      if Persistence.repo_available?() do
+      if repo_available?() do
         Repo.one(
           from(w in WorkflowVersion,
             where: w.project_id == ^project_id and w.active == true,
@@ -150,7 +150,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   def list_workflow_versions(%Project{id: project_id}) do
     query(:list_workflow_versions, fn ->
-      if Persistence.repo_available?() do
+      if repo_available?() do
         Repo.all(from(w in WorkflowVersion, where: w.project_id == ^project_id, order_by: [desc: w.version]))
       else
         []
@@ -172,7 +172,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   defp project_for_runtime(project_id) when is_binary(project_id) do
     query(:project_for_runtime, fn ->
-      if Persistence.repo_available?(), do: Repo.get(Project, project_id), else: nil
+      if repo_available?(), do: Repo.get(Project, project_id), else: nil
     end)
   end
 
@@ -185,6 +185,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       end
     end)
   end
+
+  defp repo_available?, do: Process.whereis(Repo) != nil
 
   defp query(operation, fun) do
     fun.()

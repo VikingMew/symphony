@@ -5,8 +5,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   import Ecto.Query
 
-  alias SymphonyElixir.Repo
-  alias SymphonyElixir.{Persistence, RunLifecycle}
+  alias SymphonyElixir.{Repo, RunLifecycle}
 
   alias SymphonyElixir.Persistence.{
     EventRecord,
@@ -14,7 +13,8 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     TaskLease,
     TaskRecord,
     Worker,
-    WorkerSession
+    WorkerSession,
+    WorkflowStore
   }
 
   @worker_protocol_version "worker-api-v1"
@@ -45,7 +45,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec register_worker(map()) :: {:ok, %{worker: Worker.t(), session: WorkerSession.t()}} | {:error, term()}
   def register_worker(attrs) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)) do
       Repo.transaction(fn -> register_worker!(attrs) end)
     end
@@ -55,7 +55,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   def list_workers(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if Persistence.repo_available?() do
+    if repo_available?() do
       Repo.all(from(w in Worker, order_by: [asc: w.name], limit: ^limit))
     else
       []
@@ -66,7 +66,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   def list_worker_sessions(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if Persistence.repo_available?() do
+    if repo_available?() do
       Repo.all(from(s in WorkerSession, order_by: [desc: s.inserted_at], limit: ^limit))
     else
       []
@@ -75,8 +75,8 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec enqueue_task(map()) :: {:ok, TaskRecord.t()} | {:error, term()}
   def enqueue_task(attrs) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
-         {:ok, project} <- Persistence.default_project() do
+    with true <- repo_available?() || {:error, :repo_unavailable},
+         {:ok, project} <- WorkflowStore.default_project() do
       attrs =
         attrs
         |> Map.put_new(:project_id, project.id)
@@ -95,7 +95,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   def list_tasks(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if Persistence.repo_available?() do
+    if repo_available?() do
       TaskRecord
       |> maybe_filter_task_project(Keyword.get(opts, :project_id))
       |> order_by([t], desc: t.inserted_at)
@@ -116,7 +116,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   def list_task_leases(opts \\ []) do
     limit = Keyword.get(opts, :limit, 100)
 
-    if Persistence.repo_available?() do
+    if repo_available?() do
       Repo.all(from(l in TaskLease, order_by: [desc: l.inserted_at], limit: ^limit))
     else
       []
@@ -126,7 +126,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   @spec claim_task(String.t(), String.t(), map()) ::
           {:ok, nil | %{task: TaskRecord.t(), lease: TaskLease.t()}} | {:error, term()}
   def claim_task(worker_id, session_id, attrs \\ %{}) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          {:ok, worker, session} <- active_worker_session(worker_id, session_id) do
       claim_task_for_session(worker, session, attrs)
     end
@@ -137,7 +137,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec heartbeat(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def heartbeat(worker_id, session_id, attrs \\ %{}) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          {:ok, worker, session} <- active_worker_session(worker_id, session_id) do
       Repo.transaction(fn -> heartbeat!(worker, session, attrs) end)
     end
@@ -149,7 +149,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     heartbeat_timeout_seconds = Keyword.get(opts, :heartbeat_timeout_seconds, worker_heartbeat_interval_seconds() * 3)
     heartbeat_cutoff = DateTime.add(now, -heartbeat_timeout_seconds, :second)
 
-    if Persistence.repo_available?() do
+    if repo_available?() do
       {offline_sessions, _} =
         Repo.update_all(
           from(s in WorkerSession,
@@ -179,7 +179,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec cancel_task(String.t(), String.t()) :: {:ok, TaskRecord.t()} | {:error, term()}
   def cancel_task(task_id, reason \\ "operator_requested") do
-    if Persistence.repo_available?() do
+    if repo_available?() do
       case Repo.get(TaskRecord, task_id) do
         nil ->
           {:error, :task_not_found}
@@ -195,7 +195,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec requeue_task(String.t()) :: {:ok, TaskRecord.t()} | {:error, term()}
   def requeue_task(task_id) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          %TaskRecord{} = task <- Repo.get(TaskRecord, task_id) || {:error, :task_not_found} do
       Repo.transaction(fn -> requeue_task!(task) end)
     end
@@ -204,7 +204,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   @spec record_worker_task_event(String.t(), String.t(), String.t(), String.t(), map()) ::
           {:ok, EventRecord.t()} | {:error, term()}
   def record_worker_task_event(worker_id, session_id, task_id, event_type, payload \\ %{}) do
-    with true <- Persistence.repo_available?() || {:error, :repo_unavailable},
+    with true <- repo_available?() || {:error, :repo_unavailable},
          {:ok, worker, session} <- active_worker_session(worker_id, session_id),
          %TaskRecord{} = task <- Repo.get(TaskRecord, task_id) || {:error, :task_not_found},
          %TaskLease{} = lease <- active_lease_for(task.id, worker.id, session.id) || {:error, :lease_not_active},
@@ -233,6 +233,8 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     |> Application.get_env(:worker_api, [])
     |> Keyword.get(key, default)
   end
+
+  defp repo_available?, do: Process.whereis(Repo) != nil
 
   defp validate_worker_protocol(@worker_protocol_version), do: :ok
   defp validate_worker_protocol(_), do: {:error, :unsupported_protocol_version}
