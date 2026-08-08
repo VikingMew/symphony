@@ -55,12 +55,12 @@ defmodule SymphonyElixirWeb.Router do
     live("/events", AdminLive, :events)
     live("/workers", WorkersLive, :index)
     live("/diagnostics/linear", LinearDiagnosticsLive, :index)
-    live("/settings", SettingsLive, :settings)
-    live("/settings/projects", SettingsLive, :settings_projects)
-    live("/settings/workflow", SettingsLive, :settings_workflow)
-    live("/settings/agents", SettingsLive, :settings_agents)
-    live("/settings/runtime", SettingsLive, :settings_runtime)
-    live("/settings/import", SettingsLive, :settings_import)
+    live("/settings", AdminLive, :settings)
+    live("/settings/projects", AdminLive, :settings_projects)
+    live("/settings/workflow", AdminLive, :settings_workflow)
+    live("/settings/agents", AdminLive, :settings_agents)
+    live("/settings/runtime", AdminLive, :settings_runtime)
+    live("/settings/import", AdminLive, :settings_import)
   end
 
   scope "/", SymphonyElixirWeb do

@@ -7,7 +7,8 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
     only: [consume_uploaded_entries: 3, put_flash: 3, push_patch: 2, uploaded_entries: 2]
 
   alias SymphonyElixir.WorkflowSettingsPackage
-  alias SymphonyElixirWeb.AdminLive.{SettingsShell, WorkflowState}
+  alias SymphonyElixirWeb.AdminLive.Settings.Components
+  alias SymphonyElixirWeb.AdminLive.WorkflowState
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -58,7 +59,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
           <div class="workflow-summary-grid">
             <p><span class="metric-label">Package type</span><strong><%= @settings_import_stage.detected_type %></strong></p>
             <p><span class="metric-label">Changes</span><strong><%= length(@settings_import_stage.diff) %></strong></p>
-            <p><span class="metric-label">Next page</span><strong><%= SettingsShell.label(@settings_import_stage.owning_tab) %></strong></p>
+            <p><span class="metric-label">Next page</span><strong><%= Components.label(@settings_import_stage.owning_tab) %></strong></p>
           </div>
           <%= if @settings_import_stage.diff == [] do %>
             <p class="empty-state">No draft changes detected.</p>
@@ -136,7 +137,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
          |> assign(:workflow_form_dirty?, true)
          |> assign(:settings_import_stage, nil)
          |> WorkflowState.assign_validation(draft)
-         |> push_patch(to: SettingsShell.path(owning_tab))}
+         |> push_patch(to: Components.path(owning_tab))}
 
       _stage ->
         {:noreply, assign_import_notice(socket, :error, "No staged import", "Paste or upload a settings package before confirming.")}

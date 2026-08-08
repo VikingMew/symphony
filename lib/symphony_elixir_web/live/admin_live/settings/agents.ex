@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Agents do
 
   use Phoenix.Component
 
-  import SymphonyElixirWeb.AdminLive.SettingsShell,
+  import SymphonyElixirWeb.AdminLive.Settings.Components,
     only: [settings_check_messages: 1, settings_check_summary: 1]
 
   alias SymphonyElixir.ProfilePromptSummary

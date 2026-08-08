@@ -6,7 +6,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
   import SymphonyElixirWeb.AdminLive.Settings.WorkflowDiscovery,
     only: [linear_workflow_discovery: 1]
 
-  import SymphonyElixirWeb.AdminLive.SettingsShell,
+  import SymphonyElixirWeb.AdminLive.Settings.Components,
     only: [settings_check_messages: 1, settings_check_summary: 1]
 
   alias SymphonyElixir.{Config, WorkflowForm}

@@ -13,7 +13,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   }
 
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
-  alias SymphonyElixirWeb.AdminLive.{SettingsShell, State}
+  alias SymphonyElixirWeb.AdminLive.Settings.Components
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
@@ -31,118 +31,121 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
      |> assign_validation(draft)}
   end
 
-  @spec save(map(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
+  @spec save(map(), Phoenix.LiveView.Socket.t()) ::
+          {:saved, Phoenix.LiveView.Socket.t()}
+          | {:unchanged, Phoenix.LiveView.Socket.t()}
+          | {:error, Phoenix.LiveView.Socket.t()}
   def save(params, socket) do
     draft = workflow_draft(socket, params) |> ProjectSettings.apply_to_workflow_draft(socket.assigns.default_project)
-    section = SettingsShell.tab(socket.assigns.live_action)
+    section = Components.tab(socket.assigns.live_action)
     project = socket.assigns.selected_project
 
-    socket =
-      if is_nil(project) do
-        put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")
+    if is_nil(project) do
+      {:error, put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")}
+    else
+      with {:ok, raw} <- WorkflowForm.to_raw(draft),
+           :changed <- workflow_change_status(raw, socket),
+           {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
+        _ = WorkflowStore.force_reload()
+
+        {:saved,
+         socket
+         |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+         |> assign_save_notice(:success, "#{section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
+         |> assign(:workflow_diagnostics_notice, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, false)
+         |> assign_validation(draft)}
       else
-        with {:ok, raw} <- WorkflowForm.to_raw(draft),
-             :changed <- workflow_change_status(raw, socket),
-             {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
-          _ = WorkflowStore.force_reload()
+        :unchanged ->
+          {:unchanged,
+           socket
+           |> put_flash(:info, "#{section_label(section)} already up to date.")
+           |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No changes to save.")
+           |> assign(:workflow_validation_visible?, true)
+           |> assign(:workflow_form, draft)
+           |> assign(:workflow_form_dirty?, false)
+           |> assign_validation(draft)}
 
-          socket
-          |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> assign_save_notice(:success, "#{section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
-          |> assign(:workflow_diagnostics_notice, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> assign(:workflow_validation_visible?, true)
-          |> assign(:workflow_form, draft)
-          |> assign(:workflow_form_dirty?, false)
-          |> assign_validation(draft)
-          |> State.refresh()
-        else
-          :unchanged ->
-            socket
-            |> put_flash(:info, "#{section_label(section)} already up to date.")
-            |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No changes to save.")
-            |> assign(:workflow_validation_visible?, true)
-            |> assign(:workflow_form, draft)
-            |> assign(:workflow_form_dirty?, false)
-            |> assign_validation(draft)
+        {:error, message} when is_binary(message) ->
+          {:error,
+           socket
+           |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+           |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
+           |> assign(:workflow_validation_visible?, true)
+           |> assign(:workflow_form, draft)
+           |> assign(:workflow_form_dirty?, true)
+           |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
+           |> assign(:workflow_validation_error, nil)
+           |> assign(:workflow_form_valid?, false)}
 
-          {:error, message} when is_binary(message) ->
-            socket
-            |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-            |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
-            |> assign(:workflow_validation_visible?, true)
-            |> assign(:workflow_form, draft)
-            |> assign(:workflow_form_dirty?, true)
-            |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
-            |> assign(:workflow_validation_error, nil)
-            |> assign(:workflow_form_valid?, false)
+        {:error, reason} ->
+          message = inspect(reason)
 
-          {:error, reason} ->
-            message = inspect(reason)
-
-            socket
-            |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-            |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
-            |> assign(:workflow_validation_visible?, true)
-            |> assign(:workflow_field_errors, %{})
-            |> assign(:workflow_form, draft)
-            |> assign(:workflow_form_dirty?, true)
-        end
+          {:error,
+           socket
+           |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+           |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
+           |> assign(:workflow_validation_visible?, true)
+           |> assign(:workflow_field_errors, %{})
+           |> assign(:workflow_form, draft)
+           |> assign(:workflow_form_dirty?, true)}
       end
-
-    {:noreply, socket}
+    end
   end
 
-  @spec restore(String.t(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
+  @spec restore(String.t(), Phoenix.LiveView.Socket.t()) ::
+          {:saved, Phoenix.LiveView.Socket.t()} | {:error, Phoenix.LiveView.Socket.t()}
   def restore(id, socket) do
-    section = SettingsShell.tab(socket.assigns.live_action)
+    section = Components.tab(socket.assigns.live_action)
     version = Enum.find(section_versions(socket.assigns.workflow_versions, section), &(&1.id == id))
     project = socket.assigns.selected_project
 
-    socket =
-      if is_nil(project) do
-        put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")
+    if is_nil(project) do
+      {:error, put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")}
+    else
+      with %{} = version <- version,
+           raw when is_binary(raw) <- persistence().export_workflow(version),
+           {:ok, history_draft} <- WorkflowForm.from_raw(raw),
+           draft <- WorkflowSettingsPackage.restore_section(section, socket.assigns.workflow_form, history_draft),
+           draft <- ProjectSettings.apply_to_workflow_draft(draft, socket.assigns.default_project),
+           {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
+           {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
+        _ = WorkflowStore.force_reload()
+
+        {:saved,
+         socket
+         |> put_flash(:info, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
+         |> assign_save_notice(:success, "#{section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
+         |> assign(:workflow_diagnostics_notice, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, false)
+         |> assign_validation(draft)}
       else
-        with %{} = version <- version,
-             raw when is_binary(raw) <- persistence().export_workflow(version),
-             {:ok, history_draft} <- WorkflowForm.from_raw(raw),
-             draft <- WorkflowSettingsPackage.restore_section(section, socket.assigns.workflow_form, history_draft),
-             draft <- ProjectSettings.apply_to_workflow_draft(draft, socket.assigns.default_project),
-             {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
-             {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
-          _ = WorkflowStore.force_reload()
+        nil ->
+          {:error, put_flash(socket, :error, "Settings version not found")}
 
-          socket
-          |> put_flash(:info, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> assign_save_notice(:success, "#{section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
-          |> assign(:workflow_diagnostics_notice, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
-          |> assign(:workflow_validation_visible?, true)
-          |> assign(:workflow_form, draft)
-          |> assign(:workflow_form_dirty?, false)
-          |> assign_validation(draft)
-          |> State.refresh()
-        else
-          nil ->
-            put_flash(socket, :error, "Settings version not found")
+        {:error, message} when is_binary(message) ->
+          {:error,
+           socket
+           |> put_flash(:error, "Settings restore rejected: #{message}")
+           |> assign_save_notice(:error, "Settings restore failed", message)
+           |> assign(:workflow_validation_visible?, true)
+           |> assign(:workflow_validation_error, message)}
 
-          {:error, message} when is_binary(message) ->
-            socket
-            |> put_flash(:error, "Settings restore rejected: #{message}")
-            |> assign_save_notice(:error, "Settings restore failed", message)
-            |> assign(:workflow_validation_visible?, true)
-            |> assign(:workflow_validation_error, message)
+        {:error, reason} ->
+          message = inspect(reason)
 
-          {:error, reason} ->
-            message = inspect(reason)
-
-            socket
-            |> put_flash(:error, "Settings restore rejected: #{message}")
-            |> assign_save_notice(:error, "Settings restore failed", message)
-            |> assign(:workflow_validation_visible?, true)
-            |> assign(:workflow_validation_error, message)
-        end
+          {:error,
+           socket
+           |> put_flash(:error, "Settings restore rejected: #{message}")
+           |> assign_save_notice(:error, "Settings restore failed", message)
+           |> assign(:workflow_validation_visible?, true)
+           |> assign(:workflow_validation_error, message)}
       end
-
-    {:noreply, socket}
+    end
   end
 
   @spec add_transition(Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}

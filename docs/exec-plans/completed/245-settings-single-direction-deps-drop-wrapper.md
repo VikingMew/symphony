@@ -7,7 +7,7 @@ own save/refresh, and remove the pure-forwarding `SettingsLive` wrapper.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -56,18 +56,29 @@ step two; flipping the save/refresh direction is step three — each step indepe
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 20 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix xref graph --format cycles` — PASS: the Settings page/shell/state/
+  workflow_state length-7 cycle is GONE; remaining cycles are only the documented
+  keep-as-is boundaries (persistence length-6, config length-4, orchestrator length-3,
+  Tracker length-2).
+- `mise exec -- mix test` — 710 tests, 0 failures, 2 skipped (FULL SUITE GREEN)
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (8 files: -1 deleted settings_live.ex, +1 new
+  settings/components.ex, router + 6 LiveView/settings modules; net -102 lines)
 
 ## Completion Deviations
 
-To be filled after implementation.
+- `SettingsLive` (pure 24-line forwarding wrapper) DELETED; all six `/settings*` routes now
+  mount `AdminLive` directly (router.ex). This was the plan's default decision — the wrapper
+  owned no state or events.
+- Shared settings components/UI hoisted into `settings/components.ex` (leaf module, no page
+  dependencies); SettingsShell slimmed (95 lines removed), page modules reference the leaf.
+- `workflow_state.ex` no longer calls `State.refresh()` after save/restore; refresh now happens
+  at the LiveView owner (AdminLive / settings pages) — one-way dependency restored.
+- Test baseline unchanged at 710 (no test count change; existing settings route suites cover the
+  rewire, and they pass).
 

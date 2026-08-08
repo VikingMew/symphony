@@ -93,7 +93,9 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("save_workflow_form", %{"workflow" => params}, socket) do
-    WorkflowState.save(params, socket)
+    params
+    |> WorkflowState.save(socket)
+    |> handle_workflow_save_result()
   end
 
   @impl true
@@ -103,7 +105,9 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   @impl true
   def handle_event("restore_settings_version", %{"id" => id}, socket) do
-    WorkflowState.restore(id, socket)
+    id
+    |> WorkflowState.restore(socket)
+    |> handle_workflow_save_result()
   end
 
   @impl true
@@ -164,4 +168,7 @@ defmodule SymphonyElixirWeb.AdminLive do
 
   defp nav_current(action) when action in @settings_actions, do: :settings
   defp nav_current(action), do: action
+
+  defp handle_workflow_save_result({:saved, socket}), do: {:noreply, State.refresh(socket)}
+  defp handle_workflow_save_result({_result, socket}), do: {:noreply, socket}
 end
