@@ -219,10 +219,6 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp load_database_workflows do
-    if database_workflow_enabled?(), do: load_enabled_database_workflows(), else: :setup_required
-  end
-
-  defp load_enabled_database_workflows do
     with {:ok, default_project} <- load_default_project(),
          {:ok, workflows} <- load_project_workflows() do
       if map_size(workflows) == 0 do
@@ -278,10 +274,6 @@ defmodule SymphonyElixir.WorkflowStore do
       %{id: id} when is_map_key(workflows, id) -> id
       _ -> workflows |> Map.keys() |> List.first()
     end
-  end
-
-  defp database_workflow_enabled? do
-    Application.get_env(:symphony_elixir, :workflow_source) in [nil, :database, "database"]
   end
 
   defp persistence, do: PersistenceProvider.module()

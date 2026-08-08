@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Config do
   Runtime configuration loaded from the active workflow package.
   """
 
-  alias SymphonyElixir.{Config.Schema, Text, Workflow}
+  alias SymphonyElixir.{Config.Schema, Text, Workflow, WorkflowStore}
 
   @workflow_context_key :symphony_workflow_context
 
@@ -71,7 +71,7 @@ defmodule SymphonyElixir.Config do
   def current_workflow do
     case Process.get(@workflow_context_key) do
       %{config: _config} = workflow -> {:ok, workflow}
-      _ -> Workflow.current()
+      _ -> WorkflowStore.current()
     end
   end
 

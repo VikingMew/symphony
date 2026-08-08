@@ -25,7 +25,6 @@ defmodule SymphonyElixir.CLI do
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
           set_database_path: (String.t() -> :ok | {:error, term()}),
-          set_workflow_source: (atom() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
           ensure_all_started: (-> ensure_started_result())
@@ -60,7 +59,6 @@ defmodule SymphonyElixir.CLI do
 
   @spec run_default(keyword(), deps()) :: :ok | {:error, String.t()}
   def run_default(opts, deps) do
-    :ok = deps.set_workflow_source.(:database)
     Application.put_env(:symphony_elixir, :no_default_yaml_prompt, Keyword.get(opts, :no_default_yaml_prompt, false))
     start_database(deps)
   end
@@ -74,7 +72,6 @@ defmodule SymphonyElixir.CLI do
   defp runtime_deps do
     %{
       set_database_path: &set_database_path/1,
-      set_workflow_source: &set_workflow_source/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
       ensure_all_started: &start_runtime_application/0
@@ -186,15 +183,6 @@ defmodule SymphonyElixir.CLI do
   defp set_server_port_override(port) when is_integer(port) and port >= 0 do
     Application.put_env(:symphony_elixir, :server_port_override, port)
     :ok
-  end
-
-  defp set_workflow_source(:database) do
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
-    :ok
-  end
-
-  defp set_workflow_source(_source) do
-    {:error, :unsupported_workflow_source}
   end
 
   defp start_database(deps) do

@@ -12,16 +12,13 @@ defmodule SymphonyElixir.WorkflowStoreTest do
 
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
-    previous_source = Application.get_env(:symphony_elixir, :workflow_source)
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
     FakePersistence.reset!()
 
     on_exit(fn ->
       stop_repo_stub()
       restore_app_env(:persistence_module, previous_persistence)
-      restore_app_env(:workflow_source, previous_source)
     end)
 
     :ok

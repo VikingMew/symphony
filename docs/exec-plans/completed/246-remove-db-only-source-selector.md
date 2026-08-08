@@ -7,7 +7,7 @@ reverse dependency on the runtime store; keep import/export codecs.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -55,18 +55,32 @@ keep the change mechanical.
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix credo --strict` (0 [F]; existing [R]/[D] unchanged)
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (682 baseline, 0 failures, 2 skipped; known flaky:
-  CoreTest persistence race + WorkflowStoreTest — run in isolation
-  to confirm non-regression)
-- `mise exec -- mix docs.check` (if docs touched)
-- `mise exec -- mix exec_plans.check`
-- diff review: only whitelisted files changed
+- `mise exec -- mix format --check-formatted` — PASS
+- `mise exec -- mix compile --warnings-as-errors` — PASS
+- `mise exec -- mix credo --strict` — PASS (0 [F]; 20 [R] + 1 [D], unchanged)
+- `mise exec -- mix specs.check` — PASS
+- `mise exec -- mix test` — 710 tests, 2 failures (full suite). Both are the PRE-EXISTING known
+  flaky families (CoreTest "run-start persistence failure" cross-file race + HookRunnerTest
+  timeout diagnostics); isolated re-run of core + hook_runner + workflow_store = 48 tests,
+  0 failures. Not introduced by this plan.
+- `mise exec -- mix docs.check` — PASS (30 passed)
+- `mise exec -- mix exec_plans.check` — PASS
+- diff review: only whitelisted files changed (cli.ex, workflow.ex, workflow_store.ex, the 4
+  Workflow.current call sites, 7 test files; net -64/+13)
+- grep acceptance: `set_workflow_source` / `database_workflow_enabled` / `Workflow.current(`
+  in lib/ -> zero hits
 
 ## Completion Deviations
 
-To be filled after implementation.
+- CLI deps map entry `set_workflow_source` and its implementation deleted; `WorkflowStore`
+  reads the DB unconditionally (no `database_workflow_enabled?/0`, no source branching).
+- `Workflow.current/0` (package parser -> runtime store reverse dependency) DELETED; the four
+  runtime call sites (config.ex, http_server.ex, prompt_builder.ex, status_dashboard.ex) now
+  call `WorkflowStore` directly.
+- Import/export codecs KEPT: `Workflow.load/1`, `parse_split_package/2`, `parse_content/1`,
+  and the file-path helpers used by test fixtures remain (only the 5-line current/0 was removed).
+- Tests no longer set `:workflow_source` env (setup/on_exit cleaned in 7 files).
+- NOTE: first Codex run correctly BLOCKED on a whitelist gap (Workflow.current callers not
+  listed); whitelist was extended with the 4 call-site files and the run completed cleanly —
+  the guard worked as designed. Test baseline unchanged at 710.
 

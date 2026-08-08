@@ -160,7 +160,6 @@ defmodule SymphonyElixir.TestSupport do
           restore_env("LINEAR_API_KEY", previous_linear_api_key)
           Application.delete_env(:symphony_elixir, :workflow_file_path)
           Application.delete_env(:symphony_elixir, :server_port_override)
-          Application.delete_env(:symphony_elixir, :workflow_source)
           File.rm_rf(workflow_root)
         end)
 

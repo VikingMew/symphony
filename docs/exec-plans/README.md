@@ -249,12 +249,12 @@ Plans should focus on product and engineering intent rather than full implementa
 242. [242-force-stop-partial-failure-honesty.md](completed/242-force-stop-partial-failure-honesty.md)
 244. [244-remove-web-compile-cycle.md](completed/244-remove-web-compile-cycle.md)
 245. [245-settings-single-direction-deps-drop-wrapper.md](completed/245-settings-single-direction-deps-drop-wrapper.md)
+246. [246-remove-db-only-source-selector.md](completed/246-remove-db-only-source-selector.md)
 243. [243-merge-path-safety-algorithms.md](completed/243-merge-path-safety-algorithms.md)
 247. [247-persistence-facade-internal-boundaries.md](completed/247-persistence-facade-internal-boundaries.md)
 
 ## Active Plans
 
-6. [246-remove-db-only-source-selector.md](active/246-remove-db-only-source-selector.md) — M6: remove DB-only source selector
 
 ## Intentional Numbering Gaps
 

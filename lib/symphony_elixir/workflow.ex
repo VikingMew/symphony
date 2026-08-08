@@ -44,11 +44,6 @@ defmodule SymphonyElixir.Workflow do
           optional(:workflow_version_id) => term()
         }
 
-  @spec current() :: {:ok, loaded_workflow()}
-  def current do
-    WorkflowStore.current()
-  end
-
   @spec load() :: {:ok, loaded_workflow()} | {:error, term()}
   def load do
     load(workflow_file_path())

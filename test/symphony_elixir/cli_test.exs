@@ -5,24 +5,22 @@ defmodule SymphonyElixir.CLITest do
 
   @removed_ack_flag "--i-understand-that-this-will-be-running-without-the-usual-guardrails"
 
-  test "defaults to database workflow source when no args are provided" do
+  test "starts with no args" do
     parent = self()
 
     deps = deps(parent)
 
     assert :ok = CLI.evaluate([], deps)
-    assert_received {:workflow_source, :database}
     assert_received :started
   end
 
-  test "accepts --port and selects database workflow source" do
+  test "accepts --port" do
     parent = self()
 
     deps = deps(parent)
 
     assert :ok = CLI.evaluate(["--port", "4000"], deps)
     assert_received {:port, 4000}
-    assert_received {:workflow_source, :database}
     assert_received :started
   end
 
@@ -35,7 +33,6 @@ defmodule SymphonyElixir.CLITest do
     assert :ok = CLI.evaluate(["--database-path", database_path], deps)
     assert_received {:database_path, expanded_path}
     assert expanded_path == Path.expand(database_path)
-    assert_received {:workflow_source, :database}
     assert_received :started
   end
 
@@ -54,7 +51,6 @@ defmodule SymphonyElixir.CLITest do
     assert logs_root == Path.expand("tmp/custom-logs")
     assert_received {:database_path, database_path}
     assert database_path == Path.expand("tmp/custom-symphony.db")
-    assert_received {:workflow_source, :database}
     assert_received :started
   end
 
@@ -118,7 +114,6 @@ defmodule SymphonyElixir.CLITest do
 
     assert :ok = CLI.evaluate(["--no-default-yaml-prompt"], deps)
     assert Application.get_env(:symphony_elixir, :no_default_yaml_prompt) == true
-    assert_received {:workflow_source, :database}
     assert_received :started
   end
 
@@ -130,10 +125,6 @@ defmodule SymphonyElixir.CLITest do
     defaults = %{
       set_database_path: fn path ->
         send(parent, {:database_path, path})
-        :ok
-      end,
-      set_workflow_source: fn source ->
-        send(parent, {:workflow_source, source})
         :ok
       end,
       set_logs_root: fn path ->

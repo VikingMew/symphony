@@ -10,7 +10,7 @@ defmodule SymphonyElixir.StatusDashboard do
   require Logger
 
   alias SymphonyElixir.Orchestrator
-  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.WorkflowStore
   alias SymphonyElixirWeb.ObservabilityPubSub
 
   defstruct [
@@ -117,7 +117,7 @@ defmodule SymphonyElixir.StatusDashboard do
   end
 
   defp raw_observability_config do
-    with {:ok, %{config: config}} <- Workflow.current(),
+    with {:ok, %{config: config}} <- WorkflowStore.current(),
          observability when is_map(observability) <-
            SymphonyElixir.Payload.get_any(config, ["observability", :observability]) do
       observability

@@ -152,19 +152,19 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "workflow store reloads active database workflow and can read without the server process" do
     ensure_workflow_store_running()
-    assert {:ok, %{prompt: "You are an agent for this repository."}} = Workflow.current()
+    assert {:ok, %{prompt: "You are an agent for this repository."}} = WorkflowStore.current()
 
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Second prompt")
     send(WorkflowStore, :poll)
 
     assert_eventually(fn ->
-      match?({:ok, %{prompt: "Second prompt"}}, Workflow.current())
+      match?({:ok, %{prompt: "Second prompt"}}, WorkflowStore.current())
     end)
 
     third_workflow = Path.join([Path.dirname(Workflow.workflow_file_path()), "third", "workflow.yml"])
     write_workflow_file!(third_workflow, prompt: "Third prompt")
     Workflow.set_workflow_file_path(third_workflow)
-    assert {:ok, %{prompt: "Third prompt"}} = Workflow.current()
+    assert {:ok, %{prompt: "Third prompt"}} = WorkflowStore.current()
 
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
     write_workflow_file!(third_workflow, prompt: "Third prompt")

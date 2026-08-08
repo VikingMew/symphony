@@ -237,7 +237,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   end
 
   test "diagnostics gives setup-required next steps" do
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     FakePersistence.reset!()
     assert :ok = WorkflowStore.force_reload()
@@ -255,7 +254,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   end
 
   test "diagnostics setup-required next steps include only missing project settings" do
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     FakePersistence.reset!()
     assert {:ok, _project} = FakePersistence.update_project("fake-project-id", %{linear_project_slug: nil, repository_url: nil})
@@ -273,10 +271,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   end
 
   test "database project settings control diagnostics project slug through fake persistence" do
-    previous_source = Application.get_env(:symphony_elixir, :workflow_source)
-
-    on_exit(fn -> restore_app_env(:workflow_source, previous_source) end)
-
     raw = """
     ---
     tracker:
@@ -309,7 +303,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     FakePersistence.put_default_project_attrs!(%{linear_project_slug: "db-project"})
     {:ok, project} = FakePersistence.default_project()
     assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "web_workflow_settings")
-    Application.put_env(:symphony_elixir, :workflow_source, :database)
     assert :ok = WorkflowStore.force_reload()
 
     diagnostics = Diagnostics.run()

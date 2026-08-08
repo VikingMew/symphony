@@ -3,7 +3,7 @@ defmodule SymphonyElixir.HttpServer do
   Compatibility facade that starts the Phoenix observability endpoint when enabled.
   """
 
-  alias SymphonyElixir.{Orchestrator, Workflow}
+  alias SymphonyElixir.{Orchestrator, WorkflowStore}
   alias SymphonyElixirWeb.Endpoint
 
   @secret_key_bytes 48
@@ -66,7 +66,7 @@ defmodule SymphonyElixir.HttpServer do
   end
 
   defp raw_server_value(key) do
-    with {:ok, %{config: config}} <- Workflow.current(),
+    with {:ok, %{config: config}} <- WorkflowStore.current(),
          server when is_map(server) <- SymphonyElixir.Payload.get_any(config, ["server", :server]) do
       SymphonyElixir.Payload.get_any(server, [key, server_key(key)])
     else
