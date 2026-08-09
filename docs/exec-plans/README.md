@@ -254,11 +254,12 @@ Plans should focus on product and engineering intent rather than full implementa
 247. [247-persistence-facade-internal-boundaries.md](completed/247-persistence-facade-internal-boundaries.md)
 248. [248-operator-profiles-standardization.md](completed/248-operator-profiles-standardization.md)
 249. [249-merge-push-default-signal.md](completed/249-merge-push-default-signal.md)
+250. [250-remove-default-project-dependency.md](completed/250-remove-default-project-dependency.md)
+251. [251-operator-tasks-select-project.md](completed/251-operator-tasks-select-project.md)
 
 ## Active Plans
 
-1. [250-remove-default-project-dependency.md](active/250-remove-default-project-dependency.md)
-2. [251-operator-tasks-select-project.md](active/251-operator-tasks-select-project.md)
+(No active plans.)
 
 ## Intentional Numbering Gaps
 

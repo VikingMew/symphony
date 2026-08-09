@@ -15,7 +15,7 @@ with a visible error instead of silently running against an arbitrary project.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -116,4 +116,25 @@ Active.
 
 ## Completion Deviations
 
-(To be filled on completion.)
+No deviations from the plan as written.
+
+All acceptance criteria met:
+
+- `request_nap(project_id)` / `request_day_dreaming(project_id)` thread the project through
+  request → task state → synthetic issue → workspace; `run_operator` runs under
+  `Config.with_workflow_context` so workspace bootstrap uses the selected project's
+  repository_url / source_strategy / setup commands.
+- No project + ≥2 enabled projects → failed task with `project required` reason.
+- No project + exactly 1 enabled project → resolves unambiguously and starts.
+- Unknown/disabled project_id → failed with `unknown project: <id>`; project with no active
+  workflow → failed with `no active workflow for project: <id>`.
+- Dashboard nap/day dreaming controls are forms with a project dropdown (enabled projects);
+  error results render an error flash card. Operator task payload carries project_id
+  (snapshot + reply + persisted events).
+- Tests: orchestrator operator-task resolution matrix (explicit/single/ambiguous/unknown/no
+  workflow), agent_runner project passthrough + workspace_creator seam, dashboard event with
+  project_id. 40 targeted tests green.
+- Full suite 730 tests: only known-flaky CoreTest persistence race failed, isolated rerun
+  40/40 green. format/compile/specs pass. lint 0 [F], no new warnings vs baseline. dialyzer
+  unchanged (6 warnings, all baseline). coverage 85.62%.
+- Executed by Codex CLI (351,237 tokens), commit fdfedf5.

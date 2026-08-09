@@ -11,7 +11,7 @@ chosen project; the legacy `slug=default` row in the live DB is cleaned up so re
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -104,4 +104,28 @@ Active.
 
 ## Completion Deviations
 
-(To be filled on completion.)
+Two deviations from the plan as written:
+
+1. **New dialyzer `pattern_match_cov` warning at persistence/workflow_store.ex:80** — the new
+   `{:error, :not_found} -> active_workflow_version_for(first_enabled_project())` branch is
+   coverage-warned (dialyzer baseline went 5 → 6 warnings). Coverage-class warning, no
+   correctness impact; accepted as part of the explicit-error-path change. Revisit if the
+   branch can be exercised in tests.
+2. **`workflow_store.ex` (runtime GenServer) needed one line**: `load_default_project` now
+   handles `{:error, :not_found} -> {:ok, nil}` (was only repo_unavailable). Required so the
+   GenServer starts cleanly with no default record; matches the pure-query semantics.
+
+Otherwise all acceptance criteria met:
+
+- `default_project()` returns `{:error, :not_found}` on empty DB, no auto-create (test asserts
+  no insert).
+- No-arg `active_workflow_version()` resolves default record → first enabled project → nil.
+- `enqueue_task(%{})` → `{:error, :project_id_required}`; with project_id → queued.
+- First-run import prompts for a target project from enabled projects (interactive), skips to
+  setup-required otherwise.
+- Admin UI selects first enabled project; diagnostics checks enabled projects.
+- Full suite 723 tests, 0 failures. format/compile/specs pass. lint 0 [F], no new warnings
+  vs baseline. coverage 85.62%.
+- Live DB `slug=default` row deletion is a separate operational step (data cleanup), executed
+  by the orchestrator after verification.
+- Executed by Codex CLI (285,197 tokens), commit 2f95837.

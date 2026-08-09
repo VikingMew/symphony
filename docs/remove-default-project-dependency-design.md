@@ -5,7 +5,7 @@ domain: [workflow, projects, persistence]
 status: current
 language: zh-CN
 updated: 2026-08-09
-design_status: proposed
+design_status: landed
 ---
 
 # 去除 Default Project 强制依赖设计
