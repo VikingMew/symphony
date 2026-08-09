@@ -49,6 +49,7 @@ other documents link instead of restating. Exec plans are governed separately by
 | [codex-linear-task-refinement-workflow-design.md](codex-linear-task-refinement-workflow-design.md) | Codex/Linear task refinement workflow. | landed |
 | [dashboard-color-system-design.md](dashboard-color-system-design.md) | Dashboard color system. | landed |
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability. | landed |
+| [operator-profiles-standardization-design.md](operator-profiles-standardization-design.md) | Read-only operator profiles (nap / day_dreaming) single-source contract. | proposed |
 
 ## L4 — Normative Contracts
 
