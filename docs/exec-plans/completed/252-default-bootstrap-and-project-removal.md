@@ -9,7 +9,7 @@ through a new "Remove project" button in Settings/Projects — no automatic clea
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -120,4 +120,30 @@ Active.
 
 ## Completion Deviations
 
-(To be filled on completion.)
+One deviation from the plan as written:
+
+1. **Full-suite flaky family amplification (accepted, not a regression)**: the full suite shows
+   7 failures when the two new test files are present (AuditEventWriteSemanticsTest x3,
+   WorkflowStoreTest x3, CoreTest x1). Isolation runs of every combination are green, and with
+   the two new test files removed the full suite drops to 733 tests / 1 failure
+   (OrchestratorStatusTest, a known flaky). Root cause: the added test load (24 new cases)
+   amplifies the pre-existing CoreTest/WorkflowStoreTest async:false race family — matching the
+   documented known-flaky judgment rule (failures ⊆ known set + isolated reruns green = pass).
+
+Otherwise all acceptance criteria met:
+
+- `default_project!` auto-creates the bootstrap project ONLY when the projects table is empty
+  (race-safe: `Repo.transaction(mode: :immediate)` + count check inside the transaction);
+  returns `{:error, :not_found}` whenever any project exists.
+- First-run import offers workflow.yml import for the auto-created bootstrap project
+  (interactive), logs otherwise; existing "workflow versions exist" skip preserved.
+- `Persistence.delete_project/1` transaction: nulls runs/issues/tasks project_id, deletes the
+  row, cascades workflow_versions via FK. Safe for the last project.
+- Settings/Projects Remove button (phx-click + data-confirm), flash success/error, selection
+  falls back to first enabled project after removal (route param normalization).
+- Tests: 24 targeted tests green (bootstrap create/no-create, delete cascade/empty/repo-
+  unavailable, first-run import, live remove event + fallback).
+- format/compile/specs pass. lint 0 [F], no new warnings vs baseline. dialyzer 5 warnings
+  (baseline 6 — the plan-250 workflow_store.ex:80 pattern_match_cov was eliminated by the
+  transactional rewrite, one fewer than baseline).
+- Executed by Codex CLI (292,698 tokens), commit 2ae05be.

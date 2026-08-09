@@ -5,7 +5,7 @@ domain: [workflow, projects, persistence, admin-ui]
 status: current
 language: zh-CN
 updated: 2026-08-09
-design_status: proposed
+design_status: landed
 ---
 
 # Default Project 引导语义修正 + 手动移除 Project

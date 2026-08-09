@@ -256,10 +256,11 @@ Plans should focus on product and engineering intent rather than full implementa
 249. [249-merge-push-default-signal.md](completed/249-merge-push-default-signal.md)
 250. [250-remove-default-project-dependency.md](completed/250-remove-default-project-dependency.md)
 251. [251-operator-tasks-select-project.md](completed/251-operator-tasks-select-project.md)
+252. [252-default-bootstrap-and-project-removal.md](completed/252-default-bootstrap-and-project-removal.md)
 
 ## Active Plans
 
-1. [252-default-bootstrap-and-project-removal.md](active/252-default-bootstrap-and-project-removal.md)
+(No active plans.)
 
 ## Intentional Numbering Gaps
 
