@@ -221,7 +221,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     _snapshot = GenServer.call(pid, :snapshot)
 
     [event] = FakePersistence.list_events(run_id: "run-persist-codex", event_type: "codex.update")
-    assert event.payload.event == :notification
+    assert event.payload.event == "notification"
     assert event.payload.message["method"] == "item/tool/call"
     assert event.payload.message["params"]["api_token"] == "[REDACTED]"
     assert event.payload.debug.raw == "Authorization: [REDACTED]"

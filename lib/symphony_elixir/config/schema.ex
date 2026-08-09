@@ -685,6 +685,7 @@ defmodule SymphonyElixir.Config.Schema do
       "merge" => %{
         "name" => "Merge",
         "executor" => %{"type" => "backend_action"},
+        "merge" => %{"push" => false, "remote" => "origin", "success_state" => "Done"},
         "prompt" => %{
           "mode" => "disabled"
         },

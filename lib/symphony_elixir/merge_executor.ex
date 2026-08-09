@@ -41,8 +41,10 @@ defmodule SymphonyElixir.MergeExecutor do
              branch: branch,
              base_branch: base_branch,
              push: push?,
+             pushed: push?,
              output: output
            }),
+         :ok <- warn_if_push_disabled(issue, branch, base_branch, push?),
          :ok <- maybe_transition(%{issue | state: start_state}, success_state, opts, :merge_completed) do
       :ok
     else
@@ -185,6 +187,12 @@ defmodule SymphonyElixir.MergeExecutor do
       states when is_list(states) -> Enum.find(states, &(&1 not in ["Merging", "Ready to Merge"]))
       _ -> nil
     end
+  end
+
+  defp warn_if_push_disabled(_issue, _branch, _base_branch, true), do: :ok
+
+  defp warn_if_push_disabled(issue, branch, base_branch, false) do
+    Logger.warning("Merge completed without push issue_id=#{issue.id} issue_identifier=#{issue.identifier} branch=#{branch} base_branch=#{base_branch}")
   end
 
   defp fail(issue, phase, reason) do

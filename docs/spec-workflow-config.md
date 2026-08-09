@@ -39,6 +39,13 @@ Design note:
 - A package SHOULD be self-contained enough to recreate an active workflow version after import.
 - A package SHOULD NOT be edited in place as the runtime source of truth.
 
+Merge profile contract:
+
+- `merge.push` defaults to `false`. When disabled, the backend validates and completes the merge
+  locally without pushing the result to the configured remote base branch.
+- Reaching the merge success state (including `Done`) does not imply that the branch was pushed;
+  operators MUST set `merge.push: true` when the remote base branch must be updated.
+
 Parsing rules:
 
 - YAML files MUST decode to map/object roots; non-map YAML is an error.
@@ -326,4 +333,3 @@ not require recognizing or validating extension fields unless that extension is 
 - `codex.turn_timeout_ms`: integer, default `3600000`
 - `codex.read_timeout_ms`: integer, default `5000`
 - `codex.stall_timeout_ms`: integer, default `300000`
-
