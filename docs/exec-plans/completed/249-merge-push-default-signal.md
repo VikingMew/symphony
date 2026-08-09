@@ -11,7 +11,7 @@ runtime gives no signal that push was skipped.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -66,4 +66,14 @@ Active.
 
 ## Completion Deviations
 
-(To be filled on completion.)
+One deviation: also synced `orchestrator_status_test.exs` assertion (`event.payload.event == :notification` atom → `"notification"` string). This is a leftover from the redaction fix (commit db89312) that surfaced in the full suite during this plan's validation — the payload now stores JSON-encodable strings by design; the test had not been updated. Same commit, unrelated to merge behavior.
+
+Otherwise all acceptance criteria met:
+
+- MergeExecutor records `pushed: push?` in merge_backend phase payload and logs `Merge completed without push` warning (with issue/branch/base context) when push is disabled; merge still succeeds (no semantic change).
+- schema.ex default merge profile now declares `merge: %{push: false, remote: "origin", success_state: "Done"}` — fresh workflows explicit instead of absent-key.
+- spec-workflow-config.md documents the merge.push contract: default false, local-only merge, Done does not imply pushed, operators MUST set push: true to update remote base.
+- Tests: merge_executor no-push warns + push invoked (fake-git seam); schema default policy. 10 targeted tests green.
+- Full suite 718 tests: only known-flaky HookRunnerTest timeout failed, isolated rerun 3/3 green.
+- specs.check passed; format + compile --warnings-as-errors passed.
+- Executed by Codex CLI (198,549 tokens), commit 8a23c27.
