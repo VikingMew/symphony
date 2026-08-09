@@ -5,7 +5,7 @@ domain: [workflow, operator, profiles]
 status: current
 language: zh-CN
 updated: 2026-08-09
-design_status: proposed
+design_status: landed
 ---
 
 # 巡检 Profile 标准化设计

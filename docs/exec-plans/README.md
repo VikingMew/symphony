@@ -252,11 +252,11 @@ Plans should focus on product and engineering intent rather than full implementa
 246. [246-remove-db-only-source-selector.md](completed/246-remove-db-only-source-selector.md)
 243. [243-merge-path-safety-algorithms.md](completed/243-merge-path-safety-algorithms.md)
 247. [247-persistence-facade-internal-boundaries.md](completed/247-persistence-facade-internal-boundaries.md)
+248. [248-operator-profiles-standardization.md](completed/248-operator-profiles-standardization.md)
 
 ## Active Plans
 
-1. [248-operator-profiles-standardization.md](active/248-operator-profiles-standardization.md)
-2. [249-merge-push-default-signal.md](active/249-merge-push-default-signal.md)
+1. [249-merge-push-default-signal.md](active/249-merge-push-default-signal.md)
 
 ## Intentional Numbering Gaps
 

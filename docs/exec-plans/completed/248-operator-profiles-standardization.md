@@ -6,7 +6,7 @@ Make the read-only operator profiles (`nap`, `day_dreaming`) a single-source con
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -68,4 +68,13 @@ Drift means the same profile behaves differently per project, standard upgrades 
 
 ## Completion Deviations
 
-(To be filled on completion.)
+None. All acceptance criteria met:
+
+- schema.ex nap default carries the full new standard (redundancy incl. redundant error handling & gating, mutual dependencies, dead weight, per-criterion Linus & Carmack mapping, issue format with evidence/criterion/impact/fix direction).
+- schema.ex day_dreaming default adds evidence / direction-alignment / no-duplicate contract.
+- profiles.yml nap + day_dreaming sections mirror the code defaults exactly (byte-identical after unescaping; verified 2200/756 chars).
+- Tests: prompt_builder asserts new markers; fresh-workflow defaults equal code defaults; package round trip preserves both profiles. 21 targeted tests green.
+- Full suite: 715 tests, failures were the known flaky families (CoreTest persistence race, AuditEventWriteSemantics raising-persistence stub) — isolated rerun 46/46 green, unrelated to this plan.
+- credo: 0 [F], 20 [R] + 1 [D] identical to pre-change baseline (stash-compared).
+- specs.check passed; format + compile --warnings-as-errors passed.
+- Executed by Codex CLI (203,553 tokens), commit f91ae13.
