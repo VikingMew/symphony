@@ -69,10 +69,15 @@ defmodule SymphonyElixir.PromptBuilderTest do
         allowed_updates: %{"target_states" => []}
       )
 
-    assert nap_prompt =~ "project fragments"
-    assert nap_prompt =~ "code/documentation drift"
-    assert nap_prompt =~ "technical debt"
+    assert nap_prompt =~ "redundant error handling"
+    assert nap_prompt =~ "redundant gating"
+    assert nap_prompt =~ "mutual dependencies"
+    assert nap_prompt =~ "Dead weight"
+    assert nap_prompt =~ "Linus"
+    assert nap_prompt =~ "Carmack"
     assert nap_prompt =~ "one Backlog Linear issue"
+    assert nap_prompt =~ "complexity impact"
+    assert nap_prompt =~ "fix direction that reduces complexity"
     assert nap_prompt =~ "Do not modify code"
     assert nap_prompt =~ "Do not modify documentation"
 
@@ -86,8 +91,17 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert day_dreaming_prompt =~ "long-term direction docs"
     assert day_dreaming_prompt =~ "features or optimization opportunities"
     assert day_dreaming_prompt =~ "one Backlog Linear issue"
+    assert day_dreaming_prompt =~ "not duplicate an existing Backlog issue"
     assert day_dreaming_prompt =~ "Do not modify code"
     assert day_dreaming_prompt =~ "Do not modify documentation"
+  end
+
+  test "fresh workflow config uses the code default operator profiles" do
+    defaults = Config.Schema.default_profiles()
+    fresh_profiles = Workflow.setup_required_workflow().config["profiles"]
+
+    assert Map.take(fresh_profiles, ["nap", "day_dreaming"]) ==
+             Map.take(defaults, ["nap", "day_dreaming"])
   end
 
   test "prompt builder applies profile prompt templates" do

@@ -379,3 +379,48 @@ profiles:
     prompt:
       mode: "extend"
       template: "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states.\n"
+  nap:
+    allowed_updates:
+      comment: false
+      description: false
+      result: false
+      target_states: []
+    executor:
+      type: "codex_agent"
+    name: "Nap audit"
+    prompt:
+      mode: "replace"
+      template: |-
+        Workflow profile: nap
+
+        Read the repository and project documentation. Lower code complexity by finding three categories of problems:
+
+        1. Redundancy: repeated logic, near-duplicate functions, and copied blocks; redundant error handling, including repeated rescue/retry/wrap, defensive re-validation of already-validated data, and catch-all rescues that hide real failures; and redundant gating, including redundant feature flags, conditions that can never be false, and duplicated permission or capability checks across layers.
+        2. Unreasonable mutual dependencies: incidental coupling, cyclic module dependencies, god modules, hidden shared state (ETS, globals, or the process dictionary), string-discriminated behavior, dual representation of one fact, and indirection layers with only one implementation.
+        3. Dead weight: speculative abstractions, unread config keys, compatibility shims, and commented-out code.
+
+        For every candidate, explicitly evaluate it against each of these Linus & Carmack criteria. State which criterion it violates and why:
+        - Linus: remove complexity, keep good taste — making the system simpler is better than making it more elaborate; reject architecture-astronaut abstractions; code must earn its place.
+        - Linus: talk is cheap, show me the code — prefer concrete, working, minimal changes over design essays.
+        - Carmack: minimize the number of things that can go wrong — every flag, abstraction, and catch-all is another possible failure; do not represent one fact twice.
+        - Carmack: hard to make simple is still worth it — hard-to-understand code is hard to make correct; simplify it instead of documenting around it.
+        - Explicit errors over silent tolerance — failures must be visible and typed; never swallow a crash merely to keep a pipeline alive without a record.
+
+        Do not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct problem that violates at least one criterion, create one Backlog Linear issue through the restricted issue creation tool. Each issue must include a concise title, evidence (file/line or code excerpt), the violated criterion and why, complexity impact, and a fix direction that reduces complexity.
+  day_dreaming:
+    allowed_updates:
+      comment: false
+      description: false
+      result: false
+      target_states: []
+    executor:
+      type: "codex_agent"
+    name: "Day dreaming"
+    prompt:
+      mode: "replace"
+      template: |-
+        Workflow profile: day_dreaming
+
+        Read the existing code, README, architecture docs, long-term direction docs, and relevant exec plans. Compare implementation reality with product direction and identify useful features or optimization opportunities that should be developed next. Every opportunity must be supported by evidence from code or documentation, align with the long-term direction, and not duplicate an existing Backlog issue.
+
+        Do not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct product or engineering opportunity, create one Backlog Linear issue through the restricted issue creation tool with a concise title, evidence from code/docs, why it matters, suggested direction, and rough impact.

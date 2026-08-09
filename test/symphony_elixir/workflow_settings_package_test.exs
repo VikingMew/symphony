@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.{WorkflowForm, WorkflowSettingsPackage}
 
@@ -64,6 +65,22 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
     assert WorkflowSettingsPackage.changed?(raw, raw) == false
     assert WorkflowSettingsPackage.changed?(raw, raw <> "\n") == false
     assert WorkflowSettingsPackage.changed?(raw, changed_raw) == true
+  end
+
+  test "profiles package round trip preserves the default operator profiles" do
+    profiles_yaml = File.read!("profiles.yml")
+
+    assert {:ok, "profiles.yml", imported_draft} =
+             WorkflowSettingsPackage.import_draft(profiles_yaml, WorkflowForm.empty())
+
+    exported_raw = workflow_raw!(imported_draft)
+    assert {:ok, round_tripped_draft} = WorkflowForm.from_raw(exported_raw)
+    assert {:ok, round_tripped_config} = WorkflowForm.to_config(round_tripped_draft)
+
+    defaults = Schema.default_profiles()
+
+    assert Map.take(round_tripped_config["profiles"], ["nap", "day_dreaming"]) ==
+             Map.take(defaults, ["nap", "day_dreaming"])
   end
 
   defp workflow_raw!(draft) do
