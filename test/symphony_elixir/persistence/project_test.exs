@@ -38,6 +38,19 @@ defmodule SymphonyElixir.Persistence.ProjectTest do
     end)
   end
 
+  test "create_run requires an explicit project_id" do
+    with_repo(fn ->
+      assert Persistence.create_run(%{}) == {:error, :project_id_required}
+      assert Persistence.create_run(%{project_id: ""}) == {:error, :project_id_required}
+    end)
+  end
+
+  test "upsert_issue requires an explicit project_id" do
+    with_repo(fn ->
+      assert Persistence.upsert_issue(%{identifier: "MT-NO-PROJECT"}) == {:error, :project_id_required}
+    end)
+  end
+
   defp insert_reference!(table, id, project_id) when table in ~w(workflow_versions runs issues tasks) do
     SQL.query!(Repo, "INSERT INTO #{table} (id, project_id) VALUES (?, ?)", [id, project_id])
   end

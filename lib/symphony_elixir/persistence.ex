@@ -23,6 +23,13 @@ defmodule SymphonyElixir.Persistence do
   @spec repo_available?() :: boolean()
   def repo_available?, do: Process.whereis(Repo) != nil
 
+  defp required_project_id(attrs) do
+    case Map.get(attrs, :project_id) do
+      project_id when is_binary(project_id) and project_id != "" -> {:ok, project_id}
+      _missing -> {:error, :project_id_required}
+    end
+  end
+
   @type read_error :: :repo_unavailable | {:query_failed, term()}
 
   @spec default_project() ::
@@ -89,8 +96,7 @@ defmodule SymphonyElixir.Persistence do
   @spec upsert_issue(map()) :: {:ok, IssueRecord.t()} | {:error, term()}
   def upsert_issue(attrs) do
     with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, project} <- default_project() do
-      attrs = Map.put_new(attrs, :project_id, project.id)
+         {:ok, _project_id} <- required_project_id(attrs) do
       identifier = Map.fetch!(attrs, :identifier)
       existing = Repo.get_by(IssueRecord, project_id: attrs.project_id, identifier: identifier)
       (existing || %IssueRecord{}) |> IssueRecord.changeset(attrs) |> Repo.insert_or_update()
@@ -100,10 +106,9 @@ defmodule SymphonyElixir.Persistence do
   @spec create_run(map()) :: {:ok, RunRecord.t()} | {:error, term()}
   def create_run(attrs) do
     with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, project} <- default_project() do
+         {:ok, _project_id} <- required_project_id(attrs) do
       attrs =
         attrs
-        |> Map.put_new(:project_id, project.id)
         |> Map.put_new(:status, "running")
         |> Map.put_new(:started_at, DateTime.utc_now())
 
