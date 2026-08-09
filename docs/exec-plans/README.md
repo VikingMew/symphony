@@ -256,6 +256,7 @@ Plans should focus on product and engineering intent rather than full implementa
 ## Active Plans
 
 1. [248-operator-profiles-standardization.md](active/248-operator-profiles-standardization.md)
+2. [249-merge-push-default-signal.md](active/249-merge-push-default-signal.md)
 
 ## Intentional Numbering Gaps
 
