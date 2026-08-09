@@ -50,6 +50,7 @@ other documents link instead of restating. Exec plans are governed separately by
 | [dashboard-color-system-design.md](dashboard-color-system-design.md) | Dashboard color system. | landed |
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability. | landed |
 | [operator-profiles-standardization-design.md](operator-profiles-standardization-design.md) | Read-only operator profiles (nap / day_dreaming) single-source contract. | landed |
+| [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | proposed |
 
 ## L4 — Normative Contracts
 
