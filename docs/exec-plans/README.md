@@ -261,7 +261,7 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-(No active plans.)
+1. [254-reject-duplicate-nap-triggers.md](active/254-reject-duplicate-nap-triggers.md)
 
 ## Intentional Numbering Gaps
 
