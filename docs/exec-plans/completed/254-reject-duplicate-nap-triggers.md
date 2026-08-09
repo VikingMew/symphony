@@ -7,6 +7,10 @@ Prevent overlapping operator runs: while a nap (or day_dreaming) run is already 
 error, instead of silently starting a second audit of the same repository that duplicates every
 issue.
 
+## Status
+
+Completed.
+
 ## Background
 
 On 2026-08-09 two nap runs (b1a1fe03 and 1b12f47b) audited the same koroni repository 24 minutes
@@ -69,3 +73,34 @@ run exclusivity, not rate limits; keep them separate but both checked.
 - Issue-level deduplication (checking whether a finding already exists as an open Linear issue
   before creating it). That is a follow-up plan for `issue_create` / the nap prompt.
 - Cleanup of the duplicated issues created on 2026-08-09 (done manually by the operator).
+
+## Verification
+
+- `mise exec -- mix format --check-formatted` — PASS.
+- `mise exec -- mix compile --warnings-as-errors` — PASS.
+- `mise exec -- mix specs.check` — PASS.
+- `mise exec -- mix test test/symphony_elixir/orchestrator_operator_tasks_test.exs` — PASS:
+  14 tests, 0 failures.
+- `mise exec -- mix test test/symphony_elixir_web/live/settings_fake_persistence_test.exs` —
+  PASS: 41 tests, 0 failures.
+- Full suite fallback — 744 tests, 6 failures, 2 skipped. Two failures were in the known
+  `OrchestratorStatusTest` flaky family and two were in the known `CoreTest` global-state family.
+  The remaining two were `ExtensionsTest` HTTP-listener tests that failed with sandbox socket
+  permission errors (`:eperm`), not assertions or changed behavior.
+
+## Completion Deviations
+
+- The request boundary already had a partial mutual-exclusion guard for `:queued`, `:starting`,
+  and `:running`; it silently returned the active task. The implementation changed that existing
+  branch to return a transient failed payload and also suppressed the handler's previously
+  unconditional `operator_task.requested` event and dashboard notification. The stored task and
+  active run remain unchanged.
+- The established public API returns task maps rather than `{:error, reason}` tuples, and the task
+  map has no structured reason field. Rejections therefore return `status: "failed"`,
+  `accepted: false`, and a human-readable string retaining the machine reason identifier
+  (`operator_task_busy` or `operator_task_already_queued`).
+- The exact full-suite command could not start in this sandbox because Elixir 1.19 Mix PubSub
+  attempts to bind a loopback TCP socket and received `:eperm`. After three failed exact attempts,
+  the suite was run in one OS process with Mix's cross-process lock/PubSub disabled. The two extra
+  `ExtensionsTest` failures came from the same sandbox restriction when those tests attempted to
+  bind real HTTP listeners.

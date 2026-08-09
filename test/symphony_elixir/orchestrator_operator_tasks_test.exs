@@ -111,6 +111,112 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert completed.operator_tasks.nap.project_id == "fake-project-id"
   end
 
+  test "requesting nap while nap is running returns busy without starting or recording another run" do
+    {:ok, pid} = start_operator_orchestrator(:RejectRunningNap)
+
+    active = Orchestrator.request_nap(pid)
+    assert active.status == "running"
+    assert_receive {:operator_runner_started, :nap, active_run_id, runner_pid, _worker_host}, 500
+    assert active_run_id == active.run_id
+
+    events_before_rejection = FakePersistence.list_events()
+    runs_before_rejection = Enum.count(FakePersistence.calls(), &match?({:create_run, _attrs}, &1))
+
+    rejected = Orchestrator.request_nap(pid)
+
+    assert rejected.status == "failed"
+    assert rejected.accepted == false
+    assert rejected.failure_reason == "operator_task_busy: nap run is already in progress"
+    assert rejected.run_id == active.run_id
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+    assert FakePersistence.list_events() == events_before_rejection
+    assert Enum.count(FakePersistence.calls(), &match?({:create_run, _attrs}, &1)) == runs_before_rejection
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.operator_tasks.nap.status == "running"
+    assert snapshot.operator_tasks.nap.run_id == active.run_id
+
+    send(runner_pid, {:finish_operator_runner, :ok})
+  end
+
+  test "requesting nap while nap is queued returns already queued without changing the queued task" do
+    {:ok, pid} = start_operator_orchestrator(:RejectQueuedNap)
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | codex_rate_limits: %{
+            "primary" => %{
+              "window_duration_mins" => 300,
+              "used_percent" => 99,
+              "resets_at" => DateTime.utc_now() |> DateTime.add(60, :second) |> DateTime.to_unix()
+            }
+          }
+      }
+    end)
+
+    queued = Orchestrator.request_nap(pid)
+    assert queued.status == "queued"
+    events_before_rejection = FakePersistence.list_events()
+
+    rejected = Orchestrator.request_nap(pid)
+
+    assert rejected.status == "failed"
+    assert rejected.accepted == false
+    assert rejected.failure_reason == "operator_task_already_queued: nap run is already queued"
+    assert rejected.run_id == queued.run_id
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+    assert FakePersistence.list_events() == events_before_rejection
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.operator_tasks.nap.status == "queued"
+    assert snapshot.operator_tasks.nap.run_id == queued.run_id
+  end
+
+  test "requesting day dreaming while nap runs is accepted independently" do
+    {:ok, pid} = start_operator_orchestrator(:IndependentOperatorKinds)
+
+    nap = Orchestrator.request_nap(pid)
+    assert_receive {:operator_runner_started, :nap, nap_run_id, nap_runner_pid, _worker_host}, 500
+    assert nap_run_id == nap.run_id
+
+    day_dreaming = Orchestrator.request_day_dreaming(pid)
+
+    assert day_dreaming.accepted == true
+    assert day_dreaming.status == "queued"
+    assert day_dreaming.kind == "day_dreaming"
+    assert day_dreaming.project_id == "fake-project-id"
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.operator_tasks.nap.status == "running"
+    assert snapshot.operator_tasks.day_dreaming.status == "queued"
+
+    send(nap_runner_pid, {:finish_operator_runner, :ok})
+  end
+
+  test "requesting nap again after completion starts a new run" do
+    {:ok, pid} = start_operator_orchestrator(:NapAfterCompletion)
+
+    first = Orchestrator.request_nap(pid)
+    assert_receive {:operator_runner_started, :nap, first_run_id, first_runner_pid, _worker_host}, 500
+    assert first_run_id == first.run_id
+    send(first_runner_pid, {:finish_operator_runner, :ok})
+
+    wait_for_snapshot(pid, fn snapshot ->
+      snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "completed"
+    end)
+
+    second = Orchestrator.request_nap(pid)
+
+    assert second.accepted == true
+    assert second.status == "running"
+    refute second.run_id == first.run_id
+    assert_receive {:operator_runner_started, :nap, second_run_id, second_runner_pid, _worker_host}, 500
+    assert second_run_id == second.run_id
+
+    send(second_runner_pid, {:finish_operator_runner, :ok})
+  end
+
   test "explicit project starts operator task in that project's workflow context" do
     project = create_project_with_workflow("Project B", "project-b", "git@github.com:org/project-b.git")
     {:ok, pid} = start_operator_orchestrator(:ExplicitProject)

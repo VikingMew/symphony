@@ -579,7 +579,22 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp put_operator_request_flash(socket, action, %{status: "failed"} = result) do
-    put_flash(socket, :error, "#{action} failed: #{Map.get(result, :failure_reason) || "unknown error"}")
+    failure_reason = Map.get(result, :failure_reason) || "unknown error"
+    profile = result |> Map.get(:kind, "operator") |> to_string() |> String.replace("_", " ")
+
+    message =
+      cond do
+        is_binary(failure_reason) and String.contains?(failure_reason, "operator_task_busy") ->
+          "#{action} failed: a #{profile} run is already in progress for this project"
+
+        is_binary(failure_reason) and String.contains?(failure_reason, "operator_task_already_queued") ->
+          "#{action} failed: a #{profile} run is already queued for this project"
+
+        true ->
+          "#{action} failed: #{failure_reason}"
+      end
+
+    put_flash(socket, :error, message)
   end
 
   defp put_operator_request_flash(socket, action, :unavailable) do

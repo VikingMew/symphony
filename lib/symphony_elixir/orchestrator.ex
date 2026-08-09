@@ -1841,17 +1841,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_operator_task_request(state, kind, project_id) do
-    {state, task} = request_operator_task(state, kind, project_id)
+    {state, task, request_status} = request_operator_task(state, kind, project_id)
 
-    persist_event("operator_task.requested", nil, %{
-      kind: to_string(kind),
-      project_id: task.project_id,
-      status: task.status,
-      run_id: task.run_id
-    })
+    if request_status == :accepted do
+      persist_event("operator_task.requested", nil, %{
+        kind: to_string(kind),
+        project_id: task.project_id,
+        status: task.status,
+        run_id: task.run_id
+      })
 
-    notify_dashboard()
-    {:reply, operator_task_reply(task), state}
+      notify_dashboard()
+    end
+
+    {:reply, operator_task_reply(task, request_status), state}
   end
 
   defp do_handle_request_refresh(state) do
@@ -1877,13 +1880,42 @@ defmodule SymphonyElixir.Orchestrator do
     current = operator_task(state, kind)
 
     case current.status do
-      status when status in [:queued, :starting, :running] ->
-        {state, current}
+      :queued ->
+        reject_operator_task(state, current, project_id, {:operator_task_already_queued, kind})
+
+      status when status in [:starting, :running] ->
+        reject_operator_task(state, current, project_id, {:operator_task_busy, kind})
 
       _ ->
-        request_new_operator_task(state, kind, project_id)
+        {state, task} = request_new_operator_task(state, kind, project_id)
+        {state, task, :accepted}
     end
   end
+
+  defp reject_operator_task(state, current, project_id, reason) do
+    failure_reason = operator_task_rejection_reason(reason)
+
+    Logger.error(
+      "Operator task request rejected action=reject kind=#{current.kind} project_id=#{project_id || "n/a"} " <>
+        "active_project_id=#{current.project_id || "n/a"} run_id=#{current.run_id || "n/a"} reason=#{inspect(reason)}"
+    )
+
+    rejected = %{
+      current
+      | status: :failed,
+        finished_at: DateTime.utc_now(),
+        failure_reason: failure_reason,
+        summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+    }
+
+    {state, rejected, :rejected}
+  end
+
+  defp operator_task_rejection_reason({:operator_task_busy, kind}),
+    do: "operator_task_busy: #{kind} run is already in progress"
+
+  defp operator_task_rejection_reason({:operator_task_already_queued, kind}),
+    do: "operator_task_already_queued: #{kind} run is already queued"
 
   defp request_new_operator_task(state, kind, project_id) do
     case resolve_operator_project(project_id) do
@@ -2314,10 +2346,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp put_operator_task(%State{} = state, kind, task), do: %{state | operator_tasks: Map.put(state.operator_tasks || %{}, kind, task)}
 
-  defp operator_task_reply(task) do
+  defp operator_task_reply(task, request_status) do
     task
     |> operator_task_payload()
-    |> Map.put(:accepted, true)
+    |> Map.put(:accepted, request_status == :accepted)
   end
 
   defp operator_tasks_payload(%State{} = state) do

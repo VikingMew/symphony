@@ -117,6 +117,41 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     defdelegate list_task_leases(opts), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
+  defmodule BusyOperatorOrchestrator do
+    use GenServer
+
+    def start_link(opts) do
+      name = Keyword.fetch!(opts, :name)
+      GenServer.start_link(__MODULE__, opts, name: name)
+    end
+
+    @impl true
+    def init(opts), do: {:ok, Keyword.fetch!(opts, :snapshot)}
+
+    @impl true
+    def handle_call(:snapshot, _from, snapshot), do: {:reply, snapshot, snapshot}
+
+    def handle_call({:request_operator_task, kind, project_id}, _from, snapshot) do
+      failure_reason = "operator_task_busy: #{kind} run is already in progress"
+
+      reply = %{
+        accepted: false,
+        kind: to_string(kind),
+        project_id: project_id,
+        status: "failed",
+        run_id: "operator-#{kind}-active",
+        requested_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        queued_at: nil,
+        started_at: nil,
+        finished_at: DateTime.utc_now() |> DateTime.to_iso8601(),
+        failure_reason: failure_reason,
+        summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+      }
+
+      {:reply, reply, snapshot}
+    end
+  end
+
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
@@ -158,6 +193,25 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "fake"
     assert html =~ "git@github.com:org/repo.git"
     assert html =~ "Linear project slug"
+  end
+
+  test "dashboard shows a friendly flash when a nap is already running" do
+    refute Process.whereis(SymphonyElixir.Repo)
+    orchestrator_name = Module.concat(__MODULE__, :BusyDashboardOperator)
+
+    start_supervised!({BusyOperatorOrchestrator, name: orchestrator_name, snapshot: dashboard_snapshot()})
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, view, _html} = live(build_conn(), "/")
+
+    html =
+      view
+      |> form("#request-nap-form", %{"project_id" => "fake-project-id"})
+      |> render_submit()
+
+    assert html =~ "Take a nap failed: a nap run is already in progress for this project"
+    refute html =~ "operator_task_busy"
   end
 
   test "settings Linear discovery is shared across project and workflow tabs" do
@@ -1543,14 +1597,30 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert b_html =~ ~s(href="/settings/projects?project=#{project_b.id}")
   end
 
-  defp start_test_endpoint do
+  defp start_test_endpoint(overrides \\ []) do
     endpoint_config =
       :symphony_elixir
       |> Application.get_env(SymphonyElixirWeb.Endpoint, [])
       |> Keyword.merge(server: false, secret_key_base: String.duplicate("s", 64))
+      |> Keyword.merge(overrides)
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
+  end
+
+  defp dashboard_snapshot do
+    %{
+      running: [],
+      retrying: [],
+      blocked: [],
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0.0},
+      rate_limits: %{},
+      polling: %{listening?: false, listening_mode: "not_listening"},
+      operator_tasks: %{
+        nap: %{status: "running", project_id: "fake-project-id", summary: nil},
+        day_dreaming: %{status: "idle", project_id: nil, summary: nil}
+      }
+    }
   end
 
   defp workflow_form_params do

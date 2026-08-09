@@ -6,6 +6,7 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Completed Plans
 
+254. [254-reject-duplicate-nap-triggers.md](completed/254-reject-duplicate-nap-triggers.md)
 1. [001-simple-username-password-auth.md](completed/001-simple-username-password-auth.md)
 2. [002-sqlite-configuration-foundation.md](completed/002-sqlite-configuration-foundation.md)
 3. [003-load-workflow-from-database.md](completed/003-load-workflow-from-database.md)
@@ -261,7 +262,7 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-1. [254-reject-duplicate-nap-triggers.md](active/254-reject-duplicate-nap-triggers.md)
+(No active plans.)
 
 ## Intentional Numbering Gaps
 
