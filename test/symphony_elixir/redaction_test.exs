@@ -68,6 +68,62 @@ defmodule SymphonyElixir.RedactionTest do
     end)
   end
 
+  test "converts atoms to strings so payloads remain JSON-encodable" do
+    payload = %{
+      event: :notification,
+      message: %{method: "item/completed", ok: true, nil_value: nil},
+      timestamp: ~U[2026-08-08 00:00:00Z],
+      list: [:a, :b, "c", 1]
+    }
+
+    sanitized = Redaction.payload(payload, 500)
+
+    assert sanitized.event == "notification"
+    assert sanitized.message == %{method: "item/completed", ok: true, nil_value: nil}
+    assert sanitized.timestamp == "2026-08-08T00:00:00Z"
+    assert sanitized.list == ["a", "b", "c", 1]
+
+    # The sanitized payload must survive Ecto :map-style JSON encoding.
+    assert {:ok, _json} = Jason.encode(sanitized)
+  end
+
+  test "sanitizes invalid UTF-8 so payloads remain JSON-encodable" do
+    invalid = <<123, 34, 109, 101, 116, 104, 111, 100, 34, 58, 34, 116, 117, 114, 110, 255, 254>>
+
+    payload = %{
+      "method" => "turn/plan/updated",
+      "debug" => %{"raw" => invalid},
+      "timestamp" => "2026-08-09T03:13:43Z"
+    }
+
+    refute String.valid?(invalid)
+
+    sanitized = Redaction.payload(payload, 500)
+
+    assert String.valid?(sanitized["debug"]["raw"])
+    # Invalid bytes replaced, not silently dropped entirely.
+    assert sanitized["debug"]["raw"] =~ "turn"
+
+    # Survives Ecto :map-style JSON encoding.
+    assert {:ok, _json} = Jason.encode(sanitized)
+  end
+
+  test "byte-boundary truncation keeps multi-byte UTF-8 valid" do
+    # CJK text is multi-byte in UTF-8; naive byte truncation splits characters.
+    value = String.duplicate("已按仓库现状完成细化测试数据", 200)
+    assert byte_size(value) > 500
+    refute String.valid?(binary_part(value, 0, 500))
+
+    payload = %{"text" => value}
+
+    sanitized = Redaction.payload(payload, 500)
+
+    assert String.valid?(sanitized["text"])
+    assert sanitized["text"] =~ "... (truncated)"
+    # Survives Ecto :map-style JSON encoding.
+    assert {:ok, _json} = Jason.encode(sanitized)
+  end
+
   test "redacts environment values, URI userinfo, and control bytes" do
     previous = System.get_env("LINEAR_API_KEY")
     System.put_env("LINEAR_API_KEY", "secret-value")

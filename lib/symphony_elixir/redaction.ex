@@ -57,7 +57,28 @@ defmodule SymphonyElixir.Redaction do
     if byte_size(value) <= max_bytes do
       value
     else
-      binary_part(value, 0, max_bytes) <> "... (truncated)"
+      # binary_part/2 truncates at a byte boundary and can split a multi-byte
+      # UTF-8 character, leaving invalid UTF-8 that breaks Ecto :map JSON
+      # encoding (Codex raw messages contain CJK and other multi-byte text).
+      # Walk back to a character boundary so the result stays valid UTF-8.
+      truncated = binary_part(value, 0, max_bytes)
+
+      if String.valid?(truncated) do
+        truncated
+      else
+        trim_incomplete_utf8(truncated)
+      end <> "... (truncated)"
+    end
+  end
+
+  defp trim_incomplete_utf8(value) do
+    if String.valid?(value) do
+      value
+    else
+      # Drop trailing bytes one at a time until the boundary is clean.
+      value
+      |> binary_part(0, byte_size(value) - 1)
+      |> trim_incomplete_utf8()
     end
   end
 
@@ -71,12 +92,32 @@ defmodule SymphonyElixir.Redaction do
 
   defp scrub_payload(value, max_string_bytes) when is_binary(value) do
     value
+    |> sanitize_utf8()
     |> credentials()
     |> truncate_bytes(max_string_bytes)
   end
 
   defp scrub_payload(value, max_string_bytes) when is_list(value), do: Enum.map(value, &scrub_payload(&1, max_string_bytes))
+  defp scrub_payload(value, _max_string_bytes) when value in [true, false, nil], do: value
+  defp scrub_payload(value, _max_string_bytes) when is_atom(value), do: Atom.to_string(value)
   defp scrub_payload(value, _max_string_bytes), do: value
+
+  defp sanitize_utf8(value) do
+    if String.valid?(value) do
+      value
+    else
+      # Replace invalid byte sequences with U+FFFD so the payload stays
+      # JSON-encodable when persisted to an Ecto :map field. Codex app-server
+      # raw messages can contain non-UTF-8 bytes (binary streams, control
+      # bytes); without this, Ecto dump fails and the Orchestrator crashes.
+      value
+      |> :unicode.characters_to_binary(:utf8, :utf8)
+      |> case do
+        {:error, converted, _rest} -> converted
+        converted when is_binary(converted) -> converted
+      end
+    end
+  end
 
   defp sensitive_key?(key),
     do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
