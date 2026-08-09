@@ -258,6 +258,7 @@ Plans should focus on product and engineering intent rather than full implementa
 ## Active Plans
 
 1. [250-remove-default-project-dependency.md](active/250-remove-default-project-dependency.md)
+2. [251-operator-tasks-select-project.md](active/251-operator-tasks-select-project.md)
 
 ## Intentional Numbering Gaps
 
