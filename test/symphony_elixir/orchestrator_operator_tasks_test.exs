@@ -6,6 +6,14 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
       parent = Application.fetch_env!(:symphony_elixir, :operator_runner_test_pid)
       send(parent, {:operator_runner_started, kind, run_id, self(), Keyword.get(opts, :worker_host)})
 
+      send(parent, {
+        :operator_runner_project,
+        kind,
+        run_id,
+        Keyword.get(opts, :project_id),
+        SymphonyElixir.Config.settings!().project.repository_url
+      })
+
       receive do
         :emit_operator_updates ->
           send(recipient, {:worker_runtime_info, run_id, %{worker_host: Keyword.get(opts, :worker_host), workspace_path: "/tmp/operator/#{run_id}"}})
@@ -62,9 +70,11 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     reply = GenServer.call(pid, {:request_operator_task, :nap})
     assert reply.status == "running"
+    assert reply.project_id == "fake-project-id"
     run_id = reply.run_id
 
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
+    assert_receive {:operator_runner_project, :nap, ^run_id, "fake-project-id", nil}, 500
 
     state = :sys.get_state(pid)
     assert %{^run_id => %Orchestrator.RunningOperator{} = running_entry} = state.running
@@ -98,6 +108,85 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
       end)
 
     assert completed.operator_tasks.nap.run_id == run_id
+    assert completed.operator_tasks.nap.project_id == "fake-project-id"
+  end
+
+  test "explicit project starts operator task in that project's workflow context" do
+    project = create_project_with_workflow("Project B", "project-b", "git@github.com:org/project-b.git")
+    {:ok, pid} = start_operator_orchestrator(:ExplicitProject)
+
+    reply = Orchestrator.request_nap(pid, project.id)
+    assert reply.status == "running"
+    assert reply.project_id == project.id
+    run_id = reply.run_id
+
+    assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
+
+    assert_receive {:operator_runner_project, :nap, ^run_id, project_id, "git@github.com:org/project-b.git"}, 500
+    assert project_id == project.id
+
+    send(runner_pid, {:finish_operator_runner, :ok})
+  end
+
+  test "missing project fails when enabled projects are ambiguous" do
+    {:ok, _project} = create_project("Project B", "project-b", true)
+    {:ok, pid} = start_operator_orchestrator(:AmbiguousProject)
+
+    reply = GenServer.call(pid, {:request_operator_task, :nap})
+
+    assert reply.status == "failed"
+    assert reply.project_id == nil
+    assert reply.failure_reason == "project required"
+    assert reply.summary.error == "project required"
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert snapshot.operator_tasks.nap.status == "failed"
+    assert snapshot.operator_tasks.nap.failure_reason == "project required"
+  end
+
+  test "missing project fails when no project is enabled" do
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, _disabled_project} = FakePersistence.update_project(project.id, %{enabled: false})
+    :ok = WorkflowStore.force_reload()
+    {:ok, pid} = start_operator_orchestrator(:NoEnabledProject)
+
+    reply = Orchestrator.request_nap(pid)
+
+    assert reply.status == "failed"
+    assert reply.failure_reason == "project required"
+    assert reply.summary.error == "project required"
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+  end
+
+  test "unknown and disabled projects fail visibly" do
+    {:ok, disabled_project} = create_project("Disabled Project", "disabled", false)
+    {:ok, pid} = start_operator_orchestrator(:UnknownProject)
+
+    unknown = GenServer.call(pid, {:request_operator_task, :nap, "missing-project"})
+    assert unknown.status == "failed"
+    assert unknown.failure_reason == "unknown project: missing-project"
+    assert unknown.summary.error == unknown.failure_reason
+
+    disabled = GenServer.call(pid, {:request_operator_task, :nap, disabled_project.id})
+    assert disabled.status == "failed"
+    assert disabled.failure_reason == "unknown project: #{disabled_project.id}"
+    assert disabled.summary.error == disabled.failure_reason
+
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+  end
+
+  test "project without an active workflow fails instead of queueing" do
+    {:ok, project} = create_project("No Workflow", "no-workflow", true)
+    {:ok, pid} = start_operator_orchestrator(:NoActiveWorkflow)
+
+    reply = GenServer.call(pid, {:request_operator_task, :day_dreaming, project.id})
+
+    assert reply.status == "failed"
+    assert reply.project_id == project.id
+    assert reply.failure_reason == "no active workflow for project: #{project.id}"
+    assert reply.summary.error == reply.failure_reason
+    refute_receive {:operator_runner_started, :day_dreaming, _run_id, _runner_pid, _worker_host}, 100
   end
 
   test "completed operator task summarizes issues created in its audit trail" do
@@ -217,12 +306,32 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     reply = GenServer.call(pid, {:request_operator_task, :nap})
     assert reply.status == "queued"
+    assert reply.project_id == "fake-project-id"
     refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
 
     snapshot = GenServer.call(pid, :snapshot)
     assert snapshot.running == []
     assert snapshot.rate_limit_gate.status == :blocked
     assert snapshot.operator_tasks.nap.status == "queued"
+    assert snapshot.operator_tasks.nap.project_id == "fake-project-id"
+  end
+
+  defp create_project_with_workflow(name, slug, repository_url) do
+    raw_workflow = FakePersistence.active_workflow_version().raw_workflow_md
+    {:ok, project} = create_project(name, slug, true, repository_url)
+    {:ok, _version} = FakePersistence.import_workflow(project, raw_workflow, "test")
+    :ok = WorkflowStore.force_reload()
+    project
+  end
+
+  defp create_project(name, slug, enabled, repository_url \\ "git@github.com:org/repo.git") do
+    FakePersistence.create_project(%{
+      name: name,
+      slug: slug,
+      linear_project_slug: slug,
+      repository_url: repository_url,
+      enabled: enabled
+    })
   end
 
   defp start_operator_orchestrator(suffix) do

@@ -109,9 +109,10 @@ defmodule SymphonyElixir.AgentRunner do
   defp with_workspace(issue, codex_update_recipient, opts, worker_host, run) do
     emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
 
-    workspace_opts = [progress_recipient: codex_update_recipient]
+    workspace_opts = [progress_recipient: codex_update_recipient, project_id: Keyword.get(opts, :project_id)]
+    workspace_creator = Keyword.get(opts, :workspace_creator, &Workspace.create_for_issue/3)
 
-    case Workspace.create_for_issue(issue, worker_host, workspace_opts) do
+    case workspace_creator.(issue, worker_host, workspace_opts) do
       {:ok, workspace} ->
         emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{workspace: workspace})
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)

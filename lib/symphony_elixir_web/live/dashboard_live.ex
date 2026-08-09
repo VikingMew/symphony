@@ -7,6 +7,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   import SymphonyElixirWeb.DashboardPresenter
 
+  alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixirWeb.{ObservabilityPubSub, Presenter, WebRuntime}
   @runtime_tick_ms 1_000
 
@@ -15,6 +16,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     socket =
       socket
       |> assign(:payload, load_payload())
+      |> assign(:operator_projects, load_operator_projects())
       |> assign(:now, DateTime.utc_now())
       |> assign(:expanded_session_histories, MapSet.new())
 
@@ -37,6 +39,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
     {:noreply,
      socket
      |> assign(:payload, load_payload())
+     |> assign(:operator_projects, load_operator_projects())
      |> assign(:now, DateTime.utc_now())}
   end
 
@@ -90,22 +93,22 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   @impl true
-  def handle_event("request_nap", _params, socket) do
-    result = SymphonyElixir.Orchestrator.request_nap(WebRuntime.orchestrator())
+  def handle_event("request_nap", %{"project_id" => project_id}, socket) do
+    result = SymphonyElixir.Orchestrator.request_nap(WebRuntime.orchestrator(), project_id)
 
     {:noreply,
      socket
-     |> put_flash(:info, "Take a nap requested: #{inspect(result)}")
+     |> put_operator_request_flash("Take a nap", result)
      |> refresh_payload()}
   end
 
   @impl true
-  def handle_event("request_day_dreaming", _params, socket) do
-    result = SymphonyElixir.Orchestrator.request_day_dreaming(WebRuntime.orchestrator())
+  def handle_event("request_day_dreaming", %{"project_id" => project_id}, socket) do
+    result = SymphonyElixir.Orchestrator.request_day_dreaming(WebRuntime.orchestrator(), project_id)
 
     {:noreply,
      socket
-     |> put_flash(:info, "Day dreaming requested: #{inspect(result)}")
+     |> put_operator_request_flash("Day dreaming", result)
      |> refresh_payload()}
   end
 
@@ -114,6 +117,10 @@ defmodule SymphonyElixirWeb.DashboardLive do
     ~H"""
     <section class="dashboard-shell">
       <SymphonyElixirWeb.Layouts.app_nav current={:dashboard} />
+
+      <section :if={Phoenix.Flash.get(@flash, :error)} class="error-card" role="alert">
+        <p class="error-copy"><%= Phoenix.Flash.get(@flash, :error) %></p>
+      </section>
 
       <header class="hero-card">
         <div class="hero-grid">
@@ -166,8 +173,30 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <div class="button-row">
               <button class="subtle-button" phx-click="start_listening">Start listening</button>
               <button class="subtle-button" phx-click="start_refine_only_listening">Listen refinement only</button>
-              <button class="subtle-button" phx-click="request_nap">Take a nap</button>
-              <button class="subtle-button" phx-click="request_day_dreaming">Day dreaming</button>
+              <form id="request-nap-form" phx-submit="request_nap">
+                <select id="nap-project-id" name="project_id" aria-label="Nap project" required disabled={@operator_projects == []}>
+                  <option value="" selected>Select nap project</option>
+                  <option :for={project <- @operator_projects} value={Map.get(project, :id)}>
+                    <%= operator_project_label(project) %>
+                  </option>
+                </select>
+                <button class="subtle-button" type="submit" disabled={@operator_projects == []}>Take a nap</button>
+              </form>
+              <form id="request-day-dreaming-form" phx-submit="request_day_dreaming">
+                <select
+                  id="day-dreaming-project-id"
+                  name="project_id"
+                  aria-label="Day dreaming project"
+                  required
+                  disabled={@operator_projects == []}
+                >
+                  <option value="" selected>Select day dreaming project</option>
+                  <option :for={project <- @operator_projects} value={Map.get(project, :id)}>
+                    <%= operator_project_label(project) %>
+                  </option>
+                </select>
+                <button class="subtle-button" type="submit" disabled={@operator_projects == []}>Day dreaming</button>
+              </form>
               <button class="subtle-button" phx-click="stop_listening">Stop listening</button>
               <button
                 class="subtle-button"
@@ -177,12 +206,18 @@ defmodule SymphonyElixirWeb.DashboardLive do
             </div>
           </div>
           <div class="runtime-task-status">
-            <span class="metric-label">nap: <span class="mono"><%= get_in(@payload, [:operator_tasks, :nap, :status]) || "idle" %></span></span>
+            <span class="metric-label">
+              nap: <span class="mono"><%= get_in(@payload, [:operator_tasks, :nap, :status]) || "idle" %></span>
+              · project <span class="mono"><%= get_in(@payload, [:operator_tasks, :nap, :project_id]) || "n/a" %></span>
+            </span>
             <span :if={operator_summary(@payload, :nap)} class="metric-label">
               nap summary:
               <span class="mono"><%= operator_summary_text(operator_summary(@payload, :nap)) %></span>
             </span>
-            <span class="metric-label">day dreaming: <span class="mono"><%= get_in(@payload, [:operator_tasks, :day_dreaming, :status]) || "idle" %></span></span>
+            <span class="metric-label">
+              day dreaming: <span class="mono"><%= get_in(@payload, [:operator_tasks, :day_dreaming, :status]) || "idle" %></span>
+              · project <span class="mono"><%= get_in(@payload, [:operator_tasks, :day_dreaming, :project_id]) || "n/a" %></span>
+            </span>
             <span :if={operator_summary(@payload, :day_dreaming)} class="metric-label">
               day dreaming summary:
               <span class="mono"><%= operator_summary_text(operator_summary(@payload, :day_dreaming)) %></span>
@@ -525,6 +560,36 @@ defmodule SymphonyElixirWeb.DashboardLive do
     Map.get(entry, :label) || Map.get(entry, :issue_identifier) || Map.get(entry, :run_id) || "n/a"
   end
 
+  defp operator_project_label(project) do
+    name = Map.get(project, :name) || Map.get(project, :slug) || Map.get(project, :id)
+    slug = Map.get(project, :slug)
+    if is_binary(slug) and slug != "", do: "#{name} (#{slug})", else: name
+  end
+
+  defp load_operator_projects do
+    case PersistenceProvider.read(fn -> PersistenceProvider.module().list_projects() end) do
+      projects when is_list(projects) ->
+        projects
+        |> Enum.filter(&(Map.get(&1, :enabled, true) == true))
+        |> Enum.sort_by(&(Map.get(&1, :name) || Map.get(&1, :slug) || Map.get(&1, :id)))
+
+      _ ->
+        []
+    end
+  end
+
+  defp put_operator_request_flash(socket, action, %{status: "failed"} = result) do
+    put_flash(socket, :error, "#{action} failed: #{Map.get(result, :failure_reason) || "unknown error"}")
+  end
+
+  defp put_operator_request_flash(socket, action, :unavailable) do
+    put_flash(socket, :error, "#{action} failed: orchestrator unavailable")
+  end
+
+  defp put_operator_request_flash(socket, action, result) do
+    put_flash(socket, :info, "#{action} requested: #{inspect(result)}")
+  end
+
   defp load_payload do
     Presenter.state_payload(WebRuntime.orchestrator(), WebRuntime.snapshot_timeout_ms())
   end
@@ -532,6 +597,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp refresh_payload(socket) do
     socket
     |> assign(:payload, load_payload())
+    |> assign(:operator_projects, load_operator_projects())
     |> assign(:now, DateTime.utc_now())
   end
 

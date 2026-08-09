@@ -15,6 +15,26 @@ defmodule SymphonyElixir.AgentRunnerTest do
            }
   end
 
+  test "operator runner carries the selected project into workspace preparation" do
+    test_pid = self()
+
+    workspace_creator = fn issue, worker_host, opts ->
+      send(test_pid, {:operator_workspace_requested, issue, worker_host, opts})
+      {:error, :stop_after_workspace_assertion}
+    end
+
+    assert {:error, :stop_after_workspace_assertion} =
+             AgentRunner.run_operator(:nap, "operator-project", nil,
+               project_id: "project-123",
+               workspace_creator: workspace_creator
+             )
+
+    assert_receive {:operator_workspace_requested, %Issue{} = issue, nil, workspace_opts}
+    assert issue.id == "operator-project"
+    assert issue.identifier == AgentRunner.operator_task_identity(:nap, "operator-project").identifier
+    assert Keyword.fetch!(workspace_opts, :project_id) == "project-123"
+  end
+
   test "agent runner keeps workspace after successful codex run" do
     test_root =
       Path.join(

@@ -88,6 +88,7 @@ defmodule SymphonyElixir.Orchestrator do
       :identifier,
       :issue_id,
       :issue,
+      :project_id,
       :state,
       :worker_host,
       :workspace_path,
@@ -1204,7 +1205,7 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp start_operator_task_after_run(state, started, run) do
+  defp start_operator_task_after_run(state, started, run, workflow) do
     started = if run, do: %{started | run_id: run.id}, else: started
 
     case select_worker_host(state, nil) do
@@ -1212,16 +1213,17 @@ defmodule SymphonyElixir.Orchestrator do
         fail_operator_task_start(state, started, "no worker capacity available")
 
       worker_host ->
-        spawn_operator_task_with_disk_guard(state, started, worker_host)
+        spawn_operator_task_with_disk_guard(state, started, worker_host, workflow)
     end
   end
 
-  defp spawn_operator_task_with_disk_guard(state, started, worker_host) do
+  defp spawn_operator_task_with_disk_guard(state, started, worker_host, workflow) do
     issue = operator_task_issue(started)
 
-    with :ok <- ensure_workspace_disk_available(issue) do
-      spawn_operator_task(state, started, worker_host)
-    else
+    case ensure_workspace_disk_available(issue) do
+      :ok ->
+        spawn_operator_task(state, started, worker_host, workflow)
+
       {:error, reason} ->
         fail_operator_task_start(state, started, format_disk_guard_reason(reason))
     end
@@ -1575,19 +1577,29 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @spec request_nap() :: map() | :unavailable
-  def request_nap, do: request_nap(__MODULE__)
+  def request_nap, do: request_nap(nil)
 
-  @spec request_nap(GenServer.server()) :: map() | :unavailable
-  def request_nap(server) do
-    if Process.whereis(server), do: GenServer.call(server, {:request_operator_task, :nap}), else: :unavailable
+  @spec request_nap(String.t() | nil | GenServer.server()) :: map() | :unavailable
+  def request_nap(project_id) when is_binary(project_id) or is_nil(project_id), do: request_nap(__MODULE__, project_id)
+  def request_nap(server), do: request_nap(server, nil)
+
+  @spec request_nap(GenServer.server(), String.t() | nil) :: map() | :unavailable
+  def request_nap(server, project_id) do
+    if GenServer.whereis(server), do: GenServer.call(server, {:request_operator_task, :nap, project_id}), else: :unavailable
   end
 
   @spec request_day_dreaming() :: map() | :unavailable
-  def request_day_dreaming, do: request_day_dreaming(__MODULE__)
+  def request_day_dreaming, do: request_day_dreaming(nil)
 
-  @spec request_day_dreaming(GenServer.server()) :: map() | :unavailable
-  def request_day_dreaming(server) do
-    if Process.whereis(server), do: GenServer.call(server, {:request_operator_task, :day_dreaming}), else: :unavailable
+  @spec request_day_dreaming(String.t() | nil | GenServer.server()) :: map() | :unavailable
+  def request_day_dreaming(project_id) when is_binary(project_id) or is_nil(project_id),
+    do: request_day_dreaming(__MODULE__, project_id)
+
+  def request_day_dreaming(server), do: request_day_dreaming(server, nil)
+
+  @spec request_day_dreaming(GenServer.server(), String.t() | nil) :: map() | :unavailable
+  def request_day_dreaming(server, project_id) do
+    if GenServer.whereis(server), do: GenServer.call(server, {:request_operator_task, :day_dreaming, project_id}), else: :unavailable
   end
 
   @spec force_stop_all() :: map() | :unavailable
@@ -1631,6 +1643,7 @@ defmodule SymphonyElixir.Orchestrator do
           label: Map.get(metadata, :label),
           run_id: Map.get(metadata, :run_id),
           identifier: metadata.identifier,
+          project_id: Map.get(metadata, :project_id),
           state: running_entry_state(metadata),
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
@@ -1820,8 +1833,23 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call({:request_operator_task, kind}, _from, state) when kind in [:nap, :day_dreaming] do
-    {state, task} = request_operator_task(state, kind)
-    persist_event("operator_task.requested", nil, %{kind: to_string(kind), status: task.status, run_id: task.run_id})
+    handle_operator_task_request(state, kind, nil)
+  end
+
+  def handle_call({:request_operator_task, kind, project_id}, _from, state) when kind in [:nap, :day_dreaming] do
+    handle_operator_task_request(state, kind, project_id)
+  end
+
+  defp handle_operator_task_request(state, kind, project_id) do
+    {state, task} = request_operator_task(state, kind, project_id)
+
+    persist_event("operator_task.requested", nil, %{
+      kind: to_string(kind),
+      project_id: task.project_id,
+      status: task.status,
+      run_id: task.run_id
+    })
+
     notify_dashboard()
     {:reply, operator_task_reply(task), state}
   end
@@ -1843,7 +1871,7 @@ defmodule SymphonyElixir.Orchestrator do
      }, state}
   end
 
-  defp request_operator_task(%State{} = state, kind) do
+  defp request_operator_task(%State{} = state, kind, project_id) do
     state = reconcile_stale_operator_entries(state)
     state = refresh_rate_limit_gate(state)
     current = operator_task(state, kind)
@@ -1853,16 +1881,39 @@ defmodule SymphonyElixir.Orchestrator do
         {state, current}
 
       _ ->
-        task = new_operator_task(kind)
-
-        if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
-          queued = %{task | status: :queued, queued_at: DateTime.utc_now()}
-          {put_operator_task(state, kind, queued), queued}
-        else
-          {state, started} = start_operator_task(state, task)
-          {put_operator_task(state, kind, started), started}
-        end
+        request_new_operator_task(state, kind, project_id)
     end
+  end
+
+  defp request_new_operator_task(state, kind, project_id) do
+    case resolve_operator_project(project_id) do
+      {:ok, project} -> request_operator_task_for_project(state, kind, project)
+      {:error, reason} -> put_failed_operator_task(state, kind, new_operator_task(kind, project_id), reason)
+    end
+  end
+
+  defp request_operator_task_for_project(state, kind, project) do
+    task = new_operator_task(kind, Map.fetch!(project, :id))
+
+    case load_operator_workflow(project) do
+      {:ok, _workflow} -> queue_or_start_operator_task(state, kind, task)
+      {:error, reason} -> put_failed_operator_task(state, kind, task, reason)
+    end
+  end
+
+  defp queue_or_start_operator_task(state, kind, task) do
+    if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
+      queued = %{task | status: :queued, queued_at: DateTime.utc_now()}
+      {put_operator_task(state, kind, queued), queued}
+    else
+      {state, started} = start_operator_task(state, task)
+      {put_operator_task(state, kind, started), started}
+    end
+  end
+
+  defp put_failed_operator_task(state, kind, task, reason) do
+    failed = fail_operator_task_resolution(task, reason)
+    {put_operator_task(state, kind, failed), failed}
   end
 
   defp maybe_start_queued_operator_tasks(%State{} = state) do
@@ -1892,9 +1943,10 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp new_operator_task(kind) do
+  defp new_operator_task(kind, project_id) do
     %{
       kind: kind,
+      project_id: project_id,
       status: :idle,
       run_id: "operator-#{kind}-#{System.unique_integer([:positive])}",
       requested_at: DateTime.utc_now(),
@@ -1907,6 +1959,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp start_operator_task(%State{} = state, task) do
+    with {:ok, project} <- resolve_operator_project(task.project_id),
+         {:ok, workflow} <- load_operator_workflow(project) do
+      Config.with_workflow_context(workflow, fn ->
+        do_start_operator_task(state, task, workflow)
+      end)
+    else
+      {:error, reason} -> {state, fail_operator_task_resolution(task, reason)}
+    end
+  end
+
+  defp do_start_operator_task(%State{} = state, task, workflow) do
     started = %{
       task
       | status: :running,
@@ -1918,7 +1981,7 @@ defmodule SymphonyElixir.Orchestrator do
 
     case persist_operator_run_started(started) do
       {:ok, run} ->
-        start_operator_task_after_run(state, started, run)
+        start_operator_task_after_run(state, started, run, workflow)
 
       {:error, reason} ->
         failure_reason = "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
@@ -1936,20 +1999,11 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp spawn_operator_task(%State{} = state, task, worker_host) do
+  defp spawn_operator_task(%State{} = state, task, worker_host, workflow) do
     recipient = self()
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           result =
-             agent_runner().run_operator(task.kind, task.run_id, recipient,
-               worker_host: worker_host,
-               run_id: task.run_id,
-               rate_limit_snapshot: state.codex_rate_limits,
-               rate_limit_settings: Config.settings!()
-             )
-
-           send(recipient, {:agent_runner_finished, task.run_id, result})
-           result
+           run_operator_task(state, task, recipient, worker_host, workflow)
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
@@ -1961,6 +2015,22 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, reason} ->
         fail_operator_task_start(state, task, "failed to spawn operator task: #{inspect(reason)}")
     end
+  end
+
+  defp run_operator_task(state, task, recipient, worker_host, workflow) do
+    Config.with_workflow_context(workflow, fn ->
+      result =
+        agent_runner().run_operator(task.kind, task.run_id, recipient,
+          project_id: task.project_id,
+          worker_host: worker_host,
+          run_id: task.run_id,
+          rate_limit_snapshot: state.codex_rate_limits,
+          rate_limit_settings: Config.settings!()
+        )
+
+      send(recipient, {:agent_runner_finished, task.run_id, result})
+      result
+    end)
   end
 
   defp fail_operator_task_start(%State{} = state, task, reason) do
@@ -1992,6 +2062,7 @@ defmodule SymphonyElixir.Orchestrator do
       kind: task.kind,
       profile: to_string(task.kind),
       label: identity.label,
+      project_id: task.project_id,
       pid: pid,
       ref: ref,
       run_id: task.run_id,
@@ -2095,6 +2166,70 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp operator_task_results(_run_id), do: Results.aggregate([])
 
+  defp resolve_operator_project(nil), do: resolve_unambiguous_operator_project()
+  defp resolve_operator_project(""), do: resolve_unambiguous_operator_project()
+
+  defp resolve_operator_project(project_id) when is_binary(project_id) do
+    case enabled_operator_projects() do
+      {:ok, projects} ->
+        case Enum.find(projects, &(Map.get(&1, :id) == project_id)) do
+          nil -> {:error, :unknown_project}
+          project -> {:ok, project}
+        end
+
+      {:error, reason} ->
+        {:error, {:project_lookup_failed, reason}}
+    end
+  end
+
+  defp resolve_unambiguous_operator_project do
+    case enabled_operator_projects() do
+      {:ok, [project]} -> {:ok, project}
+      {:ok, _projects} -> {:error, :project_required}
+      {:error, reason} -> {:error, {:project_lookup_failed, reason}}
+    end
+  end
+
+  defp enabled_operator_projects do
+    case PersistenceProvider.read(fn -> persistence().list_projects() end) do
+      projects when is_list(projects) -> {:ok, Enum.filter(projects, &(Map.get(&1, :enabled, true) == true))}
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:invalid_list_projects_result, other}}
+    end
+  end
+
+  defp load_operator_workflow(project) do
+    case persistence().active_workflow_version(project) do
+      nil -> {:error, :no_active_workflow}
+      {:error, reason} -> {:error, {:workflow_lookup_failed, reason}}
+      workflow_version -> {:ok, persistence().workflow_to_loaded(workflow_version)}
+    end
+  rescue
+    error -> {:error, {:workflow_lookup_failed, error}}
+  end
+
+  defp fail_operator_task_resolution(task, reason) do
+    failure_reason = operator_project_failure_reason(reason, task.project_id)
+
+    %{
+      task
+      | status: :failed,
+        finished_at: DateTime.utc_now(),
+        failure_reason: failure_reason,
+        summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason}
+    }
+  end
+
+  defp operator_project_failure_reason(:project_required, _project_id), do: "project required"
+  defp operator_project_failure_reason(:unknown_project, project_id), do: "unknown project: #{project_id}"
+  defp operator_project_failure_reason(:no_active_workflow, project_id), do: "no active workflow for project: #{project_id}"
+
+  defp operator_project_failure_reason({:project_lookup_failed, reason}, _project_id),
+    do: "project lookup failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
+  defp operator_project_failure_reason({:workflow_lookup_failed, reason}, project_id),
+    do: "workflow lookup failed for project #{project_id}: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
   defp operator_kind_from_running_entry(%RunningOperator{kind: kind}) when kind in [:nap, :day_dreaming], do: kind
   defp operator_kind_from_running_entry(_running_entry), do: nil
 
@@ -2165,6 +2300,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp operator_task(%State{} = state, kind) do
     Map.get(state.operator_tasks || %{}, kind, %{
       kind: kind,
+      project_id: nil,
       status: :idle,
       run_id: nil,
       requested_at: nil,
@@ -2194,6 +2330,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp operator_task_payload(task) do
     %{
       kind: to_string(task.kind),
+      project_id: task.project_id,
       status: to_string(task.status),
       run_id: task.run_id,
       requested_at: iso8601_or_nil(task.requested_at),
@@ -2723,6 +2860,7 @@ defmodule SymphonyElixir.Orchestrator do
       kind: to_string(task.kind),
       profile: to_string(task.kind),
       label: operator_task_label(task.kind),
+      project_id: task.project_id,
       status: "running",
       execution_mode: "centralized",
       attempt: 0,

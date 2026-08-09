@@ -97,17 +97,34 @@ defmodule SymphonyElixir.ExtensionsTest do
     end
 
     def handle_call({:request_operator_task, kind}, _from, state) do
+      handle_operator_task_request(kind, nil, state)
+    end
+
+    def handle_call({:request_operator_task, kind, project_id}, _from, state) do
+      handle_operator_task_request(kind, project_id, state)
+    end
+
+    defp handle_operator_task_request(kind, project_id, state) do
+      failure_reason = Keyword.get(state, :operator_failure)
+
       task = %{
         kind: to_string(kind),
-        status: "running",
+        project_id: project_id,
+        status: if(failure_reason, do: "failed", else: "running"),
         run_id: "operator-#{kind}-1",
         requested_at: DateTime.utc_now() |> DateTime.to_iso8601(),
         queued_at: nil,
-        started_at: DateTime.utc_now() |> DateTime.to_iso8601(),
-        finished_at: nil,
-        failure_reason: nil,
-        summary: %{created: 0, skipped: 0, failed: 0, issues: []}
+        started_at: if(failure_reason, do: nil, else: DateTime.utc_now() |> DateTime.to_iso8601()),
+        finished_at: if(failure_reason, do: DateTime.utc_now() |> DateTime.to_iso8601()),
+        failure_reason: failure_reason,
+        summary:
+          if(failure_reason,
+            do: %{created: 0, skipped: 0, failed: 1, issues: [], error: failure_reason},
+            else: %{created: 0, skipped: 0, failed: 0, issues: []}
+          )
       }
+
+      if owner = Keyword.get(state, :owner), do: send(owner, {:operator_task_requested, kind, project_id})
 
       state =
         Keyword.update!(state, :snapshot, fn snapshot ->
@@ -761,6 +778,7 @@ defmodule SymphonyElixir.ExtensionsTest do
       StaticOrchestrator.start_link(
         name: orchestrator_name,
         snapshot: static_snapshot(),
+        owner: self(),
         refresh: %{queued: false, coalesced: false, requested_at: DateTime.utc_now(), operations: []}
       )
 
@@ -773,6 +791,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Take a nap"
     assert html =~ "Day dreaming"
     assert html =~ "nap:"
+    assert html =~ "Fake Project (fake)"
 
     start_html =
       view
@@ -800,19 +819,46 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     nap_html =
       view
-      |> element("button[phx-click='request_nap']")
-      |> render_click()
+      |> form("#request-nap-form", %{"project_id" => "fake-project-id"})
+      |> render_submit()
 
     assert nap_html =~ "nap:"
     assert nap_html =~ "running"
+    assert_receive {:operator_task_requested, :nap, "fake-project-id"}
 
     day_dreaming_html =
       view
-      |> element("button[phx-click='request_day_dreaming']")
-      |> render_click()
+      |> form("#request-day-dreaming-form", %{"project_id" => "fake-project-id"})
+      |> render_submit()
 
     assert day_dreaming_html =~ "day dreaming:"
     assert day_dreaming_html =~ "running"
+    assert_receive {:operator_task_requested, :day_dreaming, "fake-project-id"}
+  end
+
+  test "dashboard surfaces operator project workflow errors" do
+    orchestrator_name = Module.concat(__MODULE__, :DashboardOperatorFailureOrchestrator)
+
+    {:ok, _orchestrator_pid} =
+      StaticOrchestrator.start_link(
+        name: orchestrator_name,
+        snapshot: static_snapshot(),
+        owner: self(),
+        operator_failure: "no active workflow for project: fake-project-id"
+      )
+
+    start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+    {:ok, view, _html} = live(build_conn(), "/")
+
+    html =
+      view
+      |> form("#request-nap-form", %{"project_id" => "fake-project-id"})
+      |> render_submit()
+
+    assert_receive {:operator_task_requested, :nap, "fake-project-id"}
+    assert html =~ "Take a nap failed: no active workflow for project: fake-project-id"
+    assert html =~ "failed"
   end
 
   test "dashboard keeps session history expanded across live updates" do
