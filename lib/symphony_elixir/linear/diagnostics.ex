@@ -173,20 +173,29 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp setup_required_skip_message(_project_items), do: "Skipped because setup is not complete."
 
   defp missing_project_setup_items do
-    case PersistenceProvider.module().default_project() do
-      {:ok, project} ->
-        []
-        |> maybe_add_project_setup_item(project, :linear_project_slug, "the Linear project slug")
-        |> maybe_add_project_setup_item(project, :repository_url, "the repository URL")
+    case PersistenceProvider.read(fn -> PersistenceProvider.module().list_projects() end) do
+      projects when is_list(projects) ->
+        projects
+        |> Enum.filter(&(project_value(&1, :enabled) == true))
+        |> Enum.map(&project_setup_items/1)
+        |> Enum.min_by(&length/1, fn -> all_project_setup_items() end)
 
       _error ->
-        ["the Linear project slug", "the repository URL"]
+        all_project_setup_items()
     end
   rescue
-    _exception -> ["the Linear project slug", "the repository URL"]
+    _exception -> all_project_setup_items()
   catch
-    _kind, _reason -> ["the Linear project slug", "the repository URL"]
+    _kind, _reason -> all_project_setup_items()
   end
+
+  defp project_setup_items(project) do
+    []
+    |> maybe_add_project_setup_item(project, :linear_project_slug, "the Linear project slug")
+    |> maybe_add_project_setup_item(project, :repository_url, "the repository URL")
+  end
+
+  defp all_project_setup_items, do: ["the Linear project slug", "the repository URL"]
 
   defp maybe_add_project_setup_item(items, project, key, label) do
     if blank?(project_value(project, key)), do: items ++ [label], else: items

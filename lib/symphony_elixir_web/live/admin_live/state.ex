@@ -18,7 +18,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   def refresh(socket) do
     {projects, projects_error} = projects()
     {default_project, default_project_error} = default_project()
-    selected_project = selected_project(socket, projects, default_project)
+    selected_project = selected_project(socket, projects)
     {active, active_error} = active_workflow_version(selected_project)
     runtime = WorkflowStore.current_with_source()
     {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(active, runtime)
@@ -26,7 +26,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     persistence_error = projects_error || default_project_error || active_error
 
     configuration_items =
-      ProjectSettings.configuration_missing_items(workflow_setup_required, default_project)
+      ProjectSettings.configuration_missing_items(workflow_setup_required, selected_project)
 
     socket
     |> assign(:projects, projects)
@@ -88,17 +88,21 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     end
   end
 
-  defp selected_project(%{assigns: %{route_params: params}}, projects, default_project) do
+  defp selected_project(%{assigns: %{route_params: params}}, projects) do
+    first_enabled_project = Enum.find(projects, &(ProjectSettings.value(&1, :enabled) == true))
+
     case SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", "")) do
       nil ->
-        default_project
+        first_enabled_project
 
       project_id ->
-        Enum.find(projects, &(ProjectSettings.value(&1, :id) == project_id)) || default_project
+        Enum.find(projects, &(ProjectSettings.value(&1, :id) == project_id)) || first_enabled_project
     end
   end
 
-  defp selected_project(_socket, _projects, default_project), do: default_project
+  defp selected_project(_socket, projects) do
+    Enum.find(projects, &(ProjectSettings.value(&1, :enabled) == true))
+  end
 
   defp project_filter(%{assigns: %{route_params: params}}) do
     SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))

@@ -101,6 +101,22 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     defp default_response(_operation, _variables), do: %{}
   end
 
+  defmodule NoDefaultPersistence do
+    @moduledoc false
+
+    def default_project, do: {:error, :not_found}
+
+    defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate export_workflow(version), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate list_workflow_versions(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate list_runs_page(opts), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate list_events(opts), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate list_tasks(opts), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate list_task_leases(opts), to: SymphonyElixir.TestSupport.FakePersistence
+  end
+
   setup do
     previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
@@ -1422,6 +1438,38 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _view, b_html} = live(build_conn(), "/settings/workflow?project=#{project_b.id}")
     assert b_html =~ "echo project-b"
     assert b_html =~ ~s(value="/settings/workflow?project=#{project_b.id}")
+  end
+
+  test "workflow settings selects the first enabled project when no default project exists" do
+    refute Process.whereis(SymphonyElixir.Repo)
+
+    assert {:ok, _disabled} = FakePersistence.update_project("fake-project-id", %{enabled: false})
+
+    {:ok, enabled_project} =
+      FakePersistence.create_project(%{
+        name: "Enabled Project",
+        slug: "enabled",
+        linear_project_slug: "enabled-project",
+        repository_url: "git@github.com:org/enabled.git",
+        enabled: true
+      })
+
+    raw =
+      workflow_import_raw("git@github.com:org/enabled.git")
+      |> String.replace(
+        "polling:\n  interval_ms: 30000",
+        "hooks:\n  after_create: \"echo enabled-project\"\npolling:\n  interval_ms: 30000"
+      )
+
+    assert {:ok, _version} = FakePersistence.import_workflow(enabled_project, raw, "web_workflow_settings")
+    Application.put_env(:symphony_elixir, :persistence_module, NoDefaultPersistence)
+    assert :ok = SymphonyElixir.WorkflowStore.force_reload()
+    start_test_endpoint()
+
+    {:ok, _view, html} = live(build_conn(), "/settings/workflow")
+
+    assert html =~ "echo enabled-project"
+    refute html =~ "Project configuration checklist"
   end
 
   test "workflow save targets the selected project and leaves other projects untouched" do

@@ -172,6 +172,16 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     defp default_response(_operation, _variables), do: %{}
   end
 
+  defmodule NoDefaultPersistence do
+    @moduledoc false
+
+    def default_project, do: {:error, :not_found}
+
+    defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
+  end
+
   setup do
     previous_endpoint = Application.get_env(:symphony_elixir, SymphonyElixirWeb.Endpoint)
     previous_auth = Application.get_env(:symphony_elixir, :auth)
@@ -236,9 +246,25 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert %{status: :ok, source: :diagnostics, project_slug: "project"} = Health.latest()
   end
 
-  test "diagnostics gives setup-required next steps" do
-    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+  test "diagnostics accepts any fully configured enabled project without a default project" do
+    Application.put_env(:symphony_elixir, :persistence_module, NoDefaultPersistence)
     FakePersistence.reset!()
+
+    assert {:ok, _project} =
+             FakePersistence.update_project("fake-project-id", %{
+               linear_project_slug: nil,
+               repository_url: nil
+             })
+
+    assert {:ok, _project} =
+             FakePersistence.create_project(%{
+               name: "Configured Project",
+               slug: "configured",
+               linear_project_slug: "configured-linear",
+               repository_url: "git@github.com:org/configured.git",
+               enabled: true
+             })
+
     assert :ok = WorkflowStore.force_reload()
 
     diagnostics = Diagnostics.run()
@@ -254,7 +280,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
   end
 
   test "diagnostics setup-required next steps include only missing project settings" do
-    Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+    Application.put_env(:symphony_elixir, :persistence_module, NoDefaultPersistence)
     FakePersistence.reset!()
     assert {:ok, _project} = FakePersistence.update_project("fake-project-id", %{linear_project_slug: nil, repository_url: nil})
     assert :ok = WorkflowStore.force_reload()

@@ -43,15 +43,13 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
   test "imports checked-in defaults when first-run prompt is accepted" do
     parent = self()
 
-    deps =
-      deps(
-        parent,
-        prompt: fn _prompt -> "yes\n" end
-      )
+    assert :ok = FirstRunDefaults.maybe_import([], deps(parent))
 
-    assert :ok = FirstRunDefaults.maybe_import([], deps)
-
-    assert_received {:import_workflow, :default_project, raw, "first_run_default_yaml"}
+    assert_received {:prompt, prompt}
+    assert prompt =~ "1) Alpha (alpha)"
+    assert prompt =~ "2) Beta (beta)"
+    refute prompt =~ "Disabled"
+    assert_received {:import_workflow, %{id: "project-beta"}, raw, "first_run_default_yaml"}
     assert raw =~ "Default imported base prompt."
     assert raw =~ "implementation"
   end
@@ -92,7 +90,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     deps =
       deps(parent,
-        list_workflow_versions: fn -> [%{id: "inactive"}] end
+        list_workflow_versions: fn _project -> [%{id: "inactive"}] end
       )
 
     assert :ok = FirstRunDefaults.maybe_import([], deps)
@@ -138,11 +136,27 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_workflow, _, _, _}
   end
 
+  test "startup without enabled projects remains setup-required without prompting" do
+    parent = self()
+
+    assert :ok = FirstRunDefaults.maybe_import([], deps(parent, list_projects: fn -> [] end))
+    refute_received {:prompt, _}
+    refute_received {:import_workflow, _, _, _}
+    assert_received {:log, :info, message}
+    assert message =~ "No enabled projects"
+  end
+
   defp deps(parent, overrides \\ []) do
     defaults = %{
       active_workflow_version: fn -> nil end,
-      list_workflow_versions: fn -> [] end,
-      default_project: fn -> {:ok, :default_project} end,
+      list_projects: fn ->
+        [
+          %{id: "project-alpha", name: "Alpha", slug: "alpha", enabled: true},
+          %{id: "project-disabled", name: "Disabled", slug: "disabled", enabled: false},
+          %{id: "project-beta", name: "Beta", slug: "beta", enabled: true}
+        ]
+      end,
+      list_workflow_versions: fn _project -> [] end,
       import_workflow: fn project, raw, source ->
         send(parent, {:import_workflow, project, raw, source})
         {:ok, %{id: "workflow-version"}}
@@ -155,7 +169,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
       end,
       prompt: fn prompt ->
         send(parent, {:prompt, prompt})
-        "yes\n"
+        "2\n"
       end,
       interactive?: fn -> true end,
       log: fn level, message -> send(parent, {:log, level, message}) end

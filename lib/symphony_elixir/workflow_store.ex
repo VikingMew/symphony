@@ -232,6 +232,7 @@ defmodule SymphonyElixir.WorkflowStore do
   defp load_default_project do
     case persistence().default_project() do
       {:ok, project} -> {:ok, project}
+      {:error, :not_found} -> {:ok, nil}
       {:error, :repo_unavailable} = error -> error
       {:error, reason} -> {:error, {:default_project, reason}}
     end

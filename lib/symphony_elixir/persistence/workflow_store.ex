@@ -12,7 +12,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @default_project_slug "default"
 
-  @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
+  @spec default_project() :: {:ok, Project.t()} | {:error, :not_found | :repo_unavailable}
   def default_project do
     query(:default_project, &default_project!/0)
   end
@@ -20,13 +20,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   defp default_project! do
     if repo_available?() do
       case Repo.get_by(Project, slug: @default_project_slug) do
-        nil ->
-          %Project{}
-          |> Project.changeset(%{name: "Default", slug: @default_project_slug, default_branch: "main", enabled: true})
-          |> Repo.insert()
-
-        project ->
-          {:ok, project}
+        nil -> {:error, :not_found}
+        project -> {:ok, project}
       end
     else
       {:error, :repo_unavailable}
@@ -80,6 +75,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     query(:active_workflow_version, fn ->
       case default_project() do
         {:ok, project} -> active_workflow_version(project)
+        {:error, :not_found} -> active_workflow_version_for(first_enabled_project())
         {:error, :repo_unavailable} -> nil
         {:error, reason} -> raise_query_error(:active_workflow_version, reason)
       end
@@ -185,6 +181,15 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       end
     end)
   end
+
+  defp first_enabled_project do
+    if repo_available?() do
+      Repo.one(from(p in Project, where: p.enabled == true, order_by: [asc: p.name], limit: 1))
+    end
+  end
+
+  defp active_workflow_version_for(nil), do: nil
+  defp active_workflow_version_for(project), do: active_workflow_version(project)
 
   defp repo_available?, do: Process.whereis(Repo) != nil
 

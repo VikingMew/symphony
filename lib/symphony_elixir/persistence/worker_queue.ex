@@ -13,8 +13,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     TaskLease,
     TaskRecord,
     Worker,
-    WorkerSession,
-    WorkflowStore
+    WorkerSession
   }
 
   @worker_protocol_version "worker-api-v1"
@@ -75,11 +74,10 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   @spec enqueue_task(map()) :: {:ok, TaskRecord.t()} | {:error, term()}
   def enqueue_task(attrs) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, project} <- WorkflowStore.default_project() do
+    with {:ok, _project_id} <- required_project_id(attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
       attrs =
         attrs
-        |> Map.put_new(:project_id, project.id)
         |> Map.put_new(:status, "queued")
         |> Map.put_new(:priority, 0)
         |> Map.put_new(:execution_mode, "worker")
@@ -235,6 +233,13 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   end
 
   defp repo_available?, do: Process.whereis(Repo) != nil
+
+  defp required_project_id(attrs) do
+    case map_get(attrs, "project_id", :project_id) do
+      project_id when is_binary(project_id) and project_id != "" -> {:ok, project_id}
+      _missing -> {:error, :project_id_required}
+    end
+  end
 
   defp validate_worker_protocol(@worker_protocol_version), do: :ok
   defp validate_worker_protocol(_), do: {:error, :unsupported_protocol_version}
