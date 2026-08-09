@@ -46,11 +46,27 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert log =~ "Workflow persistence query failed operation=list_workflow_versions outcome=failed"
   end
 
-  test "default_project is a pure query when no default row exists" do
+  test "default_project creates the bootstrap project when the projects table is empty" do
     with_repo(fn ->
+      assert {:ok, project} = WorkflowStore.default_project()
+      assert project.name == "Default"
+      assert project.slug == "default"
+      assert project.default_branch == "main"
+      assert project.enabled == true
+      assert Repo.aggregate(Project, :count) == 1
       assert WorkflowStore.default_project() == {:error, :not_found}
-      assert Repo.aggregate(Project, :count) == 0
       assert WorkflowStore.active_workflow_version() == nil
+    end)
+  end
+
+  test "default_project does not insert when any project already exists" do
+    with_repo(fn ->
+      {:ok, project} = WorkflowStore.create_project(%{name: "Existing", slug: "existing", enabled: true})
+
+      assert WorkflowStore.default_project() == {:error, :not_found}
+      assert Repo.aggregate(Project, :count) == 1
+      assert Repo.get(Project, project.id) == project
+      assert Repo.get_by(Project, slug: "default") == nil
     end)
   end
 

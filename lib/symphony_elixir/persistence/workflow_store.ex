@@ -12,19 +12,35 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @default_project_slug "default"
 
-  @spec default_project() :: {:ok, Project.t()} | {:error, :not_found | :repo_unavailable}
+  @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   def default_project do
     query(:default_project, &default_project!/0)
   end
 
   defp default_project! do
     if repo_available?() do
-      case Repo.get_by(Project, slug: @default_project_slug) do
-        nil -> {:error, :not_found}
-        project -> {:ok, project}
-      end
+      Repo.transaction(&create_default_project_if_empty!/0, mode: :immediate)
     else
       {:error, :repo_unavailable}
+    end
+  end
+
+  defp create_default_project_if_empty! do
+    case Repo.aggregate(Project, :count) do
+      0 -> create_default_project!()
+      _project_count -> Repo.rollback(:not_found)
+    end
+  end
+
+  defp create_default_project! do
+    case create_project(%{
+           name: "Default",
+           slug: @default_project_slug,
+           default_branch: "main",
+           enabled: true
+         }) do
+      {:ok, project} -> project
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 

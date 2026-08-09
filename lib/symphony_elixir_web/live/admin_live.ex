@@ -104,6 +104,11 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
+  def handle_event("remove_project", %{"project_id" => id}, socket) do
+    Projects.remove(id, socket)
+  end
+
+  @impl true
   def handle_event("restore_settings_version", %{"id" => id}, socket) do
     id
     |> WorkflowState.restore(socket)

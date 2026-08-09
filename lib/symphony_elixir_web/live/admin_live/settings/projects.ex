@@ -46,7 +46,18 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
               <h4><%= project.name %></h4>
               <p class="metric-label mono"><%= project.slug %></p>
             </div>
-            <span class={if project.enabled, do: "status-badge status-info", else: "status-badge"}><%= if project.enabled, do: "enabled", else: "disabled" %></span>
+            <div class="button-row">
+              <span class={if project.enabled, do: "status-badge status-info", else: "status-badge"}><%= if project.enabled, do: "enabled", else: "disabled" %></span>
+              <button
+                type="button"
+                class="subtle-button"
+                phx-click="remove_project"
+                phx-value-project_id={project.id}
+                data-confirm={"Remove #{project.name}? Its workflow versions will also be removed."}
+              >
+                Remove
+              </button>
+            </div>
           </header>
 
           <form class="workflow-form settings-editor-form project-edit-form" data-project-id={project.id} phx-submit="save_project_settings">
@@ -152,6 +163,33 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
           socket
           |> put_flash(:error, "Project settings rejected: #{message}")
           |> WorkflowState.assign_save_notice(:error, "Project settings failed", message)
+      end
+
+    {:noreply, socket}
+  end
+
+  @spec remove(String.t(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
+  def remove(id, socket) do
+    socket =
+      case persistence().delete_project(id) do
+        {:ok, project} ->
+          _ = WorkflowStore.force_reload()
+
+          socket
+          |> put_flash(:info, "Project #{project.name} removed.")
+          |> WorkflowState.assign_save_notice(
+            :success,
+            "Project removed",
+            "Project #{project.name} removed."
+          )
+          |> State.refresh()
+
+        {:error, reason} ->
+          message = changeset_or_reason(reason)
+
+          socket
+          |> put_flash(:error, "Project removal failed: #{message}")
+          |> WorkflowState.assign_save_notice(:error, "Project removal failed", message)
       end
 
     {:noreply, socket}

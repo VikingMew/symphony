@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Persistence do
     IssueRecord,
     Project,
     RunRecord,
+    TaskRecord,
     User,
     WorkerQueue,
     WorkflowStore,
@@ -24,7 +25,8 @@ defmodule SymphonyElixir.Persistence do
 
   @type read_error :: :repo_unavailable | {:query_failed, term()}
 
-  @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
+  @spec default_project() ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   defdelegate default_project(), to: WorkflowStore
 
   @spec list_projects() :: [Project.t()] | {:error, read_error()}
@@ -36,6 +38,17 @@ defmodule SymphonyElixir.Persistence do
   @spec update_project(Project.t() | String.t(), map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   defdelegate update_project(project_or_id, attrs), to: WorkflowStore
+
+  @spec delete_project(Project.t() | String.t()) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
+  def delete_project(%Project{id: id}), do: delete_project(id)
+
+  def delete_project(id) when is_binary(id) do
+    with true <- repo_available?() || {:error, :repo_unavailable},
+         %Project{} = project <- Repo.get(Project, id) || {:error, :not_found} do
+      Repo.transaction(fn -> delete_project!(project) end)
+    end
+  end
 
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowVersion.t()} | {:error, term()}
@@ -61,6 +74,17 @@ defmodule SymphonyElixir.Persistence do
 
   @spec list_workflow_versions(Project.t() | nil) :: [WorkflowVersion.t()]
   defdelegate list_workflow_versions(project), to: WorkflowStore
+
+  defp delete_project!(project) do
+    Repo.update_all(from(run in RunRecord, where: run.project_id == ^project.id), set: [project_id: nil])
+    Repo.update_all(from(issue in IssueRecord, where: issue.project_id == ^project.id), set: [project_id: nil])
+    Repo.update_all(from(task in TaskRecord, where: task.project_id == ^project.id), set: [project_id: nil])
+
+    case Repo.delete(project) do
+      {:ok, deleted_project} -> deleted_project
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
 
   @spec upsert_issue(map()) :: {:ok, IssueRecord.t()} | {:error, term()}
   def upsert_issue(attrs) do

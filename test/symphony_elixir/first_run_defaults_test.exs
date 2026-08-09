@@ -136,14 +136,67 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_workflow, _, _, _}
   end
 
+  test "zero-project interactive startup imports into the bootstrap project" do
+    parent = self()
+
+    {_agent, deps} =
+      zero_project_bootstrap_deps(parent,
+        prompt: fn prompt ->
+          send(parent, {:prompt, prompt})
+          "1\n"
+        end
+      )
+
+    assert :ok = FirstRunDefaults.maybe_import([], deps)
+    assert_received {:prompt, prompt}
+    assert prompt =~ "1) Default (default)"
+
+    assert_received {:import_workflow, project, raw, "first_run_default_yaml"}
+    assert project.slug == "default"
+    assert raw =~ "Default imported base prompt."
+  end
+
+  test "zero-project non-interactive startup logs and leaves the bootstrap project" do
+    parent = self()
+    {agent, deps} = zero_project_bootstrap_deps(parent, interactive?: fn -> false end)
+
+    assert :ok = FirstRunDefaults.maybe_import([], deps)
+    assert [%{slug: "default", enabled: true}] = Agent.get(agent, & &1.projects)
+    refute_received {:prompt, _}
+    refute_received {:import_workflow, _, _, _}
+    assert_received {:log, :info, message}
+    assert message =~ "non-interactive"
+  end
+
   test "startup without enabled projects remains setup-required without prompting" do
     parent = self()
 
-    assert :ok = FirstRunDefaults.maybe_import([], deps(parent, list_projects: fn -> [] end))
+    disabled_project = %{id: "project-disabled", name: "Disabled", slug: "disabled", enabled: false}
+
+    assert :ok = FirstRunDefaults.maybe_import([], deps(parent, list_projects: fn -> [disabled_project] end))
     refute_received {:prompt, _}
     refute_received {:import_workflow, _, _, _}
     assert_received {:log, :info, message}
     assert message =~ "No enabled projects"
+  end
+
+  defp zero_project_bootstrap_deps(parent, overrides) do
+    {:ok, agent} = Agent.start_link(fn -> %{projects: []} end)
+    bootstrap = %{id: "bootstrap-project", name: "Default", slug: "default", enabled: true}
+
+    bootstrap_overrides = [
+      active_workflow_version: fn ->
+        Agent.update(agent, fn
+          %{projects: []} = state -> %{state | projects: [bootstrap]}
+          state -> state
+        end)
+
+        nil
+      end,
+      list_projects: fn -> Agent.get(agent, & &1.projects) end
+    ]
+
+    {agent, deps(parent, Keyword.merge(bootstrap_overrides, overrides))}
   end
 
   defp deps(parent, overrides \\ []) do

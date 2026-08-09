@@ -19,6 +19,12 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     {projects, projects_error} = projects()
     {default_project, default_project_error} = default_project()
     selected_project = selected_project(socket, projects)
+
+    socket =
+      if is_nil(projects_error),
+        do: normalize_project_selection(socket, projects, selected_project),
+        else: socket
+
     {active, active_error} = active_workflow_version(selected_project)
     runtime = WorkflowStore.current_with_source()
     {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(active, runtime)
@@ -103,6 +109,24 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   defp selected_project(_socket, projects) do
     Enum.find(projects, &(ProjectSettings.value(&1, :enabled) == true))
   end
+
+  defp normalize_project_selection(%{assigns: %{route_params: params}} = socket, projects, selected_project) do
+    project_id = SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))
+
+    if project_id && Enum.all?(projects, &(ProjectSettings.value(&1, :id) != project_id)) do
+      route_params =
+        case selected_project do
+          nil -> Map.delete(params, "project")
+          project -> Map.put(params, "project", ProjectSettings.value(project, :id))
+        end
+
+      assign(socket, :route_params, route_params)
+    else
+      socket
+    end
+  end
+
+  defp normalize_project_selection(socket, _projects, _selected_project), do: socket
 
   defp project_filter(%{assigns: %{route_params: params}}) do
     SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))
