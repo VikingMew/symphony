@@ -259,7 +259,7 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-(No active plans.)
+1. [252-default-bootstrap-and-project-removal.md](active/252-default-bootstrap-and-project-removal.md)
 
 ## Intentional Numbering Gaps
 

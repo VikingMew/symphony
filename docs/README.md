@@ -51,6 +51,7 @@ other documents link instead of restating. Exec plans are governed separately by
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability. | landed |
 | [operator-profiles-standardization-design.md](operator-profiles-standardization-design.md) | Read-only operator profiles (nap / day_dreaming) single-source contract. | landed |
 | [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | landed |
+| [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | proposed |
 
 ## L4 — Normative Contracts
 
