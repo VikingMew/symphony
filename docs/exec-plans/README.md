@@ -262,7 +262,7 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-(No active plans.)
+255. [255-nap-audit-methodology.md](active/255-nap-audit-methodology.md)
 
 ## Intentional Numbering Gaps
 

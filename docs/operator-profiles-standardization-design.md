@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, operator, profiles]
 status: current
 language: zh-CN
-updated: 2026-08-09
+updated: 2026-08-16
 design_status: landed
 ---
 
@@ -53,6 +53,33 @@ Symphony 的 workflow 里有两类"巡检型"operator profile:**nap**(工程审�
 
 **产出格式**:每个违反至少一条标准的问题建一个 Backlog Linear issue,包含:简洁标题、证据(file/line 或代码摘录)、违反哪条标准及原因、复杂度影响、降复杂度的修复方向。
 
+
+**审计方法论（2026-08-16 增补，源自 DeepSeek Harness 冗余删除实践提炼）**：
+
+nap 是「提出删除/优化方向的方法」，不是删除本身。发现路径分两层：**机械扫描 + 人工审查**。
+
+1. **机械扫描前置**（执行时先跑，工具输出作为证据源，与手写审查互补）：
+   - `mix xref graph` —— 无消费者导出 / 未使用函数；
+   - `mix deps.tree` + 未使用依赖检查 —— 依赖冗余；
+   - credo duplicate code / cyclomatic complexity —— 重复逻辑；
+   - `mix dialyzer` —— 死代码（unused_fun 等；OTP28 有误报，输出必须人工复核）。
+   工具输出只是线索，每条候选仍需对照 Linus & Carmack 逐条判定后才建 issue。
+
+2. **新增审计维度**（在原有三类问题之上）：
+   - **豁免清单 stale 审计**：`.dialyzer_ignore.exs` / credo 豁免 / `@tag :skip` 测试 / 被禁 lint 规则——条目对应代码是否还在？能否收紧？能否删掉整条豁免基线？（清理后豁免清单应能收缩到空）
+   - **无消费者公共 API / 事件**：公共导出、GenServer cast/call、事件 topic 无真实消费者（以 xref graph 佐证）。
+   - **手写维护型文档生成化**：文档事实是否已有源码单一事实源（schema.ex 配置项、模块清单、索引）——手写即漂移源；过期文档建议归档而非物理删除。
+   - **防复发门禁**：修复方向优先「引入门禁 + 清零后删豁免基线」，而非一次性清理。
+
+3. **产出格式升级**：每个 issue 除原有字段（标题/证据/违反标准/复杂度影响/修复方向）外，增加：
+   - 发现路径（机械扫描输出 / 人工审查）；
+   - 验证方式：建议删除后如何证明行为不变（`make all` / 相关测试 / dialyzer）。
+
+4. **防误报纪律**：
+   - 工具输出必须人工复核（dialyzer OTP28 unused_fun 误报已知）；
+   - 区分「纯删除」与「重组迁移」：能力仍在使用但归属错位 → 建议重组而非删除；
+   - 拿不准的候选写「Keep as-is」，不堆噪音。
+
 ### 3.2 day_dreaming — 方向探索
 
 **定位**:对比"实现现状 vs 产品方向",识别值得做的功能/优化机会。
@@ -94,6 +121,7 @@ Symphony 的 workflow 里有两类"巡检型"operator profile:**nap**(工程审�
 - [ ] `profiles.yml` 含 nap / day_dreaming 段,内容与代码默认值一致。
 - [ ] 新建 workflow 的巡检 profile 默认值来自标准模板(测试覆盖)。
 - [ ] import/export 包往返后 nap / day_dreaming 完整保留(测试覆盖)。
+- [ ] `schema.ex` 中 nap 默认 prompt 含 2026-08-16 审计方法论全部要素（机械扫描前置、豁免 stale、无消费者 API、文档生成化、防复发门禁、产出格式含发现路径与验证方式、防误报纪律）。
 - [ ] `mix specs.check` 通过。
 - [ ] `make all` 通过。
 
