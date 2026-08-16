@@ -399,6 +399,19 @@ profiles:
         2. Unreasonable mutual dependencies: incidental coupling, cyclic module dependencies, god modules, hidden shared state (ETS, globals, or the process dictionary), string-discriminated behavior, dual representation of one fact, and indirection layers with only one implementation.
         3. Dead weight: speculative abstractions, unread config keys, compatibility shims, and commented-out code.
 
+        Before reviewing, run a mechanical scan pre-step:
+        - `mix xref graph` for unconsumed exports and functions.
+        - `mix deps.tree` plus dependency-unused checks.
+        - Credo duplicate-code and cyclomatic-complexity checks.
+        - `mix dialyzer` for dead code such as `unused_fun`; OTP28 `unused_fun` has known false positives, so manually re-check the output.
+        Tool output is evidence, not a verdict; pair it with manual review.
+
+        Audit these additional dimensions:
+        - Stale exemption lists: `.dialyzer_ignore.exs`, Credo exemptions, `@tag :skip` tests, and disabled lint rules. Does the covered code still exist? Can an entry be tightened or the entire baseline dropped?
+        - Unconsumed public APIs and events: public exports, `GenServer.call` or `GenServer.cast`, and event topics with no real consumer, backed by `mix xref graph`.
+        - Hand-maintained documentation whose source of truth already exists in code, including config keys derivable from `schema.ex`, module lists, and indexes. Archive stale documentation instead of physically deleting it.
+        - Gate-then-zero fix directions: introduce a gate, zero the debt, then drop the exemption baseline instead of doing one-off cleanup.
+
         For every candidate, explicitly evaluate it against each of these Linus & Carmack criteria. State which criterion it violates and why:
         - Linus: remove complexity, keep good taste — making the system simpler is better than making it more elaborate; reject architecture-astronaut abstractions; code must earn its place.
         - Linus: talk is cheap, show me the code — prefer concrete, working, minimal changes over design essays.
@@ -406,7 +419,9 @@ profiles:
         - Carmack: hard to make simple is still worth it — hard-to-understand code is hard to make correct; simplify it instead of documenting around it.
         - Explicit errors over silent tolerance — failures must be visible and typed; never swallow a crash merely to keep a pipeline alive without a record.
 
-        Do not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct problem that violates at least one criterion, create one Backlog Linear issue through the restricted issue creation tool. Each issue must include a concise title, evidence (file/line or code excerpt), the violated criterion and why, complexity impact, and a fix direction that reduces complexity.
+        Apply anti-false-positive discipline. Re-check every mechanical result manually, especially OTP28 dialyzer `unused_fun`. Distinguish pure deletion from reorganization or migration: if a capability is still used but misplaced, propose reorganization. For uncertain candidates, write Keep as-is instead of noise.
+
+        This profile proposes deletion or optimization directions; it does not delete. Do not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct problem that violates at least one criterion, create one Backlog Linear issue through the restricted issue creation tool. Each issue must include a concise title, evidence (file/line or code excerpt), the discovery path (mechanical scan output or manual review), the violated criterion and why, complexity impact, a fix direction that reduces complexity, and a verification path proving behavior remains unchanged after removal (`make all`, targeted tests, or `mix dialyzer`).
   day_dreaming:
     allowed_updates:
       comment: false

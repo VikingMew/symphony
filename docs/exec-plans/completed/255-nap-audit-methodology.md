@@ -10,7 +10,7 @@ delete or modify anything itself.
 
 ## Status
 
-Active.
+Completed.
 
 ## Background
 
@@ -102,16 +102,24 @@ side of that pipeline; this plan only upgrades the proposal prompt, not the exec
 
 ## Verification
 
-- `mise exec -- mix format --check-formatted`
-- `mise exec -- mix compile --warnings-as-errors`
-- `mise exec -- mix specs.check`
-- `mise exec -- mix test` (full suite; attribute any flake per known-families procedure)
-- `make all` (lint 0 [F]; coverage; dialyzer vs baseline)
-- Byte-compare schema.ex nap template vs profiles.yml nap section
+- `mise exec -- mix format --check-formatted` — PASS (Hermes re-ran).
+- `mise exec -- mix compile --warnings-as-errors` — PASS (Codex).
+- `mise exec -- mix specs.check` — PASS (Hermes re-ran: all public functions have @spec or exemption).
+- `mise exec -- mix test test/symphony_elixir/prompt_builder_test.exs` — PASS: 16 tests, 0 failures (Hermes re-ran).
+- Targeted tests (Codex) — PASS: 72 tests, 0 failures.
+- `mise exec -- mix test` (full suite, Codex) — PASS: 744 tests, 0 failures, 2 skipped.
+- `mise exec -- mix test --cover` — PASS (Hermes re-ran, exit 0): 85.59% coverage (>= 85 gate).
+- Lint (`mix credo --strict`, Hermes re-ran) — 0 [F]; 19 readability + 1 design (pre-existing baseline, no new).
+- `mix dialyzer` — 5 `pattern_match_cov` warnings, all in untouched files (protocol.ex x2, token_usage.ex, config.ex, orchestrator.ex); identical to baseline, none introduced by this plan.
+- Byte-compare schema.ex nap template vs profiles.yml nap section — byte-identical (Codex reports 3,946 bytes both sides).
+- `make all` as a single target — NOT runnable in the Codex sandbox (Mix/Hex blocked from network/sockets by sandbox, `:eperm`/`:eaccess`); all its components verified independently above.
 
 ## Completion Deviations
 
-None yet.
+- `make all` could not be run as a single target inside the Codex sandbox: Mix/Hex setup needs local sockets, network, and `~/.hex/cache.ets` persistence, which `--sandbox workspace-write` denies (`:eperm`, `:eaccess`, DNS failures). All make-all components (format, compile, lint, coverage, dialyzer) were run and verified independently — see Verification.
+- Dialyzer reports 5 pre-existing `pattern_match_cov` warnings (coverage-class, not correctness) in files untouched by this plan: `codex/protocol.ex:378,459`, `codex/token_usage.ex:72`, `config.ex:221`, `orchestrator.ex:2961`. Not introduced here; recorded as known baseline.
+- Codex added a clarifying sentence to the nap prompt beyond the plan's letter: "This profile proposes deletion or optimization directions; it does not delete." — faithfully strengthens the nap-as-proposal positioning from the design doc §3.1; kept.
+- Codex extended `prompt_builder_test.exs` with 20 fine-grained assertions (one per methodology element) instead of a coarse snapshot; the consistency test for schema.ex ↔ profiles.yml still passes unchanged.
 
 ## Dependencies
 
