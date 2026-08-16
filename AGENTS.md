@@ -49,6 +49,14 @@ discipline of Linus Torvalds and John Carmack:
   typed. Never disguise a database fault as "setup required", never swallow a crash to keep a
   pipeline alive with no record, never fail open on a rate-limit gate.
 
+## Pre-release Stance (no external consumers)
+
+Remove this section at the first tagged release. With no external consumers, prefer the correct
+foundation over compatibility shims: rename or repackage freely and update every reference
+together. Ecto migrations are monotonic; old on-disk formats are rejected — no compatibility
+shim for old DB schema versions. This deletion authority is time-boxed: it expires at first
+release, after which compatibility matters again.
+
 ## Documentation Layers
 
 | Layer | Purpose |
