@@ -32,9 +32,12 @@ Symphony 的长期运行配置来自 SQLite active workflow version。Settings �
 
 - `/settings/workflow` 保存 workflow/routing/runtime 共享配置。
 - `/settings/agents` 保存 base prompt、profiles、allowed updates 和 executor policy。
-- 保存成功后调用 `WorkflowStore.force_reload/0`。
-- `WorkflowStore` 也会每 1 秒轮询一次 active workflow version。
+- 保存成功后，持久化边界在返回成功前发布完整的内存 snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
+- `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
+  last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。
+
+四个 `WorkflowStore` 读取 API 都只读取原子替换的内存 snapshot，不访问 SQLite，也不等待后台任务。
 
 这意味着以下改动可以不重启服务：
 

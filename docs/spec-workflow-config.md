@@ -270,8 +270,19 @@ Value coercion semantics:
 
 Dynamic reload is REQUIRED:
 
-- The software MUST detect active workflow version changes.
-- On change, it MUST re-read and re-apply workflow config and prompt/profile data without restart.
+- SQLite is the durable authority, but normal runtime reads MUST resolve from one atomically
+  replaced in-memory snapshot containing all enabled projects, default selection, source/version
+  metadata, and setup/error state.
+- Runtime reads MUST NOT query persistence, trigger refresh-on-read, or wait behind persistence
+  refresh work. An absent cache owner MUST NOT cause caller-side SQLite fallback.
+- Successful workflow and project mutations MUST persist first and publish the complete replacement
+  snapshot before reporting full success. Persistence success followed by publication failure MUST
+  return a typed partial/refresh failure.
+- The software MUST detect externally activated workflow version changes in the background with at
+  most one refresh in flight. Timer ticks during a stall MUST coalesce or skip.
+- Background publication MUST use a generation guard so work started before a newer mutation cannot
+  overwrite that mutation.
+- On change, the software MUST re-read and re-apply workflow config and prompt/profile data without restart.
 - The software MUST attempt to adjust live behavior to the new config (for example polling
   cadence, concurrency limits, active/terminal states, codex settings, workspace paths/hooks, and
   prompt content for future runs).
@@ -281,10 +292,9 @@ Dynamic reload is REQUIRED:
   changes.
 - Extensions that manage their own listeners/resources (for example an HTTP server port change) MAY
   require restart unless the implementation explicitly supports live rebind.
-- Implementations SHOULD also re-validate/reload defensively during runtime operations (for example
-  before dispatch) in case filesystem watch events are missed.
-- Invalid reloads MUST NOT crash the service; keep operating with the last known good effective
-  configuration and emit an operator-visible error.
+- Invalid or unavailable refreshes MUST NOT crash the service or expose a partial project set; keep
+  the complete last-known-good snapshot, including setup-required, and emit a structured
+  operator-visible error.
 
 ### 6.3 Dispatch Preflight Validation
 

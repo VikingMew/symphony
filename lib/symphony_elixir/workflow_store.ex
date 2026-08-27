@@ -1,12 +1,11 @@
 defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
-  Caches the active database workflow version for every enabled project.
+  Publishes the active database workflow version for every enabled project.
 
-  The runtime source is the active workflow version per project in SQLite. Each
-  enabled project that has an active workflow version contributes one loaded
-  workflow, keyed by project id. `current/0` and `current_with_source/0` keep
-  single-workflow compatibility and return the default project's workflow (or
-  the first enabled project's workflow when the default has none).
+  SQLite is the durable authority, but runtime reads use one atomically replaced
+  in-memory snapshot. The owner process performs initial and explicit loads and
+  coordinates one background refresh; callers never query persistence or wait
+  for that work.
   """
 
   use GenServer
@@ -15,13 +14,15 @@ defmodule SymphonyElixir.WorkflowStore do
   alias SymphonyElixir.{PersistenceProvider, Workflow}
 
   @poll_interval_ms 1_000
+  @snapshot_key {__MODULE__, :published_snapshot}
 
   @type current_error :: :no_active_workflow | :repo_unavailable | {:query_failed, term()}
+  @type refresh_error :: {:refresh_failed, current_error() | :cache_unavailable}
 
   defmodule State do
     @moduledoc false
 
-    defstruct [:workflows, :default_project_id, :source]
+    defstruct [:workflows, :default_project_id, :source, :generation, :refresh]
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -39,143 +40,157 @@ defmodule SymphonyElixir.WorkflowStore do
   @spec current_with_source() ::
           {:ok, %{workflow: Workflow.loaded_workflow(), source: map()}} | {:error, current_error()}
   def current_with_source do
-    current_with_source_payload()
+    published_snapshot()
+    |> state_payload()
   end
 
   @spec list_enabled() :: [Workflow.loaded_workflow()]
   def list_enabled do
-    case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) ->
-        {:ok, workflows} = GenServer.call(__MODULE__, :list_enabled)
-        workflows
-
-      _ ->
-        %State{workflows: workflows} = load_initial_state()
-        Map.values(workflows)
-    end
+    published_snapshot()
+    |> Map.fetch!(:workflows)
+    |> Map.values()
   end
 
-  @spec for_project(term()) :: {:ok, Workflow.loaded_workflow()} | {:error, :not_found | :setup_required}
+  @spec for_project(term()) :: {:ok, Workflow.loaded_workflow()} | {:error, :not_found}
   def for_project(project_id) do
-    case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) ->
-        GenServer.call(__MODULE__, {:for_project, project_id})
-
-      _ ->
-        %State{workflows: workflows} = load_initial_state()
-
-        case Map.get(workflows, project_id) do
-          nil -> {:error, :not_found}
-          workflow -> {:ok, workflow}
-        end
+    case get_in(published_snapshot(), [:workflows, project_id]) do
+      nil -> {:error, :not_found}
+      workflow -> {:ok, workflow}
     end
   end
 
-  @spec force_reload() :: :ok
+  @doc """
+  Reloads and atomically publishes the complete durable workflow snapshot.
+
+  This call may wait for persistence, but public reads remain independent. A
+  failed load preserves the last published snapshot and is reported explicitly.
+  """
+  @spec force_reload() :: :ok | {:error, refresh_error()}
   def force_reload do
     case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) ->
-        GenServer.call(__MODULE__, :force_reload)
-
-      _ ->
-        _state = load_initial_state()
-        :ok
+      pid when is_pid(pid) -> GenServer.call(__MODULE__, :force_reload, :infinity)
+      _ -> {:error, {:refresh_failed, :cache_unavailable}}
     end
-  end
-
-  defp current_with_source_payload do
-    case Process.whereis(__MODULE__) do
-      pid when is_pid(pid) ->
-        GenServer.call(__MODULE__, :current_with_source)
-
-      _ ->
-        load_current_state()
-    end
-  end
-
-  defp load_current_state do
-    case load_state() do
-      {:ok, state} -> state_payload(state)
-      {:error, reason} -> {:error, normalize_current_error(reason)}
-    end
-  rescue
-    error -> {:error, {:query_failed, error}}
-  catch
-    kind, reason -> {:error, {:query_failed, {kind, reason}}}
   end
 
   @impl true
   def init(_opts) do
     state = load_initial_state()
+
+    if registered_owner?() do
+      publish(state)
+    end
+
     schedule_poll()
     {:ok, state}
   end
 
   @impl true
-  def handle_call(:current_with_source, _from, %State{} = state) do
-    new_state = reload_state(state)
-    {:reply, state_payload(new_state), new_state}
-  end
-
-  def handle_call(:list_enabled, _from, %State{} = state) do
-    new_state = reload_state(state)
-    {:reply, {:ok, Map.values(new_state.workflows)}, new_state}
-  end
-
-  def handle_call({:for_project, project_id}, _from, %State{} = state) do
-    new_state = reload_state(state)
-
-    result =
-      case Map.get(new_state.workflows, project_id) do
-        nil -> {:error, :not_found}
-        workflow -> {:ok, workflow}
-      end
-
-    {:reply, result, new_state}
-  end
-
   def handle_call(:force_reload, _from, %State{} = state) do
-    new_state = reload_state(state)
-    {:reply, :ok, new_state}
+    generation = state.generation + 1
+    guarded_state = %{state | generation: generation}
+
+    case safe_load_state() do
+      {:ok, loaded_state} ->
+        new_state = %{loaded_state | generation: generation, refresh: state.refresh}
+        publish(new_state)
+        {:reply, :ok, new_state}
+
+      {:error, reason} ->
+        log_reload_failure(:explicit, :error, reason)
+        {:reply, {:error, {:refresh_failed, normalize_current_error(reason)}}, guarded_state}
+    end
   end
 
   @impl true
   def handle_info(:poll, %State{} = state) do
     schedule_poll()
+    {:noreply, maybe_start_refresh(state)}
+  end
 
-    new_state = reload_state(state)
-    {:noreply, new_state}
+  def handle_info(
+        {:workflow_refresh_result, token, start_generation, result},
+        %State{refresh: %{token: token, monitor: monitor}} = state
+      ) do
+    Process.demonitor(monitor, [:flush])
+    state = %{state | refresh: nil}
+    {:noreply, handle_refresh_result(state, start_generation, result)}
+  end
+
+  def handle_info({:workflow_refresh_result, _token, _generation, _result}, %State{} = state) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {:DOWN, monitor, :process, _pid, reason},
+        %State{refresh: %{monitor: monitor}} = state
+      ) do
+    if reason != :normal do
+      log_reload_failure(:background, :exit, reason)
+    end
+
+    {:noreply, %{state | refresh: nil}}
+  end
+
+  def handle_info({:DOWN, _monitor, :process, _pid, _reason}, %State{} = state) do
+    {:noreply, state}
+  end
+
+  defp maybe_start_refresh(%State{refresh: nil} = state) do
+    owner = self()
+    token = make_ref()
+    start_generation = state.generation
+
+    {pid, monitor} =
+      spawn_monitor(fn ->
+        send(owner, {
+          :workflow_refresh_result,
+          token,
+          start_generation,
+          safe_load_state()
+        })
+      end)
+
+    %{state | refresh: %{token: token, monitor: monitor, pid: pid}}
+  end
+
+  defp maybe_start_refresh(%State{} = state), do: state
+
+  defp handle_refresh_result(%State{} = state, start_generation, {:ok, loaded_state})
+       when start_generation == state.generation do
+    new_state = %{loaded_state | generation: state.generation + 1, refresh: nil}
+    publish(new_state)
+    new_state
+  end
+
+  defp handle_refresh_result(%State{} = state, start_generation, {:ok, _loaded_state}) do
+    Logger.info(
+      "Workflow refresh skipped action=discard_stale_generation " <>
+        "refresh_generation=#{start_generation} current_generation=#{state.generation}"
+    )
+
+    state
+  end
+
+  defp handle_refresh_result(%State{} = state, _start_generation, {:error, reason}) do
+    log_reload_failure(:background, :error, reason)
+    state
   end
 
   defp schedule_poll do
     Process.send_after(self(), :poll, @poll_interval_ms)
   end
 
-  defp reload_state(%State{} = state) do
-    case load_state() do
-      {:ok, new_state} ->
-        new_state
-
-      {:error, reason} ->
-        log_reload_failure(:error, reason)
-        retain_loaded_or_mark_error(state, reason)
-    end
-  rescue
-    error ->
-      log_reload_failure(:error, error)
-      retain_loaded_or_mark_error(state, {:query_failed, error})
-  catch
-    kind, reason ->
-      log_reload_failure(kind, reason)
-      retain_loaded_or_mark_error(state, {:query_failed, {kind, reason}})
+  defp registered_owner? do
+    Process.info(self(), :registered_name) == {:registered_name, __MODULE__}
   end
 
-  defp retain_loaded_or_mark_error(%State{workflows: workflows} = state, _reason)
-       when map_size(workflows) > 0,
-       do: state
-
-  defp retain_loaded_or_mark_error(%State{} = state, reason) do
-    %{state | source: %{type: :error, reason: normalize_current_error(reason)}}
+  defp safe_load_state do
+    load_state()
+  rescue
+    error -> {:error, {:query_failed, error}}
+  catch
+    kind, reason -> {:error, {:query_failed, {kind, reason}}}
   end
 
   defp load_state do
@@ -185,7 +200,9 @@ defmodule SymphonyElixir.WorkflowStore do
          %State{
            workflows: workflows,
            default_project_id: default_project_id,
-           source: database_source(workflows)
+           source: database_source(workflows, default_project_id),
+           generation: 0,
+           refresh: nil
          }}
 
       :setup_required ->
@@ -197,25 +214,14 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp load_initial_state do
-    case load_state() do
+    case safe_load_state() do
       {:ok, state} ->
         state
 
-      {:error, :repo_unavailable} ->
-        Logger.warning("Workflow database load degraded action=use_error_state reason=repo_unavailable")
-        repo_unavailable_state()
-
       {:error, reason} ->
-        raise "Workflow database load failed reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+        log_reload_failure(:initial, :error, reason)
+        error_state(reason)
     end
-  rescue
-    error ->
-      log_initial_load_failure(:error, error)
-      reraise error, __STACKTRACE__
-  catch
-    kind, reason ->
-      log_initial_load_failure(kind, reason)
-      :erlang.raise(kind, reason, __STACKTRACE__)
   end
 
   defp load_database_workflows do
@@ -279,9 +285,10 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp persistence, do: PersistenceProvider.module()
 
-  defp database_source(workflows) do
+  defp database_source(workflows, default_project_id) do
     %{
       type: :database,
+      default_project_id: default_project_id,
       workflow_versions:
         Map.new(workflows, fn {project_id, workflow} ->
           {project_id, Map.get(workflow, :workflow_version_id)}
@@ -290,34 +297,65 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp setup_required_state do
-    %State{workflows: %{}, default_project_id: nil, source: %{type: :setup_required}}
-  end
-
-  defp repo_unavailable_state do
     %State{
       workflows: %{},
       default_project_id: nil,
-      source: %{type: :error, reason: :repo_unavailable}
+      source: %{type: :setup_required},
+      generation: 0,
+      refresh: nil
     }
   end
 
-  defp log_reload_failure(kind, reason) do
-    Logger.error("Workflow reload failed action=retain_last_known_good kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+  defp error_state(reason) do
+    %State{
+      workflows: %{},
+      default_project_id: nil,
+      source: %{type: :error, reason: normalize_current_error(reason)},
+      generation: 0,
+      refresh: nil
+    }
   end
 
-  defp log_initial_load_failure(kind, reason) do
-    Logger.error("Workflow database load failed action=propagate kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+  defp log_reload_failure(mode, kind, reason) do
+    Logger.error(
+      "Workflow refresh failed action=retain_last_known_good mode=#{mode} kind=#{kind} " <>
+        "reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    )
   end
 
-  defp state_payload(%State{source: %{type: :error, reason: reason}}),
+  defp publish(%State{} = state) do
+    :persistent_term.put(@snapshot_key, %{
+      workflows: state.workflows,
+      default_project_id: state.default_project_id,
+      source: state.source,
+      generation: state.generation
+    })
+  end
+
+  defp published_snapshot do
+    :persistent_term.get(@snapshot_key, %{
+      workflows: %{},
+      default_project_id: nil,
+      source: %{type: :error, reason: :repo_unavailable},
+      generation: 0
+    })
+  end
+
+  defp state_payload(%{source: %{type: :error, reason: reason}}),
     do: {:error, normalize_current_error(reason)}
 
-  defp state_payload(%State{source: %{type: :setup_required} = source}) do
-    workflow = Workflow.setup_required_workflow(Application.get_env(:symphony_elixir, :server_port_override))
+  defp state_payload(%{source: %{type: :setup_required} = source}) do
+    workflow =
+      Workflow.setup_required_workflow(Application.get_env(:symphony_elixir, :server_port_override))
+
     {:ok, %{workflow: workflow, source: source}}
   end
 
-  defp state_payload(%State{workflows: workflows, default_project_id: default_id, source: source}) do
+  defp state_payload(%{
+         workflows: workflows,
+         default_project_id: default_id,
+         source: source
+       }) do
     case Map.get(workflows, default_id) do
       nil -> {:error, :no_active_workflow}
       workflow -> {:ok, %{workflow: workflow, source: source}}

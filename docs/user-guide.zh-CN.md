@@ -436,7 +436,7 @@ mise exec -- ./bin/symphony \
 
 此时规则是：
 
-- 运行时配置来源是 SQLite active workflow version。
+- SQLite active workflow version 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问 SQLite。
 - 如果 SQLite 中还没有 active workflow version，系统进入 setup-required。
 - setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
 - 不带 `--port` 时也使用 SQLite workflow source，只是不启动 Web dashboard。
@@ -456,6 +456,8 @@ mise exec -- ./bin/symphony \
 /settings/runtime tracker/config 摘要（project 选择器限定）
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
+/api/v1/:issue_identifier 当前 live 状态；inactive issue 会回退到持久化状态和最近结果
+/api/v1/runs?issue_identifier=SYM-3 有界、倒序的 run 与 event timeline
 ```
 
 ## 10. 执行模式
@@ -489,7 +491,8 @@ export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
 ## 11. 热更新
 
 Symphony 当前支持 Settings / workflow 配置热更新：保存新的 SQLite active workflow version 后，
-运行时会重新读取配置，不需要重启服务。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
+持久化边界会在报告成功前原子发布完整 snapshot，不需要重启服务。外部 activation 由单飞后台刷新检测；
+SQLite 阻塞或刷新失败时，读取继续使用 last-known-good snapshot。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
 
 详细说明见 [Symphony 热更新说明](hot_update.zh-CN.md)。
 

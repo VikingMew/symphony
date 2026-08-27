@@ -8,7 +8,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     PersistenceProvider,
     WorkflowForm,
     WorkflowSettingsPackage,
-    WorkflowStore,
     WorkflowValidator
   }
 
@@ -46,8 +45,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
            :changed <- workflow_change_status(raw, socket),
            {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
-        _ = WorkflowStore.force_reload()
-
         {:saved,
          socket
          |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
@@ -112,8 +109,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
            draft <- ProjectSettings.apply_to_workflow_draft(draft, socket.assigns.default_project),
            {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
            {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
-        _ = WorkflowStore.force_reload()
-
         {:saved,
          socket
          |> put_flash(:info, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
@@ -305,7 +300,9 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   end
 
   defp safe_import_workflow(project, raw, source) do
-    persistence().import_workflow(project, raw, source)
+    project
+    |> persistence().import_workflow(raw, source)
+    |> PersistenceProvider.publish_runtime_mutation()
   rescue
     exception -> {:error, Exception.message(exception)}
   catch

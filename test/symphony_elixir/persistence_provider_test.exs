@@ -29,4 +29,11 @@ defmodule SymphonyElixir.PersistenceProviderTest do
 
     assert PersistenceProvider.module() == FakePersistence
   end
+
+  test "normalizes thrown reads and preserves production mutation success" do
+    assert {:error, {:query_failed, {:throw, :busy}}} = PersistenceProvider.read(fn -> throw(:busy) end)
+
+    Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
+    assert {:ok, :persisted} = PersistenceProvider.publish_runtime_mutation({:ok, :persisted})
+  end
 end

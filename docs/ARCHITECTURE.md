@@ -142,13 +142,17 @@ Locations:
 - `lib/symphony_elixir/workflow.ex`
 - `lib/symphony_elixir/workflow_store.ex`
 
-The workflow store caches the active SQLite `workflow_versions` row **for every enabled project**
-(keyed by project id), parses each saved workflow package, and keeps the prompt body as the shared
-base prompt. `current/0` and `current_with_source/0` keep single-workflow compatibility and return
-the default project's workflow (or the first enabled project's when the default has none);
-`list_enabled/0` and `for_project/1` expose the per-project map. If no enabled project has an
-active workflow, the store returns a setup-required sentinel that does not poll Linear or schedule
-agents. Workspace isolation is per repository, which keeps multiple projects' workspaces separate.
+SQLite remains the durable workflow authority. At cold start the workflow store loads every enabled
+project and atomically publishes one coherent in-memory snapshot containing the workflow map,
+default selection, source/version metadata, and setup/error state. `current/0`,
+`current_with_source/0`, `list_enabled/0`, and `for_project/1` read only that published term; they do
+not query SQLite or wait behind refresh work. Explicit mutations persist first and publish before
+success, while a single background refresh detects external activation and rejects stale results by
+generation. Failures retain the complete last-known-good snapshot.
+
+If no enabled project has an active workflow, the published setup-required snapshot does not poll
+Linear or schedule agents. Workspace isolation is per repository, which keeps multiple projects'
+workspaces separate.
 
 ### 6.3 Config Layer
 
@@ -241,7 +245,9 @@ port is configured, the service provides:
 
 - `/`: LiveView dashboard
 - `/api/v1/state`: full state snapshot
-- `/api/v1/<issue_identifier>`: issue-specific state
+- `/api/v1/<issue_identifier>`: live issue state augmented by bounded persisted history, with an
+  inactive persisted issue fallback
+- `/api/v1/runs?issue_identifier=<identifier>`: bounded newest-first runs and event timeline
 - `/api/v1/refresh`: manual refresh endpoint
 - `/runs`, `/events`, `/workers`, `/settings/*`: management pages
 - `/settings/import`: staged split-package import and diff review before applying to editable Settings draft
@@ -259,6 +265,11 @@ The persistence context owns SQLite-backed records for projects, workflow versio
 turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
 worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
 Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
+
+The observability boundary deliberately separates memory/current from persistence/history:
+`/api/v1/state` reads only the orchestrator snapshot, while issue enrichment and `/api/v1/runs`
+use bounded tasks through `PersistenceProvider` and Repo. A stalled history query can fail its own
+request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 
 ## 7. Configuration Model
 

@@ -104,7 +104,12 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-The runtime source of truth is the SQLite database. `workflow.yml` and `profiles.yml` are import/export artifacts, not files that Symphony watches at runtime.
+SQLite is the durable runtime authority. On cold start Symphony publishes the active per-project
+workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
+dispatch reads use that snapshot without querying SQLite. Successful Settings mutations republish
+before reporting success, and background external-change detection retains last-known-good state
+during database stalls. `workflow.yml` and `profiles.yml` are import/export artifacts, not files
+that Symphony watches at runtime.
 
 Useful startup options:
 
@@ -169,6 +174,8 @@ Centralized execution is the default and does not require registered workers.
 | Linear diagnostics | `/diagnostics/linear` |
 | Settings | `/settings` |
 | JSON state API | `/api/v1/state` |
+| Issue status + recent outcome | `/api/v1/:issue_identifier` |
+| Bounded persisted run/event history | `/api/v1/runs?issue_identifier=SYM-3` |
 | Health probes | `/health/live`, `/health/ready` |
 
 Logs are structured application logs. There is no TUI status surface.

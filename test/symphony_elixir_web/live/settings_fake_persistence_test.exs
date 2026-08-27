@@ -7,6 +7,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.WorkflowForm
+  alias SymphonyElixir.WorkflowStore
 
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
@@ -165,6 +166,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     Application.put_env(:symphony_elixir, :linear_diagnostics_client_module, FakeLinearClient)
     System.put_env("LINEAR_API_KEY", "fake-linear-token")
     FakePersistence.reset!()
+    :ok = WorkflowStore.force_reload()
 
     on_exit(fn ->
       restore_app_env(:persistence_module, previous_persistence)
