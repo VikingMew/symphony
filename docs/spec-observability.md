@@ -155,6 +155,7 @@ Minimum endpoints:
 - `GET /api/v1/state`
   - Returns a summary view of the current system state (running sessions, retry queue/delays,
     aggregate token/runtime totals, latest rate limits, and any additional tracked summary fields).
+  - Reads only the bounded orchestrator snapshot and MUST NOT fall back to persistence.
   - Suggested response shape:
 
     ```json
@@ -254,8 +255,21 @@ Minimum endpoints:
     }
     ```
 
-  - If the issue is unknown to the current in-memory state, return `404` with an error response (for
-    example `{\"error\":{\"code\":\"issue_not_found\",\"message\":\"...\"}}`).
+  - Live runtime state is authoritative when present. Bounded persisted issue, latest-run,
+    recent-run, and event history MAY augment it; history failure keeps the live payload and adds an
+    explicit history error.
+  - An inactive persisted issue returns `200` with its persisted state and latest outcome.
+  - Return `404 issue_not_found` only after successful history lookup finds neither live nor
+    persisted issue/run data. If persistence is required but unavailable, failed, or timed out,
+    return a typed `503` error instead of collapsing the condition to `404`.
+
+- `GET /api/v1/runs?issue_identifier=<identifier>`
+  - `issue_identifier` is required. Returns bounded newest-first run projections with `id`, `kind`,
+    `profile`, `status`, `attempt`, `started_at`, `finished_at`, and `failure_reason`, plus a compact
+    bounded event timeline.
+  - Caller limits are clamped to an implementation-owned maximum. Unknown history, invalid input,
+    Repo unavailability, query failure, and bounded timeout remain distinct JSON errors.
+  - The static `/api/v1/runs` route MUST be registered before the dynamic issue route.
 
 - `POST /api/v1/refresh`
   - Queues an immediate tracker poll + reconciliation cycle (best-effort trigger; implementations
@@ -274,6 +288,11 @@ Minimum endpoints:
 
 API design notes:
 
+- All endpoints remain behind the existing authenticated API pipeline.
+- Persisted history uses the configured persistence provider and normal Repo path; implementations
+  MUST NOT open the SQLite file directly.
+- History reads run outside memory-backed snapshot owners and have a bounded wait. A blocked history
+  request MUST NOT make `/api/v1/state` or workflow/config reads unavailable.
 - The JSON shapes above are the RECOMMENDED baseline for interoperability and debugging ergonomics.
 - Implementations MAY add fields, but SHOULD avoid breaking existing fields within a version.
 - Endpoints SHOULD be read-only except for operational triggers like `/refresh`.
@@ -281,4 +300,3 @@ API design notes:
 - API errors SHOULD use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
 - If the dashboard is a client-side app, it SHOULD consume this API rather than duplicating state
   logic.
-

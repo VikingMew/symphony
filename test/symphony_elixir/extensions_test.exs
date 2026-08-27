@@ -186,7 +186,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, WorkflowStore)
     write_workflow_file!(third_workflow, prompt: "Third prompt")
     assert {:ok, %{workflow: %{prompt: "Third prompt"}, source: %{type: :database}}} = WorkflowStore.current_with_source()
-    assert :ok = WorkflowStore.force_reload()
+    assert {:error, {:refresh_failed, :cache_unavailable}} = WorkflowStore.force_reload()
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
@@ -219,11 +219,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert returned_state.source.type == :database
     assert_receive :poll, 2_500
 
-    Process.exit(manual_pid, :normal)
-    restart_result = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
-
-    assert match?({:ok, _pid}, restart_result) or
-             match?({:error, {:already_started, _pid}}, restart_result)
+    GenServer.stop(manual_pid, :normal)
+    assert_eventually(fn -> is_nil(Process.whereis(WorkflowStore)) end)
+    assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
 
     Workflow.set_workflow_file_path(existing_path)
     WorkflowStore.force_reload()
@@ -491,7 +489,11 @@ defmodule SymphonyElixir.ExtensionsTest do
              "logs" => %{"codex_session_logs" => []},
              "recent_events" => [],
              "last_error" => nil,
-             "tracked" => %{}
+             "tracked" => %{},
+             "persisted_issue" => nil,
+             "latest_run" => nil,
+             "recent_runs" => [],
+             "timeline" => []
            }
 
     conn = get(build_conn(), "/api/v1/MT-RETRY")
@@ -532,6 +534,9 @@ defmodule SymphonyElixir.ExtensionsTest do
              %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
 
     assert json_response(post(build_conn(), "/api/v1/MT-1", %{}), 405) ==
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+
+    assert json_response(post(build_conn(), "/api/v1/runs", %{}), 405) ==
              %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
 
     assert json_response(get(build_conn(), "/unknown"), 404) ==

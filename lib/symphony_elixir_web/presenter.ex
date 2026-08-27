@@ -53,8 +53,9 @@ defmodule SymphonyElixirWeb.Presenter do
     }
   end
 
-  @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
-  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) when is_binary(issue_identifier) do
+  @spec live_issue_payload(String.t(), GenServer.name(), timeout()) ::
+          {:ok, map()} | :not_found | {:error, :snapshot_timeout | :snapshot_unavailable}
+  def live_issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) when is_binary(issue_identifier) do
     case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
       %{} = snapshot ->
         running = Enum.find(snapshot.running, &(&1.identifier == issue_identifier))
@@ -62,15 +63,53 @@ defmodule SymphonyElixirWeb.Presenter do
         blocked = Enum.find(Map.get(snapshot, :blocked, []), &(&1.identifier == issue_identifier))
 
         if is_nil(running) and is_nil(retry) and is_nil(blocked) do
-          {:error, :issue_not_found}
+          :not_found
         else
           {:ok, issue_payload_body(issue_identifier, running, retry, blocked)}
         end
 
-      _ ->
-        {:error, :issue_not_found}
+      :timeout ->
+        {:error, :snapshot_timeout}
+
+      :unavailable ->
+        {:error, :snapshot_unavailable}
     end
   end
+
+  @spec issue_payload(String.t(), GenServer.name(), timeout()) :: {:ok, map()} | {:error, :issue_not_found}
+  def issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) do
+    case live_issue_payload(issue_identifier, orchestrator, snapshot_timeout_ms) do
+      {:ok, payload} -> {:ok, payload}
+      _not_found_or_unavailable -> {:error, :issue_not_found}
+    end
+  end
+
+  @spec with_persisted_history(map(), map()) :: map()
+  def with_persisted_history(live_payload, history) do
+    live_payload
+    |> Map.put(:persisted_issue, history.issue)
+    |> Map.put(:latest_run, history.latest_run)
+    |> Map.put(:recent_runs, history.runs)
+    |> Map.put(:timeline, history.events)
+  end
+
+  @spec persisted_issue_payload(map()) :: map()
+  def persisted_issue_payload(history) do
+    issue = history.issue || %{}
+
+    %{
+      issue_identifier: history.issue_identifier,
+      issue_id: Map.get(issue, :id),
+      status: Map.get(issue, :state) || get_in(history, [:latest_run, :status]),
+      persisted_issue: history.issue,
+      latest_run: history.latest_run,
+      recent_runs: history.runs,
+      timeline: history.events
+    }
+  end
+
+  @spec with_history_error(map(), map()) :: map()
+  def with_history_error(live_payload, error), do: Map.put(live_payload, :history_error, error)
 
   @spec refresh_payload(GenServer.name()) :: {:ok, map()} | {:error, :unavailable}
   def refresh_payload(orchestrator) do

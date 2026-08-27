@@ -142,7 +142,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
       active_workflow_version: &Persistence.active_workflow_version/0,
       list_projects: &Persistence.list_projects/0,
       list_workflow_versions: &Persistence.list_workflow_versions/1,
-      import_workflow: &Persistence.import_workflow/3,
+      import_workflow: &Persistence.WorkflowStore.import_workflow/3,
       package_root: &File.cwd!/0,
       read_file: &File.read/1,
       prompt: &IO.gets/1,

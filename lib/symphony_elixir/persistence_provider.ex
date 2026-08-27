@@ -22,4 +22,26 @@ defmodule SymphonyElixir.PersistenceProvider do
   catch
     kind, reason -> {:error, {:query_failed, {kind, reason}}}
   end
+
+  @doc """
+  Publishes successful mutations made through a replacement persistence module.
+
+  The production persistence context already performs this write-through step;
+  test and extension modules use this helper at their mutation call sites.
+  """
+  @spec publish_runtime_mutation(result) ::
+          result | {:error, {:runtime_publication_failed, term(), term()}}
+        when result: term()
+  def publish_runtime_mutation({:ok, persisted} = success) do
+    if module() == SymphonyElixir.Persistence do
+      success
+    else
+      case SymphonyElixir.WorkflowStore.force_reload() do
+        :ok -> success
+        {:error, reason} -> {:error, {:runtime_publication_failed, persisted, reason}}
+      end
+    end
+  end
+
+  def publish_runtime_mutation(other), do: other
 end

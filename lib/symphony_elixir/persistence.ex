@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Persistence do
   import Ecto.Query
 
   alias SymphonyElixir.{PersistenceProvider, Repo, RunLifecycle, Workflow}
+  alias SymphonyElixir.WorkflowStore, as: RuntimeWorkflowStore
 
   alias SymphonyElixir.Persistence.{
     EventRecord,
@@ -39,27 +40,56 @@ defmodule SymphonyElixir.Persistence do
   @spec list_projects() :: [Project.t()] | {:error, read_error()}
   def list_projects, do: read(fn -> WorkflowStore.list_projects() end)
 
-  @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
-  defdelegate create_project(attrs), to: WorkflowStore
+  @spec create_project(map()) ::
+          {:ok, Project.t()}
+          | {:error,
+             Ecto.Changeset.t()
+             | :repo_unavailable
+             | {:runtime_publication_failed, Project.t(), term()}}
+  def create_project(attrs) do
+    attrs
+    |> WorkflowStore.create_project()
+    |> publish_runtime_snapshot()
+  end
 
   @spec update_project(Project.t() | String.t(), map()) ::
-          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
-  defdelegate update_project(project_or_id, attrs), to: WorkflowStore
+          {:ok, Project.t()}
+          | {:error,
+             Ecto.Changeset.t()
+             | :not_found
+             | :repo_unavailable
+             | {:runtime_publication_failed, Project.t(), term()}}
+  def update_project(project_or_id, attrs) do
+    project_or_id
+    |> WorkflowStore.update_project(attrs)
+    |> publish_runtime_snapshot()
+  end
 
   @spec delete_project(Project.t() | String.t()) ::
-          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
+          {:ok, Project.t()}
+          | {:error,
+             Ecto.Changeset.t()
+             | :not_found
+             | :repo_unavailable
+             | {:runtime_publication_failed, Project.t(), term()}}
   def delete_project(%Project{id: id}), do: delete_project(id)
 
   def delete_project(id) when is_binary(id) do
     with true <- repo_available?() || {:error, :repo_unavailable},
          %Project{} = project <- Repo.get(Project, id) || {:error, :not_found} do
       Repo.transaction(fn -> delete_project!(project) end)
+      |> publish_runtime_snapshot()
     end
   end
 
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
-          {:ok, WorkflowVersion.t()} | {:error, term()}
-  defdelegate import_workflow(project, raw_workflow_md, source \\ "import"), to: WorkflowStore
+          {:ok, WorkflowVersion.t()}
+          | {:error, term() | {:runtime_publication_failed, WorkflowVersion.t(), term()}}
+  def import_workflow(project, raw_workflow_md, source \\ "import") do
+    project
+    |> WorkflowStore.import_workflow(raw_workflow_md, source)
+    |> publish_runtime_snapshot()
+  end
 
   @spec active_workflow_version() :: WorkflowVersion.t() | nil
   defdelegate active_workflow_version(), to: WorkflowStore
@@ -74,7 +104,11 @@ defmodule SymphonyElixir.Persistence do
   defdelegate export_workflow(version), to: WorkflowStore
 
   @spec activate_workflow_version(WorkflowVersion.t()) :: {:ok, WorkflowVersion.t()} | {:error, term()}
-  defdelegate activate_workflow_version(version), to: WorkflowStore
+  def activate_workflow_version(version) do
+    version
+    |> WorkflowStore.activate_workflow_version()
+    |> publish_runtime_snapshot()
+  end
 
   @spec list_workflow_versions() :: [WorkflowVersion.t()]
   defdelegate list_workflow_versions(), to: WorkflowStore
@@ -138,9 +172,9 @@ defmodule SymphonyElixir.Persistence do
     if repo_available?(), do: Repo.get(WorkflowVersion, id)
   end
 
-  @spec get_issue_by_identifier(String.t()) :: IssueRecord.t() | nil
+  @spec get_issue_by_identifier(String.t()) :: IssueRecord.t() | nil | {:error, read_error()}
   def get_issue_by_identifier(identifier) when is_binary(identifier) do
-    if repo_available?(), do: Repo.get_by(IssueRecord, identifier: identifier)
+    read(fn -> Repo.get_by(IssueRecord, identifier: identifier) end)
   end
 
   @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
@@ -234,6 +268,15 @@ defmodule SymphonyElixir.Persistence do
       {:error, :repo_unavailable}
     end
   end
+
+  defp publish_runtime_snapshot({:ok, persisted} = success) do
+    case RuntimeWorkflowStore.force_reload() do
+      :ok -> success
+      {:error, reason} -> {:error, {:runtime_publication_failed, persisted, reason}}
+    end
+  end
+
+  defp publish_runtime_snapshot(other), do: other
 
   defp maybe_filter_event_project(query, project_id) when is_binary(project_id) and project_id != "" do
     where(query, [e], e.project_id == ^project_id)

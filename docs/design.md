@@ -109,8 +109,8 @@ Primary files:
 
 `SymphonyElixir.CLI` is the command-line entrypoint compiled into `bin/symphony`. It parses
 runtime CLI options such as `--port` and `--db`, stores runtime overrides, and starts the OTP
-application. Workflow authority is loaded from the SQLite active workflow version rather than a
-startup workflow path.
+application. SQLite remains workflow authority across restarts; cold start publishes the active
+per-project state into one atomic in-memory snapshot, and normal runtime reads do not query SQLite.
 
 `SymphonyElixir.Application` is defined in `lib/symphony_elixir.ex`. It starts the supervision
 tree:
@@ -160,7 +160,8 @@ lib/symphony_elixir/
 | `SymphonyElixir.Application` | `symphony_elixir.ex` | OTP application entrypoint and supervision tree. |
 | `SymphonyElixir.CLI` | `cli.ex` | CLI parsing, runtime overrides, and app startup. |
 | `SymphonyElixir.Workflow` | `workflow.ex` | Workflow package parsing and config/prompt normalization entrypoints. |
-| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | Caches the active workflow per enabled project and the last known good configuration. |
+| `SymphonyElixir.WorkflowStore` | `workflow_store.ex` | Atomically publishes the active per-project/default/source snapshot, coordinates single-flight background refresh, and serves persistence-free reads. |
+| `SymphonyElixir.ObservabilityHistory` | `observability_history.ex` | Runs bounded persistence-provider reads and exposes explicit issue/run/event JSON projections. |
 | `SymphonyElixir.Config` | `config.ex` | Typed accessors for workflow configuration and defaults. |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | Configuration schema and validation rules. |
 | `SymphonyElixir.Orchestrator` | `orchestrator.ex` | Polling, dispatch, active-run tracking, retries, cleanup, status generation. |
@@ -280,6 +281,7 @@ GET  /diagnostics/linear       Linear diagnostics
 GET  /dashboard.css             Dashboard stylesheet
 GET  /api/v1/state              Full runtime state JSON
 POST /api/v1/refresh            Trigger refresh
+GET  /api/v1/runs               Bounded persisted issue run/event history
 GET  /api/v1/:issue_identifier  Issue-specific state JSON
 POST /api/worker/v1/register    Worker registration
 POST /api/worker/v1/tasks/claim Worker task claim
@@ -403,4 +405,3 @@ Live external end-to-end test:
 export LINEAR_API_KEY=...
 mise exec -- make e2e
 ```
-

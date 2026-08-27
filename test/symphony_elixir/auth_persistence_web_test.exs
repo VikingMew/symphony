@@ -65,6 +65,11 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
              build_conn()
              |> get("/api/v1/state")
              |> json_response(401)
+
+    assert %{"error" => %{"code" => "authentication_required"}} =
+             build_conn()
+             |> get("/api/v1/runs?issue_identifier=SYM-3")
+             |> json_response(401)
   end
 
   test "valid login creates a session and logout clears it" do

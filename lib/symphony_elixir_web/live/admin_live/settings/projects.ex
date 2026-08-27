@@ -5,7 +5,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
 
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  alias SymphonyElixir.{PersistenceProvider, WorkflowStore}
+  alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
   alias SymphonyElixirWeb.AdminLive.{State, WorkflowState}
 
@@ -136,22 +136,18 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
 
     result =
       case id do
-        nil -> persistence().create_project(attrs)
+        nil -> persistence().create_project(attrs) |> PersistenceProvider.publish_runtime_mutation()
         id -> maybe_update_project(id, attrs, socket)
       end
 
     socket =
       case result do
         :unchanged ->
-          _ = WorkflowStore.force_reload()
-
           socket
           |> put_flash(:info, "Project settings already up to date.")
           |> WorkflowState.assign_save_notice(:info, "Project settings already up to date", "No changes to save.")
 
         {:ok, project} ->
-          _ = WorkflowStore.force_reload()
-
           socket
           |> put_flash(:info, "Project settings saved.")
           |> WorkflowState.assign_save_notice(:success, "Project settings saved", "#{project.name} is available in Settings.")
@@ -171,10 +167,8 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
   @spec remove(String.t(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def remove(id, socket) do
     socket =
-      case persistence().delete_project(id) do
+      case persistence().delete_project(id) |> PersistenceProvider.publish_runtime_mutation() do
         {:ok, project} ->
-          _ = WorkflowStore.force_reload()
-
           socket
           |> put_flash(:info, "Project #{project.name} removed.")
           |> WorkflowState.assign_save_notice(
@@ -238,11 +232,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
   defp maybe_update_project(id, attrs, socket) do
     case Enum.find(socket.assigns.projects, &(ProjectSettings.value(&1, :id) == id)) do
       nil ->
-        persistence().update_project(id, attrs)
+        persistence().update_project(id, attrs) |> PersistenceProvider.publish_runtime_mutation()
 
       project ->
         if ProjectSettings.changed?(project, attrs),
-          do: persistence().update_project(id, attrs),
+          do: persistence().update_project(id, attrs) |> PersistenceProvider.publish_runtime_mutation(),
           else: :unchanged
     end
   end

@@ -9,7 +9,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def reset!(state \\ initial_state()) do
     ensure_started()
-    Agent.update(@name, fn _ -> state end)
+    :ok = Agent.update(@name, fn _ -> state end)
+    maybe_publish_runtime()
   end
 
   def calls do
@@ -50,27 +51,33 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def put_workflow_versions(versions, active_version \\ nil) when is_list(versions) do
     ensure_started()
 
-    Agent.update(@name, fn state ->
-      state
-      |> Map.put(:workflow_versions, versions)
-      |> Map.put(:active_workflow_version, active_version)
-    end)
+    :ok =
+      Agent.update(@name, fn state ->
+        state
+        |> Map.put(:workflow_versions, versions)
+        |> Map.put(:active_workflow_version, active_version)
+      end)
+
+    maybe_publish_runtime()
   end
 
   def put_default_project_attrs!(attrs) when is_map(attrs) do
     ensure_started()
 
-    Agent.update(@name, fn state ->
-      [project | rest] = state.projects
+    :ok =
+      Agent.update(@name, fn state ->
+        [project | rest] = state.projects
 
-      runtime_attrs =
-        attrs
-        |> atomize_project_attrs()
-        |> Map.drop([:name, :slug, :description, :enabled])
+        runtime_attrs =
+          attrs
+          |> atomize_project_attrs()
+          |> Map.drop([:name, :slug, :description, :enabled])
 
-      updated = Map.merge(project, runtime_attrs)
-      Map.put(state, :projects, [updated | rest])
-    end)
+        updated = Map.merge(project, runtime_attrs)
+        Map.put(state, :projects, [updated | rest])
+      end)
+
+    maybe_publish_runtime()
   end
 
   def fail_next_import_workflow!(reason) do
@@ -86,32 +93,42 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def import_workflow(project, raw_workflow_md, source) do
     ensure_started()
 
+    version_number =
+      Agent.get(@name, fn state ->
+        Enum.count(state.workflow_versions, &(Map.get(&1, :project_id) == project.id)) + 1
+      end)
+
     version = %{
-      id: "fake-workflow-version-#{Map.get(project, :slug) || System.unique_integer([:positive])}",
+      id: "fake-workflow-version-#{Map.get(project, :slug) || "project"}-#{System.unique_integer([:positive])}",
       project_id: project.id,
-      version: 1,
+      version: version_number,
       source: source,
       active: true,
       inserted_at: DateTime.utc_now(),
       raw_workflow_md: raw_workflow_md
     }
 
-    Agent.get_and_update(@name, fn state ->
-      state = record_call(state, {:import_workflow, project, raw_workflow_md, source})
+    result =
+      Agent.get_and_update(@name, fn state ->
+        state = record_call(state, {:import_workflow, project, raw_workflow_md, source})
 
-      case Map.get(state, :next_import_workflow_error) do
-        nil ->
-          next_state =
-            state
-            |> Map.put(:active_workflow_version, version)
-            |> Map.update(:workflow_versions, [version], &(&1 ++ [version]))
+        case Map.get(state, :next_import_workflow_error) do
+          nil ->
+            next_state =
+              state
+              |> Map.update!(:workflow_versions, &deactivate_project_versions(&1, project.id))
+              |> Map.put(:active_workflow_version, version)
+              |> Map.update(:workflow_versions, [version], &(&1 ++ [version]))
 
-          {{:ok, version}, next_state}
+            {{:ok, version}, next_state}
 
-        reason ->
-          {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
-      end
-    end)
+          reason ->
+            {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
+        end
+      end)
+
+    if match?({:ok, _version}, result), do: maybe_publish_runtime()
+    result
   end
 
   def active_workflow_version do
@@ -163,31 +180,63 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def create_project(attrs) do
     ensure_started()
 
-    Agent.get_and_update(@name, fn state ->
-      project =
-        attrs
-        |> atomize_project_attrs()
-        |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
+    result =
+      Agent.get_and_update(@name, fn state ->
+        project =
+          attrs
+          |> atomize_project_attrs()
+          |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
 
-      {{:ok, project}, state |> record_call({:create_project, attrs}) |> Map.update!(:projects, &(&1 ++ [project]))}
-    end)
+        {{:ok, project}, state |> record_call({:create_project, attrs}) |> Map.update!(:projects, &(&1 ++ [project]))}
+      end)
+
+    maybe_publish_runtime()
+    result
   end
 
   def update_project(id, attrs) do
     ensure_started()
 
-    Agent.get_and_update(@name, fn state ->
-      case Enum.find(state.projects, &(Map.get(&1, :id) == id)) do
-        nil ->
-          {{:error, :not_found}, state |> record_call({:update_project, id, attrs})}
+    result =
+      Agent.get_and_update(@name, fn state ->
+        case Enum.find(state.projects, &(Map.get(&1, :id) == id)) do
+          nil ->
+            {{:error, :not_found}, state |> record_call({:update_project, id, attrs})}
 
-        project ->
-          updated = Map.merge(project, atomize_project_attrs(attrs))
-          projects = replace_project(state.projects, id, updated)
+          project ->
+            updated = Map.merge(project, atomize_project_attrs(attrs))
+            projects = replace_project(state.projects, id, updated)
 
-          {{:ok, updated}, state |> record_call({:update_project, id, attrs}) |> Map.put(:projects, projects)}
-      end
-    end)
+            {{:ok, updated}, state |> record_call({:update_project, id, attrs}) |> Map.put(:projects, projects)}
+        end
+      end)
+
+    if match?({:ok, _project}, result), do: maybe_publish_runtime()
+    result
+  end
+
+  def delete_project(id) do
+    ensure_started()
+
+    result =
+      Agent.get_and_update(@name, fn state ->
+        case Enum.find(state.projects, &(Map.get(&1, :id) == id)) do
+          nil ->
+            {{:error, :not_found}, record_call(state, {:delete_project, id})}
+
+          project ->
+            next_state =
+              state
+              |> record_call({:delete_project, id})
+              |> Map.update!(:projects, &reject_by_id(&1, id))
+              |> Map.update!(:workflow_versions, &reject_by_project_id(&1, id))
+
+            {{:ok, project}, next_state}
+        end
+      end)
+
+    if match?({:ok, _project}, result), do: maybe_publish_runtime()
+    result
   end
 
   def list_runs(opts \\ []) do
@@ -319,7 +368,17 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def activate_workflow_version(version) do
     ensure_started()
-    Agent.update(@name, fn state -> state |> record_call({:activate_workflow_version, version}) |> Map.put(:active_workflow_version, version) end)
+
+    Agent.update(@name, fn state ->
+      activated = Map.put(version, :active, true)
+
+      state
+      |> record_call({:activate_workflow_version, version})
+      |> Map.update!(:workflow_versions, &activate_version(&1, activated))
+      |> Map.put(:active_workflow_version, activated)
+    end)
+
+    maybe_publish_runtime()
     {:ok, version}
   end
 
@@ -643,9 +702,43 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   defp ensure_started do
     case Process.whereis(@name) do
-      nil -> start_link()
+      nil -> Agent.start(fn -> initial_state() end, name: @name)
       _pid -> :ok
     end
+  end
+
+  defp maybe_publish_runtime do
+    if Process.whereis(SymphonyElixir.WorkflowStore) do
+      SymphonyElixir.WorkflowStore.force_reload()
+    else
+      :ok
+    end
+  end
+
+  defp deactivate_project_versions(versions, project_id) do
+    Enum.map(versions, fn
+      %{project_id: ^project_id} = version -> Map.put(version, :active, false)
+      version -> version
+    end)
+  end
+
+  defp reject_by_id(records, id), do: Enum.reject(records, &(Map.get(&1, :id) == id))
+
+  defp reject_by_project_id(records, project_id) do
+    Enum.reject(records, &(Map.get(&1, :project_id) == project_id))
+  end
+
+  defp activate_version(versions, version) do
+    project_id = Map.get(version, :project_id)
+    version_id = Map.get(version, :id)
+
+    Enum.map(versions, fn existing ->
+      if Map.get(existing, :project_id) == project_id do
+        Map.put(existing, :active, Map.get(existing, :id) == version_id)
+      else
+        existing
+      end
+    end)
   end
 
   defp record_call(state, call), do: update_in(state.calls, &[call | &1])
