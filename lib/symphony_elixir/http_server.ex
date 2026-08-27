@@ -59,6 +59,13 @@ defmodule SymphonyElixir.HttpServer do
   end
 
   defp configured_server_host do
+    case Application.get_env(:symphony_elixir, :server_host_override) do
+      host when is_binary(host) and host != "" -> host
+      _ -> configured_workflow_host()
+    end
+  end
+
+  defp configured_workflow_host do
     case raw_server_value("host") do
       host when is_binary(host) and host != "" -> host
       _ -> "127.0.0.1"

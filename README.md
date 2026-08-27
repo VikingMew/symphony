@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 > [!IMPORTANT]
-> This repository is a fork of the upstream OpenAI Symphony preview. It has diverged into an Elixir/Phoenix control plane with SQLite-backed runtime settings, persisted run history, Linear diagnostics, and worker execution paths.
+> This repository is a fork of the upstream OpenAI Symphony preview. It has diverged into an Elixir/Phoenix control plane with PostgreSQL-backed runtime settings, persisted run history, Linear diagnostics, and worker execution paths.
 
 Symphony is a Phoenix/Elixir control plane for running Codex agents from Linear issues.
 
@@ -20,7 +20,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Optional remote execution through configured SSH worker hosts.
 - Optional HTTP worker-task queue mode for external workers.
 - Per-issue workspaces and Git worktrees.
-- SQLite-backed projects, workflow versions, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
+- PostgreSQL-backed projects, workflow versions, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
 - Settings pages for Projects, Workflow, Agents, Runtime, and package import.
 - Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
@@ -70,6 +70,7 @@ observability pages (Runs, Events, Workers) are project-aware.
 Requirements:
 
 - `mise`
+- PostgreSQL 17 or another supported PostgreSQL server
 - Linear personal API token in `LINEAR_API_KEY`
 - Codex CLI available to the runtime user
 
@@ -78,8 +79,9 @@ git clone https://github.com/VikingMew/symphony
 cd symphony
 mise trust
 mise install
+export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony
 mise exec -- mix setup
-mise exec -- mix ecto.migrate
+mise exec -- mix symphony.migrate
 mise exec -- mix build
 mise exec -- ./bin/symphony --port 4000
 ```
@@ -92,7 +94,7 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 4. Settings / Runtime: Codex command, sandbox, approval policy, workspace paths, and worker settings.
 5. Settings / Import: optional workflow/profile package import with preview before applying.
 
-If SQLite has no active workflow version, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates the first workflow.
+If PostgreSQL has no active workflow version, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates the first workflow.
 
 On a fresh database, Symphony can also offer to import the checked-in `workflow.yml` and
 `profiles.yml` as the first active workflow version. This is a one-time import prompt; the YAML
@@ -104,9 +106,9 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-SQLite is the durable runtime authority. On cold start Symphony publishes the active per-project
+PostgreSQL is the durable runtime authority. On cold start Symphony publishes the active per-project
 workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
-dispatch reads use that snapshot without querying SQLite. Successful Settings mutations republish
+dispatch reads use that snapshot without querying PostgreSQL. Successful Settings mutations republish
 before reporting success, and background external-change detection retains last-known-good state
 during database stalls. `workflow.yml` and `profiles.yml` are import/export artifacts, not files
 that Symphony watches at runtime.
@@ -116,12 +118,10 @@ Useful startup options:
 ```bash
 mise exec -- ./bin/symphony \
   --port 4000 \
-  --database-path /path/to/symphony.db \
   --logs-root /path/to/logs
 ```
 
 - `--port` enables the Phoenix dashboard and JSON API.
-- `--database-path` selects the SQLite file (default: `./symphony.db`).
 - `--logs-root` changes the runtime log directory (default: `./log`).
 - `--no-default-yaml-prompt` disables the first-run package import prompt.
 
@@ -136,9 +136,11 @@ Common environment variables:
 | `LINEAR_API_KEY` | Linear API access. |
 | `GH_TOKEN` / `GITHUB_TOKEN` | GitHub REST fallback for PR lookup/creation when authenticated `gh` is unavailable. |
 | `LINEAR_ASSIGNEE` | Optional default Linear assignee. |
-| `SYMPHONY_DATABASE_PATH` | Default SQLite location when `--database-path` is not passed. |
+| `DATABASE_URL` | Required PostgreSQL connection URL for startup, migrations, and cutover. |
+| `SYMPHONY_DATABASE_POOL_SIZE` | PostgreSQL pool size; defaults to `5` locally and `10` in Compose. |
 | `SYMPHONY_AUTH_ENABLED` | Enables username/password auth for the web UI/API. |
 | `SYMPHONY_ADMIN_USERNAME` / `SYMPHONY_ADMIN_PASSWORD` | Simple local admin auth. |
+| `SECRET_KEY_BASE` | Release session-signing secret; Compose requires at least 64 bytes. |
 | `SYMPHONY_EXECUTION_MODE=worker` | Queue work for external workers instead of local Codex execution. |
 | `SYMPHONY_WORKER_REGISTRATION_TOKEN` | Shared token used by worker API clients. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used for Linear/Codex subprocess network access. |
@@ -154,7 +156,7 @@ workspace path to exist locally.
 
 | Mode | Use When |
 | --- | --- |
-| Local centralized | One machine runs the dashboard, SQLite, workspaces, and Codex. |
+| Local centralized | One machine runs the dashboard and Codex against PostgreSQL. |
 | Centralized with SSH hosts | Symphony coordinates work but launches Codex on configured SSH hosts. |
 | Worker mode | Dashboard and queue are separated from external workers that claim tasks over HTTP. |
 | Dashboard-first setup | Start with an empty database and create configuration through Settings. |
@@ -186,34 +188,31 @@ Symphony does not need to own public TLS, certificate issuance, or a dedicated d
 
 See [docs/deployment.md](docs/deployment.md) for Nginx, Kubernetes, WebSocket, health probe, and forwarded-header examples.
 
-### Docker
+### Docker Compose
 
-The root `Dockerfile` provides four targets:
-
-| Target | Purpose |
-| --- | --- |
-| `all-in-one` | Phoenix dashboard, SQLite, local workspaces, and Codex CLI in one container. |
-| `dashboard-internal-db` | Dashboard and worker API with SQLite under `/data`; defaults to worker mode. |
-| `dashboard-external-db` | Dashboard using a mounted SQLite file under `/external`. |
-| `worker` | SSH-reachable Codex worker for centralized SSH-host execution. |
-
-Build and run the all-in-one image:
+The root `compose.yaml` is the supported self-hosted stack. It builds a non-root OTP release image,
+starts PostgreSQL on an internal network, runs migrations once, then starts Symphony after the
+database is healthy. Copy `.env.example` to the ignored `.env`, replace all `change-me` values,
+and start the stack:
 
 ```bash
-docker build --target all-in-one -t symphony-all-in-one .
-docker run --rm -it \
-  -p 4000:4000 \
-  -v symphony-data:/data \
-  -v "$HOME/.codex:/home/symphony/.codex" \
-  -e LINEAR_API_KEY="$LINEAR_API_KEY" \
-  symphony-all-in-one
+cp .env.example .env
+docker compose config
+docker compose build
+docker compose up -d
+curl --fail http://127.0.0.1:4000/health/live
+curl --fail http://127.0.0.1:4000/health/ready
 ```
+
+The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, PostgreSQL clients, and
+SQLite cutover tooling, but no Mix, compiler, or source checkout. The separate `worker` target
+remains available for SSH-reachable Codex workers.
 
 Builds accept `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`,
 `NPM_REGISTRY`, and `HEX_MIRROR_URL` build arguments for internal registries and mirrors.
 Standard proxy variables can be passed as Docker build arguments and, separately, as runtime
-environment variables. Dashboard images migrate SQLite on startup, write logs under `/data/logs`,
-and expose the dashboard on port 4000.
+environment variables. See [docs/compose.md](docs/compose.md) for first start, credentials,
+upgrades, backup/restore, legacy SQLite cutover, volume verification, restart testing, and rollback.
 
 ## Project Layout
 
@@ -226,7 +225,7 @@ and expose the dashboard on port 4000.
 - `.codex/`: repository-local Codex skills and setup helpers.
 
 Elixir/OTP supervision manages the long-running scheduler and agent processes; Phoenix LiveView
-provides the operator and settings surfaces, and Ecto persists runtime state in SQLite.
+provides the operator and settings surfaces, and Ecto persists runtime state in PostgreSQL.
 
 ## Development
 
@@ -235,6 +234,14 @@ mise exec -- mix test
 mise exec -- mix test --cover
 mise exec -- mix lint
 mise exec -- mix exec_plans.check
+```
+
+The ordinary unit suite is database-free. Run the explicit PostgreSQL integration target only
+against a disposable, already-created empty database:
+
+```bash
+export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony_smoke
+make pg-smoke
 ```
 
 The main CI workflow runs `make all`, which includes setup, build, formatting check, lint, coverage, and dialyzer.
@@ -262,7 +269,8 @@ Exec plans are the implementation ledger:
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): implementation architecture.
 - [docs/design.md](docs/design.md): code structure overview and feature-design index.
 - [docs/user-guide.zh-CN.md](docs/user-guide.zh-CN.md): Chinese operator guide.
-- [docs/persistence_and_auth.md](docs/persistence_and_auth.md): SQLite and auth details.
+- [docs/persistence_and_auth.md](docs/persistence_and_auth.md): PostgreSQL and auth details.
+- [docs/compose.md](docs/compose.md): Compose, PostgreSQL operations, and SQLite cutover.
 - [docs/deployment.md](docs/deployment.md): reverse proxy and Kubernetes deployment.
 - [docs/documentation-alignment.md](docs/documentation-alignment.md): long-lived documentation alignment.
 - [docs/long_term_direction.zh-CN.md](docs/long_term_direction.zh-CN.md): long-term direction.
@@ -283,7 +291,7 @@ Implemented:
 Still alpha:
 
 - APIs and UI are changing quickly;
-- SQLite is the supported persistence backend;
+- PostgreSQL is the supported persistence backend;
 - multi-tenant hardening is not a goal yet;
 - operators should review prompts, skills, sandbox, approval policy, repository access, and worker trust boundaries before using it on important code.
 

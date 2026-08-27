@@ -1,0 +1,122 @@
+name: symphony
+
+x-symphony-environment: &symphony-environment
+  DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
+  SYMPHONY_DATABASE_POOL_SIZE: ${SYMPHONY_DATABASE_POOL_SIZE:-10}
+  PORT: "4000"
+  SYMPHONY_SERVER_HOST: 0.0.0.0
+  SYMPHONY_LOGS_ROOT: /data/logs
+  SYMPHONY_EXECUTION_MODE: ${SYMPHONY_EXECUTION_MODE:-centralized}
+  LINEAR_API_KEY: ${LINEAR_API_KEY:-}
+  LINEAR_ASSIGNEE: ${LINEAR_ASSIGNEE:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+  GH_TOKEN: ${GH_TOKEN:-}
+  GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+  SYMPHONY_AUTH_ENABLED: ${SYMPHONY_AUTH_ENABLED:-true}
+  SYMPHONY_ADMIN_USERNAME: ${SYMPHONY_ADMIN_USERNAME:-admin}
+  SYMPHONY_ADMIN_PASSWORD: ${SYMPHONY_ADMIN_PASSWORD:-}
+  SYMPHONY_ADMIN_PASSWORD_HASH: ${SYMPHONY_ADMIN_PASSWORD_HASH:-}
+  SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env}
+  SYMPHONY_WORKER_REGISTRATION_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:-}
+  SYMPHONY_SSH_CONFIG: ${SYMPHONY_SSH_CONFIG:-}
+  SYMPHONY_TRUST_X_FORWARDED_HEADERS: ${SYMPHONY_TRUST_X_FORWARDED_HEADERS:-false}
+  SYMPHONY_PUBLIC_URL: ${SYMPHONY_PUBLIC_URL:-}
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  ALL_PROXY: ${ALL_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-postgres,localhost,127.0.0.1}
+  http_proxy: ${http_proxy:-}
+  https_proxy: ${https_proxy:-}
+  all_proxy: ${all_proxy:-}
+  no_proxy: ${no_proxy:-postgres,localhost,127.0.0.1}
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-symphony}
+      POSTGRES_USER: ${POSTGRES_USER:-symphony}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - database
+
+  migrate:
+    build:
+      context: .
+      target: symphony
+    image: symphony:local
+    environment: *symphony-environment
+    command: ["/app/bin/symphony", "eval", "SymphonyElixir.Release.migrate!()"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - database
+
+  symphony:
+    build:
+      context: .
+      target: symphony
+    image: symphony:local
+    environment: *symphony-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "${SYMPHONY_DASHBOARD_BIND:-127.0.0.1}:${SYMPHONY_DASHBOARD_PORT:-4000}:4000"
+    volumes:
+      - symphony_logs:/data/logs
+      - symphony_workspaces:/data/workspaces
+      - codex_home:/home/symphony/.codex
+      - gh_config:/home/symphony/.config/gh
+      - ssh_home:/home/symphony/.ssh
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:4000/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - database
+      - egress
+
+volumes:
+  postgres_data:
+  symphony_logs:
+  symphony_workspaces:
+  codex_home:
+  gh_config:
+  ssh_home:
+
+networks:
+  database:
+    internal: true
+  egress: {}

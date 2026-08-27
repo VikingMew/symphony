@@ -76,6 +76,7 @@ other documents link instead of restating. Exec plans are governed separately by
 | Document | Purpose |
 | --- | --- |
 | [user-guide.zh-CN.md](user-guide.zh-CN.md) | Operator guide (zh-CN). |
+| [compose.md](compose.md) | Compose, PostgreSQL operations, backup/restore, and SQLite cutover guide. |
 | [deployment.md](deployment.md) | Reverse-proxy and Kubernetes deployment guide. |
 
 ## Adding or Changing Documents
