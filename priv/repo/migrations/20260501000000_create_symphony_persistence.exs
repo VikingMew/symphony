@@ -29,8 +29,8 @@ defmodule SymphonyElixir.Repo.Migrations.CreateSymphonyPersistence do
       add(:endpoint, :text)
       add(:project_slug, :text, null: false)
       add(:api_key_secret_ref, :text)
-      add(:active_states, :map, null: false, default: "[]")
-      add(:terminal_states, :map, null: false, default: "[]")
+      add(:active_states, :map, null: false, default: %{})
+      add(:terminal_states, :map, null: false, default: %{})
       add(:enabled, :boolean, null: false, default: true)
       timestamps(type: :utc_datetime_usec)
     end
@@ -42,7 +42,7 @@ defmodule SymphonyElixir.Repo.Migrations.CreateSymphonyPersistence do
       add(:project_id, references(:projects, type: :binary_id, on_delete: :delete_all), null: false)
       add(:version, :integer, null: false)
       add(:raw_workflow_md, :text, null: false)
-      add(:yaml_config, :map, null: false, default: "{}")
+      add(:yaml_config, :map, null: false, default: %{})
       add(:prompt_body, :text, null: false)
       add(:source, :text, null: false, default: "manual")
       add(:active, :boolean, null: false, default: false)
@@ -60,8 +60,8 @@ defmodule SymphonyElixir.Repo.Migrations.CreateSymphonyPersistence do
       add(:title, :text)
       add(:state, :text)
       add(:url, :text)
-      add(:labels, :map, null: false, default: "[]")
-      add(:snapshot, :map, null: false, default: "{}")
+      add(:labels, :map, null: false, default: %{})
+      add(:snapshot, :map, null: false, default: %{})
       timestamps(type: :utc_datetime_usec)
     end
 
@@ -119,7 +119,7 @@ defmodule SymphonyElixir.Repo.Migrations.CreateSymphonyPersistence do
       add(:run_id, references(:runs, type: :binary_id, on_delete: :nilify_all))
       add(:issue_identifier, :text)
       add(:event_type, :text, null: false)
-      add(:payload, :map, null: false, default: "{}")
+      add(:payload, :map, null: false, default: %{})
       add(:occurred_at, :utc_datetime_usec, null: false)
       timestamps(type: :utc_datetime_usec)
     end
@@ -129,9 +129,8 @@ defmodule SymphonyElixir.Repo.Migrations.CreateSymphonyPersistence do
 
     create table(:app_settings, primary_key: false) do
       add(:key, :text, primary_key: true)
-      add(:value, :map, null: false, default: "{}")
+      add(:value, :map, null: false, default: %{})
       timestamps(type: :utc_datetime_usec)
     end
   end
 end
-

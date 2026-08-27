@@ -1,9 +1,9 @@
 defmodule SymphonyElixir.Repo do
   @moduledoc """
-  Ecto repository for Symphony's local SQLite persistence.
+  Ecto repository for Symphony's PostgreSQL persistence.
   """
 
   use Ecto.Repo,
     otp_app: :symphony_elixir,
-    adapter: Ecto.Adapters.SQLite3
+    adapter: Ecto.Adapters.Postgres
 end

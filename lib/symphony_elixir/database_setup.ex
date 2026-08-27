@@ -1,39 +1,40 @@
 defmodule SymphonyElixir.DatabaseSetup do
   @moduledoc """
-  Prepares the local SQLite database before the application supervisor starts.
+  Validates the PostgreSQL connection and runs migrations before Symphony starts.
   """
 
   alias SymphonyElixir.Repo
 
-  @max_attempts 5
-  @retry_sleep_ms 200
-
   @spec prepare() :: :ok | {:error, term()}
   def prepare do
-    with :ok <- ensure_database_directory(),
-         :ok <- retry_locked(&create_storage/0) do
-      retry_locked(&run_migrations/0)
+    with :ok <- validate_config() do
+      run_migrations()
     end
   end
 
-  defp ensure_database_directory do
-    case Keyword.fetch(Repo.config(), :database) do
-      {:ok, database} when is_binary(database) and database not in [":memory:", ""] ->
-        database
-        |> Path.dirname()
-        |> File.mkdir_p()
+  @spec validate_config() :: :ok | {:error, :missing_database_url}
+  def validate_config do
+    case :symphony_elixir |> Application.get_env(Repo, []) |> Keyword.get(:url) do
+      url when is_binary(url) ->
+        if String.trim(url) == "", do: {:error, :missing_database_url}, else: :ok
 
-      _ ->
-        :ok
+      _missing ->
+        {:error, :missing_database_url}
     end
   end
 
-  defp create_storage do
-    case Repo.__adapter__().storage_up(Repo.config()) do
-      :ok -> :ok
-      {:error, :already_up} -> :ok
-    end
+  @spec format_error(term()) :: String.t()
+  def format_error(:missing_database_url), do: "DATABASE_URL is required"
+
+  def format_error({:database_unreachable, reason}) do
+    "PostgreSQL is unreachable: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
   end
+
+  def format_error({:migration_failed, reason}) do
+    "PostgreSQL migration failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+  end
+
+  def format_error(reason), do: inspect(reason, limit: 20, printable_limit: 1_000)
 
   defp run_migrations do
     Ecto.Migrator.with_repo(Repo, fn repo ->
@@ -41,8 +42,12 @@ defmodule SymphonyElixir.DatabaseSetup do
     end)
     |> case do
       {:ok, _migrations, _apps} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, {:database_unreachable, reason}}
     end
+  rescue
+    error -> {:error, {:migration_failed, error}}
+  catch
+    kind, reason -> {:error, {:migration_failed, {kind, reason}}}
   end
 
   defp migrations_path do
@@ -51,26 +56,4 @@ defmodule SymphonyElixir.DatabaseSetup do
     |> to_string()
     |> Path.join("repo/migrations")
   end
-
-  defp retry_locked(fun), do: retry_locked(fun, 1)
-
-  defp retry_locked(fun, attempt) do
-    case fun.() do
-      :ok ->
-        :ok
-
-      {:error, reason} = error ->
-        if database_locked?(reason) and attempt < @max_attempts do
-          Process.sleep(@retry_sleep_ms * attempt)
-          retry_locked(fun, attempt + 1)
-        else
-          error
-        end
-    end
-  end
-
-  defp database_locked?(%Exqlite.Error{message: message}), do: String.contains?(message, "database is locked")
-  defp database_locked?(%{message: message}) when is_binary(message), do: String.contains?(message, "database is locked")
-  defp database_locked?(reason) when is_binary(reason), do: String.contains?(reason, "database is locked")
-  defp database_locked?(_reason), do: false
 end

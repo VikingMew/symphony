@@ -4,7 +4,7 @@ defmodule SymphonyElixir.PersistenceProvider do
 
   Production defaults to `SymphonyElixir.Persistence`. Tests can replace the
   module with a fake for Web UI and workflow-source tests that do not need
-  SQLite semantics.
+  PostgreSQL semantics.
   """
 
   @spec module() :: module()

@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   import Ecto.Query
   require Logger
 
+  alias Ecto.Adapters.SQL
   alias SymphonyElixir.{Repo, Workflow}
 
   alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
@@ -19,7 +20,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   defp default_project! do
     if repo_available?() do
-      Repo.transaction(&create_default_project_if_empty!/0, mode: :immediate)
+      Repo.transaction(fn ->
+        SQL.query!(Repo, "SELECT pg_advisory_xact_lock($1)", [1_928_374_651])
+        create_default_project_if_empty!()
+      end)
     else
       {:error, :repo_unavailable}
     end
@@ -306,19 +310,21 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   defp create_workflow_version(%Project{} = project, attrs) do
-    next_version =
-      Repo.one(
-        from(w in WorkflowVersion,
-          where: w.project_id == ^project.id,
-          select: max(w.version)
-        )
-      )
-      |> case do
-        nil -> 1
-        version -> version + 1
-      end
-
     Repo.transaction(fn ->
+      Repo.one!(from(p in Project, where: p.id == ^project.id, lock: "FOR UPDATE"))
+
+      next_version =
+        Repo.one(
+          from(w in WorkflowVersion,
+            where: w.project_id == ^project.id,
+            select: max(w.version)
+          )
+        )
+        |> case do
+          nil -> 1
+          version -> version + 1
+        end
+
       if Map.get(attrs, :active) || Map.get(attrs, "active") do
         Repo.update_all(from(w in WorkflowVersion, where: w.project_id == ^project.id), set: [active: false])
       end

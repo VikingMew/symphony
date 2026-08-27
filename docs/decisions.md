@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, decisions]
 status: current
 language: en
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Decision Log
@@ -19,11 +19,19 @@ operator UI and service boundary without a separate frontend stack.
 
 ### SQLite-backed runtime settings
 
+Status: superseded by PostgreSQL runtime persistence
+
+SQLite workflow versions were the runtime authority before plan 259. SQLite is now only a frozen,
+one-way cutover source and cannot be selected as a runtime backend.
+
+### PostgreSQL runtime persistence
+
 Status: accepted
 
-SQLite workflow versions are the runtime authority, including the selected active version.
-`workflow.yml` and `profiles.yml` remain import/export artifacts and examples so runtime behavior
-does not depend on ambiguous file fallback or automatic seeding.
+PostgreSQL is the sole runtime database and `DATABASE_URL` is the connection contract. Active
+workflow versions remain the durable authority, while normal `WorkflowStore` reads use the atomic
+in-memory snapshot established by plan 257. Plan 259 owns the one supported stopped-SQLite-backup
+cutover into an already-migrated empty PostgreSQL database.
 
 ### Per-project workflow versions and multi-project runtime
 

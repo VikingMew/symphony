@@ -311,6 +311,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     TaskRecord
     |> where([t], t.status == "queued")
     |> order_by([t], desc: t.priority, asc: t.queued_at)
+    |> lock("FOR UPDATE SKIP LOCKED")
     |> Repo.all()
     |> Enum.find(&capability_match?(&1.required_capabilities, labels, capabilities))
   end
@@ -413,7 +414,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     |> join(:inner, [l], t in TaskRecord, on: t.id == l.task_id)
     |> where([l, t], l.worker_id == ^worker_id and l.worker_session_id == ^session_id and l.status == "active")
     |> where([_l, t], t.status == "cancelled")
-    |> select([_l, t], %{type: "cancel_task", task_id: t.id, reason: fragment("json_extract(?, '$.cancel_reason')", t.payload)})
+    |> select([_l, t], %{type: "cancel_task", task_id: t.id, reason: fragment("?->>'cancel_reason'", t.payload)})
     |> Repo.all()
   end
 

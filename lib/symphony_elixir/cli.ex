@@ -5,7 +5,7 @@ defmodule SymphonyElixir.CLI do
 
   alias SymphonyElixir.LogFile
 
-  @switches [database_path: :string, logs_root: :string, no_default_yaml_prompt: :boolean, port: :integer]
+  @switches [logs_root: :string, no_default_yaml_prompt: :boolean, port: :integer]
   @runtime_apps [
     :logger,
     :crypto,
@@ -19,12 +19,11 @@ defmodule SymphonyElixir.CLI do
     :solid,
     :ecto,
     :ecto_sql,
-    :ecto_sqlite3
+    :postgrex
   ]
 
   @type ensure_started_result :: {:ok, [atom()]} | {:error, term()}
   @type deps :: %{
-          set_database_path: (String.t() -> :ok | {:error, term()}),
           set_logs_root: (String.t() -> :ok | {:error, term()}),
           set_server_port_override: (non_neg_integer() | nil -> :ok | {:error, term()}),
           ensure_all_started: (-> ensure_started_result())
@@ -47,7 +46,6 @@ defmodule SymphonyElixir.CLI do
     case OptionParser.parse(args, strict: @switches) do
       {opts, [], []} ->
         with :ok <- maybe_set_logs_root(opts, deps),
-             :ok <- maybe_set_database_path(opts, deps),
              :ok <- maybe_set_server_port(opts, deps) do
           run_default(opts, deps)
         end
@@ -65,13 +63,12 @@ defmodule SymphonyElixir.CLI do
 
   @spec usage_message() :: String.t()
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>] [--no-default-yaml-prompt]"
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--no-default-yaml-prompt]"
   end
 
   @spec runtime_deps() :: deps()
   defp runtime_deps do
     %{
-      set_database_path: &set_database_path/1,
       set_logs_root: &set_logs_root/1,
       set_server_port_override: &set_server_port_override/1,
       ensure_all_started: &start_runtime_application/0
@@ -142,28 +139,6 @@ defmodule SymphonyElixir.CLI do
     :ok
   end
 
-  defp maybe_set_database_path(opts, deps) do
-    case Keyword.get_values(opts, :database_path) do
-      [] ->
-        :ok
-
-      values ->
-        database_path = values |> List.last() |> String.trim()
-
-        if database_path == "" do
-          {:error, usage_message()}
-        else
-          :ok = deps.set_database_path.(Path.expand(database_path))
-        end
-    end
-  end
-
-  defp set_database_path(database_path) do
-    config = Application.get_env(:symphony_elixir, SymphonyElixir.Repo, [])
-    Application.put_env(:symphony_elixir, SymphonyElixir.Repo, Keyword.put(config, :database, database_path))
-    :ok
-  end
-
   defp maybe_set_server_port(opts, deps) do
     case Keyword.get_values(opts, :port) do
       [] ->
@@ -191,7 +166,7 @@ defmodule SymphonyElixir.CLI do
         :ok
 
       {:error, reason} ->
-        {:error, "Failed to start Symphony: #{inspect(reason)}"}
+        {:error, "Failed to start Symphony: #{SymphonyElixir.DatabaseSetup.format_error(reason)}"}
     end
   end
 

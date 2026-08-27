@@ -4,39 +4,67 @@ genre: reference
 domain: [persistence, auth]
 status: current
 language: en
-updated: 2026-08-07
+updated: 2026-08-27
 owner: SymphonyElixir.Persistence
 ---
 
 # Persistence and Authentication
 
-Symphony uses local SQLite-backed persistence for runtime/configuration state and supports optional
-username/password authentication for the Phoenix control plane.
+Symphony uses PostgreSQL for runtime/configuration state and supports optional username/password
+authentication for the Phoenix control plane. SQLite is supported only as a frozen legacy import
+source during cutover; it is not a runtime backend.
 
-## SQLite
+## PostgreSQL
 
-The application uses `Ecto` with `ecto_sqlite3`.
-
-Default database path:
-
-```text
-symphony.db
-```
-
-Override the path:
+The application uses Ecto with `postgrex`. Every application, migration, release, and cutover
+command uses one required connection contract:
 
 ```bash
-export SYMPHONY_DATABASE_PATH=/path/to/symphony.db
+export DATABASE_URL='postgresql://symphony:password@127.0.0.1:5432/symphony'
+export SYMPHONY_DATABASE_POOL_SIZE=5
 ```
 
-Run migrations:
+`DATABASE_URL` must identify an existing database. Symphony does not create a PostgreSQL database
+or silently substitute a local file. A missing URL, unreachable server, or failed migration stops
+startup with an explicit database error.
+
+Run migrations before starting the service:
 
 ```bash
-cd elixir
-mise exec -- mix ecto.migrate
+mise exec -- mix symphony.migrate
 ```
 
-Reset local development data by stopping the service and removing the SQLite database file, then running migrations again.
+The local `bin/symphony` development command also applies pending migrations before starting the
+supervision tree. The Compose stack uses a one-shot release migration service and starts Symphony
+only after that service succeeds.
+
+## Durable Workflow Authority
+
+PostgreSQL owns projects, workflow versions, issues, runs, events, agent turns, workspaces, workers,
+sessions, tasks, leases, users, tracker configuration, and application settings. One active workflow
+version exists per enabled project.
+
+At cold start `WorkflowStore` loads the active workflows and atomically publishes a coherent
+in-memory snapshot. Normal runtime config, prompt, dashboard, diagnostics, and dispatch reads use
+only that snapshot; they do not query PostgreSQL. Explicit Settings mutations persist first and
+republish before returning success. A failed background refresh retains the last-known-good
+snapshot and reports the database error rather than presenting it as setup-required.
+
+If the migrated database is genuinely empty, Symphony starts in setup-required mode and does not
+poll Linear or schedule agents until Settings creates a project and active workflow. Checked-in
+`workflow.yml` and `profiles.yml` remain import/export artifacts, not runtime fallbacks.
+
+## Legacy SQLite Cutover
+
+The supported one-way path imports a stopped, backed-up legacy `symphony.db` into an already
+migrated, empty PostgreSQL database. It preserves IDs, foreign-key relationships, timestamps,
+JSON/map values, and active workflow versions, verifies every table count, and refuses a non-empty
+target or a source with live `-wal`/`-shm` sidecars.
+
+The complete maintenance-window, verification, switch, and rollback procedure is owned by
+[Compose and PostgreSQL Operations](compose.md#legacy-sqlite-cutover). The prior SQLite-capable
+application artifact and untouched backup are required for rollback; the new application cannot
+select SQLite at runtime.
 
 ## Authentication
 
@@ -70,61 +98,15 @@ The worker API uses its own protocol authentication. Registration requires
 `x-symphony-worker-id`, `x-symphony-worker-session`, and optionally
 `x-symphony-worker-protocol`.
 
-## Workflow Versions
-
-Workflow versions persist the complete workflow package contract:
-
-- parsed YAML config
-- prompt body
-- source
-- active flag
-
-Database-backed workflow loading supports explicit database mode:
-
-```elixir
-Application.put_env(:symphony_elixir, :workflow_source, :database)
-```
-
-The CLI starts in database workflow mode. If no active SQLite workflow exists, Symphony starts in
-setup-required mode and does not poll Linear or schedule agents until `/settings/workflow` creates
-the first active workflow. Local split package files (`workflow.yml` and `profiles.yml`) are import
-and export artifacts, not startup seed data. Use `--database-path <path>` or
-`SYMPHONY_DATABASE_PATH` to select a different SQLite database file.
-
-## Web UI
-
-The following browser pages are available when the Phoenix server is enabled:
-
-- `/`
-- `/runs`
-- `/workers`
-- `/settings`
-- `/settings/projects`
-- `/settings/workflow`
-- `/settings/agents`
-- `/settings/runtime`
-- `/diagnostics/linear`
-
-Settings is one tabbed page: Projects owns project-specific Linear project slug, repository URL,
-and default branch; Workflow owns shared workflow/runtime/bootstrap policy; shared read-only Linear
-discovery in Settings provides project/state candidates to both sections; Agents owns execution
-profiles and the shared base prompt; and Runtime shows tracker/config summary. Workflow and Agents
-each show their own version history in the UI: Workflow history lists workflow settings saves,
-while Agents history lists profile/prompt saves. Restoring a history row is section-scoped
-and writes a new complete active workflow version instead of directly activating an older complete
-package. Runtime reads the SQLite active workflow version; split
-`workflow.yml`/`profiles.yml` packages are import/export artifacts. See
-[Workflow 页面设计目标](workflow-page-design.md).
-
 ## Worker State
 
-SQLite also stores Panel-side worker state:
+PostgreSQL also stores Panel-side worker state:
 
-- workers and worker sessions
-- queued/running/completed/failed/cancelled tasks
-- active, expired, released, and cancelled task leases
-- worker task events
+- workers and worker sessions;
+- queued/running/completed/failed/cancelled tasks;
+- active, expired, released, and cancelled task leases;
+- worker task events.
 
 `SYMPHONY_EXECUTION_MODE=worker` makes the orchestrator enqueue worker tasks. The default
-`centralized` mode continues to run Codex from the Panel process and can still use SSH hosts from
-`worker.ssh_hosts` for remote centralized execution.
+`centralized` mode runs Codex from the Symphony process and can still use configured SSH hosts for
+remote centralized execution.

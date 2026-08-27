@@ -2,7 +2,7 @@ defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
   Publishes the active database workflow version for every enabled project.
 
-  SQLite is the durable authority, but runtime reads use one atomically replaced
+  PostgreSQL is the durable authority, but runtime reads use one atomically replaced
   in-memory snapshot. The owner process performs initial and explicit loads and
   coordinates one background refresh; callers never query persistence or wait
   for that work.

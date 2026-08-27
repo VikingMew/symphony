@@ -6,23 +6,9 @@ config :symphony_elixir, ecto_repos: [SymphonyElixir.Repo]
 
 config :symphony_elixir, :start_repo, config_env() != :test
 
-database_path =
-  System.get_env("SYMPHONY_DATABASE_PATH") ||
-    if config_env() == :test do
-      Path.join(System.tmp_dir!(), "symphony-elixir-test-config-#{System.unique_integer([:positive])}.db")
-    else
-      Path.expand("../symphony.db", __DIR__)
-    end
+config :symphony_elixir, SymphonyElixir.Repo, pool_size: 5
 
-config :symphony_elixir, SymphonyElixir.Repo,
-  database: database_path,
-  pool_size: String.to_integer(System.get_env("SYMPHONY_DATABASE_POOL_SIZE") || "5")
-
-config :symphony_elixir, :auth,
-  enabled: System.get_env("SYMPHONY_AUTH_ENABLED") in ["1", "true", "TRUE", "yes"],
-  username: System.get_env("SYMPHONY_ADMIN_USERNAME"),
-  password_hash: System.get_env("SYMPHONY_ADMIN_PASSWORD_HASH"),
-  password: System.get_env("SYMPHONY_ADMIN_PASSWORD")
+config :symphony_elixir, :auth, enabled: false
 
 config :symphony_elixir, SymphonyElixirWeb.Endpoint,
   adapter: Bandit.PhoenixAdapter,

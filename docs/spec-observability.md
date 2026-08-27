@@ -290,7 +290,7 @@ API design notes:
 
 - All endpoints remain behind the existing authenticated API pipeline.
 - Persisted history uses the configured persistence provider and normal Repo path; implementations
-  MUST NOT open the SQLite file directly.
+  MUST NOT query the durable database directly.
 - History reads run outside memory-backed snapshot owners and have a bounded wait. A blocked history
   request MUST NOT make `/api/v1/state` or workflow/config reads unavailable.
 - The JSON shapes above are the RECOMMENDED baseline for interoperability and debugging ergonomics.

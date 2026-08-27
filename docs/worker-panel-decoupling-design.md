@@ -19,7 +19,7 @@ design_status: landed
 - 管理 workflow 配置。
 - 启动本地 Codex 执行流程。
 - 提供 dashboard 和 API。
-- 写入 SQLite 运行历史。
+- 写入 PostgreSQL 运行历史。
 
 这个结构适合早期实现，但长期会把 Web 服务、数据库、调度和实际执行绑在同一个运行边界里。后续需要把系统拆成：
 
@@ -37,7 +37,7 @@ registration、task claim、heartbeat/lease、task event 上报、dashboard work
 - Panel 通过稳定 HTTP/JSON 协议和 worker 通信。
 - Panel 负责 worker identity、session、token、task、lease、heartbeat 和事件持久化。
 - Worker 只能完成自己持有有效 lease 的任务。
-- Panel 重启后可以从 SQLite 恢复 worker/task/lease 状态。
+- Panel 重启后可以从 PostgreSQL 恢复 worker/task/lease 状态。
 - Worker 崩溃或断网后，lease 可以过期并按 retry policy 重新排队。
 - Dashboard 可以展示 worker 在线状态、活跃 lease、任务队列、失败、取消和历史事件。
 - 长期支持集中式部署和 worker 部署两种模式；不会在 worker API 出现后立刻强制切换到 worker-only。
@@ -59,7 +59,7 @@ registration、task claim、heartbeat/lease、task event 上报、dashboard work
 Tracker / Web UI
       |
       v
-Panel: Phoenix + Ecto + SQLite
+Panel: Phoenix + Ecto + PostgreSQL
 ├── Project / Workflow / Tracker Config
 ├── Scheduler
 ├── Task Queue

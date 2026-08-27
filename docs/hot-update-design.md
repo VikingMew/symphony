@@ -18,7 +18,7 @@ Symphony 需要区分三种热更新：
 
 | 类型 | 当前状态 | 说明 |
 | --- | --- | --- |
-| Settings / workflow 配置热更新 | 已支持 | 通过 Web UI 保存新的 SQLite active workflow version，运行时重新读取配置，不需要重启进程。 |
+| Settings / workflow 配置热更新 | 已支持 | 通过 Web UI 保存新的 PostgreSQL active workflow version，运行时重新读取配置，不需要重启进程。 |
 | 开发期代码热更新 | 部分支持 | Elixir VM 支持加载新 beam；当前 `bin/symphony` 不是 Phoenix dev server，代码改动通常需要重启，或在 `iex -S mix` 中手动 `recompile()`。 |
 | 生产期 OTP release 热代码升级 | 未支持 | BEAM 支持 hot code upgrade，但本项目还没有 release upgrade、appup/relup、进程状态迁移和发布流程。当前生产策略应是重启式部署。 |
 
@@ -26,7 +26,7 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自 SQLite active workflow version。Settings 页面保存 Workflow 或 Agents 时，会写入新的 `workflow_versions` 记录并激活它。
+Symphony 的长期运行配置来自 PostgreSQL active workflow version。Settings 页面保存 Workflow 或 Agents 时，会写入新的 `workflow_versions` 记录并激活它。
 
 关键路径：
 
@@ -37,7 +37,7 @@ Symphony 的长期运行配置来自 SQLite active workflow version。Settings �
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。
 
-四个 `WorkflowStore` 读取 API 都只读取原子替换的内存 snapshot，不访问 SQLite，也不等待后台任务。
+四个 `WorkflowStore` 读取 API 都只读取原子替换的内存 snapshot，不访问 PostgreSQL，也不等待后台任务。
 
 这意味着以下改动可以不重启服务：
 
