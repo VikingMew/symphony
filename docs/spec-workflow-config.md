@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Workflow and Configuration Specification
@@ -39,12 +39,8 @@ Design note:
 - A package SHOULD be self-contained enough to recreate an active workflow version after import.
 - A package SHOULD NOT be edited in place as the runtime source of truth.
 
-Merge profile contract:
-
-- `merge.push` defaults to `false`. When disabled, the backend validates and completes the merge
-  locally without pushing the result to the configured remote base branch.
-- Reaching the merge success state (including `Done`) does not imply that the branch was pushed;
-  operators MUST set `merge.push: true` when the remote base branch must be updated.
+The default package contains refinement and implementation profiles only. There is no backend merge
+profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
 
 Parsing rules:
 
@@ -97,9 +93,22 @@ Fields:
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
 - `active_states` (list of strings)
-  - Default: `Refining`, `Ready`, `In Progress`, `Ready to Merge`, `Merging`
+  - Default: `Refining`, `Ready`, `In Progress`
 - `terminal_states` (list of strings)
   - Default: `Canceled`, `Cancelled`, `Duplicate`, `Done`
+
+Default workflow policy:
+
+- Executable routes: `Refining -> refinement`, `Ready -> implementation`, and
+  `In Progress -> implementation`.
+- Human-review states: `Needs Refinement Review` and `Ready to Merge`.
+- Codex transitions: `Refining -> Needs Refinement Review`, `Ready -> In Progress`, and
+  `In Progress -> Ready to Merge`.
+- Human change requests: `Needs Refinement Review -> Refining` and
+  `Ready to Merge -> In Progress`.
+- `Ready to Merge` MUST NOT appear in `tracker.active_states` or `workflow.states`.
+- `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
+  cancellation terminal states.
 
 #### 5.3.2 `polling` (object)
 
@@ -313,7 +322,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
   the Project settings record (each enabled project names its own Linear project slug)
-- `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]`
+- `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`

@@ -44,8 +44,8 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
   test "normalizes atom-keyed input without dynamic atom conversion" do
     workflow = %{
       states: %{Ready: %{profile: "implementation"}},
-      human_review_states: ["In Review"],
-      allowed_transitions: [%{from: "Ready", to: "In Review", actor: "codex", profile: "implementation"}]
+      human_review_states: ["Ready to Merge"],
+      allowed_transitions: [%{from: "Ready", to: "Ready to Merge", actor: "codex", profile: "implementation"}]
     }
 
     assert WorkflowContract.workflow_errors(workflow, %{}, tracker()) == []
@@ -53,11 +53,11 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
 
   test "computes known workflow states from workflow and tracker settings" do
     states =
-      %{states: %{Ready: %{profile: "implementation"}}, human_review_states: ["In Review"]}
+      %{states: %{Ready: %{profile: "implementation"}}, human_review_states: ["Ready to Merge"]}
       |> WorkflowContract.known_states(tracker(terminal_states: ["Done"]))
 
     assert MapSet.member?(states, Schema.normalize_issue_state("Ready"))
-    assert MapSet.member?(states, Schema.normalize_issue_state("In Review"))
+    assert MapSet.member?(states, Schema.normalize_issue_state("Ready to Merge"))
     assert MapSet.member?(states, Schema.normalize_issue_state("Done"))
   end
 

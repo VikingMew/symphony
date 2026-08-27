@@ -55,7 +55,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Ready to Merge", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"}
                   ]
                 }
@@ -701,7 +701,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
       kind: linear
       endpoint: "https://api.linear.app/graphql"
       project_slug: "project"
-      active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+      active_states: ["Refining", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
@@ -730,13 +730,11 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
           profile: implementation
         In Progress:
           profile: implementation
-        Ready to Merge:
-          profile: merge
-        Merging:
-          profile: merge
-      human_review_states: ["Needs Refinement Review", "In Review"]
+      human_review_states: ["Needs Refinement Review", "Ready to Merge"]
       allowed_transitions:
         - {from: Ready, to: In Progress, actor: codex, profile: implementation}
+        - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
+        - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
       tool_policy:
         linear:
           exposed_tools: ["linear_task_read", "linear_task_update"]
@@ -751,12 +749,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
         name: "Implementation"
         executor: {type: codex_agent}
         prompt: {mode: extend, template: "Implement the task."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "In Review"]}
-      merge:
-        name: "Merge"
-        executor: {type: codex_agent}
-        prompt: {mode: extend, template: "Merge the task."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["Merging", "Done"]}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "Ready to Merge"]}
     ---
 
     Imported workflow prompt.

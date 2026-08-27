@@ -72,9 +72,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                           %{"name" => "Needs Refinement Review"},
                           %{"name" => "Ready"},
                           %{"name" => "In Progress"},
-                          %{"name" => "In Review"},
                           %{"name" => "Ready to Merge"},
-                          %{"name" => "Merging"},
                           %{"name" => "Done"},
                           %{"name" => "Cancelled"},
                           %{"name" => "Canceled"},
@@ -127,7 +125,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Ready to Merge", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"},
                     %{"id" => "state-canceled", "name" => "Canceled", "type" => "canceled"}
                   ]
@@ -304,7 +302,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       endpoint: "https://api.linear.app/graphql"
       api_key: "token"
       project_slug: "stale-workflow-project"
-      active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+      active_states: ["Refining", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
@@ -403,8 +401,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                           %{"name" => "Needs Refinement Review"},
                           %{"name" => "Ready"},
                           %{"name" => "In Progress"},
-                          %{"name" => "Ready to Merge"},
-                          %{"name" => "Merging"},
                           %{"name" => "Done"},
                           %{"name" => "Canceled"},
                           %{"name" => "Duplicate"}
@@ -428,10 +424,10 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert html =~ "Settings validation checks local structure"
     assert html =~ "Cancelled"
     assert html =~ "Referenced by Terminal states"
-    assert html =~ "In Review"
+    assert html =~ "Ready to Merge"
     assert html =~ "Referenced by Human review states"
     assert html =~ "Profile implementation target states"
-    assert html =~ "Allowed transition In Progress -&gt; In Review"
+    assert html =~ "Allowed transition In Progress -&gt; Ready to Merge"
     assert html =~ "Open Workflow Settings"
     assert html =~ "Canceled"
     assert html =~ "Needs Refinement Review"
@@ -505,7 +501,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert "Ready" in discovery.states
     assert "In Progress" in discovery.suggestions.active_states
     assert "Done" in discovery.suggestions.terminal_states
-    assert "In Review" in discovery.suggestions.review_states
+    assert "Ready to Merge" in discovery.suggestions.review_states
   end
 
   test "linear discovery fetches workflow states with separate per-team queries" do

@@ -2,7 +2,7 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Codex.LinearToolAudit
-  alias SymphonyElixir.{MergeExecutor, PersistenceEventWriter}
+  alias SymphonyElixir.PersistenceEventWriter
 
   defmodule RepoUnavailablePersistence do
     def record_event(_attrs), do: {:error, :repo_unavailable}
@@ -76,27 +76,6 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
     refute log =~ "outcome=:ok"
   end
 
-  test "agent phase telemetry continues with a visible degraded outcome when persistence raises" do
-    workspace_root = temporary_path("agent-runner")
-    write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
-    put_persistence(RaisingPersistence)
-
-    issue = %Issue{
-      id: "issue-agent-audit",
-      identifier: "MT-AGENT-AUDIT",
-      state: "Ready to Merge",
-      branch_name: "feature/mt-agent-audit"
-    }
-
-    log =
-      capture_log(fn ->
-        assert :ok = AgentRunner.run(issue, nil, merge_executor: fn _workspace, _issue, _opts -> :ok end)
-      end)
-
-    assert log =~ "Run phase persistence degraded action=continue_degraded"
-    assert log =~ "outcome={:degraded, {:exception, %RuntimeError{message: \"record_event exploded\"}"
-  end
-
   test "workspace hook telemetry continues with a visible degraded outcome when persistence raises" do
     workspace_root = temporary_path("workspace")
 
@@ -115,33 +94,6 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
 
     assert log =~ "Workspace event persistence degraded action=continue_degraded"
     assert log =~ "issue_id=issue-workspace-audit issue_identifier=MT-WORKSPACE-AUDIT"
-    assert log =~ "outcome={:degraded, {:exception, %RuntimeError{message: \"record_event exploded\"}"
-  end
-
-  test "merge phase telemetry continues with a visible degraded outcome when persistence raises" do
-    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@example.com:org/repo.git")
-    put_persistence(RaisingPersistence)
-
-    issue = %Issue{
-      id: "issue-merge-audit",
-      identifier: "MT-MERGE-AUDIT",
-      state: "Ready to Merge",
-      branch_name: "feature/mt-merge-audit"
-    }
-
-    runner = fn _workspace, args, _timeout_ms -> merge_command_result(args) end
-
-    log =
-      capture_log(fn ->
-        assert :ok =
-                 MergeExecutor.run("/tmp/workspace", issue,
-                   git_opts: [runner: runner],
-                   merge_state_transitioner: fn _issue, _target_state -> :ok end
-                 )
-      end)
-
-    assert log =~ "Merge phase persistence degraded action=continue_degraded"
-    assert log =~ "issue_id=\"issue-merge-audit\" issue_identifier=\"MT-MERGE-AUDIT\""
     assert log =~ "outcome={:degraded, {:exception, %RuntimeError{message: \"record_event exploded\"}"
   end
 
@@ -190,12 +142,4 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
     on_exit(fn -> File.rm_rf(path) end)
     path
   end
-
-  defp merge_command_result(["ls-remote", "--heads", "origin", branch]) when branch in ["feature/mt-merge-audit", "main"] do
-    {"abc refs/heads/#{branch}\n", 0}
-  end
-
-  defp merge_command_result(["fetch", "origin", branch]) when branch in ["feature/mt-merge-audit", "main"], do: {"", 0}
-  defp merge_command_result(["checkout", "--detach", "origin/main"]), do: {"", 0}
-  defp merge_command_result(["merge", "--no-edit", "origin/feature/mt-merge-audit"]), do: {"merged", 0}
 end

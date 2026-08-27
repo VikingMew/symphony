@@ -623,7 +623,11 @@ defmodule SymphonyElixir.Workspace do
         :ok
 
       command ->
-        Remote.run_command(worker_host, Remote.before_remove_script(workspace, command), Config.settings!().hooks.timeout_ms)
+        Remote.run_command(
+          worker_host,
+          Remote.before_remove_script(workspace, command),
+          Config.settings!().hooks.timeout_ms
+        )
         |> case do
           {:ok, {output, status}} ->
             handle_hook_command_result(

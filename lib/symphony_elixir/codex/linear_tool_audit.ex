@@ -93,7 +93,20 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp normalize_success_result(%{} = output) do
     output
-    |> Map.take(["id", "identifier", "title", "url", "state", "issue_update", "comment_update", "reference_links", "requested_state", "issue", "workflow"])
+    |> Map.take([
+      "id",
+      "identifier",
+      "title",
+      "url",
+      "state",
+      "issue_update",
+      "comment_update",
+      "reference_links",
+      "requested_state",
+      "handoff",
+      "issue",
+      "workflow"
+    ])
     |> Redaction.payload(500)
   end
 

@@ -270,7 +270,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         "linear_task_update",
         %{
           "comment" => "Ready for review",
-          "target_state" => "In Review",
+          "target_state" => "Ready to Merge",
           "result" => %{"tests" => "green"}
         },
         task_updater: fn payload ->
@@ -282,7 +282,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert_received {:task_updater_called,
                      %{
                        "comment" => "Ready for review",
-                       "target_state" => "In Review",
+                       "target_state" => "Ready to Merge",
                        "result" => %{"tests" => "green"}
                      }}
 

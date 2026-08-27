@@ -3,9 +3,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.{BranchName, Config, Git, Linear.Client, Linear.Issue}
-  alias SymphonyElixir.Codex.{LinearToolAudit}
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
+  alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Config
+  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.Linear.Issue
 
   @task_read_query """
   query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
@@ -250,9 +252,10 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp execute_issue_create(arguments, opts) do
-    with {:ok, result} <- IssueCreate.execute(arguments, opts) do
-      success_response(result)
-    else
+    case IssueCreate.execute(arguments, opts) do
+      {:ok, result} ->
+        success_response(result)
+
       {:error, reason} ->
         failure_response(tool_error_payload(@issue_create_tool, reason))
     end
@@ -302,8 +305,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp default_task_updater(payload, opts) do
     with {:ok, issue_id} <- issue_id_from_opts(opts),
          {:ok, profile} <- profile_from_opts(opts),
-         :ok <- validate_update_policy(payload, profile, opts),
-         {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
+         :ok <- validate_update_policy(payload, profile) do
+      if implementation_completion_request?(payload, profile) do
+        complete_implementation_handoff(issue_id, payload, opts)
+      else
+        perform_regular_task_update(issue_id, payload, opts)
+      end
+    end
+  catch
+    {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp perform_regular_task_update(issue_id, payload, opts) do
+    with {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
          {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
          {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts) do
       {:ok,
@@ -314,8 +328,30 @@ defmodule SymphonyElixir.Codex.DynamicTool do
          "requested_state" => Map.get(payload, "target_state")
        }}
     end
-  catch
-    {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp complete_implementation_handoff(issue_id, payload, opts) do
+    with {:ok, issue} <- issue_from_opts(opts),
+         {:ok, handoff} <- prepare_implementation_handoff(issue, opts) do
+      payload = put_handoff_reference(payload, handoff)
+
+      result =
+        with {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
+             {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts),
+             {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts) do
+          {:ok,
+           %{
+             "issue_update" => issue_update,
+             "comment_update" => comment_update,
+             "reference_links" => reference_links,
+             "requested_state" => Map.get(payload, "target_state"),
+             "handoff" => handoff
+           }}
+        end
+
+      observe_implementation_handoff(result, issue, handoff, opts)
+      result
+    end
   end
 
   defp issue_id_from_opts(opts) do
@@ -334,39 +370,17 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp validate_update_policy(payload, profile, opts) do
+  defp validate_update_policy(payload, profile) do
     policy = Config.workflow_allowed_updates(profile)
 
-    with :ok <- Policy.validate_update_policy(payload, policy, profile) do
-      validate_implementation_branch_pushed(payload, profile, opts)
-    end
+    Policy.validate_update_policy(payload, policy, profile)
   end
 
-  defp validate_implementation_branch_pushed(%{"target_state" => target_state}, "implementation", opts)
-       when is_binary(target_state) do
-    if Policy.implementation_completion_target?(target_state) and project_repository_configured?() do
-      with {:ok, %Issue{branch_name: branch_name}} <- issue_from_opts(opts),
-           {:ok, branch} <- BranchName.validate(branch_name),
-           {:ok, workspace} <- workspace_from_opts(opts),
-           {:ok, true} <- remote_branch_exists?(workspace, branch, opts) do
-        :ok
-      else
-        {:ok, false} -> {:error, {:linear_branch_not_pushed, branch_name_from_opts(opts)}}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      :ok
-    end
+  defp implementation_completion_request?(%{"target_state" => target_state}, "implementation") do
+    Policy.implementation_completion_target?(target_state)
   end
 
-  defp validate_implementation_branch_pushed(_payload, _profile, _opts), do: :ok
-
-  defp project_repository_configured? do
-    case Config.settings!().project.repository_url do
-      repository_url when is_binary(repository_url) and repository_url != "" -> true
-      _ -> false
-    end
-  end
+  defp implementation_completion_request?(_payload, _profile), do: false
 
   defp issue_from_opts(opts) do
     case Keyword.get(opts, :issue) do
@@ -375,28 +389,32 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp branch_name_from_opts(opts) do
-    case Keyword.get(opts, :issue) do
-      %Issue{branch_name: branch_name} -> branch_name
-      _ -> nil
+  defp prepare_implementation_handoff(issue, opts) do
+    case Keyword.get(opts, :implementation_handoff_preparer) do
+      preparer when is_function(preparer, 2) -> preparer.(issue, opts)
+      _ -> {:error, :implementation_handoff_unavailable}
     end
   end
 
-  defp workspace_from_opts(opts) do
-    case Keyword.get(opts, :workspace) do
-      workspace when is_binary(workspace) and workspace != "" -> {:ok, workspace}
-      _ -> {:error, :workspace_context_unavailable}
+  defp observe_implementation_handoff(result, issue, handoff, opts) do
+    case Keyword.get(opts, :implementation_handoff_observer) do
+      observer when is_function(observer, 4) ->
+        observer.(handoff_status(result), issue, handoff_details(result, handoff), opts)
+
+      _ ->
+        :ok
     end
   end
 
-  defp remote_branch_exists?(workspace, branch, opts) do
-    checker = Keyword.get(opts, :branch_remote_checker)
+  defp handoff_status({:ok, _result}), do: :completed
+  defp handoff_status({:error, _reason}), do: :failed
 
-    if is_function(checker, 2) do
-      checker.(workspace, branch)
-    else
-      Git.remote_branch_exists?(workspace, branch)
-    end
+  defp handoff_details({:ok, _result}, handoff), do: handoff
+  defp handoff_details({:error, reason}, handoff), do: Map.put(handoff, :reason, inspect(reason))
+
+  defp put_handoff_reference(payload, handoff) do
+    references = Map.get(payload, "references", %{})
+    Map.put(payload, "references", Map.put(references, "pr_url", Map.fetch!(handoff, :url)))
   end
 
   defp maybe_update_issue(issue_id, payload, opts) do
@@ -408,7 +426,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if map_size(issue_input) == 0 do
       {:ok, nil}
     else
-      graphql(opts, @issue_update_mutation, %{"id" => issue_id, "input" => issue_input})
+      case graphql(opts, @issue_update_mutation, %{"id" => issue_id, "input" => issue_input}) do
+        {:ok, %{"data" => %{"issueUpdate" => %{"success" => true} = update}}} ->
+          {:ok, update}
+
+        {:ok, %{"errors" => errors}} ->
+          {:error, {:linear_issue_update_failed, errors}}
+
+        {:ok, response} ->
+          {:error, {:linear_issue_update_failed, response}}
+
+        {:error, reason} ->
+          {:error, {:linear_issue_update_failed, reason}}
+      end
     end
   end
 
@@ -452,11 +482,24 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         if String.trim(body) == "" do
           {:ok, nil}
         else
-          graphql(opts, @comment_create_mutation, %{"issueId" => issue_id, "body" => body})
+          create_comment(issue_id, body, opts)
         end
 
       _ ->
         {:ok, nil}
+    end
+  end
+
+  defp create_comment(issue_id, body, opts) do
+    case graphql(opts, @comment_create_mutation, %{"issueId" => issue_id, "body" => body}) do
+      {:ok, %{"data" => %{"commentCreate" => %{"success" => true} = comment}}} ->
+        {:ok, comment}
+
+      {:ok, response} ->
+        {:error, {:linear_comment_create_failed, response}}
+
+      {:error, reason} ->
+        {:error, {:linear_comment_create_failed, reason}}
     end
   end
 

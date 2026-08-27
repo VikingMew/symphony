@@ -4,7 +4,7 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Symphony 用户运行指南
@@ -127,6 +127,17 @@ mise exec -- mix build
 export LINEAR_API_KEY="你的 Linear Personal API Key"
 ```
 
+实现交付还需要 Symphony runtime user 的 GitHub 认证。优先让 service environment 中的 `gh`
+已登录；也可以设置 REST fallback token：
+
+```bash
+export GH_TOKEN="你的 GitHub token"
+# 或 export GITHUB_TOKEN="你的 GitHub token"
+```
+
+不要把 GitHub token 写进 workflow。中心化 SSH execution 时，worker 仍需单独具备 feature branch
+push auth；初次 PR lookup/create 由 Symphony service 完成。
+
 可选：配置 SQLite 数据库位置。
 
 ```bash
@@ -207,11 +218,12 @@ workflow:
       profile: implementation
     In Progress:
       profile: implementation
-    Ready to Merge:
-      profile: merge
-    Merging:
-      profile: merge
-  human_review_states: ["Needs Refinement Review", "In Review"]
+  human_review_states: ["Needs Refinement Review", "Ready to Merge"]
+  allowed_transitions:
+    - {from: Refining, to: Needs Refinement Review, actor: codex, profile: refinement}
+    - {from: Ready, to: In Progress, actor: codex, profile: implementation}
+    - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
+    - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
   tool_policy:
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]
@@ -249,23 +261,14 @@ profiles:
     prompt:
       mode: extend
       template: |
-        Implement, test, verify, and prepare the work for human review.
+        Implement, test, verify, commit, and push the exact Linear branch. Submit the final
+        comment/result/references and explicitly request Ready to Merge. Symphony owns initial
+        PR creation.
     allowed_updates:
       description: false
       comment: true
       result: true
-      target_states: ["In Progress", "In Review"]
-  merge:
-    name: "Merge"
-    executor:
-      type: manual
-    prompt:
-      mode: disabled
-    allowed_updates:
-      description: false
-      comment: true
-      result: true
-      target_states: ["Done"]
+      target_states: ["In Progress", "Ready to Merge"]
 ```
 
 `workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。默认
@@ -358,21 +361,43 @@ Backlog
   -> Needs Refinement Review
   -> Ready
   -> In Progress
-  -> In Review
   -> Ready to Merge
-  -> Merging
   -> Done
 ```
 
-其中 `Refining`、`Ready`、`In Progress`、`Ready to Merge`、`Merging` 是可调度状态，会放进
-`tracker.active_states`，并通过 `workflow.states.<state>.profile` 指定对应 profile。`Needs
-Refinement Review` 和 `In Review` 是人工确认状态，不应放进 active states。
-`Done`、`Canceled` 和 `Duplicate` 是终态。
+其中只有 `Refining`、`Ready`、`In Progress` 是可调度状态，会放进 `tracker.active_states` 并通过
+`workflow.states.<state>.profile` 路由。`Needs Refinement Review` 和 `Ready to Merge` 是人工等待
+状态，不进入 active states，也没有 executable route。`Done` 是唯一成功终态；`Canceled`、
+`Cancelled` 和 `Duplicate` 是取消终态。
+
+实现完成不是普通 Codex turn exit。Codex 完成 validation、commit、push 精确 Linear
+`branchName` 后，必须提交 final comment/result/references 并显式请求 `Ready to Merge`。Symphony
+随后校验 repository/default/head，复用或创建 open GitHub PR，记录 PR URL，最后才更新 Linear。
+GitHub/PR/auth 失败会让 issue 保持 `In Progress`。人要求修改时使用
+`Ready to Merge -> In Progress`；Codex 更新同一 branch/PR，再次验证并请求 handoff。人 merge PR
+后，由 Linear GitHub automation 把 issue 移到 `Done`。
 
 Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、
 也不应拿到 Linear API Key 或 raw GraphQL；Symphony 后端负责持有凭据，并按 workflow profile
 限制可更新字段和可流转状态。每次状态动作前都应先读取 task detail 和 comments，因为人工打回
 通常通过评论说明新的要求。
+
+### PR-first 安全 rollout 顺序
+
+对每个 enabled project 和涉及的 Linear team，按下面顺序切换；不要只编辑 checked-in YAML：
+
+1. 在每个 Linear team 配置 PR merged automation，把 linked issue 移到 `Done`；同时确认任何
+   PR-open automation 不会在 Symphony handoff 后覆盖 `Ready to Merge`。
+2. 让实际 Symphony runtime user 能使用已认证的 `gh`，或提供 `GH_TOKEN` / `GITHUB_TOKEN` 给
+   REST fallback。使用 SSH execution 时，worker 还必须保留 branch-push auth。
+3. 部署新代码，并为每个 enabled project 创建、校验、应用 trimmed SQLite active workflow
+   version。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们不会修改运行时。
+4. 手工处理仍处于退休状态 `In Review`、`Merging`、`Merged` 的运行中 issue，并确认没有 live
+   issue 依赖旧 route。
+5. live issue 清理完成后，才在每个相关 Linear team archive `In Review`、`Merging`、`Merged`。
+
+只有所有相关 team 都启用 merged-to-`Done` automation，并在 live cleanup 后完成退休 state
+archive，rollout 才算 operationally closed。
 
 ## 8. 启动 Symphony
 

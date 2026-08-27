@@ -24,14 +24,16 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
   def validate_update_policy(payload, policy, profile) do
     with :ok <- validate_required_allow_true(payload, policy, profile, "description"),
          :ok <- validate_required_allow_true(payload, policy, profile, "result"),
-         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment") do
-      validate_target_state_allowed(payload, policy, profile)
+         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment"),
+         :ok <- validate_target_state_allowed(payload, policy, profile) do
+      validate_implementation_completion_payload(payload, profile)
     end
   end
 
   @spec implementation_completion_target?(String.t()) :: boolean()
   def implementation_completion_target?(target_state) when is_binary(target_state) do
-    SymphonyElixir.StateName.normalize(target_state) != SymphonyElixir.StateName.normalize("In Progress")
+    SymphonyElixir.StateName.normalize(target_state) ==
+      SymphonyElixir.StateName.normalize("Ready to Merge")
   end
 
   @spec reference_link_candidates(map()) :: [map()]
@@ -70,6 +72,33 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
       {:error, {:target_state_not_allowed, target_state, profile, allowed}}
     end
   end
+
+  defp validate_implementation_completion_payload(
+         %{"target_state" => target_state} = payload,
+         "implementation"
+       ) do
+    if implementation_completion_target?(target_state) do
+      required_fields = ["comment", "result", "references"]
+
+      case Enum.find(required_fields, &missing_completion_field?(payload, &1)) do
+        nil -> :ok
+        field -> {:error, {:implementation_handoff_field_required, field}}
+      end
+    else
+      :ok
+    end
+  end
+
+  defp validate_implementation_completion_payload(_payload, _profile), do: :ok
+
+  defp missing_completion_field?(payload, "comment") do
+    case Map.get(payload, "comment") do
+      value when is_binary(value) -> String.trim(value) == ""
+      _ -> true
+    end
+  end
+
+  defp missing_completion_field?(payload, field), do: not is_map(Map.get(payload, field))
 
   defp put_optional_string(payload, arguments, field) do
     case SymphonyElixir.Payload.get_any(arguments, [field, argument_key(field)]) do

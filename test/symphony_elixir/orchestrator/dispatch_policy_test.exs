@@ -48,7 +48,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
 
     settings =
       dispatch_settings(
-        active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
+        active_states: ["Refining", "Ready", "In Progress"],
         listening_mode: :listening_refine_only,
         refinement_states: ["Refining"]
       )
@@ -57,7 +57,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
     refute DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings)
     refute DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings)
     refute DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("merging", "Merging"), state, settings)
   end
 
   defp issue(id, state, attrs \\ []) do

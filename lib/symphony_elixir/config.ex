@@ -217,9 +217,6 @@ defmodule SymphonyElixir.Config do
 
       {:query_failed, query_reason} ->
         "Runtime configuration unavailable: database query failed: #{inspect(query_reason)}"
-
-      other ->
-        "Runtime configuration unavailable: #{inspect(other)}"
     end
   end
 end

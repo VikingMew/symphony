@@ -122,7 +122,9 @@ defmodule SymphonyElixir.Codex.ToolRequestHandler do
   defp reply_with_non_interactive_tool_input_answer(id, params) do
     case tool_request_user_input_unavailable_answers(params) do
       {:ok, answers} ->
-        {:reply, %{"id" => id, "result" => %{"answers" => answers}}, :tool_input_auto_answered, %{answer: @non_interactive_tool_input_answer}}
+        result = %{"id" => id, "result" => %{"answers" => answers}}
+        metadata = %{answer: @non_interactive_tool_input_answer}
+        {:reply, result, :tool_input_auto_answered, metadata}
 
       :error ->
         :input_required

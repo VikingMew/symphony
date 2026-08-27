@@ -5,7 +5,7 @@ domain: [spec, linear-integration]
 status: current
 language: en
 owner: SymphonyElixir.Linear
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Issue Tracker Integration Specification
@@ -77,15 +77,17 @@ Orchestrator behavior on tracker errors:
 - Running-state refresh failure: log and keep active workers running.
 - Startup terminal cleanup failure: log warning and continue startup.
 
-### 11.5 Tracker Writes (Important Boundary)
+### 11.5 Tracker Writes and Implementation Handoff
 
-Symphony does not require first-class tracker write APIs in the orchestrator.
-
-- Ticket mutations (state transitions, comments, PR metadata) are typically handled by the coding
-  agent using tools defined by the workflow prompt.
-- The service remains a scheduler/runner and tracker reader.
-- Workflow-specific success often means "reached the next handoff state" (for example
-  `Needs Implementation Review`) rather than tracker terminal state `Done`.
-- If the `linear_graphql` client-side tool extension is implemented, it is still part of the agent
-  toolchain rather than orchestrator business logic.
-
+- Codex requests task-scoped mutations through the restricted `linear_task_update` tool; raw Linear
+  GraphQL is not exposed to the agent.
+- The default implementation completion target is exactly `Ready to Merge` and requires a final
+  comment, structured result, and references.
+- `AgentRunner` MUST ensure the exact GitHub repository/base/head PR is open before the tool attaches
+  references, posts the comment, or moves Linear. The Linear state update is last.
+- PR failure leaves the issue in `In Progress`. Linear write failure after PR creation is typed and
+  visible so a retry can reuse the already-open PR.
+- `Ready to Merge` is a waiting state. Symphony performs no `Ready to Merge -> Done` write; Linear's
+  GitHub merged-PR automation owns successful completion.
+- Human change requests move `Ready to Merge -> In Progress`; Codex updates the same branch/PR and
+  explicitly requests `Ready to Merge` again after validation.

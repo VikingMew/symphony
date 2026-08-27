@@ -1,9 +1,9 @@
 defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
-  alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
 
   defmodule MultiProjectLinearClient do
     def fetch_issues_by_states(_states), do: {:ok, []}

@@ -41,10 +41,14 @@ The default workflow is intentionally gated by human review states:
 
 ```text
 Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
-  -> In Review -> Ready to Merge -> Merging -> Done
+  -> Ready to Merge -> Done
 ```
 
-Agent-work states are active. Human-review states are intentionally not dispatched until a person moves the issue forward.
+`Refining`, `Ready`, and `In Progress` are agent-work states. `Needs Refinement Review` and
+`Ready to Merge` are human-review states and are never dispatched. Implementation completion is
+explicit: after Codex validates, commits, and pushes the exact Linear branch, Symphony finds or
+opens the GitHub PR and only then moves the issue to `Ready to Merge`. A human merges on GitHub;
+Linear's GitHub automation owns the final move to `Done`.
 
 ## Core Concepts
 
@@ -52,7 +56,7 @@ Agent-work states are active. Human-review states are intentionally not dispatch
 | --- | --- |
 | Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
 | Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One active workflow version exists per enabled project. |
-| Agent profile | A stage-specific prompt and update policy, such as refinement, implementation, or merge. |
+| Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
 | Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, and agent turns. Runs, issues, events, and worker tasks carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
 | Worker mode | Optional HTTP task-queue mode where external workers claim tasks through `/api/worker/v1/*`. |
@@ -125,6 +129,7 @@ Common environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `LINEAR_API_KEY` | Linear API access. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub REST fallback for PR lookup/creation when authenticated `gh` is unavailable. |
 | `LINEAR_ASSIGNEE` | Optional default Linear assignee. |
 | `SYMPHONY_DATABASE_PATH` | Default SQLite location when `--database-path` is not passed. |
 | `SYMPHONY_AUTH_ENABLED` | Enables username/password auth for the web UI/API. |
@@ -134,6 +139,11 @@ Common environment variables:
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used for Linear/Codex subprocess network access. |
 | `SYMPHONY_TRUST_X_FORWARDED_HEADERS=true` | Trust reverse-proxy forwarded scheme/host/prefix headers. |
 | `SYMPHONY_PUBLIC_URL` | Optional fixed public base URL behind a proxy. |
+
+The centralized service checks `gh` in its own runtime `PATH`; an interactive shell installation
+does not prove the service can use it. SSH workers still need branch-push credentials on the worker,
+while PR lookup/creation runs at the Symphony service boundary and does not require the remote
+workspace path to exist locally.
 
 ## Operating Modes
 

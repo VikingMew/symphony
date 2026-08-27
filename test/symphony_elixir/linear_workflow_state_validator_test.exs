@@ -19,7 +19,6 @@ defmodule SymphonyElixir.LinearWorkflowStateValidatorTest do
         "Refining",
         "Ready",
         "In Progress",
-        "Ready to Merge",
         "Done",
         "Canceled",
         "Cancelled",
@@ -27,8 +26,8 @@ defmodule SymphonyElixir.LinearWorkflowStateValidatorTest do
       ])
 
     assert result.status == :error
-    assert "Merging" in result.missing.active_states
     assert "Needs Refinement Review" in result.missing.human_review_states
+    assert "Ready to Merge" in result.missing.human_review_states
     assert %{profile: "refinement", states: ["Needs Refinement Review"]} in result.missing.profile_target_states
     assert Enum.any?(result.missing.transitions, &("Needs Refinement Review" in &1.missing))
   end
@@ -36,30 +35,26 @@ defmodule SymphonyElixir.LinearWorkflowStateValidatorTest do
   defp settings do
     %{
       tracker: %{
-        active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
+        active_states: ["Refining", "Ready", "In Progress"],
         terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
       },
       workflow: %{
         "states" => %{
           "Refining" => %{"profile" => "refinement"},
           "Ready" => %{"profile" => "implementation"},
-          "In Progress" => %{"profile" => "implementation"},
-          "Ready to Merge" => %{"profile" => "merge"},
-          "Merging" => %{"profile" => "merge"}
+          "In Progress" => %{"profile" => "implementation"}
         },
-        "human_review_states" => ["Needs Refinement Review", "In Review"],
+        "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
         "allowed_transitions" => [
           %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
           %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
-          %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
-          %{"from" => "Ready to Merge", "to" => "Merging", "actor" => "codex", "profile" => "merge"},
-          %{"from" => "Merging", "to" => "Done", "actor" => "codex", "profile" => "merge"}
+          %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
+          %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
         ]
       },
       profiles: %{
         "refinement" => %{"allowed_updates" => %{"target_states" => ["Needs Refinement Review"]}},
-        "implementation" => %{"allowed_updates" => %{"target_states" => ["In Progress", "In Review"]}},
-        "merge" => %{"allowed_updates" => %{"target_states" => ["Merging", "Done"]}}
+        "implementation" => %{"allowed_updates" => %{"target_states" => ["In Progress", "Ready to Merge"]}}
       }
     }
   end

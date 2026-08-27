@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Orchestration Specification
@@ -143,6 +143,11 @@ An issue is dispatch-eligible only if all are true:
 - Per-state concurrency slots are available.
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
+
+The default active states are `Refining`, `Ready`, and `In Progress`. The human-review states
+`Needs Refinement Review` and `Ready to Merge` are deliberately absent from `active_states` and
+MUST NOT have executable routes. In particular, no orchestrator path transitions `Ready to Merge`
+to `Done`; GitHub review plus Linear automation owns that transition.
 
 Sorting order (stable intent):
 
@@ -323,4 +328,3 @@ Invariant 3: Workspace key is sanitized.
 
 - Only `[A-Za-z0-9._-]` allowed in workspace directory names.
 - Replace all other characters with `_`.
-

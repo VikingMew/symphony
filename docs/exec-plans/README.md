@@ -263,7 +263,8 @@ Plans should focus on product and engineering intent rather than full implementa
 
 ## Active Plans
 
-(No active plans.)
+255. [255-github-pr-implementation-handoff.md](active/255-github-pr-implementation-handoff.md)
+256. [256-retire-backend-merge-trim-workflow.md](active/256-retire-backend-merge-trim-workflow.md)
 
 ## Intentional Numbering Gaps
 

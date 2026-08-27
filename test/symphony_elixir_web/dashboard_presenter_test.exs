@@ -10,7 +10,8 @@ defmodule SymphonyElixirWeb.DashboardPresenterTest do
     assert DashboardPresenter.format_runtime_seconds(65) == "1m 5s"
     assert DashboardPresenter.format_runtime_and_turns(started_at, 3, now) == "1m 5s / 3"
     assert DashboardPresenter.format_runtime_and_turns(DateTime.to_iso8601(started_at), nil, now) == "1m 5s"
-    assert DashboardPresenter.total_runtime_seconds(%{codex_totals: %{seconds_running: 30}, running: [%{started_at: started_at}]}, now) == 95
+    snapshot = %{codex_totals: %{seconds_running: 30}, running: [%{started_at: started_at}]}
+    assert DashboardPresenter.total_runtime_seconds(snapshot, now) == 95
     assert DashboardPresenter.format_int(1_234_567) == "1,234,567"
     assert DashboardPresenter.format_int(nil) == "n/a"
     assert DashboardPresenter.format_time(now) == "2026-05-21T10:01:05Z"

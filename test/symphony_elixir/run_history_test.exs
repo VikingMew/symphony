@@ -293,7 +293,7 @@ defmodule SymphonyElixir.RunHistoryTest do
               "params" => %{
                 "rateLimits" => %{
                   "primary" => %{"usedPercent" => 6, "windowDurationMins" => 300},
-                  "secondary" => %{"usedPercent" => 61, "windowDurationMins" => 10080}
+                  "secondary" => %{"usedPercent" => 61, "windowDurationMins" => 10_080}
                 }
               }
             }
@@ -400,7 +400,7 @@ defmodule SymphonyElixir.RunHistoryTest do
         },
         %{
           event_type: "linear.state_transition",
-          payload: %{"from_state" => "In Progress", "to_state" => "In Review"},
+          payload: %{"from_state" => "In Progress", "to_state" => "Ready to Merge"},
           occurred_at: ~U[2026-05-21 00:00:04Z]
         }
       ])
@@ -412,7 +412,7 @@ defmodule SymphonyElixir.RunHistoryTest do
     assert summary.last_codex_detail == "agent message streaming: Finished the task."
     assert "dynamic tool call requested (linear_task_read)" in summary.actions
     assert "linear_task_read x1" in summary.tools
-    assert "In Progress -> In Review" in summary.linear_updates
+    assert "In Progress -> Ready to Merge" in summary.linear_updates
     assert "dynamic tool call requested (linear_task_read)" in summary.highlights
     assert "needs input" in summary.blockers
     assert "turn blocked: waiting for user input" in summary.blockers

@@ -233,10 +233,15 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
   defp bucket_summary(_label, bucket) when not is_map(bucket), do: nil
 
   defp bucket_summary(label, bucket) do
+    window_duration =
+      bucket
+      |> Payload.get_any(["window_duration_mins", :window_duration_mins, "windowDurationMins", :windowDurationMins])
+      |> format_window_duration()
+
     %{
       label: label,
       used_percent: Payload.get_any(bucket, ["used_percent", :used_percent, "usedPercent", :usedPercent]),
-      window_duration: format_window_duration(Payload.get_any(bucket, ["window_duration_mins", :window_duration_mins, "windowDurationMins", :windowDurationMins])),
+      window_duration: window_duration,
       resets_at: format_reset_time(Payload.get_any(bucket, ["resets_at", :resets_at, "resetsAt", :resetsAt]))
     }
   end

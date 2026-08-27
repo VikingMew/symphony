@@ -69,9 +69,7 @@ defmodule SymphonyElixir.Codex.TokenUsage do
   def normalize(_usage), do: @zero
 
   defp payload_get(payload, fields) when is_list(fields), do: Enum.find_value(fields, fn field -> map_integer_value(payload, field) end)
-  defp payload_get(payload, field), do: map_integer_value(payload, field)
   defp map_integer_value(payload, field) when is_map(payload), do: payload |> Map.get(field) |> integer_like()
-  defp map_integer_value(_payload, _field), do: nil
   defp integer_like(value) when is_integer(value) and value >= 0, do: value
 
   defp integer_like(value) when is_binary(value) do

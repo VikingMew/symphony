@@ -37,9 +37,10 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
           "Ready" => %{"profile" => "implementation"},
           "In Progress" => %{"profile" => "implementation"}
         },
-        "human_review_states" => ["In Review"],
+        "human_review_states" => ["Ready to Merge"],
         "allowed_transitions" => [
-          %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"}
+          %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
+          %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"}
         ]
       }
     })
@@ -56,7 +57,7 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
             "description" => false,
             "comment" => true,
             "result" => true,
-            "target_states" => ["In Review"]
+            "target_states" => ["In Progress", "Ready to Merge"]
           }
         }
       },
@@ -259,7 +260,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_api_token: nil,
           tracker_project_slug: "project",
           tracker_assignee: nil,
-          tracker_active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"],
+          tracker_active_states: ["Refining", "Ready", "In Progress"],
           tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),

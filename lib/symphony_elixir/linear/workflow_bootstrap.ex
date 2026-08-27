@@ -78,7 +78,7 @@ defmodule SymphonyElixir.Linear.WorkflowBootstrap do
     normalized = normalize_state(state)
 
     cond do
-      normalized in ["done", "merged"] -> "completed"
+      normalized == "done" -> "completed"
       normalized in ["canceled", "cancelled", "duplicate"] -> "canceled"
       true -> "started"
     end

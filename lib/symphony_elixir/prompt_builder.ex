@@ -100,16 +100,7 @@ defmodule SymphonyElixir.PromptBuilder do
     """
     Workflow profile: implementation
 
-    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, test, and verify the code in the worktree. When ready for human implementation review, use `linear_task_update` to add the result, relevant references, a concise comment, and request one of these states: #{target_states_text(allowed_updates)}.
-    """
-    |> String.trim()
-  end
-
-  defp profile_contract("merge", allowed_updates) do
-    """
-    Workflow profile: merge
-
-    First read the task and recent activity with `linear_task_read`; comments may contain reviewer constraints. Verify the branch is ready to merge, perform the merge workflow when allowed, and use `linear_task_update` with a concise result comment and one of these states: #{target_states_text(allowed_updates)}.
+    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, validate, commit, and push the exact Linear `branchName`. Use `linear_task_update` to post the final result, references, and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. Symphony owns initial PR creation. If human changes return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again.
     """
     |> String.trim()
   end
@@ -130,7 +121,7 @@ defmodule SymphonyElixir.PromptBuilder do
 
     if is_binary(branch_name) and String.trim(branch_name) != "" do
       prompt <>
-        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting a review or merge-ready state. Do not create or switch to a different task branch."
+        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting Ready to Merge. Do not create or switch to a different task branch. Symphony creates the initial pull request after the explicit completion request."
     else
       prompt
     end
