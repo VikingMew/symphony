@@ -6,14 +6,14 @@ defmodule SymphonyElixir.AgentRunner do
   require Logger
 
   alias SymphonyElixir.{
-    BranchName,
     AgentRunner.Policy,
+    BranchName,
     Codex.AppServer,
     Codex.RateLimitGate,
     Config,
     Git,
+    GitHub.PullRequest,
     Linear.Issue,
-    MergeExecutor,
     PersistenceEventWriter,
     PromptBuilder,
     Tracker,
@@ -21,7 +21,6 @@ defmodule SymphonyElixir.AgentRunner do
   }
 
   @implementation_profile "implementation"
-  @merge_profile "merge"
   @implementation_start_state "Ready"
   @implementation_started_state "In Progress"
 
@@ -163,37 +162,16 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_profile(workspace, issue, codex_update_recipient, opts, worker_host) do
     case Config.workflow_profile_for_state(issue.state) do
-      @merge_profile ->
-        run_merge(workspace, issue, codex_update_recipient, opts, worker_host)
-
       @implementation_profile ->
         with :ok <- prepare_implementation_branch(workspace, issue, opts) do
           run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
         end
 
-      _profile ->
+      profile when is_binary(profile) and profile != "" ->
         run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
-    end
-  end
 
-  defp run_merge(workspace, issue, codex_update_recipient, opts, worker_host) do
-    emit_phase(issue, :merge_backend, :started, worker_host, opts, %{workspace: workspace})
-
-    merge_opts =
-      opts
-      |> Keyword.put_new(:codex_update_recipient, codex_update_recipient)
-      |> Keyword.put_new(:git_opts, Keyword.get(opts, :git_opts, []))
-
-    merge_executor = Keyword.get(opts, :merge_executor, &MergeExecutor.run/3)
-
-    case merge_executor.(workspace, issue, merge_opts) do
-      :ok ->
-        emit_phase(issue, :merge_backend, :completed, worker_host, opts, %{workspace: workspace})
-        :ok
-
-      {:error, reason} ->
-        emit_phase(issue, :merge_backend, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
-        {:error, reason}
+      _profile ->
+        {:error, {:workflow_state_not_executable, issue.state}}
     end
   end
 
@@ -230,7 +208,22 @@ defmodule SymphonyElixir.AgentRunner do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    opts = Keyword.put_new(opts, :codex_update_recipient, codex_update_recipient)
+    dynamic_tool_opts =
+      opts
+      |> Keyword.get(:dynamic_tool_opts, [])
+      |> Keyword.put_new(
+        :implementation_handoff_preparer,
+        implementation_handoff_preparer(issue, worker_host, opts)
+      )
+      |> Keyword.put_new(
+        :implementation_handoff_observer,
+        implementation_handoff_observer(worker_host, opts)
+      )
+
+    opts =
+      opts
+      |> Keyword.put_new(:codex_update_recipient, codex_update_recipient)
+      |> Keyword.put(:dynamic_tool_opts, dynamic_tool_opts)
 
     with_codex_session(
       workspace,
@@ -285,8 +278,11 @@ defmodule SymphonyElixir.AgentRunner do
     transitions = Config.settings!().workflow |> Map.get("allowed_transitions", [])
 
     case Policy.validate_implementation_start_transition(transitions, from_state, profile) do
-      :ok -> :ok
-      {:error, {:transition_not_allowed, ^from_state, _expected_to_state, ^profile}} -> {:error, {:transition_not_allowed, from_state, to_state, profile}}
+      :ok ->
+        :ok
+
+      {:error, {:transition_not_allowed, ^from_state, _expected_to_state, ^profile}} ->
+        {:error, {:transition_not_allowed, from_state, to_state, profile}}
     end
   end
 
@@ -339,7 +335,8 @@ defmodule SymphonyElixir.AgentRunner do
              issue,
              on_message: codex_message_handler(codex_update_recipient, issue),
              workspace: workspace,
-             run_id: Keyword.get(opts, :run_id)
+             run_id: Keyword.get(opts, :run_id),
+             dynamic_tool_opts: Keyword.get(opts, :dynamic_tool_opts, [])
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
@@ -374,6 +371,58 @@ defmodule SymphonyElixir.AgentRunner do
           {:error, reason}
       end
     end
+  end
+
+  defp implementation_handoff_preparer(_run_issue, worker_host, runner_opts) do
+    fn issue, tool_opts ->
+      event_opts = handoff_event_opts(runner_opts, tool_opts)
+      emit_phase(issue, :implementation_handoff, :started, worker_host, event_opts)
+
+      pull_request_ensurer =
+        Keyword.get(runner_opts, :pull_request_ensurer, &PullRequest.ensure_open/3)
+
+      github_opts = Keyword.get(runner_opts, :github_opts, [])
+
+      case pull_request_ensurer.(issue, Config.settings!().project, github_opts) do
+        {:ok, pull_request} ->
+          {:ok, pull_request}
+
+        {:error, reason} ->
+          emit_phase(issue, :implementation_handoff, :failed, worker_host, event_opts, %{
+            reason: inspect(reason)
+          })
+
+          {:error, {:implementation_handoff_failed, reason}}
+
+        other ->
+          reason = {:unexpected_pull_request_result, other}
+
+          emit_phase(issue, :implementation_handoff, :failed, worker_host, event_opts, %{
+            reason: inspect(reason)
+          })
+
+          {:error, {:implementation_handoff_failed, reason}}
+      end
+    end
+  end
+
+  defp implementation_handoff_observer(worker_host, runner_opts) do
+    fn status, issue, details, tool_opts ->
+      emit_phase(
+        issue,
+        :implementation_handoff,
+        status,
+        worker_host,
+        handoff_event_opts(runner_opts, tool_opts),
+        details
+      )
+    end
+  end
+
+  defp handoff_event_opts(runner_opts, tool_opts) do
+    runner_opts
+    |> Keyword.put(:session_id, Keyword.get(tool_opts, :session_id))
+    |> Keyword.put_new(:run_id, Keyword.get(tool_opts, :run_id))
   end
 
   defp run_operator_codex_turn(workspace, issue, profile, codex_update_recipient, opts, worker_host) do
@@ -538,7 +587,8 @@ defmodule SymphonyElixir.AgentRunner do
         phase: to_string(phase),
         status: to_string(status),
         worker_host: worker_host_for_log(worker_host),
-        attempt: Keyword.get(opts, :attempt)
+        attempt: Keyword.get(opts, :attempt),
+        session_id: Keyword.get(opts, :session_id)
       }
       |> Map.merge(issue_phase_payload(issue))
       |> Map.merge(extra_payload)
@@ -550,6 +600,7 @@ defmodule SymphonyElixir.AgentRunner do
     record_telemetry_event(
       %{
         issue_identifier: Map.get(payload, :issue_identifier),
+        run_id: Keyword.get(opts, :run_id),
         event_type: "run.phase",
         payload: payload
       },

@@ -55,7 +55,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Ready to Merge", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"}
                   ]
                 }

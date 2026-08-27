@@ -307,7 +307,11 @@ defmodule SymphonyElixir.Linear.Discovery do
   end
 
   defp terminal_state?(state), do: normalize_state(state) in ["canceled", "cancelled", "closed", "done", "duplicate"]
-  defp review_state?(state), do: String.contains?(normalize_state(state), "review")
+
+  defp review_state?(state) do
+    normalized = normalize_state(state)
+    String.contains?(normalized, "review") or normalized == "ready to merge"
+  end
 
   defp normalize_state(state) when is_binary(state), do: SymphonyElixir.StateName.normalize(state)
   defp normalize_state(_state), do: ""

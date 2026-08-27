@@ -52,7 +52,7 @@ defmodule SymphonyElixir.CoreTest do
 
     config = Config.settings!()
     assert config.polling.interval_ms == 30_000
-    assert config.tracker.active_states == ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+    assert config.tracker.active_states == ["Refining", "Ready", "In Progress"]
     assert config.tracker.terminal_states == ["Canceled", "Cancelled", "Duplicate", "Done"]
     assert config.tracker.assignee == nil
     assert config.agent.max_turns == 20
@@ -150,15 +150,14 @@ defmodule SymphonyElixir.CoreTest do
 
     assert Config.workflow_profile_for_state("Refining") == "refinement"
     assert Config.workflow_profile_for_state("In Progress") == "implementation"
-    assert Config.workflow_profile_for_state("Ready to Merge") == "merge"
-    assert Config.workflow_profile_for_state("In Review") == nil
+    assert Config.workflow_profile_for_state("Ready to Merge") == nil
     assert Config.workflow_executor_for_state("Ready") == "codex_agent"
-    assert Config.human_review_state?("In Review")
+    assert Config.human_review_state?("Ready to Merge")
     refute Config.human_review_state?("In Progress")
 
     assert Config.workflow_allowed_updates("implementation")["target_states"] == [
              "In Progress",
-             "In Review"
+             "Ready to Merge"
            ]
 
     assert get_in(config.workflow, ["tool_policy", "linear", "exposed_tools"]) == [
@@ -217,7 +216,7 @@ defmodule SymphonyElixir.CoreTest do
       tracker_terminal_states: ["Done"],
       workflow_policy: %{
         states: %{Ready: %{profile: "implementation"}, "In Progress": %{profile: "implementation"}},
-        human_review_states: ["In Review"],
+        human_review_states: ["Ready to Merge"],
         allowed_transitions: [%{from: "In Progress", to: "Unknown Review", actor: "codex", profile: "implementation"}]
       },
       profiles_policy: %{
@@ -235,26 +234,21 @@ defmodule SymphonyElixir.CoreTest do
     assert message =~ "profiles.implementation.allowed_updates.target_states references unknown workflow state"
   end
 
-  test "workflow policy accepts editable implementation review state from config" do
+  test "workflow policy accepts the PR-first implementation review state" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
-      tracker_active_states: ["Ready", "In Progress", "Ready to Merge", "Merging"],
+      tracker_active_states: ["Ready", "In Progress"],
       tracker_terminal_states: ["Done"],
       workflow_policy: %{
         states: %{
           Ready: %{profile: "implementation"},
-          "In Progress": %{profile: "implementation"},
-          "Ready to Merge": %{profile: "merge"},
-          Merging: %{profile: "merge"}
+          "In Progress": %{profile: "implementation"}
         },
-        human_review_states: ["In Review"],
+        human_review_states: ["Ready to Merge"],
         allowed_transitions: [
           %{from: "Ready", to: "In Progress", actor: "codex", profile: "implementation"},
-          %{from: "In Progress", to: "In Review", actor: "codex", profile: "implementation"},
-          %{from: "In Review", to: "Ready to Merge", actor: "human"},
-          %{from: "In Review", to: "In Progress", actor: "human"},
-          %{from: "Ready to Merge", to: "Merging", actor: "codex", profile: "merge"},
-          %{from: "Merging", to: "Done", actor: "codex", profile: "merge"}
+          %{from: "In Progress", to: "Ready to Merge", actor: "codex", profile: "implementation"},
+          %{from: "Ready to Merge", to: "In Progress", actor: "human"}
         ]
       },
       profiles_policy: %{
@@ -262,21 +256,15 @@ defmodule SymphonyElixir.CoreTest do
           name: "Implementation",
           executor: %{type: "codex_agent"},
           prompt: %{mode: "extend", template: "Implement {{ issue.identifier }}"},
-          allowed_updates: %{comment: true, result: true, target_states: ["In Progress", "In Review"]}
-        },
-        merge: %{
-          name: "Merge",
-          executor: %{type: "codex_agent"},
-          prompt: %{mode: "extend", template: "Merge {{ issue.identifier }}"},
-          allowed_updates: %{comment: true, result: true, target_states: ["Merging", "Done"]}
+          allowed_updates: %{comment: true, result: true, target_states: ["In Progress", "Ready to Merge"]}
         }
       }
     )
 
     assert :ok = Config.validate!()
-    assert Config.human_review_state?("In Review")
+    assert Config.human_review_state?("Ready to Merge")
     refute Config.human_review_state?("Needs Review")
-    assert Config.workflow_allowed_updates("implementation")["target_states"] == ["In Progress", "In Review"]
+    assert Config.workflow_allowed_updates("implementation")["target_states"] == ["In Progress", "Ready to Merge"]
   end
 
   test "workflow rejects nested profiles and profile active state routing" do
@@ -380,10 +368,10 @@ defmodule SymphonyElixir.CoreTest do
   test "workflow supports manual profile executor" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
-      workflow_policy: %{states: %{"Ready to Merge" => %{profile: "merge"}}},
+      workflow_policy: %{states: %{"Manual QA" => %{profile: "qa"}}},
       profiles_policy: %{
-        merge: %{
-          name: "Merge",
+        qa: %{
+          name: "QA",
           executor: %{type: "manual"},
           prompt: %{mode: "disabled"},
           allowed_updates: %{target_states: ["Done"]}
@@ -392,8 +380,8 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert :ok = Config.validate!()
-    assert Config.workflow_profile_for_state("Ready to Merge") == "merge"
-    assert Config.workflow_executor_for_state("Ready to Merge") == "manual"
+    assert Config.workflow_profile_for_state("Manual QA") == "qa"
+    assert Config.workflow_executor_for_state("Manual QA") == "manual"
   end
 
   test "current split workflow package is valid and complete" do
@@ -871,7 +859,7 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
+        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
         tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
       )
 
@@ -934,7 +922,7 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
+        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
         tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
       )
 
@@ -998,7 +986,7 @@ defmodule SymphonyElixir.CoreTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         tracker_kind: "linear",
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "In Review"],
+        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
         tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"],
         poll_interval_ms: 30_000
       )

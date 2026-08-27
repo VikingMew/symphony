@@ -375,8 +375,6 @@ defmodule SymphonyElixir.Codex.Protocol do
       token_map(payload)
   end
 
-  defp token_usage(_payload, _method), do: nil
-
   defp find_token_usage(payload, paths) do
     Enum.find_value(paths, fn path ->
       payload
@@ -455,8 +453,6 @@ defmodule SymphonyElixir.Codex.Protocol do
   defp first_value(map, key_groups) when is_map(map) do
     Enum.find_value(key_groups, &Payload.get_any(map, &1))
   end
-
-  defp first_value(_map, _key_groups), do: nil
 
   defp map_or_empty(value) when is_map(value), do: value
   defp map_or_empty(_value), do: %{}

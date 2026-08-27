@@ -390,7 +390,9 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
         Enum.filter(runs, fn run ->
           run_inserted_at = run_inserted_at(run)
           run_id = Map.get(run, :id)
-          DateTime.compare(run_inserted_at, inserted_at) == :lt or (DateTime.compare(run_inserted_at, inserted_at) == :eq and run_id < id)
+
+          DateTime.compare(run_inserted_at, inserted_at) == :lt or
+            (DateTime.compare(run_inserted_at, inserted_at) == :eq and run_id < id)
         end)
 
       :error ->

@@ -735,13 +735,164 @@ defmodule SymphonyElixir.AgentRunnerTest do
         labels: []
       }
 
-      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+      assert :ok =
+               AgentRunner.run(issue, nil,
+                 issue_state_fetcher: state_fetcher,
+                 pull_request_ensurer: fn _issue, _project, _opts ->
+                   flunk("max-turn exhaustion must not create a pull request")
+                 end
+               )
 
       trace = File.read!(trace_file)
       assert length(String.split(trace, "RUN", trim: true)) == 1
       assert length(Regex.scan(~r/"method":"turn\/start"/, trace)) == 2
     after
       System.delete_env("SYMP_TEST_CODEx_TRACE")
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "explicit implementation completion ensures the PR before the Linear transition" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-handoff-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "SYM-1")
+      codex_binary = Path.join(test_root, "fake-codex")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        case "$count" in
+          1)
+            printf '%s\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            ;;
+          3)
+            printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-handoff"}}}'
+            ;;
+          4)
+            printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-handoff"}}}'
+            printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":"None"},"references":{"branch":"feature/sym-1"}}}}'
+            ;;
+          5)
+            printf '%s\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        project_repository_url: "https://github.com/acme/app",
+        codex_command: "#{codex_binary} app-server"
+      )
+
+      issue = %Issue{
+        id: "issue-handoff",
+        identifier: "SYM-1",
+        title: "Ship PR handoff",
+        description: "Ensure the PR before changing Linear",
+        state: "In Progress",
+        branch_name: "feature/sym-1",
+        labels: []
+      }
+
+      test_pid = self()
+
+      pull_request_ensurer = fn handoff_issue, project, github_opts ->
+        send(test_pid, {:handoff_order, :pr})
+        assert handoff_issue.branch_name == "feature/sym-1"
+        assert project.repository_url == "https://github.com/acme/app"
+        assert github_opts == []
+
+        {:ok,
+         %{
+           url: "https://github.com/acme/app/pull/12",
+           repository: "acme/app",
+           base: "main",
+           head: "feature/sym-1",
+           source: :gh
+         }}
+      end
+
+      graphql = fn query, variables ->
+        cond do
+          query =~ "attachmentCreate" ->
+            send(test_pid, {:handoff_order, :attachment})
+            assert variables["input"]["url"] == "https://github.com/acme/app/pull/12"
+            {:ok, %{"data" => %{"attachmentCreate" => %{"success" => true}}}}
+
+          query =~ "commentCreate" ->
+            send(test_pid, {:handoff_order, :comment})
+            {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+
+          query =~ "SymphonyLinearIssueTeamStates" ->
+            send(test_pid, {:handoff_order, :state_lookup})
+
+            {:ok,
+             %{
+               "data" => %{
+                 "issue" => %{
+                   "team" => %{
+                     "states" => %{
+                       "nodes" => [
+                         %{"id" => "state-ready-to-merge", "name" => "Ready to Merge"}
+                       ]
+                     }
+                   }
+                 }
+               }
+             }}
+
+          query =~ "SymphonyLinearTaskIssueUpdate" ->
+            send(test_pid, {:handoff_order, :state_update})
+            assert variables["input"]["stateId"] == "state-ready-to-merge"
+            {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+        end
+      end
+
+      assert :ok =
+               AgentRunner.run(issue, nil,
+                 workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
+                 implementation_branch_checkout: fn ^workspace, "feature/sym-1", _opts ->
+                   {:ok, "checked out"}
+                 end,
+                 pull_request_ensurer: pull_request_ensurer,
+                 dynamic_tool_opts: [graphql: graphql],
+                 issue_state_fetcher: fn ["issue-handoff"] ->
+                   {:ok, [%{issue | state: "Ready to Merge"}]}
+                 end,
+                 run_id: "run-handoff"
+               )
+
+      assert_receive {:handoff_order, :pr}
+      assert_receive {:handoff_order, :attachment}
+      assert_receive {:handoff_order, :comment}
+      assert_receive {:handoff_order, :state_lookup}
+      assert_receive {:handoff_order, :state_update}
+
+      events =
+        FakePersistence.list_events(issue_identifier: "SYM-1", event_type: "run.phase")
+        |> Enum.filter(&(&1.payload.phase == "implementation_handoff"))
+
+      assert Enum.map(events, & &1.payload.status) == ["completed", "started"]
+      assert Enum.all?(events, &(&1.run_id == "run-handoff"))
+      assert Enum.all?(events, &(&1.payload.session_id == "thread-handoff-turn-handoff"))
+      assert List.first(events).payload.url == "https://github.com/acme/app/pull/12"
+    after
       File.rm_rf(test_root)
     end
   end

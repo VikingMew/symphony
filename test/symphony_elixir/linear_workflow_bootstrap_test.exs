@@ -31,15 +31,16 @@ defmodule SymphonyElixir.LinearWorkflowBootstrapTest do
         client_module: FakeBootstrapClient
       )
 
-    assert result.created == ["Merging", "Needs Refinement Review"]
+    assert result.created == ["In Progress", "Needs Refinement Review", "Ready to Merge"]
     assert result.failed == []
-    assert_received {:create_workflow_state, "team-1", "Merging", _opts}
+    assert_received {:create_workflow_state, "team-1", "In Progress", _opts}
     assert_received {:create_workflow_state, "team-1", "Needs Refinement Review", _opts}
+    assert_received {:create_workflow_state, "team-1", "Ready to Merge", _opts}
     refute_received {:create_workflow_state, "team-1", "Ready", _opts}
   end
 
   test "reports partial failures" do
-    Application.put_env(:symphony_elixir, :bootstrap_fail_state, "Merging")
+    Application.put_env(:symphony_elixir, :bootstrap_fail_state, "Ready to Merge")
 
     {:ok, result} =
       WorkflowBootstrap.create_missing_statuses(
@@ -49,27 +50,27 @@ defmodule SymphonyElixir.LinearWorkflowBootstrapTest do
         client_module: FakeBootstrapClient
       )
 
-    assert result.created == ["Needs Refinement Review"]
-    assert [%{state: "Merging", reason: ":boom"}] = result.failed
+    assert result.created == ["In Progress", "Needs Refinement Review"]
+    assert [%{state: "Ready to Merge", reason: ":boom"}] = result.failed
   end
 
   defp settings do
     %{
       tracker: %{
-        active_states: ["Refining", "Ready", "Merging"],
+        active_states: ["Refining", "Ready", "In Progress"],
         terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
       },
       workflow: %{
-        "states" => %{"Refining" => %{}, "Ready" => %{}, "Merging" => %{}},
-        "human_review_states" => ["Needs Refinement Review"],
+        "states" => %{"Refining" => %{}, "Ready" => %{}, "In Progress" => %{}},
+        "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
         "allowed_transitions" => [
           %{"from" => "Refining", "to" => "Needs Refinement Review"},
-          %{"from" => "Merging", "to" => "Done"}
+          %{"from" => "In Progress", "to" => "Ready to Merge"}
         ]
       },
       profiles: %{
         "refinement" => %{"allowed_updates" => %{"target_states" => ["Needs Refinement Review"]}},
-        "merge" => %{"allowed_updates" => %{"target_states" => ["Merging", "Done"]}}
+        "implementation" => %{"allowed_updates" => %{"target_states" => ["In Progress", "Ready to Merge"]}}
       }
     }
   end

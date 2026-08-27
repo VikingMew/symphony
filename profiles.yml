@@ -63,7 +63,6 @@ base_prompt: |
   - `commit`: produce clean, logical commits during implementation.
   - `push`: keep remote branch current and publish updates.
   - `pull`: keep branch updated with latest `origin/main` before handoff.
-  - `land`: optional manual fallback for merge incidents; the default merge path is Symphony's backend merge executor using Linear `branchName`.
   
   ## Status map
   
@@ -72,10 +71,8 @@ base_prompt: |
   - `Needs Refinement Review` -> refinement is complete; do not implement. Human must move it to `Ready` or back to `Refining`.
   - `Ready` -> human-approved development queue. Agent may move it to `In Progress` and implement.
   - `In Progress` -> implementation actively underway.
-  - `In Review` -> implementation is complete; do not merge. Human must move it to `Ready`, `In Progress`, or `Ready to Merge`.
-  - `Ready to Merge` -> human-approved merge queue. Agent may move it to `Merging`.
-  - `Merging` -> Symphony backend is merging the Linear `branchName` branch into the configured base branch.
-  - `Done` -> terminal state; no further action required.
+  - `Ready to Merge` -> an open GitHub PR is waiting for human review and merge. Symphony never dispatches this state.
+  - `Done` -> successful terminal state, normally set by Linear's GitHub PR-merged automation.
   - `Canceled`, `Cancelled`, `Duplicate` -> terminal states; no further action required.
   
   ## State Transition Authority
@@ -85,11 +82,9 @@ base_prompt: |
   - Human moves `Needs Refinement Review` -> `Ready` when refinement is accepted.
   - Human moves `Needs Refinement Review` -> `Refining` when refinement needs another pass.
   - Agent may move `Ready` -> `In Progress` when starting implementation.
-  - Agent moves `In Progress` -> `In Review` only after implementation, validation, and PR handoff are complete.
-  - Human moves `In Review` -> `Ready` or `In Progress` when changes are requested.
-  - Human moves `In Review` -> `Ready to Merge` when implementation is accepted.
-  - Symphony may move `Ready to Merge` -> `Merging` when starting the backend merge flow.
-  - Agent moves `Merging` -> `Done` only after merge is complete.
+  - Agent explicitly requests `In Progress` -> `Ready to Merge` only after implementation, validation, commit, and exact-branch push. Symphony opens or finds the PR before applying the state transition.
+  - Human moves `Ready to Merge` -> `In Progress` when PR changes are requested.
+  - Linear's GitHub integration moves the linked issue to `Done` after a human merges the PR on GitHub.
   - Human owns all transitions to `Canceled`, `Cancelled`, or `Duplicate`.
   
   ## Step 0: Determine current ticket state and route
@@ -102,13 +97,9 @@ base_prompt: |
      - `Needs Refinement Review` -> do not modify; stop and wait for human review.
      - `Ready` -> move to `In Progress`, then run the implementation flow.
      - `In Progress` -> continue execution flow from current scratchpad comment.
-     - `In Review` -> do not modify; stop and wait for human review.
-     - `Ready to Merge` -> run the backend merge flow, which moves to `Merging` when policy allows.
-     - `Merging` -> continue the backend merge flow for the Linear `branchName` branch.
+     - `Ready to Merge` -> do not dispatch or modify; wait for human GitHub review/merge or a human change-request transition back to `In Progress`.
      - `Done`, `Canceled`, `Cancelled`, `Duplicate` -> do nothing and shut down.
-  4. Check whether a PR already exists for the current branch and whether it is closed.
-     - If a branch PR exists and is `CLOSED` or `MERGED`, treat prior branch work as non-reusable for this run.
-     - Create a fresh branch from `origin/main` and restart execution flow as a new attempt.
+  4. Do not create the initial PR. The Symphony handoff checks the exact configured repository/base/Linear-head tuple after the explicit completion request.
   5. For `Ready` tickets, do startup sequencing in this exact order:
      - `update_issue(..., state: "In Progress")`
      - find/create `## Codex Workpad` bootstrap comment
@@ -166,9 +157,9 @@ base_prompt: |
         - resulting `HEAD` short SHA.
   10. Compact context and proceed to execution.
   
-  ## PR feedback sweep protocol (required)
+  ## PR change-request protocol (required)
   
-  When a ticket has an attached PR, run this protocol before moving to `In Review`:
+  When a human moves a ticket from `Ready to Merge` back to `In Progress`, update the same Linear `branchName` and existing PR:
   
   1. Identify the PR number from issue links/attachments.
   2. Gather feedback from all channels:
@@ -180,21 +171,21 @@ base_prompt: |
      - explicit, justified pushback reply is posted on that thread.
   4. Update the workpad plan/checklist to include each feedback item and its resolution status.
   5. Re-run validation after feedback-driven changes and push updates.
-  6. Repeat this sweep until there are no outstanding actionable comments.
+  6. Repeat this sweep until there are no outstanding actionable comments, then request `Ready to Merge` again.
   
   ## Blocked-access escape hatch (required behavior)
   
   Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
   
-  - GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-  - Do not move to `In Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-  - If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `In Review` with a short blocker brief in the workpad that includes:
+  - Codex does not create the initial PR or repair a failed backend handoff. Symphony first tries the service-runtime `gh`, then its `GH_TOKEN` / `GITHUB_TOKEN` REST fallback.
+  - A branch, GitHub, authentication, PR conflict, or PR creation failure leaves the issue in `In Progress`; record the typed failure in the workpad.
+  - If another required tool or permission is unavailable, keep the issue in `In Progress` with a short blocker brief in the workpad that includes:
     - what is missing,
     - why it blocks required acceptance/validation,
     - exact human action needed to unblock.
   - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
   
-  ## Step 3: Execution phase (Ready -> In Progress -> In Review)
+  ## Step 3: Execution phase (Ready -> In Progress -> Ready to Merge)
   
   1.  Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff `pull` sync result is already recorded in the workpad before implementation continues.
   2.  If current issue state is `Ready`, move it to `In Progress`; otherwise leave the current state unchanged.
@@ -206,7 +197,7 @@ base_prompt: |
       - Keep parent/child structure intact as scope evolves.
       - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
       - Never leave completed work unchecked in the plan.
-      - For tickets that started as `Ready` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
+      - For tickets returned from `Ready to Merge`, run the full PR change-request protocol immediately after kickoff and before unrelated work.
   5.  Run validation/tests required for the scope.
       - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
       - Prefer a targeted proof that directly demonstrates the behavior you changed.
@@ -216,63 +207,51 @@ base_prompt: |
       - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
   6.  Re-check all acceptance criteria and close any gaps.
   7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-  8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
-      - Ensure the GitHub PR has label `symphony` (add it if missing).
-  9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
+  8.  Do not create or attach the initial PR. Symphony creates or finds it during the explicit completion handoff and records its URL.
+  9.  Merge latest `origin/main` into the exact Linear branch, resolve conflicts, and rerun checks.
   10. Update the workpad comment with final checklist status and validation notes.
       - Mark completed plan/acceptance/validation checklist items as checked.
       - Add final handoff notes (commit + validation summary) in the same workpad comment.
       - Post exactly one final handoff comment via `linear_task_update` before moving to review. It must include `Completed`, `Validation`, `Deviations`, and `Blockers`. Use `None` for empty `Deviations` or `Blockers`.
-      - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
+      - Do not invent a PR URL; the backend adds the ensured PR reference to the update result and issue links.
       - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
       - Do not post any additional duplicate completion summary comment.
-  11. Before moving to `In Review`, poll PR feedback and checks:
-      - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
-      - Run the full PR feedback sweep protocol.
-      - Confirm PR checks are passing (green) after the latest changes.
-      - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
-      - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
-      - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-  12. Only then move issue to `In Review`.
-      - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `In Review` with the blocker brief and explicit unblock actions.
-  13. For `Ready` tickets that already had a PR attached at kickoff:
-      - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
-      - Ensure branch was pushed with any required updates.
-      - Then move to `In Review`.
+  11. Confirm every required ticket-provided validation/test-plan item is explicitly marked complete and refresh the workpad so its plan and evidence match the latest commit.
+  12. Call `linear_task_update` once with the final comment, structured result, branch/commit references, and `target_state: "Ready to Merge"`.
+      - This explicit request is the only implementation-completion signal.
+      - Symphony validates the issue, repository, base, exact Linear branch, and remote branch; finds or creates the open PR; records its URL; and only then applies the Linear transition.
+      - A normal Codex turn exit or `agent.max_turns` exhaustion is not completion and must not create a PR or change state.
   
   ## Step 4: Human review gates
   
   1. When the issue is in `Needs Refinement Review`, do not code or change ticket content. Wait for a human to move it to `Ready` or back to `Refining`.
-  2. When the issue is in `In Review`, do not code, push, merge, or change ticket content.
-  3. If human review requests changes, the human moves the issue to `Ready` or `In Progress`.
-  4. If human review approves implementation, the human moves the issue to `Ready to Merge`.
+  2. When the issue is in `Ready to Merge`, do not dispatch Codex; a human reviews and merges the linked PR on GitHub.
+  3. If human review requests changes, the human moves the issue to `In Progress`; Codex updates the same branch/PR and repeats the handoff.
+  4. After merge, Linear's GitHub automation moves the linked issue to `Done`.
   
-  ## Step 5: Merge handling
+  ## Step 5: PR handoff invariants
   
-  1. Read Linear `branchName`; it is the only branch source of truth for merge.
-  2. Validate that `branchName` is present, ASCII-safe, and safe to pass to git.
-  3. Verify the branch exists on the configured remote before merging.
-  4. If current issue state is `Ready to Merge`, Symphony moves it to `Merging` when workflow policy allows.
-  5. Fetch `branchName`, check out the configured base branch, and merge `origin/<branchName>` using the backend merge executor.
-  6. Push only when the merge profile explicitly enables push.
-  7. After merge is complete and any configured push succeeds, move the issue to `Done` or the configured success state.
+  1. Linear `branchName` is the only implementation head branch source of truth.
+  2. Codex implements, validates, commits, and pushes that exact branch.
+  3. Symphony owns initial PR lookup/creation and targets the configured default branch.
+  4. An existing open PR is reused; a closed PR for the tuple is a typed conflict.
+  5. Symphony never approves, merges, or pushes the feature branch into the default branch.
+  6. `Ready to Merge` is the only waiting/review state and `Done` is the only successful terminal state.
   
-  ## Completion bar before In Review
+  ## Completion bar before Ready to Merge
   
   - Step 2/3 checklist is fully complete and accurately reflected in the single workpad comment.
   - Acceptance criteria and required ticket-provided validation items are complete.
   - Validation/tests are green for the latest commit.
-  - PR feedback sweep is complete and no actionable comments remain.
-  - PR checks are green, Linear `branchName` is the branch used for implementation, that exact branch is pushed to the remote, and PR/branch references are linked on the issue.
-  - Required PR metadata is present (`symphony` label).
+  - For a change-request run, the PR feedback sweep is complete and no actionable comments remain.
+  - Linear `branchName` is the branch used for implementation and that exact branch is pushed to the remote.
   - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
   
   ## Guardrails
   
-  - If the branch PR is already closed/merged, do not reuse that branch or prior implementation state for continuation.
-  - For closed/merged branch PRs, create a new branch from `origin/main` and restart from reproduction/planning as if starting fresh.
+  - If the exact branch PR is already closed, do not silently reuse it or create an ambiguous duplicate; surface the backend's typed conflict.
   - If issue state is `Backlog`, do not modify it; wait for human to move to `Refining`.
-  - If issue state is `Needs Refinement Review` or `In Review`, do not modify it; wait for human state transition.
+  - If issue state is `Needs Refinement Review` or `Ready to Merge`, do not modify it; wait for human state transition.
   - Do not edit the issue body/description for planning or progress tracking.
   - Use exactly one persistent workpad comment (`## Codex Workpad`) per issue.
   - If comment editing is unavailable in-session, use the update script. Only report blocked if both MCP editing and script-based editing are unavailable.
@@ -282,7 +261,7 @@ base_prompt: |
     title/description/acceptance criteria, same-project assignment, a `related`
     link to the current issue, and `blockedBy` when the follow-up depends on the
     current issue.
-  - Do not move to `In Review` unless the `Completion bar before In Review` is satisfied.
+  - Do not request `Ready to Merge` unless the `Completion bar before Ready to Merge` is satisfied.
   - In human review states, do not make changes; wait and poll.
   - If state is terminal (`Done`, `Canceled`, `Cancelled`, or `Duplicate`), do nothing and shut down.
   - Keep issue text concise, specific, and reviewer-oriented.
@@ -329,7 +308,7 @@ profiles:
       comment: true
       description: false
       result: true
-      target_states: ["In Progress", "In Review"]
+      target_states: ["In Progress", "Ready to Merge"]
     executor:
       type: "codex_agent"
     name: "Implementation"
@@ -340,7 +319,7 @@ profiles:
 
         Before changing code, call `linear_task_read` with `include_activity: true` and read the task detail plus recent comments/activity. Treat human comments as authoritative scope or review feedback. If comments contradict the description, follow the newest explicit human comment and record the interpretation in the workpad before editing code.
 
-        Implement, test, and verify the requested work in the workspace.
+        Implement, test, commit, and push the exact Linear `branchName` in the workspace.
 
         Before requesting review, call `linear_task_update` with:
         - a concise `comment` containing:
@@ -349,24 +328,9 @@ profiles:
           - `Deviations`: any planned work not done, behavior that differs from the original request, or `None`;
           - `Blockers`: remaining blockers, or `None`;
         - a structured `result` with the same information;
-        - relevant `references` such as branch, commit, PR, or artifact links.
+        - relevant `references` such as branch, commit, or artifact links.
 
-        Only request an allowed target state after the summary/comment, validation, and handoff are complete.
-  merge:
-    allowed_updates:
-      comment: true
-      description: false
-      result: true
-      target_states: ["Merging", "Done"]
-    executor:
-      type: "backend_action"
-    merge:
-      push: false
-      remote: "origin"
-      success_state: "Done"
-    name: "Merge"
-    prompt:
-      mode: "disabled"
+        Explicitly request `Ready to Merge` only after the summary, validation, commit, and push are complete. Symphony owns initial PR creation and records the PR URL before changing Linear. Do not create the initial PR or wait for PR review/checks before it exists. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
   refinement:
     allowed_updates:
       comment: true

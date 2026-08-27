@@ -4,346 +4,119 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-08-27
 design_status: landed
 ---
 
 # Codex / Linear 代码实现工作流
 
-本文维护 `pull -> worktree -> test -> code -> verify -> push to branch -> comment -> transit` 这条工作流。它覆盖已确认需求从 Linear 进入实现阶段后，Codex 如何准备 workspace、执行测试、修改代码、验证结果、推送分支、评论并请求状态流转。
+本文维护当前 `read -> workspace -> baseline -> code -> verify -> commit -> push -> explicit
+handoff` 实现流。它适用于中心化 `AgentRunner` 的本地或 SSH-host Codex execution。
 
-## 目标
+## 目标与非目标
 
-- 从 Linear 拉取已确认、可开发的 task。
-- Codex 读取 task detail、最近评论和状态变更，判断当前是新实现、继续实现还是打回返工。
-- 为 task 准备隔离 workspace/worktree。
-- Codex 基于 task detail 实现代码变更。
-- Codex 执行必要测试和验证。
-- Codex 将代码推送到可审查分支。
-- Codex 在 Linear comment 中汇报结果。
-- Codex 请求进入人工实现验收状态。
+目标：
 
-## 非目标
+- 使用 Linear 指定的精确 `branchName` 完成实现、验证、commit 和 push。
+- 让最新人工 comment/activity 控制返工范围。
+- 通过 final comment/result/references 显式请求 `Ready to Merge`。
+- 由 Symphony idempotently 创建或复用 GitHub PR 后再更新 Linear。
 
-- 不让 Codex 持有 Linear API Key。
-- 不让 Codex 任意操作 Linear issue。
-- 不自动代表人完成实现验收。
-- 不自动合并 main，除非任务处于明确的 merge 阶段且策略允许。
-- 不跳过测试或验证直接推状态。
+非目标：
 
-## 适用阶段
+- Codex 不负责初次 PR 创建，也不在 PR 创建前等待 review/checks。
+- Symphony/Codex 不 approve 或 merge PR，不 push `HEAD` 到 default branch。
+- 普通 Codex exit、max-turn exhaustion 和测试通过本身都不是完成信号。
+- 不自动迁移旧状态中的运行中 issue。
 
-主要适用于实现阶段：
+## 状态入口和出口
 
 ```text
-Ready -> In Progress -> In Review -> Ready to Merge -> Merging -> Done
+Ready -> In Progress -> Ready to Merge
+                       | human changes requested
+                       v
+                    In Progress -> Ready to Merge
 ```
 
-其中：
+`Ready` dispatch 后，Symphony 在 Codex work 开始时转到 `In Progress`。实现 turn 只在 Codex
+显式调用 `linear_task_update(target_state: "Ready to Merge", ...)` 时尝试完成 handoff。
+`Ready to Merge` 是人工等待状态，无 executable route。PR merge 后由 Linear automation 转到
+`Done`。
 
-- `Ready`：需求已由人确认，可开始实现。
-- `In Progress`：Codex 正在实现和验证。
-- `In Review`：等待人验收实现。
-- `Ready to Merge`：人已验收，准备合并。
-- `Merging`：Codex 或受控自动化执行合并流程。
-- `Done`：任务完成。
+## 实现步骤
 
-本文重点维护：
+### 1. 读取任务与人工反馈
 
-```text
-Ready -> In Progress -> In Review
-```
+在修改代码前调用 `linear_task_read(include_activity: true)`。读取 description、identifier、title、
+`branchName`、comments 和 state changes。最新明确人工评论高于更早 description；冲突解释写进
+workpad/comment。
 
-`In Review -> Ready to Merge` 由人触发。`Ready to Merge -> Merging -> Done` 可由后续 merge 工作流维护。
+### 2. 准备 workspace 和精确分支
 
-该流程支持打回：
+Symphony 创建隔离 workspace，并校验/checkout Linear `branchName`。不得生成不同 task branch。
+每次 run 可能重建 workspace，因此有价值的进度必须 commit/push，不能只留在本地目录。
 
-```text
-In Review -> In Progress
-Ready to Merge -> In Progress
-```
+SSH execution 中 workspace 只存在于 worker；后续 PR handoff 不得要求 Symphony host 能访问该路径。
 
-打回时，最新人工评论是当前实现任务的主要输入。Codex 必须优先处理打回反馈，而不是仅按旧 task detail 重跑实现流程。
+### 3. Baseline、实现和验证
 
-## 参与者
+先运行与改动相关的 baseline/targeted checks，再做最小实现。遵循 repository `AGENTS.md`、spec、
+格式、静态检查和测试约束。验证强度与风险相称；失败命令和原因进入 final result。
 
-- Symphony Orchestrator：拉取候选 task，创建 run，分配 workspace。
-- Workspace Manager：准备 task 对应 worktree 或 workspace。
-- Codex：实现代码、运行验证、生成结果说明。
-- Git Remote：接收 feature branch。
-- Symphony Linear Tool Boundary：受限评论和状态流转。
-- Human Reviewer：验收实现和决定是否进入 merge。
+### 4. Commit 和 push
 
-## 状态入口
+确认 branch 等于 Linear `branchName`，review diff，创建有意义的 commit，并 push 同一 branch。
+worker host 需要 Git remote push auth。禁止把 feature result push 到 configured default branch。
 
-默认 `Ready` 和 `In Progress` 可参与实现工作流。
+### 5. 提交显式完成请求
 
-推荐入口策略：
+Codex 的 `linear_task_update` 必须包含：
 
-- 人把 task 从 `Needs Refinement Review` 移到 `Ready`。
-- Symphony 发现 `Ready` 后，可以将 task 派给 Codex。
-- Symphony 完成 workspace/bootstrap 并成功启动 Codex session 后，由 Symphony 后端执行
-  `Ready -> In Progress`；该流转成功后才发送第一轮 Codex task prompt。
-- workspace/bootstrap 失败或 Codex session 启动失败时，不应把 task 移到 `In Progress`。
+- `comment`：`Completed`、`Validation`、`Deviations`、`Blockers`。
+- `result`：同样四类结构化信息。
+- `references`：至少 branch 和 commit；已有 PR update 可以带 PR URL。
+- `target_state: Ready to Merge`。
 
-如果 task 已经是 `In Progress`，Symphony 可以恢复或继续已有 run，但必须避免并发重复实现。
+初次实现不调用 `gh pr create`。完成请求交给 `AgentRunner` 的 backend-owned boundary。
 
-## 工具契约
+### 6. Symphony 原子 handoff
 
-Linear 侧需要以下受限工具：
+`AgentRunner` 校验 identifier/title、branch/default/repository、remote branch，lookup exact PR，必要时
+create，然后把 PR reference、comment/result 写入 Linear，最后更新 state。PR 必须：
 
-- `linear_task_read`
-- `linear_task_update`
+- repository 与配置/实际 remote identity 一致；
+- base 是 `project.default_branch`；
+- head 是精确 Linear `branchName`；
+- title 包含 Linear identifier；
+- body 包含精确 `Fixes <ID>`。
 
-`linear_task_read` 必须一次返回 task detail、最近评论、状态变更和 implementation profile 的 allowed updates。`linear_task_update` 负责提交 comment、result 和目标状态，由后端按 implementation profile 做细粒度校验。
+重复请求遇到 open PR 返回同一 URL。closed/merged PR 是 typed conflict。GitHub 失败时不执行任何
+Linear completion write。
 
-Git / workspace 侧可以由 Codex 本地工具执行，但仍应受 workspace sandbox 和 hook 策略约束。
+### 7. 人工 review 和返工
 
-## 步骤
+人只在 GitHub review/merge。需要修改时，把 Linear 从 `Ready to Merge` 移回 `In Progress` 并留下
+comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新验证、commit、push，再次显式请求
+`Ready to Merge`。Symphony lookup 到同一 open PR 并复用。
 
-### 1. Pull
+## Failure Matrix
 
-Symphony 从 Linear 拉取可实现 task。
+| Failure | Required behavior |
+| --- | --- |
+| Invalid/missing Linear branch | Typed failure; issue stays `In Progress` |
+| Repository identity mismatch | Do not contact/create in a different repo |
+| Remote branch missing | Do not create PR or update Linear completion |
+| `gh` unavailable/unusable | Use REST only when environment token exists |
+| No GitHub auth | Typed visible failure; no Linear completion writes |
+| Existing closed/merged PR | Typed conflict; no duplicate PR |
+| PR create race | Re-read exact tuple and reuse the open PR |
+| Linear comment/state failure | Visible typed failure; retry reuses existing PR |
+| Normal turn exit/max turns | Return control; no PR and no completion transition |
 
-查询边界：
+## 审计与验收
 
-- project 必须匹配配置。
-- state 在实现入口状态中，例如 `Ready` 或 `In Progress`。
-- blocker 必须满足项目策略。
-- assignee/routing 必须匹配当前 worker。
-
-调度约束：
-
-- 一个 issue 同时只能有一个 active implementation run。
-- 如果 issue 移动到 human review 状态，停止继续派发 Codex。
-- 如果 issue 移动到 terminal 状态，停止 run 并清理可清理 workspace。
-
-### 2. Read Detail And Comments
-
-Codex 通过 `linear_task_read` 读取当前 task detail、最近评论和状态变更。
-
-读取 activity 是强制步骤。实现任务可能被人打回到 `In Progress`，此时 description 可能仍然描述原始需求，而最近人工评论才说明当前必须修复的问题。`linear_task_read` 必须把这些信息合并返回，避免 Codex 只读 description 后误判任务。
-
-分析输入优先级：
-
-1. 最新明确人工评论，尤其是打回原因。
-2. 最近状态变更，例如 `In Review -> In Progress`。
-3. 当前 issue description。
-4. PR review 或 branch/commit 信息，如果已经记录在评论或 Linear issue
-   attachment 中。
-5. Codex 上一次 `[codex]` 评论。
-6. 当前 worktree diff 和测试结果。
-
-如果评论和 description 冲突，以最新人工评论为准，并在最终 comment 中说明采用了哪条反馈。
-
-### 3. Worktree
-
-Workspace Manager 为 issue 准备独立 workspace 或 git worktree。
-
-推荐规则：
-
-- workspace 路径由 issue identifier 派生，稳定且可审计。
-- worktree 模式下，base repository path 由 repository base root 和 repo cache name 派生；issue worktree path 由 worktree base root 和 issue identifier 派生。详细规则见 `workspace-source-layout-design.md`。
-- 每次 agent run 创建 issue worktree 前，托管 base repository 会按 project `default_branch` fetch 并更新本地 base branch，避免 agent 从旧 commit 启动。
-- 不删除用户未提交改动。
-- 创建或复用 feature branch。
-- branch 名优先使用 Linear `branchName`，否则使用规范化 fallback，例如 `codex/MT-123-short-title`。
-- 执行 configured `after_create` / `before_run` hooks。
-
-进入 Codex 前，workspace 应满足：
-
-- 位于允许的 workspace root 内。
-- 不是 symlink escape。
-- git remote 可用。
-- 基础依赖已按项目策略安装或可安装。
-
-### 4. Test Baseline
-
-Codex 在修改代码前应尽量获取 baseline。
-
-推荐行为：
-
-- 读取 README、测试命令、mise 配置和项目脚本。
-- 运行轻量 smoke test 或相关测试。
-- 如果 baseline 已失败，记录失败并判断是否与当前 task 相关。
-- 不因为无关 baseline failure 直接停止，但必须在最终 comment 中说明。
-
-### 5. Code
-
-Codex 按 task detail 实现最小必要变更。
-
-约束：
-
-- 保持改动和 task scope 对齐。
-- 不进行无关重构。
-- 不修改 secret、凭证、本地环境文件。
-- 不覆盖用户已有未提交改动。
-- 对状态机、权限、外部 API、持久化 schema 等高风险变更补测试。
-- 如果是打回返工，只修改与打回评论相关的范围，除非发现必须一起修复的直接依赖问题。
-
-### 6. Verify
-
-Codex 完成代码后运行验证。
-
-推荐验证顺序：
-
-```text
-format -> compile/lint -> targeted tests -> full tests -> coverage when required
-```
-
-具体命令由项目决定，例如：
-
-```bash
-mise exec -- mix format
-mise exec -- mix compile --warnings-as-errors
-mise exec -- mix test
-mise exec -- mix test --cover
-```
-
-验证结果必须记录：
-
-- 执行了哪些命令。
-- 哪些命令通过。
-- 哪些命令失败以及失败原因。
-- 是否存在未运行的验证，以及原因。
-- 如果是打回返工，说明哪些验证覆盖了打回反馈。
-
-### 7. Push To Branch
-
-验证通过或达到可审查状态后，Codex 推送 feature branch。
-
-推荐规则：
-
-- 只推当前 task branch。
-- 不直接推 `main`。
-- 不强推，除非明确配置且 run 拥有该权限。
-- 如果 remote moved，先按项目策略 pull/merge/revalidate。
-- push 后记录 branch name、commit sha、remote URL 或 PR URL。`linear_task_update`
-  中的具体 HTTP(S) URL 会由 Symphony 后端绑定到当前 Linear issue；没有 URL 的
-  branch name 或 commit sha 仍只作为结果元数据记录。
-
-如果项目使用 PR：
-
-- 可以创建或更新 PR。
-- PR body 应引用 Linear issue。
-- PR 状态应写入 Linear comment。
-
-### 8. Comment
-
-Codex 通过 `linear_task_update` 在当前 task 追加结果说明。推荐把 comment、result 和目标状态合并在同一次请求中提交，由后端先完整校验再执行。
-
-推荐 comment 模板：
-
-```text
-[codex] Implementation ready for review.
-
-Branch: <branch>
-Commit: <sha>
-PR: <url if any>
-Latest human feedback handled: <comment id or none>
-
-Validation:
-- <command>: passed
-- <command>: passed
-
-Notes:
-- <important caveat or skipped verification>
-```
-
-后端校验：
-
-- 只能评论当前 issue。
-- body 长度受限。
-- 默认追加 `[codex]` 前缀。
-- 不记录 secret。
-- 如果 task 是打回返工，comment 必须引用或总结最新人工反馈。
-
-### 9. Transit
-
-实现验证完成后，Codex 通过 `linear_task_update` 请求状态流转：
-
-```text
-In Progress -> In Review
-```
-
-`Ready -> In Progress` 是 Symphony 后端在 Codex session 启动成功后执行的入口流转，
-不应由 Codex 自己通过 `linear_task_update` 请求。
-
-后端校验：
-
-- 当前 issue 等于 run issue。
-- 当前状态仍在允许源状态。
-- 目标状态存在。
-- branch 已推送或明确记录了不能推送的原因。
-- 验证结果已记录。
-- transition 在 workflow allowlist 中。
-- 如果是打回返工，comment 必须明确说明反馈已处理。
-
-人确认后执行：
-
-```text
-In Review -> Ready to Merge
-```
-
-Codex 不应自动执行这个确认动作。
-
-## 失败处理
-
-推荐错误码：
-
-- `workspace_prepare_failed`
-- `baseline_failed`
-- `verification_failed`
-- `push_failed`
-- `issue_mismatch`
-- `transition_not_allowed`
-- `target_state_not_found`
-- `comment_too_long`
-- `linear_request_failed`
-
-处理原则：
-
-- workspace 准备失败：不进入 `In Progress`，或如果已进入则 comment 说明并保持状态等待人工处理。
-- 测试失败：保留分支和改动，comment 说明失败命令，不进入 `In Review`，除非项目允许“带失败验收”。
-- push 失败：不进入 review 状态，comment 或 run event 记录失败原因。
-- comment 失败：不阻塞本地结果保存，但不应静默转状态。
-- transition 失败：保留 comment 和 branch，run 标记为需要人工处理。
-- 如果无法读取评论或 activity，不应把打回任务当作普通实现继续处理；应 comment 或记录 run event 请求人工介入。
-
-## 审计
-
-每次实现 run 至少记录：
-
-- run id。
-- issue id 和 identifier。
-- workspace path。
-- branch name。
-- commit sha。
-- 验证命令和结果摘要。
-- 参考的最新人工 comment id。
-- comment id。
-- source state 和 target state。
-- push 结果。
-- transition 结果。
-
-禁止记录：
-
-- Linear token。
-- Git credentials。
-- Authorization header。
-- secret-bearing command output。
-
-## 验收标准
-
-- Codex 可以从 `Ready` task 开始实现。
-- Codex 可以读取当前 task 的最近评论和状态变更。
-- 人工打回后，Codex 根据最新人工评论限定返工范围。
-- Workspace/worktree 路径受控且不逃逸 workspace root。
-- Codex 可以运行测试并记录验证结果。
-- Codex 可以推送 feature branch。
-- Codex 可以评论当前 Linear task。
-- Codex 可以请求 `In Progress -> In Review`。
-- Codex 不能自动执行 `In Review -> Ready to Merge`。
-- Codex 不能直接持有 Linear API Key。
-- Codex 不能在未读取评论的情况下处理打回任务。
-- 失败路径不会静默推进状态。
+- phase event 证明 `PR started/completed` 发生在 Linear state transition 前，并携带 issue/session/run。
+- test 证明 local/SSH workspace path 不参与 PR resolution。
+- test 证明 open PR idempotency、REST fallback、redaction 和错误类型。
+- dispatch/config test 证明 active states 只有 `Refining`、`Ready`、`In Progress`。
+- repository audit 证明 runtime 不存在 backend feature merge 或 default-branch push 路径。

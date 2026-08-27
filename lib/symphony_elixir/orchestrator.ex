@@ -1121,17 +1121,18 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
-    with :ok <- ensure_workspace_disk_available(issue) do
-      workflow = current_workflow_context()
+    case ensure_workspace_disk_available(issue) do
+      :ok ->
+        workflow = current_workflow_context()
 
-      case persist_run_started(issue, attempt, worker_host) do
-        {:ok, run_record} ->
-          dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record)
+        case persist_run_started(issue, attempt, worker_host) do
+          {:ok, run_record} ->
+            dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record)
 
-        {:error, reason} ->
-          skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason)
-      end
-    else
+          {:error, reason} ->
+            skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason)
+        end
+
       {:error, reason} ->
         block_issue_for_disk_guard(state, issue, reason, worker_host)
     end
@@ -1350,7 +1351,16 @@ defmodule SymphonyElixir.Orchestrator do
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
-    prepared_retry = RetryPolicy.prepare_retry(issue_id, attempt, metadata, previous_retry, Config.settings!().agent.max_retry_backoff_ms)
+
+    prepared_retry =
+      RetryPolicy.prepare_retry(
+        issue_id,
+        attempt,
+        metadata,
+        previous_retry,
+        Config.settings!().agent.max_retry_backoff_ms
+      )
+
     retry_token = make_ref()
     due_at_ms = System.monotonic_time(:millisecond) + prepared_retry.delay_ms + @retry_due_at_display_grace_ms
 
@@ -2957,9 +2967,6 @@ defmodule SymphonyElixir.Orchestrator do
 
         {:error, reason} ->
           propagate_persistence_failure(:finish_run, context, reason)
-
-        other ->
-          propagate_persistence_failure(:finish_run, context, {:unexpected_result, other})
       end
     else
       :ok

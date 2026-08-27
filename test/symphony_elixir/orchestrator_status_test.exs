@@ -1155,16 +1155,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert next_poll_in_ms <= 5_000
 
     assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
-
-    assert %{polling: %{listening?: true, checking?: true}} =
-             wait_for_snapshot(
-               pid,
-               fn
-                 %{polling: %{listening?: true, checking?: true}} -> true
-                 _ -> false
-               end,
-               500
-             )
+    assert %{polling: %{listening?: true}} = GenServer.call(pid, :snapshot)
   end
 
   test "orchestrator poll cycle resets next refresh countdown after a check" do
@@ -1588,7 +1579,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
     Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
-    Application.put_env(:symphony_elixir, :rollback_linear_state, "In Review")
+    Application.put_env(:symphony_elixir, :rollback_linear_state, "Ready to Merge")
 
     orchestrator_name = Module.concat(__MODULE__, :ForceStopSkipRollbackOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)

@@ -35,26 +35,6 @@ defmodule SymphonyElixir.Git do
     end
   end
 
-  @spec merge_branch(Path.t(), String.t(), keyword()) :: command_result()
-  def merge_branch(workspace, branch, opts \\ []) do
-    remote = Keyword.get(opts, :remote, "origin")
-    base_branch = Keyword.fetch!(opts, :base_branch)
-
-    with {:ok, true} <- remote_branch_exists?(workspace, branch, opts),
-         {:ok, true} <- remote_base_branch_exists?(workspace, base_branch, opts),
-         {:ok, _output} <- run(workspace, ["fetch", remote, branch], opts),
-         {:ok, _output} <- run(workspace, ["fetch", remote, base_branch], opts),
-         {:ok, _output} <- run(workspace, ["checkout", "--detach", "#{remote}/#{base_branch}"], opts),
-         {:ok, output} <- run(workspace, ["merge", "--no-edit", "#{remote}/#{branch}"], opts),
-         {:ok, _push_output} <- maybe_push(workspace, base_branch, opts) do
-      {:ok, output}
-    else
-      {:ok, false} -> {:error, {:remote_branch_not_found, branch}}
-      {:error, {:remote_base_branch_not_found, _base_branch} = reason} -> {:error, reason}
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
   @spec run(Path.t(), [String.t()], keyword()) :: command_result()
   def run(workspace, args, opts \\ []) when is_binary(workspace) and is_list(args) do
     runner = Keyword.get(opts, :runner, &run_git_command/3)
@@ -66,23 +46,6 @@ defmodule SymphonyElixir.Git do
       {output, 0} -> {:ok, to_string(output)}
       {output, status} -> {:error, {:git_command_failed, args, status, sanitize_output(output)}}
       other -> {:error, {:unexpected_git_result, other}}
-    end
-  end
-
-  defp maybe_push(workspace, base_branch, opts) do
-    if Keyword.get(opts, :push, false) do
-      remote = Keyword.get(opts, :remote, "origin")
-      run(workspace, ["push", remote, "HEAD:refs/heads/#{base_branch}"], opts)
-    else
-      {:ok, ""}
-    end
-  end
-
-  defp remote_base_branch_exists?(workspace, base_branch, opts) do
-    case remote_branch_exists?(workspace, base_branch, opts) do
-      {:ok, true} -> {:ok, true}
-      {:ok, false} -> {:error, {:remote_base_branch_not_found, base_branch}}
-      {:error, reason} -> {:error, reason}
     end
   end
 

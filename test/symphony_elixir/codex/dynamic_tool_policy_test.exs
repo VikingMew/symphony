@@ -12,11 +12,29 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
   end
 
   test "validates allowed update policy" do
-    policy = %{"comment" => true, "description" => false, "result" => true, "target_states" => ["In Review"]}
+    policy = %{
+      "comment" => true,
+      "description" => false,
+      "result" => true,
+      "target_states" => ["In Progress", "Ready to Merge"]
+    }
 
-    assert :ok = Policy.validate_update_policy(%{"comment" => "ok", "target_state" => "In Review"}, policy, "implementation")
+    assert :ok =
+             Policy.validate_update_policy(
+               %{
+                 "comment" => "ok",
+                 "result" => %{"validation" => "green"},
+                 "references" => %{"branch" => "feature/sym-1"},
+                 "target_state" => "Ready to Merge"
+               },
+               policy,
+               "implementation"
+             )
+
     assert {:error, {:update_not_allowed, "description", "implementation"}} = Policy.validate_update_policy(%{"description" => "no"}, policy, "implementation")
-    assert {:error, {:target_state_not_allowed, "Done", "implementation", ["In Review"]}} = Policy.validate_update_policy(%{"target_state" => "Done"}, policy, "implementation")
+
+    assert {:error, {:target_state_not_allowed, "Done", "implementation", ["In Progress", "Ready to Merge"]}} =
+             Policy.validate_update_policy(%{"target_state" => "Done"}, policy, "implementation")
   end
 
   test "extracts and deduplicates concrete reference links" do

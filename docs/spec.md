@@ -5,7 +5,7 @@ domain: [spec, overview]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Symphony Service Specification
@@ -68,11 +68,12 @@ stricter approvals or sandboxing.
 
 Important boundary:
 
-- Symphony is a scheduler/runner and tracker reader.
-- Ticket writes (state transitions, comments, PR links) are typically performed by the coding agent
-  using tools available in the workflow/runtime environment.
-- A successful run can end at a workflow-defined handoff state (for example `Needs Implementation Review`), not
-  necessarily `Done`.
+- Symphony is a scheduler/runner with a narrow centralized implementation-handoff boundary.
+- Restricted agent tools request ticket mutations. For implementation completion, Symphony first
+  ensures an open GitHub PR for the validated repository/base/head tuple and only then performs the
+  final Linear comment/reference/state writes.
+- The default successful run ends at the human-review handoff state `Ready to Merge`; `Done` is
+  reached later through Linear's GitHub merged-PR automation.
 
 ## 2. Goals and Non-Goals
 
@@ -93,8 +94,8 @@ Important boundary:
 - Rich web UI or multi-tenant control plane.
 - Prescribing a specific dashboard or terminal UI implementation.
 - General-purpose workflow engine or distributed job scheduler.
-- Built-in business logic for how to edit tickets, PRs, or comments. (That logic lives in the
-  workflow prompt and agent tooling.)
+- General project-specific business logic for tickets or PRs. The required atomic GitHub
+  PR-before-Linear implementation handoff is a deliberate backend invariant.
 - Mandating strong sandbox controls beyond what the coding agent and host OS provide.
 - Mandating a single default approval, sandbox, or operator-confirmation posture for all
   implementations.
@@ -175,4 +176,3 @@ Symphony is easiest to port when kept in these layers:
 - OPTIONAL workspace population tooling (for example Git CLI, if used).
 - Coding-agent executable that supports the targeted Codex app-server mode.
 - Host environment authentication for the issue tracker and coding agent.
-

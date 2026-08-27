@@ -38,13 +38,13 @@ defmodule SymphonyElixir.PromptBuilderTest do
     prompt =
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
-        allowed_updates: %{"target_states" => ["In Review"]}
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
     assert prompt =~ "Workflow profile: implementation"
     assert prompt =~ "`linear_task_read`"
     assert prompt =~ "`linear_task_update`"
-    assert prompt =~ "In Review"
+    assert prompt =~ "Ready to Merge"
     assert prompt =~ "Ticket S-2"
   end
 
@@ -123,7 +123,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
           "name" => "Implementation",
           "prompt" => %{"mode" => "extend", "template" => "Stage {{ workflow.profile_name }} {{ issue.identifier }}"}
         },
-        allowed_updates: %{"target_states" => ["In Review"]}
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
     assert prompt =~ "Stage Implementation S-3"
@@ -137,13 +137,13 @@ defmodule SymphonyElixir.PromptBuilderTest do
           "name" => "Implementation",
           "prompt" => %{"mode" => "replace", "template" => "Replace {{ issue.identifier }}"}
         },
-        allowed_updates: %{"target_states" => ["In Review"]}
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
     assert prompt == "Replace S-3"
   end
 
-  test "prompt builder renders built-in refinement merge and custom profile contracts" do
+  test "prompt builder renders built-in refinement and custom profile contracts" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
 
     issue = %Issue{
@@ -164,16 +164,6 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert refinement_prompt =~ "Workflow profile: refinement"
     assert refinement_prompt =~ "Needs Refinement Review"
     assert refinement_prompt =~ "Base S-4"
-
-    merge_prompt =
-      PromptBuilder.build_prompt(issue,
-        profile: "merge",
-        allowed_updates: %{"target_states" => ["Done"]}
-      )
-
-    assert merge_prompt =~ "Workflow profile: merge"
-    assert merge_prompt =~ "Done"
-    assert merge_prompt =~ "Base S-4"
 
     custom_prompt =
       PromptBuilder.build_prompt(issue,
@@ -203,7 +193,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
         profile_policy: %{"prompt" => %{"mode" => "disabled"}},
-        allowed_updates: %{"target_states" => ["In Review"]}
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
     assert disabled_prompt == "Base S-5"
@@ -211,7 +201,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
     branch_prompt =
       PromptBuilder.build_prompt(issue,
         profile: "implementation",
-        allowed_updates: %{"target_states" => ["In Review"]}
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
     assert branch_prompt =~ "Required branch: `feature/s-5`"
@@ -392,8 +382,8 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert prompt =~ "This is an unattended orchestration session."
     assert prompt =~ "Only stop early for a true blocker"
     assert prompt =~ "Do not include \"next steps for user\""
-    assert prompt =~ "default merge path is Symphony's backend merge executor"
-    assert prompt =~ "Read Linear `branchName`; it is the only branch source of truth for merge"
+    assert prompt =~ "Do not create the initial PR"
+    assert prompt =~ "Linear `branchName` is the only implementation head branch source of truth"
     assert prompt =~ "Continuation context:"
     assert prompt =~ "retry attempt #2"
   end

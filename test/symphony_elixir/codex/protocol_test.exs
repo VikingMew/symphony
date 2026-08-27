@@ -123,7 +123,7 @@ defmodule SymphonyElixir.Codex.ProtocolTest do
     end
 
     test "matches error responses by id" do
-      error = %{"code" => -32600, "message" => "invalid request"}
+      error = %{"code" => -32_600, "message" => "invalid request"}
 
       assert Protocol.decode_response_line(Jason.encode!(%{"id" => 2, "error" => error}), 2) ==
                {:response_error, error}

@@ -52,7 +52,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
-      field(:active_states, {:array, :string}, default: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"])
+      field(:active_states, {:array, :string}, default: ["Refining", "Ready", "In Progress"])
       field(:terminal_states, {:array, :string}, default: ["Canceled", "Cancelled", "Duplicate", "Done"])
     end
 
@@ -102,7 +102,11 @@ defmodule SymphonyElixir.Config.Schema do
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes], empty_values: [])
+      |> cast(
+        attrs,
+        [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes],
+        empty_values: []
+      )
       |> validate_optional_non_blank(:repository_base_root)
       |> validate_optional_non_blank(:worktree_base_root)
       |> validate_number(:initialize_timeout_ms, greater_than: 0)
@@ -622,21 +626,15 @@ defmodule SymphonyElixir.Config.Schema do
       "states" => %{
         "Refining" => %{"profile" => "refinement"},
         "Ready" => %{"profile" => "implementation"},
-        "In Progress" => %{"profile" => "implementation"},
-        "Ready to Merge" => %{"profile" => "merge"},
-        "Merging" => %{"profile" => "merge"}
+        "In Progress" => %{"profile" => "implementation"}
       },
-      "human_review_states" => ["Needs Refinement Review", "In Review"],
+      "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
       "allowed_transitions" => [
         %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
         %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
         %{"from" => "Needs Refinement Review", "to" => "Refining", "actor" => "human"},
         %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "In Review", "to" => "Ready to Merge", "actor" => "human"},
-        %{"from" => "In Review", "to" => "In Progress", "actor" => "human"},
-        %{"from" => "Ready to Merge", "to" => "Merging", "actor" => "codex", "profile" => "merge"},
-        %{"from" => "Merging", "to" => "Done", "actor" => "codex", "profile" => "merge"},
+        %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
         %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
       ],
       "tool_policy" => %{
@@ -673,27 +671,13 @@ defmodule SymphonyElixir.Config.Schema do
         "prompt" => %{
           "mode" => "extend",
           "template" =>
-            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, test, and verify the requested work in the workspace. When ready for review, add the result, relevant references, a concise comment, and request one of the allowed target states."
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, validate, commit, and push the exact Linear branchName. Post the final result, comment, and references, then explicitly request Ready to Merge. Symphony owns initial PR creation. After human change requests return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again."
         },
         "allowed_updates" => %{
           "description" => false,
           "comment" => true,
           "result" => true,
-          "target_states" => ["In Progress", "In Review"]
-        }
-      },
-      "merge" => %{
-        "name" => "Merge",
-        "executor" => %{"type" => "backend_action"},
-        "merge" => %{"push" => false, "remote" => "origin", "success_state" => "Done"},
-        "prompt" => %{
-          "mode" => "disabled"
-        },
-        "allowed_updates" => %{
-          "description" => false,
-          "comment" => true,
-          "result" => true,
-          "target_states" => ["Merging", "Done"]
+          "target_states" => ["In Progress", "Ready to Merge"]
         }
       },
       "nap" => %{

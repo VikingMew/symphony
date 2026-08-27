@@ -57,7 +57,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                   "nodes" => [
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
-                    %{"id" => "state-review", "name" => "In Review", "type" => "started"},
+                    %{"id" => "state-review", "name" => "Ready to Merge", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"}
                   ]
                 }
@@ -242,7 +242,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert workflow_html =~ "Refresh Linear configuration"
     assert workflow_html =~ "Linear Workflow State Candidates"
     assert workflow_html =~ "Suggested State Lists"
-    assert workflow_html =~ "In Review"
+    assert workflow_html =~ "Ready to Merge"
     refute workflow_html =~ "Linear Project Candidates"
 
     assert length(Regex.scan(~r/Refresh Linear configuration/, workflow_html)) == 1
@@ -273,8 +273,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                     %{"name" => "Needs Refinement Review"},
                     %{"name" => "Ready"},
                     %{"name" => "In Progress"},
-                    %{"name" => "Ready to Merge"},
-                    %{"name" => "Merging"},
                     %{"name" => "Done"},
                     %{"name" => "Canceled"},
                     %{"name" => "Duplicate"}
@@ -299,10 +297,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "Settings are structurally valid"
     assert html =~ "Cancelled"
     assert html =~ "Referenced by Terminal states"
-    assert html =~ "In Review"
+    assert html =~ "Ready to Merge"
     assert html =~ "Referenced by Human review states"
     assert html =~ "Profile implementation target states"
-    assert html =~ "Allowed transition In Progress -&gt; In Review"
+    assert html =~ "Allowed transition In Progress -&gt; Ready to Merge"
     assert html =~ "Needs Refinement Review"
   end
 
@@ -1174,17 +1172,16 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
             "endpoint" => "https://api.linear.app/graphql",
             "api_key" => "$LINEAR_API_KEY",
             "project_slug" => "project",
-            "active_states" => ["Ready", "In Progress", "Ready to Merge"],
+            "active_states" => ["Ready", "In Progress"],
             "terminal_states" => ["Done"]
           },
           "project" => %{"repository_url" => "git@github.com:org/repo.git"},
           "workflow" => %{
             "states" => %{
               "Ready" => %{"profile" => "implementation"},
-              "In Progress" => %{"profile" => "implementation"},
-              "Ready to Merge" => %{"profile" => "merge"}
+              "In Progress" => %{"profile" => "implementation"}
             },
-            "human_review_states" => ["Needs Refinement Review", "In Review"],
+            "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
             "allowed_transitions" => [
               %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"}
             ]
@@ -1194,13 +1191,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
               "name" => "Implementation",
               "executor" => %{"type" => "codex_agent"},
               "prompt" => %{"mode" => "extend", "template" => "Implement it"},
-              "allowed_updates" => %{"comment" => true, "result" => true, "target_states" => ["In Progress", "In Review"]}
-            },
-            "merge" => %{
-              "name" => "Merge",
-              "executor" => %{"type" => "codex_agent"},
-              "prompt" => %{"mode" => "extend", "template" => "Merge it"},
-              "allowed_updates" => %{"comment" => true, "result" => true, "target_states" => ["Done"]}
+              "allowed_updates" => %{"comment" => true, "result" => true, "target_states" => ["In Progress", "Ready to Merge"]}
             }
           }
         },
@@ -1210,7 +1201,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     edited =
       put_in(draft, ["allowed_transitions"], %{
         "0" => %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-        "1" => %{"from" => "In Progress", "to" => "In Review", "actor" => "codex", "profile" => "implementation"},
+        "1" => %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
         "2" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
       })
 
@@ -1219,7 +1210,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert get_in(loaded_workflow.config, ["workflow", "allowed_transitions"]) == [
              %{"actor" => "codex", "from" => "Ready", "profile" => "implementation", "to" => "In Progress"},
-             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "In Review"}
+             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "Ready to Merge"}
            ]
 
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
@@ -1627,7 +1618,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     %{
       "tracker_project_slug" => "project",
       "tracker_assignee" => "",
-      "active_states" => "Refining\nReady\nIn Progress\nReady to Merge\nMerging",
+      "active_states" => "Refining\nReady\nIn Progress",
       "terminal_states" => "Canceled\nCancelled\nDuplicate\nDone",
       "polling_interval_ms" => "30000",
       "project_repository_url" => "git@github.com:org/repo.git",
@@ -1700,7 +1691,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
         "Ready" => %{"profile" => "implementation"},
         "In Progress" => %{"profile" => "implementation"}
       },
-      "human_review_states" => ["In Review"],
+      "human_review_states" => ["Ready to Merge"],
       "allowed_transitions" => []
     }
   end
@@ -1712,7 +1703,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       kind: linear
       endpoint: "https://api.linear.app/graphql"
       project_slug: "project"
-      active_states: ["Refining", "Ready", "In Progress", "Ready to Merge", "Merging"]
+      active_states: ["Refining", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
@@ -1741,13 +1732,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
           profile: implementation
         In Progress:
           profile: implementation
-        Ready to Merge:
-          profile: merge
-        Merging:
-          profile: merge
-      human_review_states: ["Needs Refinement Review", "In Review"]
+      human_review_states: ["Needs Refinement Review", "Ready to Merge"]
       allowed_transitions:
         - {from: Ready, to: In Progress, actor: codex, profile: implementation}
+        - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
+        - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
       tool_policy:
         linear:
           exposed_tools: ["linear_task_read", "linear_task_update"]
@@ -1762,12 +1751,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
         name: "Implementation"
         executor: {type: codex_agent}
         prompt: {mode: extend, template: "Implement the task."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "In Review"]}
-      merge:
-        name: "Merge"
-        executor: {type: codex_agent}
-        prompt: {mode: extend, template: "Merge the task."}
-        allowed_updates: {description: false, comment: true, result: true, target_states: ["Merging", "Done"]}
+        allowed_updates: {description: false, comment: true, result: true, target_states: ["In Progress", "Ready to Merge"]}
     ---
 
     Imported workflow prompt.

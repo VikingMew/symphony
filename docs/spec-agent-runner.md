@@ -5,7 +5,7 @@ domain: [spec, agent-runner]
 status: current
 language: en
 owner: SymphonyElixir.AgentRunner
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Agent Runner Protocol Specification
@@ -231,11 +231,46 @@ Behavior:
 2. Build prompt from workflow template.
 3. Start app-server session.
 4. Forward app-server events to orchestrator.
-5. On any error, fail the worker attempt (the orchestrator will retry).
+5. Treat only an explicit allowed `Ready to Merge` request as implementation completion.
+6. On any error, fail the worker attempt (the orchestrator will retry).
 
 Note:
 
 - Workspaces are intentionally preserved after successful runs.
+- A normal app-server turn completion or `agent.max_turns` exhaustion MUST NOT create a PR or move
+  an issue to `Ready to Merge`.
+
+### 10.8 Centralized GitHub PR Handoff
+
+For the default implementation profile, `AgentRunner` owns this ordered boundary:
+
+1. Receive an explicit `Ready to Merge` request containing final comment, structured result, and
+   references.
+2. Validate the Linear identifier/title, exact Linear `branchName`, configured default branch,
+   GitHub repository identity, and existence of the remote head branch.
+3. Ensure an open PR exists for the exact repository/base/head tuple.
+4. Attach the PR URL and post the final Linear comment/result/references.
+5. Update Linear from `In Progress` to `Ready to Merge` last.
+
+Step 5 MUST NOT run if PR preparation fails. Failures MUST be typed, visible, redacted, and leave
+the issue in `In Progress`. Started/completed/failed `implementation_handoff` phase events MUST
+carry issue, session, and run context; completed events record the PR URL.
+
+PR lookup/creation requirements:
+
+- Discover `gh` from the service process environment and use non-interactive, timeout-bounded
+  commands.
+- Look up before create and return an existing open PR without duplication.
+- Create against the configured default branch with the exact validated head, a title containing
+  the Linear identifier, and an exact `Fixes <ID>` closing reference in the body.
+- If `gh` is unavailable or unusable, use GitHub REST through the existing HTTP/proxy stack when
+  `GH_TOKEN` or `GITHUB_TOKEN` is present; do not add a workflow token setting.
+- A closed or merged PR for the same branch is a typed conflict, not success and not permission to
+  create an ambiguous duplicate.
+- Repository identity mismatch, missing remote branch/auth, CLI/API errors, and Linear transition
+  failure are typed errors. Logs and returned command output MUST redact token values.
+- Resolution MUST NOT depend on the centralized host having the worker workspace, which preserves
+  SSH-host execution.
 
 ## 12. Prompt Construction and Context Assembly
 

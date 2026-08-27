@@ -111,12 +111,16 @@ defmodule SymphonyElixir.LinearDiagnosticsProbesTest do
       url: "https://linear.app/issue/LIN-1"
     }
 
-    Application.put_env(:symphony_elixir, :linear_diagnostics_probe_fake, %{candidate_result: {:ok, [issue, %{identifier: "LIN-2"}]}})
+    Application.put_env(:symphony_elixir, :linear_diagnostics_probe_fake, %{
+      candidate_result: {:ok, [issue, %{identifier: "LIN-2"}]}
+    })
 
     assert {%{status: :ok, data: %{issue_count: 2}}, issues} = Probes.candidate_probe(FakeClient)
     assert [%{identifier: "LIN-1", assignee: "unassigned"}, %{identifier: "LIN-2"}] = issues
 
-    Application.put_env(:symphony_elixir, :linear_diagnostics_probe_fake, %{candidate_result: {:error, {:token, "secret-token"}}})
+    Application.put_env(:symphony_elixir, :linear_diagnostics_probe_fake, %{
+      candidate_result: {:error, {:token, "secret-token"}}
+    })
 
     assert {%{status: :error, detail: detail}, []} = Probes.candidate_probe(FakeClient)
     assert detail =~ "[REDACTED]"

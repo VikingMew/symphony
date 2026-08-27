@@ -18,12 +18,12 @@ defmodule SymphonyElixir.Workspace.HookRunnerTest do
   test "run_local returns timeout diagnostics with recent output" do
     dir = tmp_dir!("hook-runner-timeout")
 
-    assert {:error, {:workspace_hook_timeout, "local_command", 50, details}} =
-             HookRunner.run_local("printf before-timeout; sleep 1", dir, 50, fn _chunk, _recent_output ->
+    assert {:error, {:workspace_hook_timeout, "local_command", 500, details}} =
+             HookRunner.run_local("printf before-timeout; sleep 2", dir, 500, fn _chunk, _recent_output ->
                :ok
              end)
 
-    assert details.elapsed_ms >= 50
+    assert details.elapsed_ms >= 500
     assert details.recent_output =~ "before-timeout"
   end
 

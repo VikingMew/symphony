@@ -145,7 +145,9 @@ defmodule SymphonyElixir.Codex.MessageHumanizer.WrapperEvents do
     binary_command = SymphonyElixir.Payload.get_any(command, ["parsedCmd", :parsedCmd, "command", :command, "cmd", :cmd])
     args = SymphonyElixir.Payload.get_any(command, ["args", :args, "argv", :argv])
 
-    if is_binary(binary_command) and is_list(args), do: normalize_command([binary_command | args]), else: normalize_command(binary_command || args)
+    if is_binary(binary_command) and is_list(args),
+      do: normalize_command([binary_command | args]),
+      else: normalize_command(binary_command || args)
   end
 
   defp normalize_command(command) when is_binary(command), do: inline_text(command)

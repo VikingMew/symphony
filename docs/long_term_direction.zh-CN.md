@@ -4,7 +4,7 @@ genre: roadmap
 domain: [roadmap, strategy]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Symphony 长期开发方向与技术选型
@@ -56,7 +56,9 @@ Elixir / Phoenix Web Service
 - `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，展示 staged diff/review，并在确认后写入 editable draft；运行时仍只在正常 Save 后变化。
 - `已落地`：input-required / approval-required / MCP elicitation 会作为 blocked session 暴露在 snapshot、API 和 dashboard 中，不再当作普通 retry failure。
 - `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
-- `部分落地`：`profiles.<id>.executor.type` schema 支持 `codex_agent`、`manual`、`backend_action`、`external_worker`。当前调度层会自动执行 `codex_agent`，也会把 merge profile 的 `backend_action` 交给后端 merge executor；manual/external 仍是路由契约和后续执行器扩展点。
+- `已落地`：默认交付使用 refinement/implementation 两个 Codex profile；实现完成后由
+  `AgentRunner` 确保 open GitHub PR，再进入 `Ready to Merge` 等待人 review。后端不 merge，
+  `manual` / `external_worker` 仍是扩展契约。
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、Docker worker 和更强 sandbox runner 仍是后续阶段。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
 - `已落地`：独立历史 Analytics 页面已由 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md) 落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
@@ -305,31 +307,32 @@ Linear 相关配置必须避免在 Settings、Diagnostics 和 runtime 之间制�
 - Discovery 必须显示 fetching、fetched、failed 状态；失败要展示可行动原因。读取结果不能自动修改 Settings，用户必须显式复制或保存。
 - Diagnostics 验证的是 active runtime config；Settings 验证的是当前 draft 和保存后的数据库配置。两者可以同时显示同一个 Linear state mismatch，但措辞必须说明问题归属：project 字段缺失去 Projects 修，workflow state/transition 缺失去 Workflow 修，token 缺失去环境变量修。
 - Linear state mismatch 需要聚焦核心：列出 missing state、引用位置、是否在 Linear available states 里有近似可选项，以及用户下一步可以“改 workflow state 名称”还是“去 Linear 新建/重命名 state”。
-- Linear state 名称长度必须在 validator 中显式校验。当前按 Linear 限制使用 25 个字符上限；例如 `Needs Refinement Review` 可以通过，`Needs Implementation Review` 应被 configuration check 明确指出超过长度限制。推荐默认实现验收状态使用较短的 `In Review`。
+- Linear state 名称长度必须在 validator 中显式校验。当前按 Linear 限制使用 25 个字符上限；例如 `Needs Refinement Review` 和 `Ready to Merge` 可以通过，`Needs Implementation Review` 应被 configuration check 明确指出超过长度限制。
 
-### 阶段 2.0：三阶段执行 profile
+### 阶段 2.0：PR-first refinement / implementation profile
 
-Workflow 不是一个单一 agent prompt。长期至少要区分三个执行环节：
+Workflow 不是一个单一 agent prompt。当前默认区分两个 Codex 执行环节：
 
 - `refinement`：从一句话想法和上下文细化任务，产出可人工确认的需求。
-- `implementation`：拉取代码、建 worktree、实现、测试、验证、推分支并交给人验收。
-- `merge`：合并或落地已验收结果；这个环节可以是 Codex agent，也可以是后端服务、GitHub
-  automation、人工操作或 future worker，不应默认等同于前两个 Codex agent。
+- `implementation`：准备 workspace、实现、测试、验证、commit、push 精确 Linear branch，并显式
+  请求 PR handoff。
+
+review/merge 不再建模为可执行 profile。`Ready to Merge` 是不可调度的人工等待状态；人通过
+GitHub review/merge，Linear GitHub integration 在 merge 后进入 `Done`。Symphony 不执行
+feature branch merge，也不 push default branch。
 
 因此 workflow 应把“状态路由”和“执行 profile 定义”拆开：
 
 - `workflow.states.<Linear state>.profile` 负责指定某个状态使用哪个 profile。
 - `profiles.<profile_id>.name` 是 profile 的显示名称，也会进入 prompt、日志和诊断。
-- `profiles.<profile_id>.executor` 指定执行器类型，例如 `codex_agent`、`backend_action`、
-  `manual`、`external_worker`。
+- `profiles.<profile_id>.executor` 指定执行器类型；默认两个 profile 都使用 `codex_agent`。
 - `profiles.<profile_id>.prompt` 指定阶段专属 prompt 或 prompt template。
 - `profiles.<profile_id>.tool_policy` 指定阶段专属 tool policy。
 - `profiles.<profile_id>.allowed_updates` 指定允许的 Linear update 字段和 target states。
 - `workflow.allowed_transitions` 和 review states 负责表达人工 review gate 以及被打回后的目标状态。
 
-`refinement`、`implementation` 和 `merge` 的 prompt 不应强行共用同一个模板。默认 workflow
-可以提供一个公共基础 prompt，但每个阶段必须能追加或替换阶段指令。尤其 merge 阶段要允许
-关闭 Codex agent，只由后端执行受控 merge 或等待人工完成。
+`refinement` 和 `implementation` 的 prompt 不应强行共用同一个模板。默认 workflow 可以提供
+公共基础 prompt，但每个阶段必须能追加或替换阶段指令。
 
 运行时长期只以 database workflow version 为 source，不再支持显式文件 runtime source，也不再展示 runtime/database mismatch 作为正常模式。split package 的推荐结构仍是
 `workflow.yml` 放状态路由和运行配置，`profiles.yml` 放 base prompt 和执行定义，但它们只用于导入/导出。数据库 workflow version 必须自包含，不能依赖旁边的 profile 文件。逻辑结构是：
@@ -343,10 +346,10 @@ workflow:
       profile: implementation
     In Progress:
       profile: implementation
-    Ready to Merge:
-      profile: merge
-    Merging:
-      profile: merge
+  human_review_states: ["Needs Refinement Review", "Ready to Merge"]
+  allowed_transitions:
+    - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
+    - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
 
 profiles:
   refinement:
@@ -370,24 +373,13 @@ profiles:
     prompt:
       mode: extend
       template: |
-        Implement, test, verify, and prepare the work for human review.
+        Implement, test, verify, commit, and push the exact Linear branch. Submit final
+        comment/result/references and explicitly request Ready to Merge.
     allowed_updates:
       description: false
       comment: true
       result: true
-      target_states: ["In Progress", "In Review"]
-
-  merge:
-    name: "Merge"
-    executor:
-      type: manual
-    prompt:
-      mode: disabled
-    allowed_updates:
-      description: false
-      comment: true
-      result: true
-      target_states: ["Done"]
+      target_states: ["In Progress", "Ready to Merge"]
 ```
 
 `profiles.<id>.active_states` 不再作为状态路由来源。路由只能从 `workflow.states` 读取。
@@ -404,13 +396,11 @@ profiles:
 
 这个契约由 [046 Profile Prompt Mode Clarity](exec-plans/completed/046-profile-prompt-mode-clarity.md) 落地。
 
-现状对齐：profile schema、state -> profile 路由、profile prompt mode、allowed updates 和
-`codex_agent` 执行路径已经落地。`backend_action` 的 merge 路径也已部分落地：
-Orchestrator 会把 `executor.type == "codex_agent"` 和 `executor.type == "backend_action"` 的可执行状态视为可领取状态；
-AgentRunner 对 merge profile 调用 `SymphonyElixir.MergeExecutor` 执行后端 merge。这个能力目前只覆盖受控 merge
-场景，非 merge 的 backend action、`manual` 和 `external_worker` 仍主要是配置契约和后续执行器扩展点。
-因此“merge 可以不是 agent”在当前代码中表现为：merge profile 可以配置为 `backend_action`，由后端 merge executor
-执行，而不是启动 Codex。
+现状对齐：profile schema、state -> profile 路由、prompt mode、allowed updates 和
+`codex_agent` 执行路径已经落地。实现显式请求 `Ready to Merge` 时，`AgentRunner` 使用 service
+environment 中的 `gh`，或在环境 token 存在时使用 REST fallback，lookup/create 精确
+repository/base/head 的 open PR。只有 PR 成功后才写 Linear completion；普通 turn exit/max turns
+不会触发 handoff。`Ready to Merge -> In Progress` 返工会更新同一 branch/PR。
 
 ### 阶段 2.1：项目模板和 bootstrap 配置解耦
 

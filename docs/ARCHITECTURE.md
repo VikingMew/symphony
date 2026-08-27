@@ -4,7 +4,7 @@ genre: architecture
 domain: [architecture, runtime]
 status: current
 language: en
-updated: 2026-08-07
+updated: 2026-08-27
 owner: SymphonyElixir.Orchestrator
 ---
 
@@ -105,9 +105,11 @@ sequenceDiagram
             WS->>WS: Run after_create hook when newly created
             Orch->>Codex: Launch app-server session
             Orch->>Codex: Send rendered issue prompt
-            Codex->>WS: Modify code, run validation, commit changes
-            Codex->>Linear: Update issue comments and status through tools
-            Codex->>GitHub: Push branch and create/update PR
+            Codex->>WS: Modify code, validate, and commit exact Linear branch
+            Codex->>GitHub: Push exact Linear branch
+            Codex->>Orch: Explicitly request Ready to Merge with final result
+            Orch->>GitHub: Find or create open PR for repository/base/head
+            Orch->>Linear: Attach PR, post final comment, move to Ready to Merge
             Codex-->>Orch: Return turn result
         else worker execution
             Orch->>Orch: Persist run/task in SQLite
@@ -206,7 +208,11 @@ Locations:
 - `lib/symphony_elixir/prompt_builder.ex`
 
 The agent runner prepares the prompt for a specific issue and starts the Codex App Server client. It
-reports run lifecycle events and outcomes back to the orchestrator.
+reports run lifecycle events and outcomes back to the orchestrator. For centralized implementation
+runs it also owns the atomic GitHub handoff boundary: validate repository/default/head identity,
+ensure an open PR exists, record its URL, then allow the restricted Linear tool to move the issue
+to `Ready to Merge`. This boundary uses repository metadata and remote branch state, not the local
+workspace path, so it also works when Codex ran on an SSH host.
 
 ### 6.8 Codex App Server Integration
 
@@ -218,6 +224,9 @@ Locations:
 This layer launches and communicates with Codex App Server. It exposes restricted task-scoped
 Linear tools (`linear_task_read` and `linear_task_update`) to Codex. Raw Linear GraphQL remains an
 internal Symphony backend/client implementation detail and is not a Codex-visible workflow tool.
+The implementation completion request is special: `Ready to Merge` is accepted only with final
+comment/result/references, and `AgentRunner` must prepare the GitHub PR before any Linear completion
+write. A normal turn exit or exhausted turn budget is not an implementation-completion signal.
 
 ### 6.9 Observability
 
@@ -286,8 +295,13 @@ The agent owns, through the workflow prompt and tools:
 - tests and validation
 - Linear workpad comments
 - Linear state transitions
-- branch, commit, and PR operations
+- exact Linear branch commits and pushes
+- updates to the same branch/PR after human change requests
 - reviewer feedback handling
+
+Symphony owns initial PR lookup/creation for centralized implementation handoff. It never approves
+or merges that PR and never pushes a feature result to the configured default branch. GitHub review
+and Linear's merged-PR automation own `Ready to Merge -> Done`.
 
 This split keeps Symphony generic while allowing teams to encode shared execution policy in Settings
 and repository skills. Project-specific repository and Linear slug values live in project settings,

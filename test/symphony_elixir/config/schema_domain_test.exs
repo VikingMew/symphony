@@ -271,14 +271,14 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       max_concurrent_agents_by_state: %{
         todo: 1,
         "In Progress": 4,
-        "In Review": 2
+        "Ready to Merge": 2
       }
     )
 
     assert Config.settings!().agent.max_concurrent_agents == 10
     assert Config.max_concurrent_agents_for_state("Todo") == 1
     assert Config.max_concurrent_agents_for_state("In Progress") == 4
-    assert Config.max_concurrent_agents_for_state("In Review") == 2
+    assert Config.max_concurrent_agents_for_state("Ready to Merge") == 2
     assert Config.max_concurrent_agents_for_state("Closed") == 10
     assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
 

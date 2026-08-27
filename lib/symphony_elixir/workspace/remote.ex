@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Workspace.Remote do
   Remote workspace command construction and SSH execution.
   """
 
-  alias SymphonyElixir.{SSH, Shell}
+  alias SymphonyElixir.{Shell, SSH}
 
   @remote_workspace_marker "__SYMPHONY_WORKSPACE__"
 

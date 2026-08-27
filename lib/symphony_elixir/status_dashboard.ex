@@ -9,6 +9,7 @@ defmodule SymphonyElixir.StatusDashboard do
   use GenServer
   require Logger
 
+  alias SymphonyElixir.Codex.MessageHumanizer
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.WorkflowStore
   alias SymphonyElixirWeb.ObservabilityPubSub
@@ -259,7 +260,7 @@ defmodule SymphonyElixir.StatusDashboard do
     end
   end
 
-  defp summarize_message(message), do: SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message)
+  defp summarize_message(message), do: MessageHumanizer.humanize_codex_message(message)
 
   defp dashboard_enabled? do
     if Code.ensure_loaded?(Mix) and function_exported?(Mix, :env, 0) do
