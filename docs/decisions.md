@@ -21,7 +21,7 @@ operator UI and service boundary without a separate frontend stack.
 
 Status: superseded by PostgreSQL runtime persistence
 
-SQLite workflow versions were the runtime authority before plan 259. SQLite is now only a frozen,
+SQLite workflow versions were the former runtime authority. SQLite is now only a frozen,
 one-way cutover source and cannot be selected as a runtime backend.
 
 ### PostgreSQL runtime persistence
@@ -29,9 +29,9 @@ one-way cutover source and cannot be selected as a runtime backend.
 Status: accepted
 
 PostgreSQL is the sole runtime database and `DATABASE_URL` is the connection contract. Active
-workflow versions remain the durable authority, while normal `WorkflowStore` reads use the atomic
-in-memory snapshot established by plan 257. Plan 259 owns the one supported stopped-SQLite-backup
-cutover into an already-migrated empty PostgreSQL database.
+workflow versions remain the durable authority, while normal `WorkflowStore` reads use an atomic
+in-memory snapshot. The only supported cutover imports a stopped SQLite backup into an
+already-migrated empty PostgreSQL database.
 
 ### Per-project workflow versions and multi-project runtime
 
@@ -41,19 +41,19 @@ Each enabled project owns its active workflow version and project-scoped runtime
 215-219 established a single orchestrator that iterates those project contexts while preserving
 default-project compatibility for existing callers.
 
-### Checked exec-plan lifecycle
+### Linear task definition and PR-first delivery
 
 Status: accepted
 
-Implementation work is recorded as indexed active or completed exec plans with verification and
-handoff evidence. `mix exec_plans.check` enforces index membership so lifecycle state is explicit
-and historical plans remain discoverable.
+Linear owns task definition, refinement state, and ordering. GitHub pull requests and commits own
+implementation review and delivery evidence; repository documentation owns only current contracts,
+designs, decisions, and operational guidance.
 
 ### Quality-gate debt cleanup
 
 Status: accepted
 
-Plans 221-224 treated static-analysis debt as bounded cleanup instead of weakening the gates:
+Static-analysis debt was treated as bounded cleanup instead of weakening the gates:
 Credo failing-priority findings went to zero, and Dialyzer went from 117 warnings to zero while
 preserving the regression suite.
 
@@ -62,13 +62,12 @@ preserving the regression suite.
 Status: accepted
 
 The fork is now an Elixir/Phoenix product rather than a repository containing an optional Elixir
-implementation. Plan 226 owns the history-preserving promotion of the Elixir project and docs to
-the repository root; this decision log does not perform that move.
+implementation. The Elixir project and docs live at the repository root.
 
 ### Adopt the L0-L5 documentation model
 
 Status: accepted
 
 Documentation is classified into one of six authority layers, with one owning document for each
-contract and links elsewhere. Plan 225 establishes the index, metadata seed, and checker before
-plan 227 performs naming convergence and the full frontmatter sweep.
+contract and links elsewhere. The index, metadata, checker, naming, and frontmatter conventions
+enforce that model.

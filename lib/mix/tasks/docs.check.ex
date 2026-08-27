@@ -40,7 +40,6 @@ defmodule Mix.Tasks.Docs.Check do
 
   defp documents do
     Path.wildcard(Path.join(@docs_dir, "**/*.md"))
-    |> Enum.reject(&String.starts_with?(&1, "docs/exec-plans/"))
     |> Enum.sort()
   end
 

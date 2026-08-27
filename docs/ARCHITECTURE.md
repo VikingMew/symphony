@@ -19,7 +19,7 @@ App Server session in that workspace, and lets the agent execute the repository-
 The repository contains two major parts:
 
 - `SPEC.md`: language-agnostic service specification.
-- The repository root is the Elixir/Phoenix implementation (promoted from `elixir/` in plan 226).
+- The repository root is the Elixir/Phoenix implementation.
 
 The current implementation targets Linear as the tracker and Codex App Server as the coding-agent
 runtime.
