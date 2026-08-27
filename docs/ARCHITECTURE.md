@@ -31,9 +31,9 @@ runtime.
 - Create and preserve isolated per-issue workspaces.
 - Run lifecycle hooks to prepare and clean workspaces.
 - Launch Codex App Server sessions with issue-specific prompts.
-- Keep runtime behavior configurable through the active SQLite workflow version.
+- Keep runtime behavior configurable through the active PostgreSQL workflow version.
 - Persist projects, workflow versions, issues, runs, agent turns, workspaces, worker tasks, leases,
-  and events in SQLite when the Repo is available.
+  and events in PostgreSQL when the Repo is available.
 - Provide logs, JSON state APIs, Linear diagnostics, worker APIs, and a Phoenix LiveView dashboard.
 - Stop or clean up active runs when issue states become terminal.
 
@@ -53,10 +53,10 @@ flowchart TD
     linear[Linear Project / Issues] -->|poll eligible issues| tracker[Tracker Layer]
     tracker --> orchestrator[Orchestrator]
 
-    workflow[SQLite Workflow Version] --> loader[Workflow Store]
+    workflow[PostgreSQL Workflow Version] --> loader[Workflow Store]
     loader --> config[Config Layer]
     config --> orchestrator
-    orchestrator --> sqlite[(SQLite / Ecto)]
+    orchestrator --> postgres[(PostgreSQL / Ecto)]
 
     orchestrator -->|create/reuse| workspace[Workspace Manager]
     workspace --> issuews[Per-Issue Workspace]
@@ -85,7 +85,7 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant CLI as bin/symphony
-    participant Workflow as SQLite Workflow Store
+    participant Workflow as PostgreSQL Workflow Store
     participant Orch as Orchestrator
     participant Linear as Linear API
     participant WS as Workspace
@@ -112,7 +112,7 @@ sequenceDiagram
             Orch->>Linear: Attach PR, post final comment, move to Ready to Merge
             Codex-->>Orch: Return turn result
         else worker execution
-            Orch->>Orch: Persist run/task in SQLite
+            Orch->>Orch: Persist run/task in PostgreSQL
             Orch->>Orch: External worker claims task through HTTP API
         end
         Orch->>Orch: Continue, retry, release, stop, or clean up
@@ -125,15 +125,15 @@ sequenceDiagram
 
 Location: `lib/symphony_elixir/cli.ex`
 
-The CLI is the escript entrypoint built as `bin/symphony`. It accepts:
+The CLI is the local-development entrypoint built as `bin/symphony`. It accepts:
 
 - `--logs-root <path>` to choose the log output root
 - `--port <port>` to enable the Phoenix observability server
-- `--database-path <path>` to choose the SQLite database file
 
-The CLI stores runtime overrides, selects database workflow mode, prepares SQLite, and starts the
-Elixir application. If no active workflow version exists, Symphony enters setup-required mode and
-the Settings UI creates the first active workflow.
+The CLI stores runtime overrides, requires `DATABASE_URL`, applies PostgreSQL migrations, and
+starts the Elixir application. Production containers start the real OTP release after a separate
+one-shot release migration command. If no active workflow version exists, Symphony enters
+setup-required mode and the Settings UI creates the first active workflow.
 
 ### 6.2 Workflow Loader
 
@@ -142,11 +142,11 @@ Locations:
 - `lib/symphony_elixir/workflow.ex`
 - `lib/symphony_elixir/workflow_store.ex`
 
-SQLite remains the durable workflow authority. At cold start the workflow store loads every enabled
+PostgreSQL remains the durable workflow authority. At cold start the workflow store loads every enabled
 project and atomically publishes one coherent in-memory snapshot containing the workflow map,
 default selection, source/version metadata, and setup/error state. `current/0`,
 `current_with_source/0`, `list_enabled/0`, and `for_project/1` read only that published term; they do
-not query SQLite or wait behind refresh work. Explicit mutations persist first and publish before
+not query PostgreSQL or wait behind refresh work. Explicit mutations persist first and publish before
 success, while a single background refresh detects external activation and rejects stale results by
 generation. Failures retain the complete last-known-good snapshot.
 
@@ -261,7 +261,7 @@ Locations:
 - `lib/symphony_elixir/persistence/*`
 - `lib/symphony_elixir_web/controllers/worker_api_controller.ex`
 
-The persistence context owns SQLite-backed records for projects, workflow versions, runs, agent
+The persistence context owns PostgreSQL-backed records for projects, workflow versions, runs, agent
 turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
 worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
 Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
@@ -273,7 +273,7 @@ request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 
 ## 7. Configuration Model
 
-The active workflow is a SQLite-backed workflow version. Operators create and update it through the
+The active workflow is a PostgreSQL-backed workflow version. Operators create and update it through the
 Settings UI; startup can enter setup-required mode when no active workflow version exists.
 `workflow.yml` and `profiles.yml` are split package artifacts for import/export and examples, not
 startup authority.
@@ -334,16 +334,15 @@ Symphony is designed for long-running operation and transient failure recovery:
   retry failures. They remain claimed and visible in snapshot/API/dashboard until issue state or
   routing changes release the claim.
 
-## 9.1 Planned Operational Surfaces
+## 9.1 Operational Surfaces
 
-Two operator-facing areas are intentionally planned rather than current architecture:
+Operator-facing deployment and history surfaces are current architecture:
 
-- Historical time-range Analytics/Stats is owned by
-  `docs/exec-plans/active/158-runtime-results-analytics-page.md`. Current dashboard state is
-  live runtime state; `/runs` and `/events` provide persisted per-run and audit views.
-- Reverse-proxy/Kubernetes edge behavior is owned by
-  `docs/exec-plans/active/159-reverse-proxy-and-kubernetes-deployment.md`. Current Docker and
-  local deployment docs do not mean Symphony owns public TLS, domains, or ingress policy.
+- `/analytics` owns historical time-range statistics; dashboard state remains a live operational
+  view, while `/runs` and `/events` provide persisted per-run and audit views.
+- The root Compose stack runs PostgreSQL, a one-shot migration release, and the non-root Symphony
+  release. Public TLS, domains, and ingress policy remain the responsibility of the trusted edge;
+  see [compose.md](compose.md) and [deployment.md](deployment.md).
 
 ## 10. Security and Trust Model
 
@@ -367,7 +366,6 @@ environments.
 Install project tool versions with `mise`:
 
 ```bash
-cd elixir
 mise trust
 mise install
 ```
@@ -375,13 +373,16 @@ mise install
 Install dependencies and build the executable:
 
 ```bash
+export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony
 mise exec -- mix setup
+mise exec -- mix symphony.migrate
 mise exec -- mix build
 ```
 
 Run without the dashboard:
 
 ```bash
+export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony
 export LINEAR_API_KEY=...
 mise exec -- ./bin/symphony
 ```
@@ -389,6 +390,7 @@ mise exec -- ./bin/symphony
 Run with the dashboard:
 
 ```bash
+export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony
 export LINEAR_API_KEY=...
 mise exec -- ./bin/symphony --port 4000
 ```
@@ -396,7 +398,6 @@ mise exec -- ./bin/symphony --port 4000
 Run checks:
 
 ```bash
-cd elixir
 mise exec -- make all
 ```
 
@@ -416,17 +417,18 @@ Common extension areas:
 ```text
 .
 ├── README.md
-├── SPEC.md
-├── ARCHITECTURE.md
-└── elixir
-    ├── README.md
-    ├── workflow.yml
-    ├── profiles.yml
-    ├── Makefile
-    ├── mise.toml
-    ├── mix.exs
-    ├── lib
-    │   ├── symphony_elixir
-    │   └── symphony_elixir_web
-    └── test
+├── Dockerfile
+├── compose.yaml
+├── workflow.yml
+├── profiles.yml
+├── Makefile
+├── mise.toml
+├── mix.exs
+├── config
+├── docs
+├── lib
+│   ├── symphony_elixir
+│   └── symphony_elixir_web
+├── priv
+└── test
 ```

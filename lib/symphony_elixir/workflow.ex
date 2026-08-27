@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  runtime source is the active workflow version in SQLite.
+  runtime source is the active workflow version in PostgreSQL.
   """
 
   alias SymphonyElixir.Config.Schema

@@ -1,4 +1,7 @@
 _build/
+.env
+.env.*
+.git/
 deps/
 cover/
 log/

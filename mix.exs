@@ -23,6 +23,11 @@ defmodule SymphonyElixir.MixProject do
         ignore_warnings: ".dialyzer_ignore.exs",
         plt_add_apps: [:mix]
       ],
+      releases: [
+        symphony: [
+          applications: [runtime_tools: :permanent]
+        ]
+      ],
       aliases: aliases(),
       deps: deps()
     ]
@@ -52,6 +57,8 @@ defmodule SymphonyElixir.MixProject do
         exit_slices: %{
           SymphonyElixir.Config => "split runtime settings loading from process/env access, then count the pure loader",
           SymphonyElixir.DatabaseSetup => "move migration/bootstrap orchestration behind a command boundary and keep schema checks covered elsewhere",
+          SymphonyElixir.Release => "cover release maintenance entrypoints through the explicit PostgreSQL smoke target",
+          SymphonyElixir.SQLiteImporter => "cover the one-way legacy import boundary through the explicit PostgreSQL smoke target",
           SymphonyElixir.Linear.Client => "extract GraphQL query construction and response decoding into counted pure modules",
           SymphonyElixir.SpecsCheck => "extract spec file parsing and validation into a counted module",
           SymphonyElixir.Persistence.WorkflowStore => "extract active-version loading and poll decision logic behind a mockable workflow-store adapter before counting the GenServer shell",
@@ -63,11 +70,16 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.HttpServer => "extract config resolution and endpoint host/port parsing",
           SymphonyElixir.LogFile => "extract file path and formatter behavior from logger side effects",
           SymphonyElixir.Workspace => "extract source strategy, cleanup policy, and hook command behavior before counting the process boundary",
-          Mix.Tasks.Symphony.Build => "keep as a Mix shell until release build packaging has a deterministic fake"
+          Mix.Tasks.Symphony.Build => "keep as a Mix shell until release build packaging has a deterministic fake",
+          Mix.Tasks.Symphony.Migrate => "cover the command wrapper through the release migration smoke",
+          Mix.Tasks.Symphony.PostgresSmoke => "run this integration harness against PostgreSQL instead of counting it in unit coverage",
+          Mix.Tasks.Symphony.SqliteImport => "cover the command wrapper through the SQLite cutover smoke"
         },
         modules: [
           SymphonyElixir.Config,
           SymphonyElixir.DatabaseSetup,
+          SymphonyElixir.Release,
+          SymphonyElixir.SQLiteImporter,
           SymphonyElixir.Linear.Client,
           SymphonyElixir.SpecsCheck,
           SymphonyElixir.Persistence.WorkflowStore,
@@ -79,7 +91,10 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.HttpServer,
           SymphonyElixir.LogFile,
           SymphonyElixir.Workspace,
-          Mix.Tasks.Symphony.Build
+          Mix.Tasks.Symphony.Build,
+          Mix.Tasks.Symphony.Migrate,
+          Mix.Tasks.Symphony.PostgresSmoke,
+          Mix.Tasks.Symphony.SqliteImport
         ]
       },
       %{
@@ -172,7 +187,8 @@ defmodule SymphonyElixir.MixProject do
       {:solid, "~> 1.2"},
       {:ecto, "~> 3.13"},
       {:ecto_sql, "~> 3.13"},
-      {:ecto_sqlite3, "~> 0.21"},
+      {:postgrex, "~> 0.21"},
+      {:castore, "~> 1.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]
@@ -182,7 +198,8 @@ defmodule SymphonyElixir.MixProject do
     [
       setup: ["deps.get"],
       build: ["symphony.build"],
-      lint: ["exec_plans.check", "specs.check", "credo --strict"]
+      lint: ["exec_plans.check", "specs.check", "credo --strict"],
+      "symphony.pg_smoke": ["symphony.postgres_smoke"]
     ]
   end
 end

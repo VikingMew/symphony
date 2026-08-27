@@ -21,8 +21,13 @@ defmodule SymphonyElixir.Application do
 
   @impl true
   def start(_type, _args) do
-    :ok = SymphonyElixir.LogFile.configure()
+    with :ok <- validate_database_config(),
+         :ok <- SymphonyElixir.LogFile.configure() do
+      start_supervisor()
+    end
+  end
 
+  defp start_supervisor do
     children =
       [
         repo_child(),
@@ -52,6 +57,14 @@ defmodule SymphonyElixir.Application do
   defp repo_child do
     if Application.get_env(:symphony_elixir, :start_repo, true) do
       SymphonyElixir.Repo
+    end
+  end
+
+  defp validate_database_config do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.DatabaseSetup.validate_config()
+    else
+      :ok
     end
   end
 end

@@ -270,11 +270,11 @@ Value coercion semantics:
 
 Dynamic reload is REQUIRED:
 
-- SQLite is the durable authority, but normal runtime reads MUST resolve from one atomically
+- PostgreSQL is the durable authority, but normal runtime reads MUST resolve from one atomically
   replaced in-memory snapshot containing all enabled projects, default selection, source/version
   metadata, and setup/error state.
 - Runtime reads MUST NOT query persistence, trigger refresh-on-read, or wait behind persistence
-  refresh work. An absent cache owner MUST NOT cause caller-side SQLite fallback.
+  refresh work. An absent cache owner MUST NOT cause caller-side database fallback.
 - Successful workflow and project mutations MUST persist first and publish the complete replacement
   snapshot before reporting full success. Persistence success followed by publication failure MUST
   return a typed partial/refresh failure.

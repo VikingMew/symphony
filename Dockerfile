@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 
 ARG ELIXIR_IMAGE=elixir:1.19-otp-28-slim
-ARG NODE_IMAGE=node:20-bookworm-slim
+ARG NODE_IMAGE=node:22-bookworm-slim
+ARG RUNTIME_IMAGE=debian:trixie-slim
 
 FROM ${NODE_IMAGE} AS codex
 
@@ -45,10 +46,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN chown symphony:symphony /workspace
 
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
-COPY --from=codex /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=codex /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=codex /usr/local/bin/codex /usr/local/bin/codex
 COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+  && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 
 EXPOSE 22
 CMD ["/usr/sbin/sshd", "-D", "-e"]
@@ -85,19 +87,22 @@ RUN mix deps.compile
 
 COPY lib ./lib
 COPY priv ./priv
-RUN mix compile
-RUN mix build
 
-FROM ${ELIXIR_IMAGE} AS app-runtime
+RUN mix compile --warnings-as-errors \
+  && mix release symphony --path /release
+
+FROM ${RUNTIME_IMAGE} AS symphony
 
 ARG APT_DEBIAN_MIRROR
 ARG APT_SECURITY_MIRROR
 
-ENV MIX_ENV=prod \
+ENV HOME=/home/symphony \
+    CODEX_HOME=/home/symphony/.codex \
+    GH_CONFIG_DIR=/home/symphony/.config/gh \
     PORT=4000 \
-    HOME=/home/symphony \
-    SYMPHONY_DATABASE_PATH=/data/symphony.db \
-    SYMPHONY_EXECUTION_MODE=worker
+    SYMPHONY_SERVER_HOST=0.0.0.0 \
+    SYMPHONY_LOGS_ROOT=/data/logs \
+    SYMPHONY_EXECUTION_MODE=centralized
 
 WORKDIR /app
 
@@ -112,49 +117,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
+    gh \
     git \
+    libncurses6 \
+    libssl3t64 \
+    libstdc++6 \
     openssh-client \
+    postgresql-client \
     ripgrep \
     sqlite3 \
+    zlib1g \
   && rm -rf /var/lib/apt/lists/* \
-  && useradd --create-home --shell /bin/bash symphony \
-  && install -d -o symphony -g symphony /data /data/logs /data/workspaces /external /home/symphony/.codex
+  && useradd --uid 10001 --create-home --shell /bin/bash symphony \
+  && install -d -o symphony -g symphony \
+    /data/logs \
+    /data/workspaces \
+    /home/symphony/.codex \
+    /home/symphony/.config/gh \
+    /home/symphony/.ssh
 
-COPY --from=build --chown=symphony:symphony /app /app
-
-USER symphony
-
-VOLUME ["/data"]
-EXPOSE 4000
-
-CMD ["sh", "-c", "mix ecto.migrate && exec ./bin/symphony --i-understand-that-this-will-be-running-without-the-usual-guardrails --logs-root /data/logs --port ${PORT}"]
-
-FROM app-runtime AS dashboard-internal-db
-
-ENV SYMPHONY_DATABASE_PATH=/data/symphony.db \
-    SYMPHONY_EXECUTION_MODE=worker
-
-FROM app-runtime AS dashboard-external-db
-
-ENV SYMPHONY_DATABASE_PATH=/external/symphony.db \
-    SYMPHONY_EXECUTION_MODE=worker
-
-VOLUME ["/external"]
-
-FROM app-runtime AS all-in-one
-
-ENV SYMPHONY_DATABASE_PATH=/data/symphony.db \
-    SYMPHONY_EXECUTION_MODE=centralized
-
-USER root
+ENV LANG=C.UTF-8
 
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
-COPY --from=codex /usr/local/bin/npm /usr/local/bin/npm
-COPY --from=codex /usr/local/bin/npx /usr/local/bin/npx
-COPY --from=codex /usr/local/bin/codex /usr/local/bin/codex
 COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
+  && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY --from=build --chown=symphony:symphony /release /app
 
 USER symphony
 
-VOLUME ["/data", "/home/symphony/.codex"]
+VOLUME ["/data/logs", "/data/workspaces", "/home/symphony/.codex", "/home/symphony/.config/gh"]
 EXPOSE 4000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
+  CMD curl --fail --silent http://127.0.0.1:4000/health/ready >/dev/null || exit 1
+
+CMD ["/app/bin/symphony", "start"]

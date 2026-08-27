@@ -11,7 +11,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 ## Codebase-Specific Conventions
 
-- Runtime config is loaded from the active SQLite workflow version and should be accessed through
+- Runtime config is loaded from the active PostgreSQL workflow version and should be accessed through
   `SymphonyElixir.Config`. `workflow.yml` and `profiles.yml` are split package import/export
   artifacts and examples, not the live runtime source.
 - Keep the implementation aligned with [`docs/spec.md`](docs/spec.md) where practical.
@@ -110,7 +110,7 @@ If behavior/config changes, update docs in the same PR:
 
 - `README.md` for project concepts, goals, and implementation/run instructions.
 - `workflow.yml` and `profiles.yml` when the import/export workflow package
-  contract changes. The SQLite active workflow version is the runtime
+  contract changes. The PostgreSQL active workflow version is the runtime
   authority; local split package files are examples/import artifacts, not the
   live runtime source.
 - `docs/documentation_alignment.md` when a change affects runtime source,

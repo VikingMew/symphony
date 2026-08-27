@@ -24,33 +24,19 @@ defmodule SymphonyElixir.CLITest do
     assert_received :started
   end
 
-  test "accepts --database-path and passes an expanded path to runtime deps" do
-    parent = self()
-    database_path = "tmp/custom-symphony.db"
-
-    deps = deps(parent)
-
-    assert :ok = CLI.evaluate(["--database-path", database_path], deps)
-    assert_received {:database_path, expanded_path}
-    assert expanded_path == Path.expand(database_path)
-    assert_received :started
-  end
-
-  test "accepts --logs-root and --database-path together" do
+  test "accepts --logs-root" do
     parent = self()
 
     deps = deps(parent)
 
     assert :ok =
              CLI.evaluate(
-               ["--logs-root", "tmp/custom-logs", "--database-path", "tmp/custom-symphony.db"],
+               ["--logs-root", "tmp/custom-logs"],
                deps
              )
 
     assert_received {:logs_root, logs_root}
     assert logs_root == Path.expand("tmp/custom-logs")
-    assert_received {:database_path, database_path}
-    assert database_path == Path.expand("tmp/custom-symphony.db")
     assert_received :started
   end
 
@@ -75,10 +61,10 @@ defmodule SymphonyElixir.CLITest do
     assert message == usage_message()
   end
 
-  test "rejects blank --database-path" do
+  test "rejects removed --database-path" do
     deps = deps(self())
 
-    assert {:error, message} = CLI.evaluate(["--database-path", ""], deps)
+    assert {:error, message} = CLI.evaluate(["--database-path", "tmp/symphony.db"], deps)
     assert message == usage_message()
   end
 
@@ -118,15 +104,11 @@ defmodule SymphonyElixir.CLITest do
   end
 
   defp usage_message do
-    "Usage: symphony [--logs-root <path>] [--port <port>] [--database-path <path>] [--no-default-yaml-prompt]"
+    "Usage: symphony [--logs-root <path>] [--port <port>] [--no-default-yaml-prompt]"
   end
 
   defp deps(parent, overrides \\ []) do
     defaults = %{
-      set_database_path: fn path ->
-        send(parent, {:database_path, path})
-        :ok
-      end,
       set_logs_root: fn path ->
         send(parent, {:logs_root, path})
         :ok

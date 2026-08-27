@@ -1,9 +1,8 @@
 defmodule SymphonyElixir.Persistence.WorkerQueueTest do
   use ExUnit.Case, async: false
 
-  alias Ecto.Adapters.SQL
-  alias SymphonyElixir.{Persistence, Repo}
-  alias SymphonyElixir.Persistence.{WorkerQueue, WorkflowStore}
+  alias SymphonyElixir.Persistence
+  alias SymphonyElixir.Persistence.WorkerQueue
 
   setup do
     previous_worker_api = Application.get_env(:symphony_elixir, :worker_api)
@@ -54,15 +53,9 @@ defmodule SymphonyElixir.Persistence.WorkerQueueTest do
     assert WorkerQueue.expire_stale_worker_state() == {0, 0}
   end
 
-  test "enqueue_task requires and preserves an explicit project_id" do
-    with_repo(fn ->
-      {:ok, project} = WorkflowStore.create_project(%{name: "Queue Project", slug: "queue-project", enabled: true})
-
-      assert WorkerQueue.enqueue_task(%{}) == {:error, :project_id_required}
-      assert {:ok, task} = WorkerQueue.enqueue_task(%{project_id: project.id})
-      assert task.project_id == project.id
-      assert task.status == "queued"
-    end)
+  test "enqueue_task validates project ownership before touching Repo" do
+    assert WorkerQueue.enqueue_task(%{}) == {:error, :project_id_required}
+    assert WorkerQueue.enqueue_task(%{project_id: "project-id"}) == {:error, :repo_unavailable}
   end
 
   test "public persistence context delegates worker queue compatibility functions" do
@@ -82,74 +75,4 @@ defmodule SymphonyElixir.Persistence.WorkerQueueTest do
 
   defp restore_env(name, nil), do: System.delete_env(name)
   defp restore_env(name, value), do: System.put_env(name, value)
-
-  defp with_repo(fun) do
-    previous_config = Application.fetch_env!(:symphony_elixir, Repo)
-    database = Path.join(System.tmp_dir!(), "exec-plan-250-worker-queue-#{System.unique_integer([:positive])}.db")
-
-    Application.put_env(
-      :symphony_elixir,
-      Repo,
-      previous_config |> Keyword.put(:database, database) |> Keyword.put(:pool_size, 1)
-    )
-
-    try do
-      {:ok, repo} = Repo.start_link()
-
-      try do
-        create_worker_queue_schema!()
-        fun.()
-      after
-        Supervisor.stop(repo)
-      end
-    after
-      Application.put_env(:symphony_elixir, Repo, previous_config)
-      Enum.each([database, database <> "-wal", database <> "-shm"], &File.rm/1)
-    end
-  end
-
-  defp create_worker_queue_schema! do
-    SQL.query!(Repo, """
-    CREATE TABLE projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      slug TEXT NOT NULL,
-      linear_project_slug TEXT,
-      repository_url TEXT,
-      default_branch TEXT NOT NULL DEFAULT 'main',
-      checkout_depth INTEGER NOT NULL DEFAULT 1,
-      source_strategy TEXT NOT NULL DEFAULT 'clone',
-      worktree_fetch INTEGER NOT NULL DEFAULT 1,
-      worktree_cleanup INTEGER NOT NULL DEFAULT 1,
-      description TEXT,
-      enabled INTEGER NOT NULL DEFAULT 1,
-      after_create_hook TEXT,
-      before_run_hook TEXT,
-      after_run_hook TEXT,
-      before_remove_hook TEXT,
-      inserted_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-    """)
-
-    SQL.query!(Repo, """
-    CREATE TABLE tasks (
-      id TEXT PRIMARY KEY,
-      project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
-      run_id TEXT,
-      workflow_version_id TEXT,
-      issue_identifier TEXT,
-      status TEXT NOT NULL DEFAULT 'queued',
-      priority INTEGER NOT NULL DEFAULT 0,
-      execution_mode TEXT NOT NULL DEFAULT 'worker',
-      required_capabilities TEXT NOT NULL DEFAULT '{}',
-      payload TEXT NOT NULL DEFAULT '{}',
-      queued_at TEXT NOT NULL,
-      started_at TEXT,
-      finished_at TEXT,
-      inserted_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )
-    """)
-  end
 end

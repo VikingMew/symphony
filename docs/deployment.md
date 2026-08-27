@@ -4,12 +4,16 @@ genre: guide
 domain: [deployment, operations]
 status: current
 language: en
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 # Deploying Symphony Behind a Reverse Proxy
 
 Symphony is an internal Phoenix service. Nginx, Kubernetes Ingress, or the platform edge should own public TLS, domain routing, and certificate renewal.
+
+For the supported self-hosted PostgreSQL stack, including release-image startup, migrations,
+backup/restore, upgrades, and rollback, use the [Compose operations guide](compose.md). This guide
+owns only edge-proxy and Kubernetes integration.
 
 ## Runtime Settings
 
@@ -26,6 +30,10 @@ Health probes:
 - `GET /health/ready`: web process is serving and the configured persistence layer is reachable.
 
 Readiness reports workflow setup as `configured` or `setup_required`; setup-required does not expose secrets and does not prevent the Settings UI from loading.
+
+Every deployment must provide `DATABASE_URL` and run `SymphonyElixir.Release.migrate!()` as a
+one-shot job before starting the web release. A missing or unreachable database is a startup error,
+not setup-required.
 
 ## Nginx Example
 
@@ -120,5 +128,10 @@ readinessProbe:
 Run the container or process with:
 
 ```sh
-SYMPHONY_TRUST_X_FORWARDED_HEADERS=true ./bin/symphony --port 4000
+DATABASE_URL=postgresql://... \
+SYMPHONY_TRUST_X_FORWARDED_HEADERS=true \
+PORT=4000 /app/bin/symphony start
 ```
+
+For local CLI development, run `mix symphony.migrate` first and then use
+`./bin/symphony --port 4000` with the same `DATABASE_URL`.

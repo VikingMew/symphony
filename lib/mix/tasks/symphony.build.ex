@@ -2,9 +2,8 @@ defmodule Mix.Tasks.Symphony.Build do
   @moduledoc """
   Builds the local Symphony executable wrapper.
 
-  Symphony depends on SQLite NIFs, which cannot be loaded reliably from an
-  escript archive. The wrapper keeps the public `./bin/symphony` command while
-  running through Mix so native dependencies load from the build directory.
+  The wrapper keeps the local-development `./bin/symphony` command while
+  running the application through Mix. Production containers use an OTP release.
   """
 
   use Mix.Task

@@ -5,7 +5,7 @@ domain: [backend, layout, conventions]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-07
+updated: 2026-08-27
 ---
 
 ## Feature Design Index
@@ -82,6 +82,9 @@ implementation lives under the repository root.
 ├── mix.exs
 ├── mix.lock
 ├── config/config.exs
+├── config/runtime.exs
+├── compose.yaml
+├── Dockerfile
 ├── docs/
 ├── lib/
 └── test/
@@ -96,8 +99,11 @@ implementation lives under the repository root.
 | `Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
 | `mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
 | `mix.exs` | Mix project definition, dependencies, aliases, and escript build config. |
-| `config/config.exs` | Phoenix/Bandit endpoint and JSON configuration. |
-| `priv/repo/migrations` | SQLite/Ecto migrations. |
+| `config/config.exs` | Compile-time Phoenix/Bandit, repository, and JSON configuration. |
+| `config/runtime.exs` | Release-safe `DATABASE_URL`, pool, host, port, and log overrides. |
+| `compose.yaml` | PostgreSQL, migration, and Symphony release topology. |
+| `Dockerfile` | Multi-stage development worker and non-root OTP release image. |
+| `priv/repo/migrations` | PostgreSQL/Ecto migrations. |
 | `docs` | Operator, design, logging, token accounting, and completed plan docs. |
 
 ## 4. Application Startup
@@ -108,9 +114,10 @@ Primary files:
 - `lib/symphony_elixir/cli.ex`
 
 `SymphonyElixir.CLI` is the command-line entrypoint compiled into `bin/symphony`. It parses
-runtime CLI options such as `--port` and `--db`, stores runtime overrides, and starts the OTP
-application. SQLite remains workflow authority across restarts; cold start publishes the active
-per-project state into one atomic in-memory snapshot, and normal runtime reads do not query SQLite.
+runtime CLI options such as `--port` and `--logs-root`, stores runtime overrides, and starts the OTP
+application. PostgreSQL is the durable workflow authority across restarts; cold start publishes the
+active per-project state into one atomic in-memory snapshot, and normal runtime reads do not query
+the database.
 
 `SymphonyElixir.Application` is defined in `lib/symphony_elixir.ex`. It starts the supervision
 tree:
@@ -146,6 +153,8 @@ lib/symphony_elixir/
 ├── persistence_provider.ex
 ├── prompt_builder.ex
 ├── repo.ex
+├── release.ex
+├── sqlite_importer.ex
 ├── specs_check.ex
 ├── ssh.ex
 ├── status_dashboard.ex
@@ -173,9 +182,11 @@ lib/symphony_elixir/
 | `SymphonyElixir.HttpServer` | `http_server.ex` | Starts optional Phoenix/Bandit observability HTTP server. |
 | `SymphonyElixir.StatusDashboard` | `status_dashboard.ex` | Terminal/operator status rendering. |
 | `SymphonyElixir.LogFile` | `log_file.ex` | Runtime log file configuration and writing. |
-| `SymphonyElixir.Persistence` | `persistence.ex` | SQLite-backed projects, workflows, runs, tasks, workers, leases, and events. |
+| `SymphonyElixir.Persistence` | `persistence.ex` | PostgreSQL-backed projects, workflows, runs, tasks, workers, leases, and events. |
 | `SymphonyElixir.PersistenceProvider` | `persistence_provider.ex` | Runtime indirection for persistence fakes in tests. |
-| `SymphonyElixir.Repo` | `repo.ex` | Ecto repository. |
+| `SymphonyElixir.Repo` | `repo.ex` | PostgreSQL Ecto repository. |
+| `SymphonyElixir.Release` | `release.ex` | Release-safe migration and one-way import entrypoints. |
+| `SymphonyElixir.SQLiteImporter` | `sqlite_importer.ex` | Imports one stopped legacy backup into an empty PostgreSQL schema. |
 | `SymphonyElixir.SSH` | `ssh.ex` | SSH worker support. |
 | `SymphonyElixir.SpecsCheck` | `specs_check.ex` | Internal spec consistency checks. |
 

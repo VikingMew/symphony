@@ -9,7 +9,7 @@ updated: 2026-08-27
 
 # Symphony 用户运行指南
 
-这份指南说明如何在 macOS 和 Ubuntu 上安装依赖、配置环境变量、初始化 SQLite，并启动 Symphony Web 服务。
+这份指南说明如何在 macOS 和 Ubuntu 上安装依赖、配置 PostgreSQL、执行 migration，并启动 Symphony Web 服务。生产 Compose 运维见 [Compose 与 PostgreSQL 运维指南](compose.md)。
 
 ## 1. 前置要求
 
@@ -20,7 +20,8 @@ Symphony Elixir 需要：
 - Erlang / Elixir，通过 `mise install` 安装
 - Linear API Key
 - Codex CLI，且支持 `codex app-server`
-- SQLite，本地持久化使用
+- PostgreSQL 17（服务端或可访问实例，以及 `psql` 客户端）
+- SQLite CLI（仅旧数据库停机导入时需要）
 
 项目声明的运行时版本在 `mise.toml`：
 
@@ -35,7 +36,7 @@ elixir = "1.19.5-otp-28"
 推荐使用 Homebrew：
 
 ```bash
-brew install git mise sqlite
+brew install git mise postgresql@17 sqlite
 ```
 
 初始化 mise shell：
@@ -49,7 +50,7 @@ source ~/.zshrc
 
 ```bash
 mise --version
-sqlite3 --version
+psql --version
 ```
 
 如果没有 Homebrew，可以使用 mise 官方安装脚本：
@@ -66,7 +67,7 @@ source ~/.zshrc
 
 ```bash
 sudo apt update
-sudo apt install -y git curl build-essential autoconf m4 libncurses5-dev libssl-dev libwxgtk3.2-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libssh-dev unixodbc-dev xsltproc fop libxml2-utils sqlite3
+sudo apt install -y git curl build-essential autoconf m4 libncurses5-dev libssl-dev libwxgtk3.2-dev libgl1-mesa-dev libglu1-mesa-dev libpng-dev libssh-dev unixodbc-dev xsltproc fop libxml2-utils postgresql-client sqlite3
 ```
 
 安装 mise：
@@ -88,7 +89,7 @@ source ~/.zshrc
 
 ```bash
 mise --version
-sqlite3 --version
+psql --version
 ```
 
 ## 4. 安装项目运行时和依赖
@@ -138,10 +139,11 @@ export GH_TOKEN="你的 GitHub token"
 不要把 GitHub token 写进 workflow。中心化 SSH execution 时，worker 仍需单独具备 feature branch
 push auth；初次 PR lookup/create 由 Symphony service 完成。
 
-可选：配置 SQLite 数据库位置。
+必须配置 PostgreSQL 连接。数据库必须已经存在；Symphony 不创建数据库。
 
 ```bash
-export SYMPHONY_DATABASE_PATH="$PWD/symphony.db"
+export DATABASE_URL="postgres://symphony:replace-me@127.0.0.1:5432/symphony"
+export SYMPHONY_DATABASE_POOL_SIZE=5
 ```
 
 可选：启用 Web UI 登录认证。
@@ -154,24 +156,20 @@ export SYMPHONY_ADMIN_PASSWORD="请换成你自己的密码"
 
 如果不设置 `SYMPHONY_AUTH_ENABLED=true`，认证默认关闭，适合本地临时开发，不建议用于共享机器或可被其他人访问的网络环境。
 
-## 6. 初始化 SQLite
+## 6. 初始化 PostgreSQL
 
-首次运行前执行 migration：
-
-```bash
-mise exec -- mix ecto.migrate
-```
-
-如果需要重置本地数据：
+由管理员创建数据库和账号后，首次运行及每次升级前执行 migration：
 
 ```bash
-rm -f symphony.db symphony.db-shm symphony.db-wal
-mise exec -- mix ecto.migrate
+mise exec -- mix symphony.migrate
 ```
+
+命令缺少 `DATABASE_URL`、连接不可达或 migration 失败时会显式失败，不会伪装成
+setup-required。setup-required 只表示数据库可用但尚无 active workflow version。
 
 ## 7. 配置 workflow
 
-运行时配置来源是 SQLite active workflow version。空数据库会进入 setup-required 状态，不会开始
+运行时配置来源是 PostgreSQL active workflow version。空数据库会进入 setup-required 状态，不会开始
 监听 Linear 或调度 agent；先在 `/settings/workflow` 和 `/settings/agents` 创建第一版 active
 workflow。
 
@@ -390,7 +388,7 @@ Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_up
    PR-open automation 不会在 Symphony handoff 后覆盖 `Ready to Merge`。
 2. 让实际 Symphony runtime user 能使用已认证的 `gh`，或提供 `GH_TOKEN` / `GITHUB_TOKEN` 给
    REST fallback。使用 SSH execution 时，worker 还必须保留 branch-push auth。
-3. 部署新代码，并为每个 enabled project 创建、校验、应用 trimmed SQLite active workflow
+3. 部署新代码，并为每个 enabled project 创建、校验、应用 trimmed PostgreSQL active workflow
    version。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们不会修改运行时。
 4. 手工处理仍处于退休状态 `In Review`、`Merging`、`Merged` 的运行中 issue，并确认没有 live
    issue 依赖旧 route。
@@ -422,7 +420,7 @@ http://127.0.0.1:4000/
 
 如果启用了认证，先访问 `/login` 登录。
 
-运行时配置来源是 SQLite active workflow version。`workflow.yml` 和 `profiles.yml` 是导入、
+运行时配置来源是 PostgreSQL active workflow version。`workflow.yml` 和 `profiles.yml` 是导入、
 导出的 split package 文件，不再作为 CLI 启动参数，也不会在启动时自动导入。
 
 ### dashboard-first 数据库模式启动
@@ -436,10 +434,10 @@ mise exec -- ./bin/symphony \
 
 此时规则是：
 
-- SQLite active workflow version 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问 SQLite。
-- 如果 SQLite 中还没有 active workflow version，系统进入 setup-required。
+- PostgreSQL active workflow version 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
+- 如果 PostgreSQL 中还没有 active workflow version，系统进入 setup-required。
 - setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
-- 不带 `--port` 时也使用 SQLite workflow source，只是不启动 Web dashboard。
+- 不带 `--port` 时也使用同一个 PostgreSQL workflow source，只是不启动 Web dashboard。
 
 ## 9. 常用页面
 
@@ -490,9 +488,9 @@ export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
 
 ## 11. 热更新
 
-Symphony 当前支持 Settings / workflow 配置热更新：保存新的 SQLite active workflow version 后，
+Symphony 当前支持 Settings / workflow 配置热更新：保存新的 PostgreSQL active workflow version 后，
 持久化边界会在报告成功前原子发布完整 snapshot，不需要重启服务。外部 activation 由单飞后台刷新检测；
-SQLite 阻塞或刷新失败时，读取继续使用 last-known-good snapshot。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
+PostgreSQL 刷新失败时，读取继续使用 last-known-good snapshot。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
 
 详细说明见 [Symphony 热更新说明](hot_update.zh-CN.md)。
 
@@ -528,6 +526,15 @@ mise exec -- mix build
 mise exec -- make all
 ```
 
+默认单元测试不访问数据库。显式 PostgreSQL 集成 smoke 只能指向一次性空数据库；它会反向并
+重新执行全部 migration、导入 SQLite fixture、验证关系，并发写入 200 条 event，然后验证
+数据库仍可读写：
+
+```bash
+export DATABASE_URL="postgresql://symphony:password@127.0.0.1:5432/symphony_smoke"
+mise exec -- make pg-smoke
+```
+
 真实外部端到端测试会创建 Linear 资源并启动真实 Codex session，谨慎使用：
 
 ```bash
@@ -547,12 +554,13 @@ mise install
 mise exec -- elixir --version
 ```
 
-### SQLite 表不存在
+### PostgreSQL 连接或表不可用
 
-执行 migration：
+确认 `DATABASE_URL` 可连接，再执行 migration：
 
 ```bash
-mise exec -- mix ecto.migrate
+psql "$DATABASE_URL" -c 'select 1'
+mise exec -- mix symphony.migrate
 ```
 
 ### Dashboard 无法访问
@@ -564,13 +572,7 @@ mise exec -- ./bin/symphony \
   --port 4000
 ```
 
-如果需要指定数据库文件，使用 `--database-path`：
-
-```bash
-mise exec -- ./bin/symphony \
-  --port 4000 \
-  --database-path ./symphony.db
-```
+`--database-path` 和 `SYMPHONY_DATABASE_PATH` 已移除；运行时只接受 `DATABASE_URL`。
 
 ### Linear 拉不到 issue
 

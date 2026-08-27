@@ -260,6 +260,8 @@ Plans should focus on product and engineering intent rather than full implementa
 251. [251-operator-tasks-select-project.md](completed/251-operator-tasks-select-project.md)
 252. [252-default-bootstrap-and-project-removal.md](completed/252-default-bootstrap-and-project-removal.md)
 253. [253-persistence-require-explicit-project-id.md](completed/253-persistence-require-explicit-project-id.md)
+259. [259-postgresql-persistence-and-sqlite-cutover.md](completed/259-postgresql-persistence-and-sqlite-cutover.md)
+260. [260-docker-compose-postgresql-deployment.md](completed/260-docker-compose-postgresql-deployment.md)
 
 ## Active Plans
 

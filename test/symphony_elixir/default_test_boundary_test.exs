@@ -10,7 +10,7 @@ defmodule SymphonyElixir.DefaultTestBoundaryTest do
     assert PersistenceProvider.module() == FakePersistence
   end
 
-  test "default suite does not create sqlite files under the test temp root" do
+  test "default suite does not create Symphony database artifacts under the test temp root" do
     temp_root = System.tmp_dir!()
 
     symphony_sqlite_files =

@@ -19,14 +19,14 @@ Symphony 后续应继续定位为一个长期运行的 Web 服务，而不是一
 Elixir / Phoenix Web Service
 ├── Web UI / Dashboard
 ├── JSON API
-├── SQLite 持久化
+├── PostgreSQL 持久化
 ├── Workflow / Project 配置管理
 ├── Orchestrator
 ├── Agent Run 管理
 └── Worker Runtime / Sandbox Runtime
 ```
 
-当前实现已经引入 SQLite、workflow version、dashboard 管理页面、Linear 诊断和 Panel 侧 worker API。
+当前实现已经引入 PostgreSQL、workflow version、dashboard 管理页面、Linear 诊断和 Panel 侧 worker API。
 长期方向是让 DB 成为唯一运行时 workflow source，让 Web UI 成为主要配置入口。
 
 一个关键原则是：runtime workflow contract 的全部内容都应该可配置并入库。这里的“全部”包括 tracker、polling、workspace、hooks、agent、codex、server 等运行配置，以及 base prompt 和 agent profile。Web UI 最终应该能够编辑、校验、版本化和审计整个 workflow contract，而不是只编辑其中一部分。`workflow.yml` 和 `profiles.yml` 可以作为导入/导出的交换格式，但不应再作为运行时配置来源。
@@ -48,7 +48,7 @@ Elixir / Phoenix Web Service
 
 当前已知对齐说明：
 
-- `已落地`：SQLite workflow version、Settings tabbed configuration、结构化 `/settings/workflow` draft form、`/settings/agents` base prompt/profile 编辑、版本保存/激活、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
+- `已落地`：PostgreSQL workflow version、Settings tabbed configuration、结构化 `/settings/workflow` draft form、`/settings/agents` base prompt/profile 编辑、版本保存/激活、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
 - `已落地`：Project source/bootstrap 由 Project Settings 和 Workflow Bootstrap 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；Workflow Bootstrap 拥有 `workspace.initialize_timeout_ms`，用于 clone/worktree 初始化和 project setup 超时。`hooks.timeout_ms` 只控制 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 - `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取 DB active workflow version；本地 split package 文件只作为导入/导出格式和示例存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
 - `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
@@ -72,7 +72,7 @@ Elixir / Phoenix Web Service
 建议主系统继续使用：
 
 ```text
-Elixir + OTP + Phoenix LiveView + Ecto + SQLite
+Elixir + OTP + Phoenix LiveView + Ecto + PostgreSQL
 ```
 
 不建议当前阶段整体重写为 Rust 或纯 Erlang。
@@ -112,19 +112,20 @@ Ecto Forms / Changesets
 - Web UI。
 - 实时状态更新。
 - JSON API。
-- SQLite 持久化。
+- PostgreSQL 持久化。
 - 运维和调试入口。
 
 如果后续需要构建工具，可以使用 Phoenix 自带的轻量 assets 流程，但不要演进成独立前端仓库或复杂 SPA，除非出现明确的产品需求。
 
-## 5. SQLite 持久化方向
+## 5. PostgreSQL 持久化方向
 
-当前实现已经使用 Ecto + SQLite 保存项目、workflow versions、issues、runs、agent turns、
+当前实现使用 Ecto + PostgreSQL 保存项目、workflow versions、issues、runs、agent turns、
 workspaces、events、workers、worker sessions、tasks 和 leases。内存状态仍负责当前
-orchestrator loop 的即时调度视图，但 dashboard 和历史记录已经依赖 SQLite。
+orchestrator loop 的即时调度视图，但 dashboard 和历史记录依赖 PostgreSQL。
 
-后续重点不再是“是否引入 SQLite”，而是继续完善 schema 边界、迁移策略、恢复语义和 UI
-编辑能力。未来如果需要多用户、多实例或更高并发，可以通过 Ecto 迁移到 Postgres。
+PostgreSQL 是唯一运行时数据库，通过 `DATABASE_URL` 连接。旧 SQLite 文件仅可在停机并备份后，
+使用受支持的一次性工具导入已经迁移且为空的 PostgreSQL；它不是可选择的运行时 backend。
+后续重点是继续完善 schema 边界、迁移策略、恢复语义和 UI 编辑能力。
 
 当前或目标核心表包括：
 
@@ -231,11 +232,11 @@ events
 
 ## 6. 配置管理演进
 
-配置管理建议分阶段推进，但运行时真相以 SQLite workflow version 为准。split package 只作为导入/导出格式。
+配置管理建议分阶段推进，但运行时真相以 PostgreSQL workflow version 为准。split package 只作为导入/导出格式。
 
 ### 阶段 1：运行状态持久化与 DB workflow source（部分落地）
 
-当前已经可以把 active workflow version 和运行状态写入 SQLite。运行时目标是 DB active workflow version 作为唯一来源；split package 不再作为启动 fallback 或自动 seed。空库时系统应进入 setup-required，不开始监听、不调度 agent。当前已写入 SQLite 的内容包括：
+当前已经可以把 active workflow version 和运行状态写入 PostgreSQL。DB active workflow version 是唯一持久化来源；split package 不作为启动 fallback 或自动 seed。空库时系统进入 setup-required，不开始监听、不调度 agent。当前已写入 PostgreSQL 的内容包括：
 
 - issue 快照
 - run 状态
@@ -628,7 +629,7 @@ lib/symphony_elixir_web/
 
 ### Milestone 1：持久化运行状态（已落地基础版）
 
-- 已引入 `ecto_sqlite3`、Repo 和 migration。
+- 已引入 `postgrex`、Repo 和 PostgreSQL migration。
 - 已保存 projects、workflow_versions、issues、runs、agent_turns、workspaces、events，以及 worker 相关 task/lease/session 状态。
 - Dashboard 已能读取 DB 中的 runs、workers、tasks、workflow versions 等历史/管理数据。
 - 运行时已经是 DB-only workflow source。split package 保留为导入/导出格式，不作为启动或 fallback source。
@@ -689,10 +690,10 @@ Symphony 的长期主线应是：
 
 ```text
 保留 Elixir/Phoenix 主系统
-继续完善 Ecto + SQLite 持久化
+继续完善 Ecto + PostgreSQL 持久化
 继续用 LiveView 构建 Dashboard 和配置 UI
-在 split package 与 SQLite workflow versions 之间保持可导入、可编辑、可审计
-运行时只读取 SQLite active workflow version
+在 split package 与 PostgreSQL workflow versions 之间保持可导入、可编辑、可审计
+运行时从内存 snapshot 读取 PostgreSQL active workflow version 的已发布状态
 把安全隔离下沉到 worker runtime
 必要时用 Rust 实现局部 sandbox/worker 组件
 ```

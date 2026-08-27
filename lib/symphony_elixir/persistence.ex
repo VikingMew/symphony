@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Persistence do
   @moduledoc """
-  Persistence context for local Symphony configuration and runtime history.
+  PostgreSQL persistence context for Symphony configuration and runtime history.
   """
 
   import Ecto.Query
@@ -129,8 +129,8 @@ defmodule SymphonyElixir.Persistence do
 
   @spec upsert_issue(map()) :: {:ok, IssueRecord.t()} | {:error, term()}
   def upsert_issue(attrs) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, _project_id} <- required_project_id(attrs) do
+    with {:ok, _project_id} <- required_project_id(attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
       identifier = Map.fetch!(attrs, :identifier)
       existing = Repo.get_by(IssueRecord, project_id: attrs.project_id, identifier: identifier)
       (existing || %IssueRecord{}) |> IssueRecord.changeset(attrs) |> Repo.insert_or_update()
@@ -139,8 +139,8 @@ defmodule SymphonyElixir.Persistence do
 
   @spec create_run(map()) :: {:ok, RunRecord.t()} | {:error, term()}
   def create_run(attrs) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         {:ok, _project_id} <- required_project_id(attrs) do
+    with {:ok, _project_id} <- required_project_id(attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
       attrs =
         attrs
         |> Map.put_new(:status, "running")
