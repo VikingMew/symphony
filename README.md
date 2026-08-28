@@ -208,10 +208,10 @@ See [docs/deployment.md](docs/deployment.md) for Nginx, Kubernetes, WebSocket, h
 
 ### Docker Compose
 
-The root `compose.yaml` is the supported self-hosted stack. It builds a non-root OTP release image,
-starts PostgreSQL on an internal network, runs migrations once, then starts Symphony after the
-database is healthy. Copy `.env.example` to the ignored `.env`, replace all `change-me` values,
-and start the stack:
+The root `compose.yaml` is the supported self-hosted stack. By default it builds the non-root OTP
+release as `symphony:local`, starts PostgreSQL on an internal network, runs migrations once, then
+starts Symphony after the database is healthy. Copy `.env.example` to the ignored `.env`, replace
+all `change-me` values, and start the local-build stack:
 
 ```bash
 cp .env.example .env
@@ -222,6 +222,16 @@ curl --fail http://127.0.0.1:4000/health/live
 curl --fail http://127.0.0.1:4000/health/ready
 ```
 
+CI also publishes one `ghcr.io/vikingmew/symphony` manifest for `linux/amd64` and `linux/arm64`.
+For a deployment that pulls an immutable image instead of building source, set `SYMPHONY_IMAGE`
+to a release or full-SHA tag and include `compose.published.yaml`:
+
+```bash
+export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+docker compose -f compose.yaml -f compose.published.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml up -d
+```
+
 The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, PostgreSQL clients, and
 SQLite cutover tooling, but no Mix, compiler, or source checkout. The separate `worker` target
 remains available for SSH-reachable Codex workers.
@@ -230,7 +240,8 @@ Builds accept `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_M
 `NPM_REGISTRY`, and `HEX_MIRROR_URL` build arguments for internal registries and mirrors.
 Standard proxy variables can be passed as Docker build arguments and, separately, as runtime
 environment variables. See [docs/compose.md](docs/compose.md) for first start, credentials,
-upgrades, backup/restore, legacy SQLite cutover, volume verification, restart testing, and rollback.
+published-image authentication and inspection, upgrades, backup/restore, legacy SQLite cutover,
+volume verification, restart testing, and rollback.
 
 ## Project Layout
 
