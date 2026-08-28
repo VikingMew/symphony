@@ -1,5 +1,35 @@
 import Config
 
+worker_role = System.get_env("SYMPHONY_ROLE") == "worker"
+config :symphony_elixir, :runtime_role, if(worker_role, do: :worker, else: :panel)
+
+if worker_role do
+  required = fn name ->
+    case System.get_env(name) do
+      value when is_binary(value) and value != "" -> value
+      _ -> raise "#{name} is required for the worker role"
+    end
+  end
+
+  positive_integer = fn name, default ->
+    case Integer.parse(System.get_env(name) || default) do
+      {value, ""} when value > 0 -> value
+      _ -> raise "#{name} must be a positive integer"
+    end
+  end
+
+  config :symphony_elixir, :worker,
+    panel_url: required.("SYMPHONY_PANEL_URL"),
+    registration_token: required.("SYMPHONY_WORKER_TOKEN"),
+    worker_name: System.get_env("SYMPHONY_WORKER_NAME") || "symphony-worker",
+    workspace_root: System.get_env("SYMPHONY_WORKER_WORKSPACE_ROOT") || "/worker/workspaces",
+    cache_root: System.get_env("SYMPHONY_WORKER_CACHE_ROOT") || "/worker/cache",
+    log_root: System.get_env("SYMPHONY_WORKER_LOG_ROOT") || "/worker/logs",
+    slots: positive_integer.("SYMPHONY_WORKER_SLOTS", "1"),
+    image_reference: System.get_env("SYMPHONY_WORKER_IMAGE") || "unknown",
+    source_revision: System.get_env("SYMPHONY_WORKER_SOURCE_REVISION") || "unknown"
+end
+
 database_pool_size =
   case Integer.parse(System.get_env("SYMPHONY_DATABASE_POOL_SIZE") || "5") do
     {pool_size, ""} when pool_size > 0 -> pool_size

@@ -21,6 +21,13 @@ defmodule SymphonyElixir.Application do
 
   @impl true
   def start(_type, _args) do
+    case Application.get_env(:symphony_elixir, :runtime_role, :panel) do
+      :worker -> SymphonyElixir.Worker.Application.start_link()
+      :panel -> start_panel()
+    end
+  end
+
+  defp start_panel do
     with :ok <- validate_database_config(),
          :ok <- SymphonyElixir.LogFile.configure() do
       start_supervisor()
