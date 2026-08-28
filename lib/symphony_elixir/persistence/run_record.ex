@@ -21,6 +21,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     field(:execution_mode, :string, default: "centralized")
     field(:attempt, :integer, default: 0)
     field(:failure_reason, :string)
+    field(:execution_summary, :map)
     field(:started_at, :utc_datetime_usec)
     field(:finished_at, :utc_datetime_usec)
     timestamps(type: :utc_datetime_usec)
@@ -41,6 +42,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :execution_mode,
       :attempt,
       :failure_reason,
+      :execution_summary,
       :started_at,
       :finished_at
     ])

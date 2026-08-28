@@ -5,14 +5,14 @@ domain: [worker, execution, validation]
 status: current
 language: en
 updated: 2026-08-28
-design_status: proposed
+design_status: landed
 ---
 
 # External Execution Runtime Design
 
 ## 1. Status and ownership
 
-This L3 document proposes the first production execution runtime: one trusted,
+This L3 document defines the first production execution runtime: one trusted,
 separately deployed worker that owns checkout, Codex, validation, and handoff. It is deliberately
 not a general distributed-execution design.
 
@@ -22,13 +22,15 @@ duplicate completion, expiry, and late-event behavior. PostgreSQL remains the on
 `run`, `task`, `task_lease`, worker-session, and operator-visible history. This proposal adds no
 parallel lifecycle.
 
-- **Current:** `centralized` is the default; the Panel-side worker-v1 lifecycle is landed; the
-  external worker does not exist; the Panel image intentionally lacks project build toolchains.
-- **Proposed:** the topology and execution responsibilities below, implemented in follow-up work.
+- **Current:** `centralized` is the default; the Panel-side worker-v1 lifecycle, trusted execution
+  worker image/runtime, bounded evidence projection, and opt-in Compose profile are landed. The
+  Panel image intentionally lacks project build toolchains.
+- **Operational gate:** worker routing remains opt-in until the real-project success, cancellation,
+  lease-expiry recovery, duplicate-delivery, and rollback drills in the L5 guide are recorded.
 - **Deferred:** durable remote artifacts and every item listed in [Deferred work](#8-deferred-work).
 
-This ticket changes documentation only. It does not change runtime code, schema, API, dashboard,
-Compose, or the default execution mode. Current L1/L4 contracts remain authoritative; see
+The delivered slices changed runtime code, schema, API, dashboard, and Compose without changing
+the default execution mode. Current L1/L4 contracts remain authoritative; see
 [Architecture](ARCHITECTURE.md), [spec.md](spec.md),
 [orchestration](spec-orchestration.md), [agent execution](spec-agent-runner.md),
 [reliability and security](spec-reliability-security.md), and [logging.md](logging.md).

@@ -12,8 +12,10 @@ owner: compose.yaml
 
 This is the source of truth for the supported self-hosted Symphony stack and for the one-way
 legacy SQLite cutover. The stack runs PostgreSQL, a one-shot migration release, and the Symphony
-OTP release. PostgreSQL is reachable only on the internal Compose network; Symphony has a second
-egress network for Linear, OpenAI/Codex, GitHub, and repository access.
+OTP release. An opt-in `execution-worker` profile deploys the trusted worker-v1 HTTP runtime; it is
+distinct from the SSH `worker` Docker target. PostgreSQL is reachable only on the internal Compose
+network. The Panel and execution worker have separate egress networks and share only an internal
+control network.
 
 ## Environment and Credentials
 
@@ -57,7 +59,9 @@ docker compose --env-file .env config --quiet
 ```
 
 The quiet form validates interpolation and structure without printing substituted secrets. The
-checked-in `compose.yaml` and `.env.example` contain placeholders, not credentials.
+checked-in `compose.yaml` and `.env.example` contain placeholders, not credentials. The worker
+profile and its failure drills are operated through
+[Trusted HTTP Execution Worker Operations](execution-worker-operations.md).
 
 Build and verify the release image:
 

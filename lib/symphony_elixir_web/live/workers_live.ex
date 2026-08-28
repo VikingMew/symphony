@@ -103,12 +103,14 @@ defmodule SymphonyElixirWeb.WorkersLive do
           <p class="empty-state">No worker-backed tasks have been queued yet.</p>
         <% else %>
           <table class="data-table">
-            <thead><tr><th>Issue</th><th>Status</th><th>Mode</th><th>Queued</th><th></th></tr></thead>
+            <thead><tr><th>Issue</th><th>Status</th><th>Validation</th><th>Source / runtime</th><th>Handoff</th><th>Queued</th><th></th></tr></thead>
             <tbody>
               <tr :for={task <- @tasks}>
                 <td class="issue-id"><%= task.issue_identifier || "n/a" %></td>
                 <td><span class={status_class(task.status)}><%= task.status %></span></td>
-                <td><%= task.execution_mode %></td>
+                <td><%= summary_value(task, "validation_status") %><%= gate_statuses(task) %></td>
+                <td class="mono"><%= source_runtime(task) %></td>
+                <td class="mono"><%= task_handoff(task) %></td>
                 <td class="mono"><%= fmt_dt(task.queued_at) %></td>
                 <td>
                   <button :if={task.status in ["queued", "leased", "running"]} class="subtle-button" phx-click="cancel_task" phx-value-id={task.id}>Cancel</button>
@@ -152,4 +154,40 @@ defmodule SymphonyElixirWeb.WorkersLive do
   defp fmt_dt(value), do: ObservabilityPresenter.fmt_dt(value)
   defp labels_text(labels), do: ObservabilityPresenter.labels_text(labels)
   defp status_class(status), do: ObservabilityPresenter.status_class(status)
+
+  defp summary_value(task, key), do: execution_summary(task)[key] || "n/a"
+
+  defp gate_statuses(task) do
+    case get_in(execution_summary(task), ["gates"]) do
+      gates when is_list(gates) and gates != [] -> " (" <> Enum.map_join(gates, ", ", &"#{&1["name"]}: #{&1["status"]}") <> ")"
+      _ -> ""
+    end
+  end
+
+  defp source_runtime(task) do
+    summary = execution_summary(task)
+    runtime = summary["runtime"] || %{}
+
+    Enum.join(
+      Enum.reject(
+        [summary["source_revision"], runtime["image_digest"] || runtime["image_tag"], runtime["worker_source_revision"]],
+        &is_nil/1
+      ),
+      " | "
+    )
+  end
+
+  defp task_handoff(task) do
+    handoff = execution_summary(task)["handoff"] || %{}
+
+    Enum.join(
+      Enum.reject(
+        [handoff["branch"], handoff["commit"], handoff["pr_identifier"], handoff["pr_url"], handoff["linear_state"]],
+        &is_nil/1
+      ),
+      " | "
+    )
+  end
+
+  defp execution_summary(task), do: Map.get(task, :execution_summary) || %{}
 end

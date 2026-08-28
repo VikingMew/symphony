@@ -18,6 +18,7 @@ defmodule SymphonyElixir.Persistence.TaskRecord do
     field(:execution_mode, :string, default: "worker")
     field(:required_capabilities, :map, default: %{})
     field(:payload, :map, default: %{})
+    field(:execution_summary, :map)
     field(:queued_at, :utc_datetime_usec)
     field(:started_at, :utc_datetime_usec)
     field(:finished_at, :utc_datetime_usec)
@@ -36,6 +37,7 @@ defmodule SymphonyElixir.Persistence.TaskRecord do
       :execution_mode,
       :required_capabilities,
       :payload,
+      :execution_summary,
       :queued_at,
       :started_at,
       :finished_at

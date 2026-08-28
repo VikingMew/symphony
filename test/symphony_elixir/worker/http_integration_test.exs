@@ -84,8 +84,15 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       payload: execution(source, revision)
     }
 
-    lease = %{id: "lease-1", expires_at: DateTime.add(DateTime.utc_now(), 60, :second)}
-    start_supervised!({Persistence, %{task: task, lease: lease}})
+    lease = %{id: "lease-1", attempt: 1, expires_at: DateTime.add(DateTime.utc_now(), 60, :second)}
+
+    correlation = %{
+      "issue_id" => "issue-1",
+      "run_attempt" => 0,
+      "worker_session_id" => "session-1"
+    }
+
+    start_supervised!({Persistence, %{task: task, lease: lease, correlation: correlation}})
     Application.put_env(:symphony_elixir, :persistence_module, Persistence)
     Application.put_env(:symphony_elixir, :worker_api, registration_token: "integration-token")
 
@@ -110,6 +117,10 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
     assert {:ok, claim} = Client.claim(config, Map.put(identity, "available_slots", 1))
     assert claim["task_id"] == "task-1"
+    assert claim["issue_id"] == "issue-1"
+    assert claim["run_attempt"] == 0
+    assert claim["lease_attempt"] == 1
+    assert claim["worker_session_id"] == "session-1"
     assert {:ok, %{"task" => nil}} = Client.claim(config, Map.put(identity, "available_slots", 1))
     assert {:ok, heartbeat} = Client.heartbeat(config, identity, %{"active_leases" => [claim["lease_id"]]})
     assert heartbeat["lease_renewals"] == ["lease-1"]
