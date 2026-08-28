@@ -1204,7 +1204,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       put_in(draft, ["allowed_transitions"], %{
         "0" => %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
         "1" => %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
-        "2" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
+        "2" => %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human", "profile" => ""},
+        "3" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
       })
 
     assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(edited)
@@ -1212,7 +1213,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert get_in(loaded_workflow.config, ["workflow", "allowed_transitions"]) == [
              %{"actor" => "codex", "from" => "Ready", "profile" => "implementation", "to" => "In Progress"},
-             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "Ready to Merge"}
+             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "Ready to Merge"},
+             %{"actor" => "human", "from" => "Ready to Merge", "to" => "In Progress"}
            ]
 
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)

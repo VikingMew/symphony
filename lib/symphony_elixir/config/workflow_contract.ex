@@ -19,6 +19,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
     |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
+    |> Kernel.++(validate_implementation_lifecycle(workflow, profiles))
   end
 
   def workflow_errors(_workflow, _profiles, _tracker), do: ["must be a map"]
@@ -200,6 +201,101 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     validate_transition_state_references(Map.get(workflow, "allowed_transitions", []), known_states) ++
       validate_profile_target_state_references(profiles, known_states)
   end
+
+  defp validate_implementation_lifecycle(workflow, profiles) do
+    case Map.get(profiles, "implementation") do
+      %{} = implementation ->
+        transitions = Map.get(workflow, "allowed_transitions", [])
+
+        []
+        |> require_state(
+          "Ready to Merge",
+          Map.get(workflow, "human_review_states", []),
+          "workflow.human_review_states"
+        )
+        |> reject_state(
+          "In Review",
+          Map.get(workflow, "human_review_states", []),
+          "workflow.human_review_states"
+        )
+        |> reject_dispatched_review_state(
+          "Ready to Merge",
+          Map.keys(Map.get(workflow, "states", %{})),
+          "workflow.states"
+        )
+        |> require_state(
+          "In Progress",
+          get_in(implementation, ["allowed_updates", "target_states"]) || [],
+          "profiles.implementation.allowed_updates.target_states"
+        )
+        |> require_state(
+          "Ready to Merge",
+          get_in(implementation, ["allowed_updates", "target_states"]) || [],
+          "profiles.implementation.allowed_updates.target_states"
+        )
+        |> reject_state(
+          "In Review",
+          get_in(implementation, ["allowed_updates", "target_states"]) || [],
+          "profiles.implementation.allowed_updates.target_states"
+        )
+        |> require_transition(transitions, "In Progress", "Ready to Merge", "codex", "implementation")
+        |> require_transition(transitions, "Ready to Merge", "In Progress", "human", nil)
+
+      _missing ->
+        []
+    end
+  end
+
+  defp require_state(errors, required, states, field) do
+    if state_member?(states, required), do: errors, else: ["#{field} must include #{inspect(required)}" | errors]
+  end
+
+  defp reject_state(errors, rejected, states, field) do
+    if state_member?(states, rejected) do
+      ["#{field} must not include retired state #{inspect(rejected)}" | errors]
+    else
+      errors
+    end
+  end
+
+  defp reject_dispatched_review_state(errors, rejected, states, field) do
+    if state_member?(states, rejected) do
+      ["#{field} must not dispatch human-review state #{inspect(rejected)}" | errors]
+    else
+      errors
+    end
+  end
+
+  defp state_member?(states, expected) when is_list(states) do
+    expected = Schema.normalize_issue_state(expected)
+    Enum.any?(states, &(is_binary(&1) and Schema.normalize_issue_state(&1) == expected))
+  end
+
+  defp state_member?(_states, _expected), do: false
+
+  defp require_transition(errors, transitions, from, to, actor, profile) do
+    if Enum.any?(transitions, &transition_matches?(&1, from, to, actor, profile)) do
+      errors
+    else
+      label = if profile, do: " actor=#{actor} profile=#{profile}", else: " actor=#{actor}"
+      ["workflow.allowed_transitions must include #{from} -> #{to}#{label}" | errors]
+    end
+  end
+
+  defp transition_matches?(transition, from, to, actor, profile) when is_map(transition) do
+    state_equal?(Map.get(transition, "from"), from) and
+      state_equal?(Map.get(transition, "to"), to) and
+      Map.get(transition, "actor") == actor and
+      (is_nil(profile) or Map.get(transition, "profile") == profile)
+  end
+
+  defp transition_matches?(_transition, _from, _to, _actor, _profile), do: false
+
+  defp state_equal?(left, right) when is_binary(left) do
+    Schema.normalize_issue_state(left) == Schema.normalize_issue_state(right)
+  end
+
+  defp state_equal?(_left, _right), do: false
 
   defp workflow_used_profiles(workflow) do
     state_profiles =
