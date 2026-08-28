@@ -8,7 +8,8 @@ defmodule SymphonyElixir.Worker.Config do
                 retention_seconds: 86_400,
                 cache_max_bytes: 10_737_418_240,
                 image_reference: "unknown",
-                source_revision: "unknown"
+                source_revision: "unknown",
+                request_options: []
               ]
 
   @type t :: %__MODULE__{
@@ -22,7 +23,8 @@ defmodule SymphonyElixir.Worker.Config do
           retention_seconds: pos_integer(),
           cache_max_bytes: pos_integer(),
           image_reference: String.t(),
-          source_revision: String.t()
+          source_revision: String.t(),
+          request_options: keyword()
         }
 
   @spec load!() :: t()

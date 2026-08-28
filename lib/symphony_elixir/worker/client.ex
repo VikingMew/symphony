@@ -34,7 +34,10 @@ defmodule SymphonyElixir.Worker.Client do
   def protocol_version, do: @protocol
 
   defp request(config, method, path, options) do
-    options = Keyword.merge([method: method, url: config.panel_url <> path, retry: :transient, max_retries: 3], options)
+    options =
+      [method: method, url: config.panel_url <> path, retry: :transient, max_retries: 3]
+      |> Keyword.merge(config.request_options)
+      |> Keyword.merge(options)
 
     case Req.request(options) do
       {:ok, %{status: status, body: body}} when status in 200..299 -> {:ok, body}

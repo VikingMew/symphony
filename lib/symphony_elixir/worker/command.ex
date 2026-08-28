@@ -11,14 +11,16 @@ defmodule SymphonyElixir.Worker.Command do
         bash -> run_port(bash, command, cwd, timeout * 1_000)
       end
 
-    Map.put(result, :duration_ms, System.monotonic_time(:millisecond) - started)
+    result
+    |> Map.put(:duration_ms, System.monotonic_time(:millisecond) - started)
+    |> put_session_id()
   end
 
   defp run_port(bash, command, cwd, timeout) do
     {executable, args} =
       case System.find_executable("setsid") do
         nil -> {bash, ["-lc", command]}
-        setsid -> {setsid, [bash, "-lc", command]}
+        setsid -> {setsid, ["--wait", bash, "-lc", command]}
       end
 
     port =
@@ -91,4 +93,11 @@ defmodule SymphonyElixir.Worker.Command do
   end
 
   defp bounded(value), do: SymphonyElixir.Redaction.bounded(value, 4_096)
+
+  defp put_session_id(%{detail: detail} = result) do
+    case Regex.run(~r/(?:SYMPHONY_CODEX_SESSION_ID=|"session_id"\s*:\s*")([A-Za-z0-9._:-]+)/, detail) do
+      [_match, session_id] -> Map.put(result, :session_id, session_id)
+      nil -> result
+    end
+  end
 end

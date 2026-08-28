@@ -7,6 +7,15 @@ defmodule SymphonyElixir.Worker.ValidationTest do
     assert Validation.outcomes() == [:passed, :failed, :timed_out, :cancelled, :toolchain_unavailable]
   end
 
+  test "preserves each non-passing contract outcome" do
+    for outcome <- [:failed, :timed_out, :cancelled, :toolchain_unavailable] do
+      runner = fn _gate, _cwd -> %{status: outcome, exit_code: nil, duration_ms: 1, detail: ""} end
+      result = Validation.run([%{command: "gate"}], "/tmp", runner)
+      assert result.overall_status == outcome
+      assert [%{status: ^outcome}] = result.gates
+    end
+  end
+
   test "stops ordered gates at the first non-passing result" do
     runner = fn gate, _cwd -> %{status: gate.status, exit_code: nil, duration_ms: 1, detail: ""} end
     gates = [%{command: "one", status: :passed}, %{command: "two", status: :failed}, %{command: "three", status: :passed}]

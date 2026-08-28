@@ -15,11 +15,11 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, revision} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
-         %{status: :passed} <- Command.run(payload.codex, workspace),
-         {:ok, validation} <- validate(config, claim, revision, payload.gates, workspace, log_dir),
+         %{status: :passed} = codex <- Command.run(payload.codex, workspace),
+         {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
          :ok <- handoff(payload, workspace) do
-      summary = summary(config, claim, revision, validation)
+      summary = summary(config, claim, revision, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
       Map.merge(summary, %{status: :completed, phase: :handoff})
     else
@@ -80,9 +80,9 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp validate(config, claim, revision, gates, workspace, log_dir) do
+  defp validate(config, claim, revision, codex, gates, workspace, log_dir) do
     validation = Validation.run(gates, workspace, &run_gate/2)
-    summary = summary(config, claim, revision, validation)
+    summary = summary(config, claim, revision, codex, validation)
     Validation.write!(Path.join(log_dir, "validation.json"), summary)
 
     case validation.overall_status do
@@ -101,11 +101,12 @@ defmodule SymphonyElixir.Worker.Executor do
 
   defp handoff(_payload, _workspace), do: {:error, :missing_handoff}
 
-  defp summary(config, claim, revision, validation) do
+  defp summary(config, claim, revision, codex, validation) do
     %{
       envelope: Map.take(claim, ["task_id", "lease_id", "project_id", "run_id"]),
       source_revision: revision,
       runtime_identity: %{image: config.image_reference, worker_source_revision: config.source_revision},
+      codex: %{session_id: Map.get(codex, :session_id), duration_ms: codex.duration_ms, outcome: codex.status},
       validation: validation
     }
   end
