@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Orchestration Specification
@@ -36,6 +36,17 @@ claim state.
 5. `Released`
    - Claim removed because issue is terminal, non-active, missing, or retry path completed without
      re-dispatch.
+
+6. `TrackerBlocked`
+   - A persisted blocking decision owns the claim and suppresses poll, continuation, retry, and
+     restart dispatch independently of the tracker write outcome.
+   - A decision is created for normalized non-empty Codex blocker evidence, a typed terminal
+     implementation-handoff failure, or two consecutive completed runs with no successful state
+     transition or PR handoff. Crashes, stalls, and infrastructure/capacity failures do not advance
+     that streak.
+   - The backend retries the decision's Linear comment and `Blocked` transition without starting a
+     coding-agent run. Human recovery clears both decision and streak; only an active target state
+     becomes dispatchable again.
 
 Important nuance:
 

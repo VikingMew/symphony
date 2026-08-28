@@ -13,7 +13,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @default_project_slug "default"
 
-  @spec default_project() :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
+  @spec default_project() ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   def default_project do
     query(:default_project, &default_project!/0)
   end
@@ -55,15 +56,20 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end)
   end
 
-  @spec create_project(map()) :: {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
+  @spec create_project(map()) ::
+          {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   def create_project(attrs) do
-    if repo_available?(), do: %Project{} |> Project.changeset(attrs) |> Repo.insert(), else: {:error, :repo_unavailable}
+    if repo_available?(),
+      do: %Project{} |> Project.changeset(attrs) |> Repo.insert(),
+      else: {:error, :repo_unavailable}
   end
 
   @spec update_project(Project.t() | String.t(), map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   def update_project(%Project{} = project, attrs) do
-    if repo_available?(), do: project |> Project.changeset(attrs) |> Repo.update(), else: {:error, :repo_unavailable}
+    if repo_available?(),
+      do: project |> Project.changeset(attrs) |> Repo.update(),
+      else: {:error, :repo_unavailable}
   end
 
   def update_project(id, attrs) when is_binary(id) do
@@ -75,7 +81,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowRecord.t()} | {:error, term()}
-  def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import") when is_binary(raw_workflow_md) do
+  def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import")
+      when is_binary(raw_workflow_md) do
     with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
          {:ok, _settings} <- Schema.parse(loaded.config) do
       upsert_workflow(project, %{
@@ -131,8 +138,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   @spec export_workflow(WorkflowRecord.t()) :: String.t()
-  def export_workflow(%WorkflowRecord{raw_workflow_md: raw}) when is_binary(raw) and raw != "", do: raw
-  def export_workflow(%WorkflowRecord{} = workflow), do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
+  def export_workflow(%WorkflowRecord{} = workflow),
+    do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
 
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
     case project_for_runtime(project_id) do

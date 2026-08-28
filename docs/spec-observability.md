@@ -49,12 +49,18 @@ SHOULD return:
 - `running` (list of running session rows)
 - each running row SHOULD include `turn_count`
 - `retrying` (list of retry queue rows)
+- `blocked` (temporary input blocks and persistent tracker blocks); persistent rows include tracker
+  state, typed reason, run id, evidence, and UTC decision time
 - `codex_totals`
   - `input_tokens`
   - `output_tokens`
   - `total_tokens`
   - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
 - `rate_limits` (latest coding-agent rate limit payload, if available)
+
+Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
+Failed external writes remain visible and retryable without creating a new coding-agent run;
+human recovery emits a decision-cleared event with issue and run context where available.
 
 RECOMMENDED snapshot error modes:
 

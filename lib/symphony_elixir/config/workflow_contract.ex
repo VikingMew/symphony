@@ -20,6 +20,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
     |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
     |> Kernel.++(validate_implementation_lifecycle(workflow, profiles))
+    |> Kernel.++(validate_blocked_lifecycle(workflow, tracker))
   end
 
   def workflow_errors(_workflow, _profiles, _tracker), do: ["must be a map"]
@@ -94,7 +95,8 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     end
   end
 
-  defp validate_state_policy(_entry, _known_profiles), do: ["states must use non-empty state names"]
+  defp validate_state_policy(_entry, _known_profiles),
+    do: ["states must use non-empty state names"]
 
   defp validate_named_state_policy(state, policy, known_profiles) do
     if linear_state_name_too_long?(state) do
@@ -108,7 +110,8 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     validate_state_policy_profile(state, Map.get(policy, "profile"), known_profiles)
   end
 
-  defp validate_state_policy_map(state, _policy, _known_profiles), do: ["states.#{state} must be a map"]
+  defp validate_state_policy_map(state, _policy, _known_profiles),
+    do: ["states.#{state} must be a map"]
 
   defp validate_state_policy_profile(state, profile, known_profiles) do
     cond do
@@ -131,16 +134,25 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     end
   end
 
-  defp validate_executor(_profile, %{"type" => type}) when type in ["codex_agent", "manual", "backend_action", "external_worker"] do
+  defp validate_executor(_profile, %{"type" => type})
+       when type in ["codex_agent", "manual", "backend_action", "external_worker"] do
     []
   end
 
-  defp validate_executor(profile, %{"type" => _type}), do: ["profiles.#{profile}.executor.type is invalid"]
-  defp validate_executor(profile, _executor), do: ["profiles.#{profile}.executor.type must be a non-empty string"]
+  defp validate_executor(profile, %{"type" => _type}),
+    do: ["profiles.#{profile}.executor.type is invalid"]
 
-  defp validate_prompt_policy(_profile, %{"mode" => mode}) when mode in ["extend", "replace", "disabled"], do: []
-  defp validate_prompt_policy(profile, %{"mode" => _mode}), do: ["profiles.#{profile}.prompt.mode is invalid"]
-  defp validate_prompt_policy(profile, _prompt), do: ["profiles.#{profile}.prompt.mode must be a non-empty string"]
+  defp validate_executor(profile, _executor),
+    do: ["profiles.#{profile}.executor.type must be a non-empty string"]
+
+  defp validate_prompt_policy(_profile, %{"mode" => mode})
+       when mode in ["extend", "replace", "disabled"], do: []
+
+  defp validate_prompt_policy(profile, %{"mode" => _mode}),
+    do: ["profiles.#{profile}.prompt.mode is invalid"]
+
+  defp validate_prompt_policy(profile, _prompt),
+    do: ["profiles.#{profile}.prompt.mode must be a non-empty string"]
 
   defp validate_profile_executor_prompt(profile, policy) do
     executor_type = get_in(policy, ["executor", "type"])
@@ -151,8 +163,11 @@ defmodule SymphonyElixir.Config.WorkflowContract do
       executor_type == "codex_agent" and prompt_mode == "disabled" ->
         ["profiles.#{profile}.prompt.mode cannot be disabled for codex_agent"]
 
-      executor_type == "codex_agent" and prompt_mode in ["extend", "replace"] and not non_empty_string?(prompt_template) ->
-        ["profiles.#{profile}.prompt.template must be a non-empty string for codex_agent #{prompt_mode} mode"]
+      executor_type == "codex_agent" and prompt_mode in ["extend", "replace"] and
+          not non_empty_string?(prompt_template) ->
+        [
+          "profiles.#{profile}.prompt.template must be a non-empty string for codex_agent #{prompt_mode} mode"
+        ]
 
       true ->
         []
@@ -160,10 +175,14 @@ defmodule SymphonyElixir.Config.WorkflowContract do
   end
 
   defp validate_allowed_updates(profile, updates) when is_map(updates) do
-    validate_string_list(Map.get(updates, "target_states", []), "profiles.#{profile}.allowed_updates.target_states")
+    validate_string_list(
+      Map.get(updates, "target_states", []),
+      "profiles.#{profile}.allowed_updates.target_states"
+    )
   end
 
-  defp validate_allowed_updates(profile, _updates), do: ["profiles.#{profile}.allowed_updates must be a map"]
+  defp validate_allowed_updates(profile, _updates),
+    do: ["profiles.#{profile}.allowed_updates must be a map"]
 
   defp validate_transitions(transitions) when is_list(transitions) do
     Enum.flat_map(transitions, fn
@@ -198,7 +217,10 @@ defmodule SymphonyElixir.Config.WorkflowContract do
 
     known_states = known_states(workflow, tracker)
 
-    validate_transition_state_references(Map.get(workflow, "allowed_transitions", []), known_states) ++
+    validate_transition_state_references(
+      Map.get(workflow, "allowed_transitions", []),
+      known_states
+    ) ++
       validate_profile_target_state_references(profiles, known_states)
   end
 
@@ -238,7 +260,13 @@ defmodule SymphonyElixir.Config.WorkflowContract do
           get_in(implementation, ["allowed_updates", "target_states"]) || [],
           "profiles.implementation.allowed_updates.target_states"
         )
-        |> require_transition(transitions, "In Progress", "Ready to Merge", "codex", "implementation")
+        |> require_transition(
+          transitions,
+          "In Progress",
+          "Ready to Merge",
+          "codex",
+          "implementation"
+        )
         |> require_transition(transitions, "Ready to Merge", "In Progress", "human", nil)
 
       _missing ->
@@ -246,8 +274,74 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     end
   end
 
+  defp validate_blocked_lifecycle(workflow, tracker) do
+    transitions = Map.get(workflow, "allowed_transitions", [])
+    active_states = tracker_states(tracker, :active_states)
+
+    if blocked_configured?(workflow, tracker) do
+      []
+      |> require_state(
+        "Blocked",
+        Map.get(workflow, "human_review_states", []),
+        "workflow.human_review_states"
+      )
+      |> reject_dispatched_review_state(
+        "Blocked",
+        Map.keys(Map.get(workflow, "states", %{})),
+        "workflow.states"
+      )
+      |> reject_dispatched_review_state("Blocked", active_states, "tracker.active_states")
+      |> require_blocked_transitions(active_states, transitions)
+      |> require_transition(transitions, "Blocked", "Ready", "human", nil)
+      |> require_transition(transitions, "Blocked", "Needs Refinement Review", "human", nil)
+      |> require_transition(transitions, "Blocked", "Canceled", "human", nil)
+      |> Kernel.++(invalid_blocked_transition_errors(transitions, active_states))
+    else
+      []
+    end
+  end
+
+  defp blocked_configured?(workflow, tracker) do
+    state_member?(Map.get(workflow, "human_review_states", []), "Blocked") or
+      state_member?(Map.keys(Map.get(workflow, "states", %{})), "Blocked") or
+      state_member?(tracker_states(tracker, :active_states), "Blocked") or
+      Enum.any?(Map.get(workflow, "allowed_transitions", []), fn transition ->
+        is_map(transition) and
+          (state_equal?(Map.get(transition, "from"), "Blocked") or
+             state_equal?(Map.get(transition, "to"), "Blocked"))
+      end)
+  end
+
+  defp require_blocked_transitions(errors, active_states, transitions) do
+    Enum.reduce(active_states, errors, fn state, acc ->
+      require_transition(acc, transitions, state, "Blocked", "symphony", nil)
+    end)
+  end
+
+  defp invalid_blocked_transition_errors(transitions, active_states) do
+    Enum.flat_map(transitions, fn transition ->
+      from = Map.get(transition, "from")
+      to = Map.get(transition, "to")
+      actor = Map.get(transition, "actor")
+
+      cond do
+        state_equal?(to, "Blocked") and
+            (actor != "symphony" or not Enum.any?(active_states, &state_equal?(&1, from))) ->
+          ["transitions to Blocked must be active-state transitions with actor=symphony"]
+
+        state_equal?(from, "Blocked") and actor != "human" ->
+          ["transitions from Blocked must use actor=human"]
+
+        true ->
+          []
+      end
+    end)
+  end
+
   defp require_state(errors, required, states, field) do
-    if state_member?(states, required), do: errors, else: ["#{field} must include #{inspect(required)}" | errors]
+    if state_member?(states, required),
+      do: errors,
+      else: ["#{field} must include #{inspect(required)}" | errors]
   end
 
   defp reject_state(errors, rejected, states, field) do
@@ -324,10 +418,14 @@ defmodule SymphonyElixir.Config.WorkflowContract do
 
   defp validate_tracker_state_names(_tracker), do: []
 
-  defp validate_transition_state_references(transitions, known_states) when is_list(transitions) do
+  defp validate_transition_state_references(transitions, known_states)
+       when is_list(transitions) do
     Enum.flat_map(transitions, fn
       transition when is_map(transition) ->
-        Enum.flat_map(["from", "to"], &transition_state_reference_errors(transition, known_states, &1))
+        Enum.flat_map(
+          ["from", "to"],
+          &transition_state_reference_errors(transition, known_states, &1)
+        )
 
       _transition ->
         []
@@ -369,15 +467,21 @@ defmodule SymphonyElixir.Config.WorkflowContract do
   defp known_state?(_known_states, _state), do: true
 
   defp maybe_required_string_error(errors, value, field) do
-    if is_binary(value) and String.trim(value) != "", do: errors, else: [field <> " must be a non-empty string" | errors]
+    if is_binary(value) and String.trim(value) != "",
+      do: errors,
+      else: [field <> " must be a non-empty string" | errors]
   end
 
   defp maybe_linear_state_name_length_error(errors, value, field) do
-    if linear_state_name_too_long?(value), do: [linear_state_name_length_error(field, value) | errors], else: errors
+    if linear_state_name_too_long?(value),
+      do: [linear_state_name_length_error(field, value) | errors],
+      else: errors
   end
 
   defp maybe_actor_error(errors, actor) do
-    if actor in ["codex", "human"], do: errors, else: ["allowed_transitions.actor must be either codex or human" | errors]
+    if actor in ["codex", "human", "symphony"],
+      do: errors,
+      else: ["allowed_transitions.actor must be codex, human, or symphony" | errors]
   end
 
   defp non_empty_string?(value), do: is_binary(value) and String.trim(value) != ""

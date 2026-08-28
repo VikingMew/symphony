@@ -18,13 +18,26 @@ defmodule SymphonyElixir.Persistence.IssueRecord do
     field(:url, :string)
     field(:labels, :map, default: %{"values" => []})
     field(:snapshot, :map, default: %{})
+    field(:blocking_decision, :map)
+    field(:no_progress_streak, :integer, default: 0)
     timestamps(type: :utc_datetime_usec)
   end
 
   @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
   def changeset(issue, attrs) do
     issue
-    |> cast(attrs, [:project_id, :tracker_issue_id, :identifier, :title, :state, :url, :labels, :snapshot])
+    |> cast(attrs, [
+      :project_id,
+      :tracker_issue_id,
+      :identifier,
+      :title,
+      :state,
+      :url,
+      :labels,
+      :snapshot,
+      :blocking_decision,
+      :no_progress_streak
+    ])
     |> validate_required([:identifier])
     |> unique_constraint([:project_id, :identifier])
   end

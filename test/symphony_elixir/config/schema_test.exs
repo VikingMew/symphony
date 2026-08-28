@@ -17,7 +17,8 @@ defmodule SymphonyElixir.Config.SchemaTest do
 
     assert Schema.default_workflow_policy()["human_review_states"] == [
              "Needs Refinement Review",
-             "Ready to Merge"
+             "Ready to Merge",
+             "Blocked"
            ]
   end
 end

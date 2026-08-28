@@ -104,7 +104,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   @impl true
   def handle_event("request_day_dreaming", %{"project_id" => project_id}, socket) do
-    result = SymphonyElixir.Orchestrator.request_day_dreaming(WebRuntime.orchestrator(), project_id)
+    result =
+      SymphonyElixir.Orchestrator.request_day_dreaming(WebRuntime.orchestrator(), project_id)
 
     {:noreply,
      socket
@@ -276,7 +277,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
           <div class="section-header">
             <div>
               <h2 class="section-title">Blocked sessions</h2>
-              <p class="section-copy">Issues paused because Codex requested operator input or approval.</p>
+              <p class="section-copy">Issues paused for operator input or by a persistent tracker blocking decision.</p>
             </div>
           </div>
 
@@ -557,7 +558,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp operator_summary_text(_summary), do: "n/a"
 
   defp running_entry_label(entry) do
-    Map.get(entry, :label) || Map.get(entry, :issue_identifier) || Map.get(entry, :run_id) || "n/a"
+    Map.get(entry, :label) || Map.get(entry, :issue_identifier) || Map.get(entry, :run_id) ||
+      "n/a"
   end
 
   defp operator_project_label(project) do
@@ -587,7 +589,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
         is_binary(failure_reason) and String.contains?(failure_reason, "operator_task_busy") ->
           "#{action} failed: a #{profile} run is already in progress for this project"
 
-        is_binary(failure_reason) and String.contains?(failure_reason, "operator_task_already_queued") ->
+        is_binary(failure_reason) and
+            String.contains?(failure_reason, "operator_task_already_queued") ->
           "#{action} failed: a #{profile} run is already queued for this project"
 
         true ->
