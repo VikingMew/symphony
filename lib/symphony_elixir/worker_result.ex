@@ -47,9 +47,8 @@ defmodule SymphonyElixir.WorkerResult do
 
     with :ok <- require_runtime_image(digest, tag),
          :ok <- bounded_text(value, "image_digest", @max_text, false),
-         :ok <- bounded_text(value, "image_tag", @max_text, false),
-         :ok <- bounded_text(value, "worker_source_revision", @max_text, true) do
-      :ok
+         :ok <- bounded_text(value, "image_tag", @max_text, false) do
+      bounded_text(value, "worker_source_revision", @max_text, true)
     end
   end
 
@@ -80,9 +79,8 @@ defmodule SymphonyElixir.WorkerResult do
          :ok <- enum(value, "status", @gate_statuses),
          :ok <- exit_code(value),
          :ok <- non_negative_integer(value, "duration_ms", true),
-         :ok <- positive_integer(value, "timeout_ms"),
-         :ok <- bounded_detail(value, "failure_detail") do
-      :ok
+         :ok <- positive_integer(value, "timeout_ms") do
+      bounded_detail(value, "failure_detail")
     end
   end
 
@@ -94,20 +92,26 @@ defmodule SymphonyElixir.WorkerResult do
     value = stringify_keys(value)
 
     with :ok <- bounded_detail(value, "error_detail") do
-      Enum.reduce_while(
-        ~w(branch commit pr_identifier pr_url linear_issue linear_state failed_step),
-        :ok,
-        fn key, :ok ->
-          case bounded_text(value, key, @max_text, false) do
-            :ok -> {:cont, :ok}
-            error -> {:halt, error}
-          end
-        end
-      )
+      validate_handoff_fields(value)
     end
   end
 
   defp handoff(_), do: invalid("handoff must be an object")
+
+  defp validate_handoff_fields(value) do
+    Enum.reduce_while(
+      ~w(branch commit pr_identifier pr_url linear_issue linear_state failed_step),
+      :ok,
+      &validate_handoff_field(value, &1, &2)
+    )
+  end
+
+  defp validate_handoff_field(value, key, :ok) do
+    case bounded_text(value, key, @max_text, false) do
+      :ok -> {:cont, :ok}
+      error -> {:halt, error}
+    end
+  end
 
   defp exit_code(%{"exit_code" => value}) when is_integer(value), do: :ok
   defp exit_code(%{"exit_code" => nil}), do: :ok
@@ -116,7 +120,9 @@ defmodule SymphonyElixir.WorkerResult do
 
   defp bounded_detail(map, key) do
     case Map.get(map, key) do
-      nil -> :ok
+      nil ->
+        :ok
+
       value when is_binary(value) ->
         cond do
           String.length(value) > @max_detail -> invalid("#{key} exceeds #{@max_detail} characters")
@@ -124,7 +130,9 @@ defmodule SymphonyElixir.WorkerResult do
           Regex.match?(@secret_pattern, value) -> invalid("#{key} contains secret-bearing text")
           true -> :ok
         end
-      _ -> invalid("#{key} must be a string")
+
+      _ ->
+        invalid("#{key} must be a string")
     end
   end
 
@@ -132,8 +140,12 @@ defmodule SymphonyElixir.WorkerResult do
     case Map.get(map, key) do
       value when is_binary(value) and value != "" ->
         if String.length(value) <= limit, do: :ok, else: invalid("#{key} exceeds #{limit} characters")
-      nil when not required -> :ok
-      _ -> invalid("#{key} must be a non-empty string")
+
+      nil when not required ->
+        :ok
+
+      _ ->
+        invalid("#{key} must be a non-empty string")
     end
   end
 
@@ -148,8 +160,12 @@ defmodule SymphonyElixir.WorkerResult do
           {:ok, _, _} -> :ok
           _ -> invalid("#{key} must be an ISO-8601 timestamp")
         end
-      nil when not required -> :ok
-      _ -> invalid("#{key} must be an ISO-8601 timestamp")
+
+      nil when not required ->
+        :ok
+
+      _ ->
+        invalid("#{key} must be an ISO-8601 timestamp")
     end
   end
 

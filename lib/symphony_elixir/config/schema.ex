@@ -187,18 +187,23 @@ defmodule SymphonyElixir.Config.Schema do
       validate_change(changeset, :required_gates, fn :required_gates, gates ->
         gates
         |> Enum.with_index()
-        |> Enum.flat_map(fn {gate, index} ->
-          name = is_map(gate) && (Map.get(gate, "name") || Map.get(gate, :name))
-          command = is_map(gate) && (Map.get(gate, "command") || Map.get(gate, :command))
-          timeout = is_map(gate) && (Map.get(gate, "timeout_ms") || Map.get(gate, :timeout_ms))
-
-          if is_binary(name) and String.trim(name) != "" and is_binary(command) and String.trim(command) != "" and
-               is_integer(timeout) and timeout > 0,
-             do: [],
-             else: [required_gates: "gate #{index} requires name, command, and positive timeout_ms"]
-        end)
+        |> Enum.flat_map(&required_gate_error/1)
       end)
     end
+
+    defp required_gate_error({gate, index}) when is_map(gate) do
+      valid? =
+        non_blank?(SymphonyElixir.Payload.get_any(gate, ["name", :name])) and
+          non_blank?(SymphonyElixir.Payload.get_any(gate, ["command", :command])) and
+          positive_integer?(SymphonyElixir.Payload.get_any(gate, ["timeout_ms", :timeout_ms]))
+
+      if valid?, do: [], else: invalid_gate_error(index)
+    end
+
+    defp required_gate_error({_gate, index}), do: invalid_gate_error(index)
+    defp invalid_gate_error(index), do: [required_gates: "gate #{index} requires name, command, and positive timeout_ms"]
+    defp non_blank?(value), do: is_binary(value) and String.trim(value) != ""
+    defp positive_integer?(value), do: is_integer(value) and value > 0
   end
 
   defmodule Worker do

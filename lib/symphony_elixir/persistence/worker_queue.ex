@@ -215,22 +215,19 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
       Repo.transaction(fn ->
         transition_task_from_event!(task, event_type, summary)
 
-        event_payload =
-          payload
-          |> Map.new(fn {key, value} -> {to_string(key), value} end)
-          |> Map.put("correlation", correlation)
-          |> maybe_put_summary(summary)
+        event_payload = build_event_payload(payload, correlation, summary)
 
-        event = %EventRecord{}
-        |> EventRecord.changeset(%{
-          project_id: task.project_id,
-          run_id: task.run_id,
-          issue_identifier: task.issue_identifier,
-          event_type: event_type,
-          payload: event_payload,
-          occurred_at: DateTime.utc_now()
-        })
-        |> Repo.insert!()
+        event =
+          %EventRecord{}
+          |> EventRecord.changeset(%{
+            project_id: task.project_id,
+            run_id: task.run_id,
+            issue_identifier: task.issue_identifier,
+            event_type: event_type,
+            payload: event_payload,
+            occurred_at: DateTime.utc_now()
+          })
+          |> Repo.insert!()
 
         log_worker_summary(event_type, correlation, summary)
         event
@@ -538,6 +535,13 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   defp maybe_put_summary(payload, nil), do: payload
   defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
+
+  defp build_event_payload(payload, correlation, summary) do
+    payload
+    |> Map.new(fn {key, value} -> {to_string(key), value} end)
+    |> Map.put("correlation", correlation)
+    |> maybe_put_summary(summary)
+  end
 
   defp log_worker_summary(_event_type, _correlation, nil), do: :ok
 

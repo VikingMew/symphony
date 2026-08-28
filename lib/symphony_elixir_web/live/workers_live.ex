@@ -155,18 +155,19 @@ defmodule SymphonyElixirWeb.WorkersLive do
   defp labels_text(labels), do: ObservabilityPresenter.labels_text(labels)
   defp status_class(status), do: ObservabilityPresenter.status_class(status)
 
-  defp summary_value(task, key), do: (task.execution_summary || %{})[key] || "n/a"
+  defp summary_value(task, key), do: task |> execution_summary() |> Map.get(key, "n/a")
 
   defp gate_statuses(task) do
-    case get_in(task.execution_summary || %{}, ["gates"]) do
+    case get_in(execution_summary(task), ["gates"]) do
       gates when is_list(gates) and gates != [] -> " (" <> Enum.map_join(gates, ", ", &"#{&1["name"]}: #{&1["status"]}") <> ")"
       _ -> ""
     end
   end
 
   defp source_runtime(task) do
-    summary = task.execution_summary || %{}
+    summary = execution_summary(task)
     runtime = summary["runtime"] || %{}
+
     Enum.join(
       Enum.reject(
         [summary["source_revision"], runtime["image_digest"] || runtime["image_tag"], runtime["worker_source_revision"]],
@@ -177,7 +178,8 @@ defmodule SymphonyElixirWeb.WorkersLive do
   end
 
   defp task_handoff(task) do
-    handoff = (task.execution_summary || %{})["handoff"] || %{}
+    handoff = execution_summary(task)["handoff"] || %{}
+
     Enum.join(
       Enum.reject(
         [handoff["branch"], handoff["commit"], handoff["pr_identifier"], handoff["pr_url"], handoff["linear_state"]],
@@ -186,4 +188,6 @@ defmodule SymphonyElixirWeb.WorkersLive do
       " | "
     )
   end
+
+  defp execution_summary(task), do: Map.get(task, :execution_summary) || %{}
 end
