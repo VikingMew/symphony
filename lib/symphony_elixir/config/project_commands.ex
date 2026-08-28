@@ -59,8 +59,6 @@ defmodule SymphonyElixir.Config.ProjectCommands do
       |> Kernel.++([
         "git",
         "-c",
-        "credential.helper=",
-        "-c",
         "core.askPass=",
         "-c",
         "http.lowSpeedLimit=1",
@@ -90,7 +88,9 @@ defmodule SymphonyElixir.Config.ProjectCommands do
   defp maybe_append_git_ssh_command(parts, _repository_url), do: parts
 
   defp ssh_repository_url?(repository_url) do
-    String.starts_with?(repository_url, "git@") or String.starts_with?(repository_url, "ssh://")
+    (String.starts_with?(repository_url, "git@") and
+       not String.starts_with?(repository_url, "git@github.com:")) or
+      String.starts_with?(repository_url, "ssh://")
   end
 
   defp maybe_append_clone_depth(parts, depth) when is_integer(depth) and depth > 0 do

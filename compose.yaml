@@ -3,7 +3,6 @@ name: symphony
 x-symphony-environment: &symphony-environment
   DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env}
   SYMPHONY_DATABASE_POOL_SIZE: ${SYMPHONY_DATABASE_POOL_SIZE:-10}
-  GIT_CONFIG_GLOBAL: /data/workspaces/.gitconfig
   PORT: "4000"
   SYMPHONY_SERVER_HOST: 0.0.0.0
   SYMPHONY_LOGS_ROOT: /data/logs

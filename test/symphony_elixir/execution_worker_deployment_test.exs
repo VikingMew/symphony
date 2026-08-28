@@ -15,6 +15,21 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     refute dockerfile =~ "npm install --global @openai/codex\n"
   end
 
+  test "symphony image configures token-free GitHub credentials at system scope" do
+    dockerfile = File.read!(@dockerfile)
+    compose = File.read!(@compose)
+
+    assert dockerfile =~
+             "git config --system credential.https://github.com.helper '!gh auth git-credential'"
+
+    assert dockerfile =~
+             "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
+
+    refute dockerfile =~ "x-access-token"
+    refute dockerfile =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
+    refute compose =~ "GIT_CONFIG_GLOBAL"
+  end
+
   test "trusted HTTP worker is opt-in, isolated, and non-privileged" do
     compose = File.read!(@compose)
     worker = compose |> String.split("  execution-worker:\n", parts: 2) |> List.last()

@@ -131,6 +131,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zlib1g \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --uid 10001 --create-home --shell /bin/bash symphony \
+  && git config --system credential.https://github.com.helper '!gh auth git-credential' \
+  && git config --system url.https://github.com/.insteadOf 'git@github.com:' \
   && install -d -o symphony -g symphony \
     /data/logs \
     /data/workspaces \
