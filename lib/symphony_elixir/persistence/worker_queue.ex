@@ -212,32 +212,35 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
          {:ok, correlation} <- authoritative_correlation(task, lease, session),
          :ok <- validate_correlation(payload || %{}, correlation),
          {:ok, summary} <- validate_event_summary(event_type, payload || %{}) do
-      Repo.transaction(fn ->
-        transition_task_from_event!(task, event_type, summary)
-
-        event_payload =
-          payload
-          |> Map.new(fn {key, value} -> {to_string(key), value} end)
-          |> Map.put("correlation", correlation)
-          |> maybe_put_summary(summary)
-
-        event = %EventRecord{}
-        |> EventRecord.changeset(%{
-          project_id: task.project_id,
-          run_id: task.run_id,
-          issue_identifier: task.issue_identifier,
-          event_type: event_type,
-          payload: event_payload,
-          occurred_at: DateTime.utc_now()
-        })
-        |> Repo.insert!()
-
-        log_worker_summary(event_type, correlation, summary)
-        event
-      end)
+      Repo.transaction(fn -> persist_worker_event!(task, event_type, payload, correlation, summary) end)
     else
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp persist_worker_event!(task, event_type, payload, correlation, summary) do
+    transition_task_from_event!(task, event_type, summary)
+
+    event_payload =
+      payload
+      |> Map.new(fn {key, value} -> {to_string(key), value} end)
+      |> Map.put("correlation", correlation)
+      |> maybe_put_summary(summary)
+
+    event =
+      %EventRecord{}
+      |> EventRecord.changeset(%{
+        project_id: task.project_id,
+        run_id: task.run_id,
+        issue_identifier: task.issue_identifier,
+        event_type: event_type,
+        payload: event_payload,
+        occurred_at: DateTime.utc_now()
+      })
+      |> Repo.insert!()
+
+    log_worker_summary(event_type, correlation, summary)
+    event
   end
 
   defp worker_api_config(key, default) do

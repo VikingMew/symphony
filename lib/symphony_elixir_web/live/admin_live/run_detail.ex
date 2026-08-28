@@ -175,11 +175,13 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
   defp duration_ms(value) when is_integer(value), do: "#{value} ms"
   defp duration_ms(_value), do: "n/a"
   defp runtime_identity(nil), do: "n/a"
+
   defp runtime_identity(runtime) do
     [runtime["image_digest"] || runtime["image_tag"], runtime["worker_source_revision"]]
     |> Enum.reject(&is_nil/1)
     |> Enum.join(" | ")
   end
+
   defp handoff_refs(nil), do: "n/a"
 
   defp handoff_refs(handoff) do

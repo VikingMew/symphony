@@ -42,6 +42,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
       SymphonyElixir.Config.with_workflow_context(workflow_context(), fn ->
         Events.worker_task_attrs(issue, run, workflow, "Prompt", "implementation")
       end)
+
     assert task_attrs.project_id == "project-1"
     assert task_attrs.run_id == "run-1"
     assert task_attrs.payload["issue"]["identifier"] == "MT-1"
