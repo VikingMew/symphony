@@ -65,6 +65,24 @@ Symphony maintains multiple projects concurrently: one Linear project + one repo
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
+### Execution worker image
+
+The separately deployable execution worker is built without changing the Panel image:
+
+```bash
+docker build --target execution-worker \
+  --build-arg SYMPHONY_WORKER_IMAGE=symphony-worker:0.1.0 \
+  --build-arg SYMPHONY_WORKER_SOURCE_REVISION="$(git rev-parse HEAD)" \
+  -t symphony-worker:0.1.0 .
+```
+
+The supported Compose stack exposes it only through the opt-in `execution-worker` profile; see
+[the worker operations guide](docs/execution-worker-operations.md). Run it with
+`SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
+`/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
+explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
+required gates, and handoff commands. The worker never derives a missing required gate.
+
 ## Quick Start
 
 Requirements:
@@ -190,10 +208,10 @@ See [docs/deployment.md](docs/deployment.md) for Nginx, Kubernetes, WebSocket, h
 
 ### Docker Compose
 
-The root `compose.yaml` is the supported self-hosted stack. It builds a non-root OTP release image,
-starts PostgreSQL on an internal network, runs migrations once, then starts Symphony after the
-database is healthy. Copy `.env.example` to the ignored `.env`, replace all `change-me` values,
-and start the stack:
+The root `compose.yaml` is the supported self-hosted stack. By default it builds the non-root OTP
+release as `symphony:local`, starts PostgreSQL on an internal network, runs migrations once, then
+starts Symphony after the database is healthy. Copy `.env.example` to the ignored `.env`, replace
+all `change-me` values, and start the local-build stack:
 
 ```bash
 cp .env.example .env
@@ -204,6 +222,16 @@ curl --fail http://127.0.0.1:4000/health/live
 curl --fail http://127.0.0.1:4000/health/ready
 ```
 
+CI also publishes one `ghcr.io/vikingmew/symphony` manifest for `linux/amd64` and `linux/arm64`.
+For a deployment that pulls an immutable image instead of building source, set `SYMPHONY_IMAGE`
+to a release or full-SHA tag and include `compose.published.yaml`:
+
+```bash
+export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+docker compose -f compose.yaml -f compose.published.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml up -d
+```
+
 The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, PostgreSQL clients, and
 SQLite cutover tooling, but no Mix, compiler, or source checkout. The separate `worker` target
 remains available for SSH-reachable Codex workers.
@@ -212,7 +240,8 @@ Builds accept `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_M
 `NPM_REGISTRY`, and `HEX_MIRROR_URL` build arguments for internal registries and mirrors.
 Standard proxy variables can be passed as Docker build arguments and, separately, as runtime
 environment variables. See [docs/compose.md](docs/compose.md) for first start, credentials,
-upgrades, backup/restore, legacy SQLite cutover, volume verification, restart testing, and rollback.
+published-image authentication and inspection, upgrades, backup/restore, legacy SQLite cutover,
+volume verification, restart testing, and rollback.
 
 ## Project Layout
 

@@ -155,7 +155,7 @@ defmodule SymphonyElixirWeb.WorkersLive do
   defp labels_text(labels), do: ObservabilityPresenter.labels_text(labels)
   defp status_class(status), do: ObservabilityPresenter.status_class(status)
 
-  defp summary_value(task, key), do: task |> execution_summary() |> Map.get(key, "n/a")
+  defp summary_value(task, key), do: execution_summary(task)[key] || "n/a"
 
   defp gate_statuses(task) do
     case get_in(execution_summary(task), ["gates"]) do

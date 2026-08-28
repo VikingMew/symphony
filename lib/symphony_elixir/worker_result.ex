@@ -47,9 +47,14 @@ defmodule SymphonyElixir.WorkerResult do
 
     with :ok <- require_runtime_image(digest, tag),
          :ok <- bounded_text(value, "image_digest", @max_text, false),
+<<<<<<< HEAD
          :ok <- bounded_text(value, "image_tag", @max_text, false) do
       bounded_text(value, "worker_source_revision", @max_text, true)
     end
+=======
+         :ok <- bounded_text(value, "image_tag", @max_text, false),
+         do: bounded_text(value, "worker_source_revision", @max_text, true)
+>>>>>>> origin/main
   end
 
   defp runtime(_), do: invalid("runtime must be an object")
@@ -79,9 +84,14 @@ defmodule SymphonyElixir.WorkerResult do
          :ok <- enum(value, "status", @gate_statuses),
          :ok <- exit_code(value),
          :ok <- non_negative_integer(value, "duration_ms", true),
+<<<<<<< HEAD
          :ok <- positive_integer(value, "timeout_ms") do
       bounded_detail(value, "failure_detail")
     end
+=======
+         :ok <- positive_integer(value, "timeout_ms"),
+         do: bounded_detail(value, "failure_detail")
+>>>>>>> origin/main
   end
 
   defp gate(_), do: invalid("must be an object")
@@ -91,13 +101,18 @@ defmodule SymphonyElixir.WorkerResult do
   defp handoff(value) when is_map(value) do
     value = stringify_keys(value)
 
+<<<<<<< HEAD
     with :ok <- bounded_detail(value, "error_detail") do
       validate_handoff_fields(value)
     end
+=======
+    with :ok <- bounded_detail(value, "error_detail"), do: handoff_fields(value)
+>>>>>>> origin/main
   end
 
   defp handoff(_), do: invalid("handoff must be an object")
 
+<<<<<<< HEAD
   defp validate_handoff_fields(value) do
     Enum.reduce_while(
       ~w(branch commit pr_identifier pr_url linear_issue linear_state failed_step),
@@ -113,6 +128,21 @@ defmodule SymphonyElixir.WorkerResult do
     end
   end
 
+=======
+  defp handoff_fields(value) do
+    Enum.reduce_while(
+      ~w(branch commit pr_identifier pr_url linear_issue linear_state failed_step),
+      :ok,
+      fn key, :ok ->
+        case bounded_text(value, key, @max_text, false) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end
+    )
+  end
+
+>>>>>>> origin/main
   defp exit_code(%{"exit_code" => value}) when is_integer(value), do: :ok
   defp exit_code(%{"exit_code" => nil}), do: :ok
   defp exit_code(%{"status" => "failed"}), do: invalid("failed gate requires integer exit_code")

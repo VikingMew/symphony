@@ -75,6 +75,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, event} <-
+<<<<<<< HEAD
            persistence().record_worker_task_event(
              worker_id,
              session_id,
@@ -82,6 +83,9 @@ defmodule SymphonyElixirWeb.WorkerApiController do
              event_type,
              event_payload(params)
            ) do
+=======
+           persistence().record_worker_task_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
+>>>>>>> origin/main
       conn
       |> put_status(202)
       |> json(%{event_id: event.id, accepted: true})
