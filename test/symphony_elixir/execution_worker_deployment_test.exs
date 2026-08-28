@@ -2,6 +2,18 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   use ExUnit.Case, async: true
 
   @compose Path.expand("../../compose.yaml", __DIR__)
+  @dockerfile Path.expand("../../Dockerfile", __DIR__)
+
+  test "shared Codex stage installs the exact supported version" do
+    dockerfile = File.read!(@dockerfile)
+
+    assert dockerfile =~ "ARG CODEX_VERSION=0.150.1"
+    assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
+    assert dockerfile =~ "FROM ${NODE_IMAGE} AS worker"
+    assert dockerfile =~ "FROM ${RUNTIME_IMAGE} AS symphony"
+    assert length(Regex.scan(~r/COPY --from=codex \/usr\/local\/lib\/node_modules/, dockerfile)) == 3
+    refute dockerfile =~ "npm install --global @openai/codex\n"
+  end
 
   test "trusted HTTP worker is opt-in, isolated, and non-privileged" do
     compose = File.read!(@compose)

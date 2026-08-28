@@ -236,8 +236,10 @@ The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, Postg
 SQLite cutover tooling, but no Mix, compiler, or source checkout. The separate `worker` target
 remains available for SSH-reachable Codex workers.
 
-Builds accept `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`,
-`NPM_REGISTRY`, and `HEX_MIRROR_URL` build arguments for internal registries and mirrors.
+Builds pin Codex CLI to `0.150.1` through the shared `CODEX_VERSION` build argument, so the
+`symphony`, SSH `worker`, and `execution-worker` targets use the same release. Builds also accept
+`ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`, `NPM_REGISTRY`, and
+`HEX_MIRROR_URL` build arguments for internal registries and mirrors.
 Standard proxy variables can be passed as Docker build arguments and, separately, as runtime
 environment variables. See [docs/compose.md](docs/compose.md) for first start, credentials,
 published-image authentication and inspection, upgrades, backup/restore, legacy SQLite cutover,
