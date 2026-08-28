@@ -12,10 +12,17 @@ defmodule SymphonyElixir.Worker.Config do
               ]
 
   @type t :: %__MODULE__{
-          panel_url: String.t(), registration_token: String.t(), worker_name: String.t(),
-          workspace_root: Path.t(), cache_root: Path.t(), log_root: Path.t(), slots: pos_integer(),
-          retention_seconds: pos_integer(), cache_max_bytes: pos_integer(),
-          image_reference: String.t(), source_revision: String.t()
+          panel_url: String.t(),
+          registration_token: String.t(),
+          worker_name: String.t(),
+          workspace_root: Path.t(),
+          cache_root: Path.t(),
+          log_root: Path.t(),
+          slots: pos_integer(),
+          retention_seconds: pos_integer(),
+          cache_max_bytes: pos_integer(),
+          image_reference: String.t(),
+          source_revision: String.t()
         }
 
   @spec load!() :: t()

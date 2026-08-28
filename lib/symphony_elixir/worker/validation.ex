@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.Worker.Validation do
   @moduledoc "Ordered validation gate execution and secret-free local summary."
 
+  alias SymphonyElixir.Worker.Command
+
   @outcomes [:passed, :failed, :timed_out, :cancelled, :toolchain_unavailable]
   @type outcome :: :passed | :failed | :timed_out | :cancelled | :toolchain_unavailable
 
@@ -8,7 +10,7 @@ defmodule SymphonyElixir.Worker.Validation do
   def outcomes, do: @outcomes
 
   @spec run([map()], Path.t(), (map(), Path.t() -> map())) :: map()
-  def run(gates, cwd, runner \\ &SymphonyElixir.Worker.Command.run/2) do
+  def run(gates, cwd, runner \\ &Command.run/2) do
     {results, overall} =
       Enum.reduce_while(gates, {[], :passed}, fn gate, {results, :passed} ->
         result = runner.(gate, cwd)

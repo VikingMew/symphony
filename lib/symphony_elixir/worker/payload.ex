@@ -5,7 +5,15 @@ defmodule SymphonyElixir.Worker.Payload do
   defstruct @enforce_keys ++ [hooks: [], handoff: %{}]
 
   @type command :: %{required(:command) => String.t(), required(:timeout_seconds) => pos_integer()}
-  @type t :: %__MODULE__{repository: String.t(), revision: String.t(), branch: String.t(), codex: command(), hooks: [command()], gates: [command()], handoff: map()}
+  @type t :: %__MODULE__{
+          repository: String.t(),
+          revision: String.t(),
+          branch: String.t(),
+          codex: command(),
+          hooks: [command()],
+          gates: [command()],
+          handoff: map()
+        }
 
   @spec parse(map()) :: {:ok, t()} | {:error, {:invalid_execution_payload, String.t()}}
   def parse(%{"version" => 1} = payload) do
@@ -28,15 +36,7 @@ defmodule SymphonyElixir.Worker.Payload do
     if value == [] and not allow_empty do
       error("#{name} must not be empty")
     else
-      value
-      |> Enum.with_index()
-      |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
-        case command(item, "#{name}[#{index}]") do
-          {:ok, parsed} -> {:cont, {:ok, [parsed | acc]}}
-          error -> {:halt, error}
-        end
-      end)
-      |> case do
+      case parse_commands(value, name) do
         {:ok, parsed} -> {:ok, Enum.reverse(parsed)}
         error -> error
       end
@@ -44,6 +44,17 @@ defmodule SymphonyElixir.Worker.Payload do
   end
 
   defp commands(_, name, _allow_empty), do: error("#{name} must be a list")
+
+  defp parse_commands(value, name) do
+    value
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
+      reduce_command(command(item, "#{name}[#{index}]"), acc)
+    end)
+  end
+
+  defp reduce_command({:ok, parsed}, acc), do: {:cont, {:ok, [parsed | acc]}}
+  defp reduce_command(error, _acc), do: {:halt, error}
 
   defp command(%{"command" => command, "timeout_seconds" => timeout}, _name)
        when is_binary(command) and command != "" and is_integer(timeout) and timeout > 0,
@@ -60,17 +71,7 @@ defmodule SymphonyElixir.Worker.Payload do
 
   defp reject_forbidden(value) when is_map(value) do
     Enum.reduce_while(value, :ok, fn {key, item}, :ok ->
-      normalized = String.downcase(to_string(key))
-
-      if normalized == "workflow_version_id" or
-           String.contains?(normalized, ["token", "secret", "password", "credential", "authorization"]) do
-        {:halt, error("forbidden field #{key}")}
-      else
-        case reject_forbidden(item) do
-          :ok -> {:cont, :ok}
-          error -> {:halt, error}
-        end
-      end
+      reduce_forbidden(key, item)
     end)
   end
 
@@ -84,6 +85,20 @@ defmodule SymphonyElixir.Worker.Payload do
   end
 
   defp reject_forbidden(_value), do: :ok
+
+  defp reduce_forbidden(key, item) do
+    normalized = String.downcase(to_string(key))
+
+    if normalized == "workflow_version_id" or
+         String.contains?(normalized, ["token", "secret", "password", "credential", "authorization"]) do
+      {:halt, error("forbidden field #{key}")}
+    else
+      continue_forbidden(reject_forbidden(item))
+    end
+  end
+
+  defp continue_forbidden(:ok), do: {:cont, :ok}
+  defp continue_forbidden(error), do: {:halt, error}
 
   defp reject_repository_credentials(repository) do
     case URI.parse(repository) do

@@ -37,12 +37,18 @@ defmodule SymphonyElixir.Worker.Command do
     remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
     receive do
-      {^port, {:data, data}} -> collect(port, deadline, bounded(output <> data))
-      {^port, {:exit_status, 0}} -> %{status: :passed, exit_code: 0, detail: bounded(output)}
+      {^port, {:data, data}} ->
+        collect(port, deadline, bounded(output <> data))
+
+      {^port, {:exit_status, 0}} ->
+        %{status: :passed, exit_code: 0, detail: bounded(output)}
+
       {^port, {:exit_status, code}} when code in [126, 127] ->
         %{status: :toolchain_unavailable, exit_code: code, detail: bounded(output)}
 
-      {^port, {:exit_status, code}} -> %{status: :failed, exit_code: code, detail: bounded(output)}
+      {^port, {:exit_status, code}} ->
+        %{status: :failed, exit_code: code, detail: bounded(output)}
+
       {:EXIT, from, :shutdown} when is_pid(from) ->
         terminate_group(port)
         %{status: :cancelled, exit_code: nil, detail: bounded(output)}

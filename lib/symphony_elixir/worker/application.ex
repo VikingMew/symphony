@@ -1,15 +1,20 @@
 defmodule SymphonyElixir.Worker.Application do
   @moduledoc false
 
+  alias SymphonyElixir.Worker.{Config, Paths, Runtime}
+  alias SymphonyElixir.Worker.Supervisor, as: WorkerSupervisor
+  alias SymphonyElixir.Worker.TaskSupervisor, as: WorkerTaskSupervisor
+  alias Task.Supervisor, as: TaskSupervisor
+
   @spec start_link() :: Supervisor.on_start()
   def start_link do
-    config = SymphonyElixir.Worker.Config.load!()
-    :ok = SymphonyElixir.Worker.Paths.prepare_roots(config)
+    config = Config.load!()
+    :ok = Paths.prepare_roots(config)
 
     Supervisor.start_link(
-      [{Task.Supervisor, name: SymphonyElixir.Worker.TaskSupervisor}, {SymphonyElixir.Worker.Runtime, config}],
+      [{TaskSupervisor, name: WorkerTaskSupervisor}, {Runtime, config}],
       strategy: :one_for_one,
-      name: SymphonyElixir.Worker.Supervisor
+      name: WorkerSupervisor
     )
   end
 end

@@ -23,19 +23,26 @@ defmodule SymphonyElixir.Worker.Executor do
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
       Map.merge(summary, %{status: :completed, phase: :handoff})
     else
-      :cancelled -> %{status: :cancelled, reason: :operator_requested, descendants_reaped: true}
+      :cancelled ->
+        %{status: :cancelled, reason: :operator_requested, descendants_reaped: true}
+
       {:validation_cancelled, summary} ->
         Map.merge(summary, %{status: :cancelled, phase: :validation, descendants_reaped: true})
 
-      {:validation_failed, summary} -> Map.merge(summary, %{status: :failed, phase: :validation})
-      {:error, reason} -> %{status: :failed, reason: inspect(reason)}
+      {:validation_failed, summary} ->
+        Map.merge(summary, %{status: :failed, phase: :validation})
+
+      {:error, reason} ->
+        %{status: :failed, reason: inspect(reason)}
+
       %{status: :cancelled} = result ->
         %{status: :cancelled, reason: :operator_requested, detail: result.detail, descendants_reaped: true}
 
       %{status: status} = result ->
         %{status: :failed, reason: status, detail: result.detail}
 
-      status when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable] -> %{status: :failed, reason: status}
+      status when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable] ->
+        %{status: :failed, reason: status}
     end
   end
 

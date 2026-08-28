@@ -23,6 +23,7 @@ defmodule SymphonyElixir.Worker.Runtime do
           "session_id" => response["session_id"],
           "protocol_version" => Client.protocol_version()
         }
+
         schedule(:poll, 0)
         heartbeat_seconds = response["heartbeat_interval_seconds"] || 10
         schedule(:heartbeat, heartbeat_seconds)
@@ -71,7 +72,8 @@ defmodule SymphonyElixir.Worker.Runtime do
         {:error, {:http_error, 401, _body}} ->
           recover_session(state)
 
-        _ -> state
+        _ ->
+          state
       end
 
     if next.identity, do: schedule(:heartbeat, next.heartbeat_seconds)
@@ -87,7 +89,8 @@ defmodule SymphonyElixir.Worker.Runtime do
         Client.event(state.config, state.identity, task_id, terminal_type(result), result)
         {:noreply, %{state | active: Map.delete(state.active, task_id)}}
 
-      nil -> {:noreply, state}
+      nil ->
+        {:noreply, state}
     end
   end
 
@@ -141,6 +144,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_type(%{status: :completed}), do: "task.completed"
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"
+
   defp recover_session(state) do
     Enum.each(state.active, fn {_task_id, lease} -> Process.exit(lease.pid, :shutdown) end)
     schedule(:register, 0)
