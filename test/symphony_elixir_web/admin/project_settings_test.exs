@@ -85,7 +85,7 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettingsTest do
       assert [%{title: "Linear project slug"}, %{title: "Repository URL"}] =
                ProjectSettings.scoped_configuration_items(items, "Project")
 
-      assert [%{title: "Active workflow version"}] =
+      assert [%{title: "Current workflow"}] =
                ProjectSettings.scoped_configuration_items(items, "Workflow")
 
       assert [%{title: "Linear API token"}] =

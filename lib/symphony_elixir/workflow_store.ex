@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
-  Publishes the active database workflow version for every enabled project.
+  Publishes the current database workflow for every enabled project.
 
   PostgreSQL is the durable authority, but runtime reads use one atomically replaced
   in-memory snapshot. The owner process performs initial and explicit loads and
@@ -260,7 +260,7 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp load_project_workflow(project, {:ok, workflows}) do
-    case persistence().active_workflow_version(project) do
+    case persistence().current_workflow(project) do
       nil ->
         {:cont, {:ok, workflows}}
 
@@ -268,10 +268,10 @@ defmodule SymphonyElixir.WorkflowStore do
         {:halt, error}
 
       {:error, reason} ->
-        {:halt, {:error, {:active_workflow_version, Map.get(project, :id), reason}}}
+        {:halt, {:error, {:current_workflow, Map.get(project, :id), reason}}}
 
-      workflow_version ->
-        loaded = persistence().workflow_to_loaded(workflow_version)
+      workflow ->
+        loaded = persistence().workflow_to_loaded(workflow)
         {:cont, {:ok, Map.put(workflows, Map.fetch!(project, :id), loaded)}}
     end
   end
@@ -289,10 +289,7 @@ defmodule SymphonyElixir.WorkflowStore do
     %{
       type: :database,
       default_project_id: default_project_id,
-      workflow_versions:
-        Map.new(workflows, fn {project_id, workflow} ->
-          {project_id, Map.get(workflow, :workflow_version_id)}
-        end)
+      project_ids: Map.keys(workflows)
     }
   end
 

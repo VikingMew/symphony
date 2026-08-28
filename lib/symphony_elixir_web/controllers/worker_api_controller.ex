@@ -47,7 +47,6 @@ defmodule SymphonyElixirWeb.WorkerApiController do
             lease_expires_at: lease.expires_at,
             project_id: task.project_id,
             run_id: task.run_id,
-            workflow_version_id: task.workflow_version_id,
             issue: %{identifier: task.issue_identifier},
             execution: task.payload || %{}
           })

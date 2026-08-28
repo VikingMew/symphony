@@ -53,13 +53,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
           </table>
         <% end %>
 
-        <h2 class="section-title">Workflow Version</h2>
-        <%= if @run_detail.workflow_version do %>
-          <pre class="code-panel"><%= ObservabilityPresenter.workflow_version_summary(@run_detail.workflow_version) %></pre>
-        <% else %>
-          <p class="empty-state">No workflow version is attached to this run.</p>
-        <% end %>
-
         <h2 class="section-title">Session History</h2>
         <%= if @run_detail.history_error do %>
           <p class="error-copy">Data unavailable: persisted session history could not be loaded.</p>
@@ -104,12 +97,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
   def assign_data(%{assigns: %{live_action: :run_detail, route_params: %{"id" => id}}} = socket) do
     run = persistence().get_run(id)
 
-    workflow_version =
-      case run && Map.get(run, :workflow_version_id) do
-        id when is_binary(id) -> persistence().get_workflow_version(id)
-        _ -> nil
-      end
-
     {session_history, history_error} =
       if run do
         read_list(fn -> RunHistory.list_run_session_events(persistence(), run.id, limit: 100) end)
@@ -126,7 +113,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
 
     assign(socket, :run_detail, %{
       run: run,
-      workflow_version: workflow_version,
       session_history: session_history,
       history_error: history_error,
       summary: RunHistory.summarize(run, session_history),
@@ -139,7 +125,6 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
     assign_new(socket, :run_detail, fn ->
       %{
         run: nil,
-        workflow_version: nil,
         session_history: [],
         history_error: nil,
         summary: RunHistory.summarize(nil, []),

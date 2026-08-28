@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Persistence.WorkflowStore do
   @moduledoc """
-  Project and workflow-version persistence plus runtime project overlays.
+  Project and current-workflow persistence plus runtime project overlays.
   """
 
   import Ecto.Query
@@ -8,7 +8,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   alias Ecto.Adapters.SQL
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
+  alias SymphonyElixir.Persistence.{Project, RunRecord, TaskRecord, WorkflowRecord}
   alias SymphonyElixir.{Repo, Workflow}
 
   @default_project_slug "default"
@@ -74,106 +74,65 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
-          {:ok, WorkflowVersion.t()} | {:error, term()}
+          {:ok, WorkflowRecord.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import") when is_binary(raw_workflow_md) do
     with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
          {:ok, _settings} <- Schema.parse(loaded.config) do
-      create_workflow_version(project, %{
+      upsert_workflow(project, %{
         raw_workflow_md: raw_workflow_md,
         yaml_config: loaded.config,
         prompt_body: loaded.prompt,
-        source: source,
-        active: true
+        source: source
       })
     end
   end
 
-  @spec active_workflow_version() :: WorkflowVersion.t() | nil
-  def active_workflow_version, do: active_workflow_version(nil)
+  @spec current_workflow() :: WorkflowRecord.t() | nil
+  def current_workflow, do: current_workflow(nil)
 
-  @spec active_workflow_version(Project.t() | nil) :: WorkflowVersion.t() | nil
-  def active_workflow_version(nil) do
-    query(:active_workflow_version, fn ->
+  @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
+  def current_workflow(nil) do
+    query(:current_workflow, fn ->
       case default_project() do
-        {:ok, project} -> active_workflow_version(project)
-        {:error, :not_found} -> active_workflow_version_for(first_enabled_project())
+        {:ok, project} -> current_workflow(project)
+        {:error, :not_found} -> current_workflow_for(first_enabled_project())
         {:error, :repo_unavailable} -> nil
-        {:error, reason} -> raise_query_error(:active_workflow_version, reason)
+        {:error, reason} -> raise_query_error(:current_workflow, reason)
       end
     end)
   end
 
-  def active_workflow_version(%Project{id: project_id}) do
-    query(:active_workflow_version, fn ->
+  def current_workflow(%Project{id: project_id}) do
+    query(:current_workflow, fn ->
       if repo_available?() do
         Repo.one(
-          from(w in WorkflowVersion,
-            where: w.project_id == ^project_id and w.active == true,
-            where: ^test_workflow_source_allowed?() or w.source != "test",
-            order_by: [desc: w.version],
-            limit: 1
+          from(w in WorkflowRecord,
+            where: w.project_id == ^project_id,
+            where: ^test_workflow_source_allowed?() or w.source != "test"
           )
         )
       end
     end)
   end
 
-  @spec workflow_to_loaded(WorkflowVersion.t()) :: Workflow.loaded_workflow()
-  def workflow_to_loaded(%WorkflowVersion{} = version) do
+  @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
+  def workflow_to_loaded(%WorkflowRecord{} = workflow) do
     config =
-      version.yaml_config
+      workflow.yaml_config
       |> Kernel.||(%{})
-      |> apply_project_runtime_settings(version.project_id)
+      |> apply_project_runtime_settings(workflow.project_id)
 
     %{
       config: config,
-      prompt: version.prompt_body || "",
-      prompt_template: version.prompt_body || "",
-      workflow_version_id: version.id,
-      project_id: version.project_id
+      prompt: workflow.prompt_body || "",
+      prompt_template: workflow.prompt_body || "",
+      project_id: workflow.project_id
     }
   end
 
-  @spec export_workflow(WorkflowVersion.t()) :: String.t()
-  def export_workflow(%WorkflowVersion{raw_workflow_md: raw}) when is_binary(raw) and raw != "", do: raw
-  def export_workflow(%WorkflowVersion{} = version), do: Workflow.to_markdown(version.yaml_config || %{}, version.prompt_body || "")
-
-  @spec activate_workflow_version(WorkflowVersion.t()) :: {:ok, WorkflowVersion.t()} | {:error, term()}
-  def activate_workflow_version(%WorkflowVersion{source: "test"} = version) do
-    if test_workflow_source_allowed?() do
-      validate_and_activate_workflow_version(version)
-    else
-      {:error, :test_workflow_source_not_allowed}
-    end
-  end
-
-  def activate_workflow_version(%WorkflowVersion{} = version) do
-    validate_and_activate_workflow_version(version)
-  end
-
-  @spec list_workflow_versions() :: [WorkflowVersion.t()]
-  def list_workflow_versions, do: list_workflow_versions(nil)
-
-  @spec list_workflow_versions(Project.t() | nil) :: [WorkflowVersion.t()]
-  def list_workflow_versions(nil) do
-    query(:list_workflow_versions, fn ->
-      case default_project() do
-        {:ok, project} -> list_workflow_versions(project)
-        {:error, :repo_unavailable} -> []
-        {:error, reason} -> raise_query_error(:list_workflow_versions, reason)
-      end
-    end)
-  end
-
-  def list_workflow_versions(%Project{id: project_id}) do
-    query(:list_workflow_versions, fn ->
-      if repo_available?() do
-        Repo.all(from(w in WorkflowVersion, where: w.project_id == ^project_id, order_by: [desc: w.version]))
-      else
-        []
-      end
-    end)
-  end
+  @spec export_workflow(WorkflowRecord.t()) :: String.t()
+  def export_workflow(%WorkflowRecord{raw_workflow_md: raw}) when is_binary(raw) and raw != "", do: raw
+  def export_workflow(%WorkflowRecord{} = workflow), do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
 
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
     case project_for_runtime(project_id) do
@@ -209,8 +168,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  defp active_workflow_version_for(nil), do: nil
-  defp active_workflow_version_for(project), do: active_workflow_version(project)
+  defp current_workflow_for(nil), do: nil
+  defp current_workflow_for(project), do: current_workflow(project)
 
   defp repo_available?, do: Process.whereis(Repo) != nil
 
@@ -297,49 +256,58 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  defp activate_workflow_version!(%WorkflowVersion{} = version) do
-    Repo.transaction(fn ->
-      Repo.update_all(
-        from(w in WorkflowVersion, where: w.project_id == ^version.project_id),
-        set: [active: false]
-      )
-
-      version
-      |> WorkflowVersion.changeset(%{active: true})
-      |> Repo.update!()
-    end)
-  end
-
-  defp validate_and_activate_workflow_version(%WorkflowVersion{} = version) do
-    with {:ok, _settings} <- Schema.parse(version.yaml_config || %{}) do
-      activate_workflow_version!(version)
-    end
-  end
-
-  defp create_workflow_version(%Project{} = project, attrs) do
+  defp upsert_workflow(%Project{} = project, attrs) do
     Repo.transaction(fn ->
       Repo.one!(from(p in Project, where: p.id == ^project.id, lock: "FOR UPDATE"))
 
-      next_version =
-        Repo.one(
-          from(w in WorkflowVersion,
-            where: w.project_id == ^project.id,
-            select: max(w.version)
-          )
-        )
-        |> case do
-          nil -> 1
-          version -> version + 1
-        end
+      existing = Repo.get_by(WorkflowRecord, project_id: project.id)
 
-      if Map.get(attrs, :active) || Map.get(attrs, "active") do
-        Repo.update_all(from(w in WorkflowVersion, where: w.project_id == ^project.id), set: [active: false])
+      if existing && !workflow_changed?(existing, attrs) do
+        existing
+      else
+        workflow =
+          (existing || %WorkflowRecord{})
+          |> WorkflowRecord.changeset(Map.put(attrs, :project_id, project.id))
+          |> Repo.insert_or_update!()
+
+        invalidate_queued_worker_work!(project.id)
+        workflow
       end
-
-      %WorkflowVersion{}
-      |> WorkflowVersion.changeset(Map.merge(attrs, %{project_id: project.id, version: next_version}))
-      |> Repo.insert!()
     end)
+  end
+
+  defp workflow_changed?(existing, attrs) do
+    Enum.any?(
+      [:raw_workflow_md, :yaml_config, :prompt_body, :source],
+      &(Map.get(existing, &1) != Map.get(attrs, &1))
+    )
+  end
+
+  defp invalidate_queued_worker_work!(project_id) do
+    now = DateTime.utc_now()
+
+    {_, queued_tasks} =
+      Repo.update_all(
+        from(task in TaskRecord,
+          where: task.project_id == ^project_id and task.status == "queued",
+          select: task.run_id
+        ),
+        set: [status: "failed", finished_at: now, updated_at: now]
+      )
+
+    run_ids = Enum.reject(queued_tasks, &is_nil/1)
+
+    if run_ids != [] do
+      Repo.update_all(
+        from(run in RunRecord, where: run.id in ^run_ids and run.status == "queued"),
+        set: [
+          status: "failed",
+          failure_reason: "workflow_changed_before_claim",
+          finished_at: now,
+          updated_at: now
+        ]
+      )
+    end
   end
 
   defp test_workflow_source_allowed? do

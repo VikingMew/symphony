@@ -109,13 +109,6 @@ defmodule SymphonyElixirWeb.AdminLive do
   end
 
   @impl true
-  def handle_event("restore_settings_version", %{"id" => id}, socket) do
-    id
-    |> WorkflowState.restore(socket)
-    |> handle_workflow_save_result()
-  end
-
-  @impl true
   def handle_event("add_workflow_transition", _params, socket) do
     WorkflowState.add_transition(socket)
   end

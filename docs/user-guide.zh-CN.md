@@ -165,11 +165,11 @@ mise exec -- mix symphony.migrate
 ```
 
 命令缺少 `DATABASE_URL`、连接不可达或 migration 失败时会显式失败，不会伪装成
-setup-required。setup-required 只表示数据库可用但尚无 active workflow version。
+setup-required。setup-required 只表示数据库可用但项目尚无 current workflow。
 
 ## 7. 配置 workflow
 
-运行时配置来源是 PostgreSQL active workflow version。空数据库会进入 setup-required 状态，不会开始
+运行时配置来源是项目唯一的 PostgreSQL current workflow。空数据库会进入 setup-required 状态，不会开始
 监听 Linear 或调度 agent；先在 `/settings/workflow` 和 `/settings/agents` 创建第一版 active
 workflow。
 
@@ -185,7 +185,7 @@ profiles.yml
 入口，逐个粘贴 `workflow.yml` 或 `profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
 顶层字段自动识别 package 类型：包含 `profiles` 或 `base_prompt` 的文档按 `profiles.yml` 导入，其余
 有效 workflow mapping 按 `workflow.yml` 导入。导入只填充页面上的 draft，不会立即激活运行时；确认校验提示后，
-再点 Save 创建第一版 active database workflow version。
+再点 Save 创建项目的 current database workflow。
 setup-required 页面里的提示文案只是系统状态提示，不是 base prompt。正确的 base prompt 来自
 `profiles.yml` 的 `base_prompt`。
 
@@ -420,7 +420,7 @@ http://127.0.0.1:4000/
 
 如果启用了认证，先访问 `/login` 登录。
 
-运行时配置来源是 PostgreSQL active workflow version。`workflow.yml` 和 `profiles.yml` 是导入、
+运行时配置来源是项目唯一的 PostgreSQL current workflow。`workflow.yml` 和 `profiles.yml` 是导入、
 导出的 split package 文件，不再作为 CLI 启动参数，也不会在启动时自动导入。
 
 ### dashboard-first 数据库模式启动
@@ -434,8 +434,8 @@ mise exec -- ./bin/symphony \
 
 此时规则是：
 
-- PostgreSQL active workflow version 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
-- 如果 PostgreSQL 中还没有 active workflow version，系统进入 setup-required。
+- 每个项目的 PostgreSQL current workflow 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
+- 如果 PostgreSQL 中还没有 current workflow，系统进入 setup-required。
 - setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
 - 不带 `--port` 时也使用同一个 PostgreSQL workflow source，只是不启动 Web dashboard。
 
@@ -488,7 +488,7 @@ export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
 
 ## 11. 热更新
 
-Symphony 当前支持 Settings / workflow 配置热更新：保存新的 PostgreSQL active workflow version 后，
+Symphony 当前支持 Settings / workflow 配置热更新：原位保存 PostgreSQL current workflow 后，
 持久化边界会在报告成功前原子发布完整 snapshot，不需要重启服务。外部 activation 由单飞后台刷新检测；
 PostgreSQL 刷新失败时，读取继续使用 last-known-good snapshot。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
 

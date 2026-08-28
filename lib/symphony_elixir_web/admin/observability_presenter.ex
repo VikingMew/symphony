@@ -23,20 +23,6 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
 
   def fmt_duration(_started_at, _finished_at), do: "running"
 
-  @spec workflow_version_summary(map() | nil) :: String.t()
-  def workflow_version_summary(version) do
-    version = version || %{}
-
-    [
-      "ID: #{Map.get(version, :id) || "n/a"}",
-      "Version: #{Map.get(version, :version) || "n/a"}",
-      "Source: #{Map.get(version, :source) || "n/a"}",
-      "Active: #{Map.get(version, :active) || false}",
-      "Inserted: #{fmt_dt(Map.get(version, :inserted_at))}"
-    ]
-    |> Enum.join("\n")
-  end
-
   @spec safe_event_payload(term()) :: String.t()
   def safe_event_payload(payload) do
     payload

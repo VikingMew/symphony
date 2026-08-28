@@ -69,12 +69,12 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_workflow, _, _, _}
   end
 
-  test "existing active workflow skips default package reads" do
+  test "existing workflow skips default package reads" do
     parent = self()
 
     deps =
       deps(parent,
-        active_workflow_version: fn -> %{id: "active"} end,
+        current_workflow: fn -> %{id: "current"} end,
         read_file: fn path ->
           send(parent, {:unexpected_read, path})
           {:error, :enoent}
@@ -83,19 +83,6 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert :ok = FirstRunDefaults.maybe_import([], deps)
     refute_received {:unexpected_read, _}
-  end
-
-  test "existing inactive workflow versions are not overwritten" do
-    parent = self()
-
-    deps =
-      deps(parent,
-        list_workflow_versions: fn _project -> [%{id: "inactive"}] end
-      )
-
-    assert :ok = FirstRunDefaults.maybe_import([], deps)
-    refute_received {:prompt, _}
-    refute_received {:import_workflow, _, _, _}
   end
 
   test "missing package file does not crash or import partial defaults" do
@@ -113,7 +100,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_workflow, _, _, _}
   end
 
-  test "invalid defaults do not create a workflow version" do
+  test "invalid defaults do not create a workflow" do
     parent = self()
 
     deps =
@@ -185,7 +172,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     bootstrap = %{id: "bootstrap-project", name: "Default", slug: "default", enabled: true}
 
     bootstrap_overrides = [
-      active_workflow_version: fn ->
+      current_workflow: fn ->
         Agent.update(agent, fn
           %{projects: []} = state -> %{state | projects: [bootstrap]}
           state -> state
@@ -201,7 +188,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
   defp deps(parent, overrides \\ []) do
     defaults = %{
-      active_workflow_version: fn -> nil end,
+      current_workflow: fn -> nil end,
       list_projects: fn ->
         [
           %{id: "project-alpha", name: "Alpha", slug: "alpha", enabled: true},
@@ -209,10 +196,9 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
           %{id: "project-beta", name: "Beta", slug: "beta", enabled: true}
         ]
       end,
-      list_workflow_versions: fn _project -> [] end,
       import_workflow: fn project, raw, source ->
         send(parent, {:import_workflow, project, raw, source})
-        {:ok, %{id: "workflow-version"}}
+        {:ok, %{id: "workflow"}}
       end,
       package_root: fn -> "/package" end,
       read_file: fn

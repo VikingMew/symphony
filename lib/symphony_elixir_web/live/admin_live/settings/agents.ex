@@ -7,8 +7,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Agents do
     only: [settings_check_messages: 1, settings_check_summary: 1]
 
   alias SymphonyElixir.ProfilePromptSummary
-  alias SymphonyElixirWeb.Admin.{ObservabilityPresenter, SettingsCheck}
-  alias SymphonyElixirWeb.AdminLive.WorkflowState
+  alias SymphonyElixirWeb.Admin.SettingsCheck
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -172,27 +171,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Agents do
           </div>
         </section>
       </form>
-    </section>
-    <section class="section-card">
-      <h2 class="section-title">Version History</h2>
-      <%= if WorkflowState.section_versions(@workflow_versions, :agents) == [] do %>
-        <p class="empty-state">No agent settings versions yet.</p>
-      <% else %>
-        <table class="data-table">
-          <thead><tr><th>Version</th><th>Source</th><th>Active</th><th>Created</th><th></th></tr></thead>
-          <tbody>
-            <tr :for={version <- WorkflowState.section_versions(@workflow_versions, :agents)}>
-              <td><%= version.version %></td>
-              <td><%= version.source %></td>
-              <td><%= version.active %></td>
-              <td class="mono"><%= ObservabilityPresenter.fmt_dt(version.inserted_at) %></td>
-              <td>
-                <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id} phx-disable-with="Restoring...">Restore agent settings</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      <% end %>
     </section>
     """
   end

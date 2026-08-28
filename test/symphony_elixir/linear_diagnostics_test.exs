@@ -176,7 +176,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     def default_project, do: {:error, :not_found}
 
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
@@ -273,7 +273,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert diagnostics.probes.api.detail =~ "Open Settings / Workflow"
     refute diagnostics.probes.api.detail =~ "Settings / Projects"
     refute diagnostics.probes.api.detail =~ "Linear project slug"
-    assert diagnostics.probes.teams.detail == "Skipped because no active workflow version is configured."
+    assert diagnostics.probes.teams.detail == "Skipped because no workflow is configured."
     refute diagnostics.probes.api.detail =~ "Cannot load active workflow config"
   end
 

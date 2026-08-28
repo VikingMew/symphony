@@ -34,10 +34,9 @@ defmodule SymphonyElixir.Orchestrator.Events do
   end
 
   @spec run_attrs(Issue.t(), map() | nil, String.t(), integer() | nil) :: map()
-  def run_attrs(%Issue{} = issue, workflow_version, execution_mode, attempt)
+  def run_attrs(%Issue{} = issue, _workflow, execution_mode, attempt)
       when execution_mode in ["centralized", "worker"] do
     %{
-      workflow_version_id: workflow_version && workflow_version.id,
       issue_identifier: issue.identifier,
       status: if(execution_mode == "worker", do: "queued", else: "running"),
       execution_mode: execution_mode,
@@ -47,11 +46,10 @@ defmodule SymphonyElixir.Orchestrator.Events do
   end
 
   @spec worker_task_attrs(Issue.t(), map(), map() | nil, String.t(), String.t() | nil) :: map()
-  def worker_task_attrs(%Issue{} = issue, run, workflow_version, prompt, profile) when is_map(run) do
+  def worker_task_attrs(%Issue{} = issue, run, _workflow, prompt, profile) when is_map(run) do
     %{
       project_id: run.project_id,
       run_id: run.id,
-      workflow_version_id: workflow_version && workflow_version.id,
       issue_identifier: issue.identifier,
       required_capabilities: %{},
       payload: %{

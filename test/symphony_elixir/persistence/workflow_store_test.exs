@@ -3,11 +3,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
 
   import ExUnit.CaptureLog
 
-  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Persistence
   alias SymphonyElixir.Persistence.Project
+  alias SymphonyElixir.Persistence.WorkflowRecord
   alias SymphonyElixir.Persistence.WorkflowStore
-  alias SymphonyElixir.Persistence.WorkflowVersion
 
   setup do
     previous_allow_test_source = Application.get_env(:symphony_elixir, :allow_test_workflow_source)
@@ -24,8 +23,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.list_projects() == []
     assert WorkflowStore.create_project(%{}) == {:error, :repo_unavailable}
     assert WorkflowStore.update_project("project-id", %{}) == {:error, :repo_unavailable}
-    assert WorkflowStore.active_workflow_version() == nil
-    assert WorkflowStore.list_workflow_versions() == []
+    assert WorkflowStore.current_workflow() == nil
   end
 
   test "project and workflow query faults are logged and reraised" do
@@ -36,38 +34,35 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
       capture_log(fn ->
         assert_raise ArgumentError, fn -> WorkflowStore.default_project() end
         assert_raise ArgumentError, fn -> WorkflowStore.list_projects() end
-        assert_raise ArgumentError, fn -> WorkflowStore.active_workflow_version(project) end
-        assert_raise ArgumentError, fn -> WorkflowStore.list_workflow_versions(project) end
+        assert_raise ArgumentError, fn -> WorkflowStore.current_workflow(project) end
       end)
 
     assert log =~ "Workflow persistence query failed operation=default_project outcome=failed"
     assert log =~ "Workflow persistence query failed operation=list_projects outcome=failed"
-    assert log =~ "Workflow persistence query failed operation=active_workflow_version outcome=failed"
-    assert log =~ "Workflow persistence query failed operation=list_workflow_versions outcome=failed"
+    assert log =~ "Workflow persistence query failed operation=current_workflow outcome=failed"
   end
 
   test "workflow_to_loaded returns runtime shape without a Repo-backed project overlay" do
-    version = %WorkflowVersion{
-      id: "workflow-version-id",
+    workflow = %WorkflowRecord{
+      id: "workflow-id",
       project_id: nil,
       yaml_config: %{"tracker" => %{"kind" => "linear"}},
       prompt_body: "Base prompt"
     }
 
-    assert WorkflowStore.workflow_to_loaded(version) == %{
+    assert WorkflowStore.workflow_to_loaded(workflow) == %{
              config: %{"tracker" => %{"kind" => "linear"}},
              prompt: "Base prompt",
              prompt_template: "Base prompt",
-             workflow_version_id: "workflow-version-id",
              project_id: nil
            }
   end
 
   test "export_workflow prefers raw markdown and can render stored YAML plus prompt" do
-    assert WorkflowStore.export_workflow(%WorkflowVersion{raw_workflow_md: "raw workflow"}) == "raw workflow"
+    assert WorkflowStore.export_workflow(%WorkflowRecord{raw_workflow_md: "raw workflow"}) == "raw workflow"
 
     rendered =
-      WorkflowStore.export_workflow(%WorkflowVersion{
+      WorkflowStore.export_workflow(%WorkflowRecord{
         yaml_config: %{"tracker" => %{"kind" => "linear"}},
         prompt_body: "Rendered prompt"
       })
@@ -76,40 +71,14 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert rendered =~ "Rendered prompt"
   end
 
-  test "test workflow source activation is blocked when explicitly disabled" do
-    Application.put_env(:symphony_elixir, :allow_test_workflow_source, false)
-
-    assert WorkflowStore.activate_workflow_version(%WorkflowVersion{source: "test"}) ==
-             {:error, :test_workflow_source_not_allowed}
-  end
-
-  test "historical workflow activation rejects the retired implementation lifecycle" do
-    Application.put_env(:symphony_elixir, :allow_test_workflow_source, true)
-
-    config =
-      Schema.defaults()
-      |> put_in(["workflow", "human_review_states"], ["Needs Refinement Review", "In Review"])
-      |> put_in(
-        ["profiles", "implementation", "allowed_updates", "target_states"],
-        ["In Progress", "In Review"]
-      )
-
-    assert {:error, {:invalid_workflow_config, message}} =
-             WorkflowStore.activate_workflow_version(%WorkflowVersion{source: "test", yaml_config: config})
-
-    assert message =~ "Ready to Merge"
-    assert message =~ "retired state"
-  end
-
-  test "public persistence context delegates workflow store compatibility functions" do
-    version = %WorkflowVersion{raw_workflow_md: "raw workflow"}
+  test "public persistence context delegates current workflow functions" do
+    workflow = %WorkflowRecord{raw_workflow_md: "raw workflow"}
 
     assert Persistence.default_project() == WorkflowStore.default_project()
     assert Persistence.list_projects() == {:error, :repo_unavailable}
     assert WorkflowStore.list_projects() == []
-    assert Persistence.active_workflow_version() == WorkflowStore.active_workflow_version()
-    assert Persistence.list_workflow_versions() == WorkflowStore.list_workflow_versions()
-    assert Persistence.export_workflow(version) == WorkflowStore.export_workflow(version)
+    assert Persistence.current_workflow() == WorkflowStore.current_workflow()
+    assert Persistence.export_workflow(workflow) == WorkflowStore.export_workflow(workflow)
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

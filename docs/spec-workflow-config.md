@@ -16,8 +16,8 @@ updated: 2026-08-27
 
 Workflow source precedence:
 
-1. Explicit active workflow version selected by the implementation datastore.
-2. Setup-required mode when no active workflow version exists.
+1. The current workflow stored for the project by the implementation datastore.
+2. Setup-required mode when no current workflow exists.
 
 Loader behavior:
 
@@ -36,7 +36,7 @@ YAML:
 
 Design note:
 
-- A package SHOULD be self-contained enough to recreate an active workflow version after import.
+- A package SHOULD be self-contained enough to recreate a project's current workflow after import.
 - A package SHOULD NOT be edited in place as the runtime source of truth.
 
 The default package contains refinement and implementation profiles only. There is no backend merge
@@ -46,7 +46,7 @@ Parsing rules:
 
 - YAML files MUST decode to map/object roots; non-map YAML is an error.
 - Base prompt fields are trimmed before use.
-- Implementations MUST validate imported package data before activating a workflow version.
+- Implementations MUST validate imported package data before replacing the current workflow.
 
 Returned workflow object:
 
@@ -72,7 +72,7 @@ Note:
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
-- A Symphony instance maintains one active workflow version **per enabled project**. The workflow
+- A Symphony instance maintains one current workflow **per enabled project**. The workflow
   schema is the per-project policy; `tracker.project_slug`, the repository URL, and workspace
   hooks are overridable per project through the Project settings record, and persisted runs,
   issues, events, and worker tasks carry the originating `project_id`.
@@ -247,7 +247,7 @@ Dispatch gating behavior:
 
 Configuration is resolved in this order:
 
-1. Select the active persisted workflow version.
+1. Select the current persisted workflow for the project.
 2. Parse its raw workflow config map.
 3. Apply built-in defaults for missing OPTIONAL fields.
 4. Resolve `$VAR_NAME` indirection only for config values that explicitly contain `$VAR_NAME`.
@@ -278,7 +278,7 @@ Dynamic reload is REQUIRED:
 - Successful workflow and project mutations MUST persist first and publish the complete replacement
   snapshot before reporting full success. Persistence success followed by publication failure MUST
   return a typed partial/refresh failure.
-- The software MUST detect externally activated workflow version changes in the background with at
+- The software MUST detect externally saved current-workflow changes in the background with at
   most one refresh in flight. Timer ticks during a stall MUST coalesce or skip.
 - Background publication MUST use a generation guard so work started before a newer mutation cannot
   overwrite that mutation.

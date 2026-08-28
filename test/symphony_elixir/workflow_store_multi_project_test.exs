@@ -128,14 +128,14 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     {:ok, default} = FakePersistence.default_project()
     default_raw = Workflow.to_markdown(loaded.config, "Default prompt")
 
-    assert {:ok, default_version} =
+    assert {:ok, _default_workflow} =
              FakePersistence.import_workflow(default, default_raw, "default-import")
              |> PersistenceProvider.publish_runtime_mutation()
 
     assert {:ok, %{prompt: "Default prompt"}} = WorkflowStore.current()
 
-    assert {:ok, %{source: %{workflow_versions: versions}}} = WorkflowStore.current_with_source()
-    assert versions[default.id] == default_version.id
+    assert {:ok, %{source: %{project_ids: project_ids}}} = WorkflowStore.current_with_source()
+    assert default.id in project_ids
 
     assert {:ok, project_b} =
              FakePersistence.create_project(%{
@@ -157,17 +157,13 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
     b_new_raw = Workflow.to_markdown(loaded.config, "Project B new prompt")
 
-    assert {:ok, b_new_version} =
+    assert {:ok, b_new_workflow} =
              FakePersistence.import_workflow(project_b, b_new_raw, "project-b-new")
              |> PersistenceProvider.publish_runtime_mutation()
 
     assert {:ok, %{prompt: "Project B new prompt"}} = WorkflowStore.for_project(project_b.id)
 
-    assert {:ok, _activated} =
-             FakePersistence.activate_workflow_version(b_old_version)
-             |> PersistenceProvider.publish_runtime_mutation()
-
-    assert {:ok, %{prompt: "Project B old prompt"}} = WorkflowStore.for_project(project_b.id)
+    assert b_new_workflow.id == b_old_version.id
 
     assert {:ok, updated_b} =
              FakePersistence.update_project(project_b.id, %{before_run_hook: "echo project-b"})
@@ -210,10 +206,10 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
     assert {:error, :not_found} = WorkflowStore.for_project(project_b.id)
 
-    assert {:ok, %{source: %{workflow_versions: final_versions}}} = WorkflowStore.current_with_source()
-    assert final_versions == %{default.id => default_version.id}
-    refute Map.has_key?(final_versions, project_b.id)
-    refute b_new_version.id == b_old_version.id
+    assert {:ok, %{source: %{project_ids: final_project_ids}}} = WorkflowStore.current_with_source()
+    assert final_project_ids == [default.id]
+    refute project_b.id in final_project_ids
+    assert b_new_workflow.id == b_old_version.id
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

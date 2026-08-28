@@ -163,7 +163,7 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
         <div class="section-header">
           <div>
             <h2 class="section-title">Tracker Configuration</h2>
-            <p class="section-copy">Current active workflow tracker settings used by diagnostics.</p>
+            <p class="section-copy">Current workflow tracker settings used by diagnostics.</p>
           </div>
         </div>
 

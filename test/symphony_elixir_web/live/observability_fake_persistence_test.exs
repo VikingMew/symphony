@@ -254,7 +254,6 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
 
     run = %{
       id: "run-1",
-      workflow_version_id: "workflow-1",
       issue_identifier: "MT-1",
       workspace_path: "/tmp/workspaces/MT-1",
       status: "failed",
@@ -264,19 +263,17 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
       finished_at: now
     }
 
-    workflow_version = %{
+    workflow = %{
       id: "workflow-1",
       project_id: "fake-project-id",
-      version: 7,
       source: "web_workflow_settings",
-      active: true,
       inserted_at: now,
       raw_workflow_md: workflow_import_raw("git@github.com:org/repo.git")
     }
 
     FakePersistence.put_runs([run])
     FakePersistence.put_issues([%{identifier: "MT-1", state: "In Progress", title: "Issue detail"}])
-    FakePersistence.put_workflow_versions([workflow_version], workflow_version)
+    FakePersistence.put_workflow(workflow)
 
     FakePersistence.put_events([
       %{
@@ -305,9 +302,8 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert run_html =~ "Final message"
     assert run_html =~ "Work performed"
     assert run_html =~ "Last Codex signal"
-    assert run_html =~ "Workflow Version"
-    assert run_html =~ "ID: workflow-1"
-    assert run_html =~ "Version: 7"
+    refute run_html =~ "Workflow Version"
+    refute run_html =~ "ID: workflow-1"
     refute run_html =~ "active: true"
     assert run_html =~ "Session History"
     assert run_html =~ "Run failed"

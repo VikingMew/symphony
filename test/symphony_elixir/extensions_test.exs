@@ -190,7 +190,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
-  test "workflow store init uses setup required when no active workflow exists" do
+  test "workflow store init uses setup required when no workflow exists" do
     FakePersistence.reset!()
 
     assert {:ok, state} = WorkflowStore.init([])
@@ -849,7 +849,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         name: orchestrator_name,
         snapshot: static_snapshot(),
         owner: self(),
-        operator_failure: "no active workflow for project: fake-project-id"
+        operator_failure: "no workflow for project: fake-project-id"
       )
 
     start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
@@ -862,7 +862,7 @@ defmodule SymphonyElixir.ExtensionsTest do
       |> render_submit()
 
     assert_receive {:operator_task_requested, :nap, "fake-project-id"}
-    assert html =~ "Take a nap failed: no active workflow for project: fake-project-id"
+    assert html =~ "Take a nap failed: no workflow for project: fake-project-id"
     assert html =~ "failed"
   end
 

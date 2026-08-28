@@ -51,5 +51,5 @@ Use a fake or mock when a test only needs to observe behavior around persistence
 Repo setup to default tests. Put database-specific semantics in the explicit PostgreSQL smoke
 target or another clearly non-default integration command using a disposable database.
 
-Runtime code must not trust test-sourced workflow data. Persistence ignores workflow versions with
+Runtime code must not trust test-sourced workflow data. Persistence ignores workflows with
 `source = "test"` unless `:allow_test_workflow_source` is explicitly enabled by the test helper.

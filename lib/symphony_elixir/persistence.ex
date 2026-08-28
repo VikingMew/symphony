@@ -16,8 +16,8 @@ defmodule SymphonyElixir.Persistence do
     TaskRecord,
     User,
     WorkerQueue,
+    WorkflowRecord,
     WorkflowStore,
-    WorkflowVersion,
     WorkspaceRecord
   }
 
@@ -83,38 +83,25 @@ defmodule SymphonyElixir.Persistence do
   end
 
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
-          {:ok, WorkflowVersion.t()}
-          | {:error, term() | {:runtime_publication_failed, WorkflowVersion.t(), term()}}
+          {:ok, WorkflowRecord.t()}
+          | {:error, term() | {:runtime_publication_failed, WorkflowRecord.t(), term()}}
   def import_workflow(project, raw_workflow_md, source \\ "import") do
     project
     |> WorkflowStore.import_workflow(raw_workflow_md, source)
     |> publish_runtime_snapshot()
   end
 
-  @spec active_workflow_version() :: WorkflowVersion.t() | nil
-  defdelegate active_workflow_version(), to: WorkflowStore
+  @spec current_workflow() :: WorkflowRecord.t() | nil
+  defdelegate current_workflow(), to: WorkflowStore
 
-  @spec active_workflow_version(Project.t() | nil) :: WorkflowVersion.t() | nil
-  defdelegate active_workflow_version(project), to: WorkflowStore
+  @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
+  defdelegate current_workflow(project), to: WorkflowStore
 
-  @spec workflow_to_loaded(WorkflowVersion.t()) :: Workflow.loaded_workflow()
-  defdelegate workflow_to_loaded(version), to: WorkflowStore
+  @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
+  defdelegate workflow_to_loaded(workflow), to: WorkflowStore
 
-  @spec export_workflow(WorkflowVersion.t()) :: String.t()
-  defdelegate export_workflow(version), to: WorkflowStore
-
-  @spec activate_workflow_version(WorkflowVersion.t()) :: {:ok, WorkflowVersion.t()} | {:error, term()}
-  def activate_workflow_version(version) do
-    version
-    |> WorkflowStore.activate_workflow_version()
-    |> publish_runtime_snapshot()
-  end
-
-  @spec list_workflow_versions() :: [WorkflowVersion.t()]
-  defdelegate list_workflow_versions(), to: WorkflowStore
-
-  @spec list_workflow_versions(Project.t() | nil) :: [WorkflowVersion.t()]
-  defdelegate list_workflow_versions(project), to: WorkflowStore
+  @spec export_workflow(WorkflowRecord.t()) :: String.t()
+  defdelegate export_workflow(workflow), to: WorkflowStore
 
   defp delete_project!(project) do
     Repo.update_all(from(run in RunRecord, where: run.project_id == ^project.id), set: [project_id: nil])
@@ -165,11 +152,6 @@ defmodule SymphonyElixir.Persistence do
   @spec get_run(String.t()) :: RunRecord.t() | nil
   def get_run(id) when is_binary(id) do
     if repo_available?(), do: Repo.get(RunRecord, id)
-  end
-
-  @spec get_workflow_version(String.t()) :: WorkflowVersion.t() | nil
-  def get_workflow_version(id) when is_binary(id) do
-    if repo_available?(), do: Repo.get(WorkflowVersion, id)
   end
 
   @spec get_issue_by_identifier(String.t()) :: IssueRecord.t() | nil | {:error, read_error()}

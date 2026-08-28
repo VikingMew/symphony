@@ -33,7 +33,7 @@ design_status: landed
   (fallback 已改 first_enabled_project,但函数和概念还在)。
 - Settings/Projects UI(settings/projects.ex)只有编辑和新增,没有移除功能。
 - Persistence 层无 `delete_project/1`。
-- FK:workflow_versions → projects CASCADE;runs / issues / tasks → projects NO ACTION。
+- FK:workflows → projects CASCADE；runs / issues / tasks → projects NO ACTION。
 
 ## 目标行为
 
@@ -43,7 +43,7 @@ design_status: landed
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建、不参与解析。
 3. **手动移除 project**:Settings/Projects 每个 project 卡片加「移除」按钮;
-   `Persistence.delete_project/1` 删除 project 及其 CASCADE 的 workflow_versions,
+   `Persistence.delete_project/1` 删除 project 及其 CASCADE 的 workflow,
    关联的 runs/issues/tasks 的 project_id 置 NULL(历史记录保留,失去 project 归属),
    或显式返回错误(当 project 有活跃 workflow / 运行中任务时拒绝删除)。
 4. **不允许移除最后激活状态的破坏性操作**:至少保留一个 enabled project 的约束由 UI
@@ -54,7 +54,7 @@ design_status: landed
 - **条件创建而非永久禁用**:守卫是「零 project」而不是「永远不」。这是与前一实现的唯一
   语义差异;解析链 / worker_queue / operator task 的显式化全部保留。
 - **显式删除而非自动清理**:不做启动时检测删除 default 的魔法。用户要删 default,点按钮。
-- **删除语义**:CASCADE workflow_versions(project 移除 = 其 workflow 配置随之移除);
+- **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。
 - **移除按钮的确认**:phx-click + data-confirm,防误删。
 

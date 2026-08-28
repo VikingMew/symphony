@@ -52,16 +52,14 @@ defmodule SymphonyElixir.SQLiteImporter do
        inserted_at: :timestamp,
        updated_at: :timestamp
      ]},
-    {"workflow_versions",
+    {"workflows",
      [
        id: :uuid,
        project_id: :uuid,
-       version: :integer,
        raw_workflow_md: :text,
        yaml_config: :jsonb,
        prompt_body: :text,
        source: :text,
-       active: :boolean,
        inserted_at: :timestamp,
        updated_at: :timestamp
      ]},
@@ -83,7 +81,6 @@ defmodule SymphonyElixir.SQLiteImporter do
      [
        id: :uuid,
        project_id: :uuid,
-       workflow_version_id: :uuid,
        issue_id: :uuid,
        issue_identifier: :text,
        workspace_path: :text,
@@ -168,7 +165,6 @@ defmodule SymphonyElixir.SQLiteImporter do
        id: :uuid,
        project_id: :uuid,
        run_id: :uuid,
-       workflow_version_id: :uuid,
        issue_identifier: :text,
        status: :text,
        priority: :integer,
@@ -258,12 +254,26 @@ defmodule SymphonyElixir.SQLiteImporter do
 
   defp import_tables!(repo, source_path, sqlite3) do
     Enum.reduce(@tables, %{}, fn {table, columns}, counts ->
-      rows = source_rows!(sqlite3, source_path, table, columns)
+      rows = source_rows_for_table!(sqlite3, source_path, table, columns)
       insert_rows!(repo, table, columns, rows)
       target_count = target_count!(repo, table)
       verify_count!(repo, table, length(rows), target_count)
       Map.put(counts, table, target_count)
     end)
+  end
+
+  defp source_rows_for_table!(sqlite3, source_path, "workflows", columns) do
+    source_columns =
+      List.insert_at(columns, 2, {:version, :integer})
+      |> List.insert_at(7, {:active, :boolean})
+
+    sqlite3
+    |> source_rows!(source_path, "workflow_versions", source_columns, "WHERE active = 1")
+    |> Enum.map(&Map.drop(&1, ["version", "active"]))
+  end
+
+  defp source_rows_for_table!(sqlite3, source_path, table, columns) do
+    source_rows!(sqlite3, source_path, table, columns)
   end
 
   defp verify_count!(_repo, _table, expected, expected), do: :ok
@@ -287,8 +297,12 @@ defmodule SymphonyElixir.SQLiteImporter do
   end
 
   defp source_rows!(sqlite3, source_path, table, columns) do
+    source_rows!(sqlite3, source_path, table, columns, "")
+  end
+
+  defp source_rows!(sqlite3, source_path, table, columns, where) do
     selected = Enum.map_join(columns, ", ", fn {column, _type} -> quote_identifier(column) end)
-    sql = "SELECT #{selected} FROM #{quote_identifier(table)} ORDER BY rowid"
+    sql = "SELECT #{selected} FROM #{quote_identifier(table)} #{where} ORDER BY rowid"
 
     case sqlite_json(sqlite3, source_path, sql) do
       {:ok, output} -> decode_rows!(table, output)

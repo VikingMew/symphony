@@ -11,7 +11,6 @@ defmodule SymphonyElixir.Persistence.RunRecord do
 
   schema "runs" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
-    belongs_to(:workflow_version, SymphonyElixir.Persistence.WorkflowVersion)
     belongs_to(:issue, SymphonyElixir.Persistence.IssueRecord)
     field(:kind, :string, default: "issue")
     field(:profile, :string)
@@ -32,7 +31,6 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     run
     |> cast(attrs, [
       :project_id,
-      :workflow_version_id,
       :issue_id,
       :kind,
       :profile,

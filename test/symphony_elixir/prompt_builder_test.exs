@@ -354,7 +354,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert prompt =~ "No description provided."
   end
 
-  test "prompt builder uses setup-required prompt when the database has no active workflow" do
+  test "prompt builder uses setup-required prompt when the database has no workflow" do
     FakePersistence.reset!()
     assert :ok = WorkflowStore.force_reload()
 

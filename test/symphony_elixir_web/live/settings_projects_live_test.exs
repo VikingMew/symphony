@@ -15,10 +15,9 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
 
     defdelegate default_project(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
-    defdelegate active_workflow_version(project), to: FakePersistence
-    defdelegate workflow_to_loaded(version), to: FakePersistence
-    defdelegate export_workflow(version), to: FakePersistence
-    defdelegate list_workflow_versions(project), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
+    defdelegate workflow_to_loaded(workflow), to: FakePersistence
+    defdelegate export_workflow(workflow), to: FakePersistence
     defdelegate list_runs_page(opts), to: FakePersistence
     defdelegate list_events(opts), to: FakePersistence
     defdelegate list_tasks(opts), to: FakePersistence
@@ -39,15 +38,8 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
       state
       |> Map.update!(:calls, &[{:delete_project, id} | &1])
       |> Map.update!(:projects, &Enum.reject(&1, fn candidate -> candidate.id == id end))
-      |> Map.update!(:workflow_versions, &Enum.reject(&1, fn version -> version.project_id == id end))
-      |> clear_active_workflow(id)
+      |> Map.update!(:workflows, &Enum.reject(&1, fn workflow -> workflow.project_id == id end))
     end
-
-    defp clear_active_workflow(%{active_workflow_version: %{project_id: project_id}} = state, project_id) do
-      %{state | active_workflow_version: nil}
-    end
-
-    defp clear_active_workflow(state, _project_id), do: state
   end
 
   setup do

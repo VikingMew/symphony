@@ -282,7 +282,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
   end
 
-  test "project without an active workflow fails instead of queueing" do
+  test "project without a workflow fails instead of queueing" do
     {:ok, project} = create_project("No Workflow", "no-workflow", true)
     {:ok, pid} = start_operator_orchestrator(:NoActiveWorkflow)
 
@@ -290,7 +290,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     assert reply.status == "failed"
     assert reply.project_id == project.id
-    assert reply.failure_reason == "no active workflow for project: #{project.id}"
+    assert reply.failure_reason == "no workflow for project: #{project.id}"
     assert reply.summary.error == reply.failure_reason
     refute_receive {:operator_runner_started, :day_dreaming, _run_id, _runner_pid, _worker_host}, 100
   end
@@ -423,7 +423,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   end
 
   defp create_project_with_workflow(name, slug, repository_url) do
-    raw_workflow = FakePersistence.active_workflow_version().raw_workflow_md
+    raw_workflow = FakePersistence.current_workflow().raw_workflow_md
     {:ok, project} = create_project(name, slug, true, repository_url)
     {:ok, _version} = FakePersistence.import_workflow(project, raw_workflow, "test")
     :ok = WorkflowStore.force_reload()

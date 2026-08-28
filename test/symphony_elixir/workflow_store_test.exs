@@ -32,8 +32,8 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     def default_project, do: counted(:default_project, &FakePersistence.default_project/0)
     def list_projects, do: counted(:list_projects, &FakePersistence.list_projects/0)
 
-    def active_workflow_version(project) do
-      counted(:active_workflow_version, fn -> FakePersistence.active_workflow_version(project) end)
+    def current_workflow(project) do
+      counted(:current_workflow, fn -> FakePersistence.current_workflow(project) end)
     end
 
     def workflow_to_loaded(version) do
@@ -69,7 +69,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
 
     def default_project, do: response(:default_project)
     def list_projects, do: response(:projects)
-    def active_workflow_version(_project), do: response(:active_version)
+    def current_workflow(_project), do: response(:current_workflow)
     def workflow_to_loaded(%{loaded: loaded}), do: loaded
 
     defp response(key) do
@@ -101,7 +101,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "reload logs a database fault and retains the last-known-good workflows" do
-    seed_active_workflow!("Last known good prompt")
+    seed_current_workflow!("Last known good prompt")
     assert :ok = WorkflowStore.force_reload()
 
     previous_state = :sys.get_state(WorkflowStore)
@@ -153,7 +153,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
 
     assert {:error, :setup_required} = Config.settings()
 
-    assert_raise ArgumentError, ~r/No active workflow is configured/, fn ->
+    assert_raise ArgumentError, ~r/No workflow is configured/, fn ->
       Config.settings!()
     end
   end
@@ -171,7 +171,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "repo unavailable starts degraded and preserves a loaded workflow on reload" do
-    seed_active_workflow!("Available before outage")
+    seed_current_workflow!("Available before outage")
     assert :ok = WorkflowStore.force_reload()
     previous_state = :sys.get_state(WorkflowStore)
 
@@ -191,7 +191,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "published workflow reads make no persistence calls" do
-    seed_active_workflow!("Memory-only prompt")
+    seed_current_workflow!("Memory-only prompt")
     Application.put_env(:symphony_elixir, :persistence_module, InstrumentedPersistence)
     assert :ok = WorkflowStore.force_reload()
     baseline = InstrumentedPersistence.calls()
@@ -210,7 +210,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "readers and status config stay available while a single background refresh is blocked" do
-    seed_active_workflow!("Available during refresh")
+    seed_current_workflow!("Available during refresh")
     Application.put_env(:symphony_elixir, :persistence_module, InstrumentedPersistence)
     assert :ok = WorkflowStore.force_reload()
 
@@ -238,7 +238,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "an older delayed background refresh cannot overwrite explicit publication" do
-    seed_active_workflow!("Old prompt")
+    seed_current_workflow!("Old prompt")
     Application.put_env(:symphony_elixir, :persistence_module, InstrumentedPersistence)
     assert :ok = WorkflowStore.force_reload()
 
@@ -246,7 +246,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     send(WorkflowStore, :poll)
     assert_receive {:persistence_blocked, :workflow_to_loaded, blocked_pid}
 
-    seed_active_workflow!("New prompt")
+    seed_current_workflow!("New prompt")
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, %{prompt: "New prompt"}} = WorkflowStore.current()
 
@@ -256,37 +256,37 @@ defmodule SymphonyElixir.WorkflowStoreTest do
   end
 
   test "typed persistence edge results never replace the published snapshot" do
-    seed_active_workflow!("Retained prompt")
+    seed_current_workflow!("Retained prompt")
     assert :ok = WorkflowStore.force_reload()
     Application.put_env(:symphony_elixir, :persistence_module, EdgePersistence)
 
-    loaded = %{project_id: "edge", prompt: "Edge prompt", workflow_version_id: "version-edge"}
+    loaded = %{project_id: "edge", prompt: "Edge prompt"}
     project = %{id: "edge", enabled: true}
     version = %{loaded: loaded}
 
-    put_edge(default_project: {:error, :not_found}, projects: [project], active_version: version)
+    put_edge(default_project: {:error, :not_found}, projects: [project], current_workflow: version)
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, ^loaded} = WorkflowStore.current()
 
-    put_edge(default_project: {:error, :invalid_default}, projects: [], active_version: nil)
+    put_edge(default_project: {:error, :invalid_default}, projects: [], current_workflow: nil)
 
     assert {:error, {:refresh_failed, {:query_failed, {:default_project, :invalid_default}}}} =
              WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: {:error, :projects_failed}, active_version: nil)
+    put_edge(default_project: {:ok, project}, projects: {:error, :projects_failed}, current_workflow: nil)
     assert {:error, {:refresh_failed, {:query_failed, :projects_failed}}} = WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: :invalid_projects, active_version: nil)
+    put_edge(default_project: {:ok, project}, projects: :invalid_projects, current_workflow: nil)
 
     assert {:error, {:refresh_failed, {:query_failed, {:invalid_list_projects_result, :invalid_projects}}}} =
              WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: [project], active_version: {:error, :repo_unavailable})
+    put_edge(default_project: {:ok, project}, projects: [project], current_workflow: {:error, :repo_unavailable})
     assert {:error, {:refresh_failed, :repo_unavailable}} = WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: [project], active_version: {:error, :version_failed})
+    put_edge(default_project: {:ok, project}, projects: [project], current_workflow: {:error, :workflow_failed})
 
-    assert {:error, {:refresh_failed, {:query_failed, {:active_workflow_version, "edge", :version_failed}}}} =
+    assert {:error, {:refresh_failed, {:query_failed, {:current_workflow, "edge", :workflow_failed}}}} =
              WorkflowStore.force_reload()
   end
 
@@ -333,7 +333,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     Application.put_env(:symphony_elixir, :workflow_store_edge, Map.new(values))
   end
 
-  defp seed_active_workflow!(prompt) do
+  defp seed_current_workflow!(prompt) do
     {:ok, loaded} = Workflow.load()
     raw = Workflow.to_markdown(loaded.config, prompt)
     {:ok, project} = FakePersistence.default_project()

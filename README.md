@@ -20,7 +20,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Optional remote execution through configured SSH worker hosts.
 - Optional HTTP worker-task queue mode for external workers.
 - Per-issue workspaces and Git worktrees.
-- PostgreSQL-backed projects, workflow versions, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
+- PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
 - Settings pages for Projects, Workflow, Agents, Runtime, and package import.
 - Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
@@ -55,14 +55,14 @@ Linear's GitHub automation owns the final move to `Done`.
 | Concept | Meaning |
 | --- | --- |
 | Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
-| Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One active workflow version exists per enabled project. |
+| Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One current workflow exists per enabled project. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
 | Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, and agent turns. Runs, issues, events, and worker tasks carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
 | Worker mode | Optional HTTP task-queue mode where external workers claim tasks through `/api/worker/v1/*`. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
-sharing a single Linear user, with per-project workflow versions and hooks. Settings and the
+sharing a single Linear user, with per-project workflows and hooks. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
 ## Quick Start
@@ -94,10 +94,10 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 4. Settings / Runtime: Codex command, sandbox, approval policy, workspace paths, and worker settings.
 5. Settings / Import: optional workflow/profile package import with preview before applying.
 
-If PostgreSQL has no active workflow version, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates the first workflow.
+If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
 
 On a fresh database, Symphony can also offer to import the checked-in `workflow.yml` and
-`profiles.yml` as the first active workflow version. This is a one-time import prompt; the YAML
+`profiles.yml` as the first current workflow. This is a one-time import prompt; the YAML
 files do not become runtime sources. To skip it and remain in setup-required mode, start with:
 
 ```bash
@@ -272,7 +272,7 @@ workers. When unset, the SSH scenario starts two disposable local worker contain
 
 Implemented:
 
-- database-backed runtime configuration and workflow versions;
+- database-backed runtime configuration and current workflows;
 - Linear tracker integration, discovery helpers, and diagnostics;
 - restricted Linear task tools for Codex sessions;
 - Codex app-server orchestration;
