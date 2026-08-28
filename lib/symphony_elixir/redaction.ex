@@ -120,5 +120,9 @@ defmodule SymphonyElixir.Redaction do
   end
 
   defp sensitive_key?(key),
-    do: key |> to_string() |> String.downcase() |> String.contains?(["token", "secret", "authorization", "api_key", "cookie"])
+    do:
+      key
+      |> to_string()
+      |> String.downcase()
+      |> String.contains?(["token", "secret", "password", "credential", "authorization", "api_key", "cookie"])
 end

@@ -65,6 +65,22 @@ Symphony maintains multiple projects concurrently: one Linear project + one repo
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
+### Execution worker image
+
+The separately deployable execution worker is built without changing the Panel image:
+
+```bash
+docker build --target execution-worker \
+  --build-arg SYMPHONY_WORKER_IMAGE=symphony-worker:0.1.0 \
+  --build-arg SYMPHONY_WORKER_SOURCE_REVISION="$(git rev-parse HEAD)" \
+  -t symphony-worker:0.1.0 .
+```
+
+Run it with `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
+`/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
+explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
+required gates, and handoff commands. The worker never derives a missing required gate.
+
 ## Quick Start
 
 Requirements:
