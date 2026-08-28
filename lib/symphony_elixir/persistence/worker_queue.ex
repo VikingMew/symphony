@@ -5,10 +5,13 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
 
   import Ecto.Query
 
-  alias SymphonyElixir.{Repo, RunLifecycle}
+  require Logger
+
+  alias SymphonyElixir.{Repo, RunLifecycle, WorkerResult}
 
   alias SymphonyElixir.Persistence.{
     EventRecord,
+    IssueRecord,
     RunRecord,
     TaskLease,
     TaskRecord,
@@ -121,8 +124,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     end
   end
 
-  @spec claim_task(String.t(), String.t(), map()) ::
-          {:ok, nil | %{task: TaskRecord.t(), lease: TaskLease.t()}} | {:error, term()}
+  @spec claim_task(String.t(), String.t(), map()) :: {:ok, nil | map()} | {:error, term()}
   def claim_task(worker_id, session_id, attrs \\ %{}) do
     with true <- repo_available?() || {:error, :repo_unavailable},
          {:ok, worker, session} <- active_worker_session(worker_id, session_id) do
@@ -206,20 +208,32 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
          {:ok, worker, session} <- active_worker_session(worker_id, session_id),
          %TaskRecord{} = task <- Repo.get(TaskRecord, task_id) || {:error, :task_not_found},
          %TaskLease{} = lease <- active_lease_for(task.id, worker.id, session.id) || {:error, :lease_not_active},
-         :ok <- reject_expired_lease(lease) do
+         :ok <- reject_expired_lease(lease),
+         {:ok, correlation} <- authoritative_correlation(task, lease, session),
+         :ok <- validate_correlation(payload || %{}, correlation),
+         {:ok, summary} <- validate_event_summary(event_type, payload || %{}) do
       Repo.transaction(fn ->
-        transition_task_from_event!(task, event_type)
+        transition_task_from_event!(task, event_type, summary)
 
-        %EventRecord{}
+        event_payload =
+          payload
+          |> Map.new(fn {key, value} -> {to_string(key), value} end)
+          |> Map.put("correlation", correlation)
+          |> maybe_put_summary(summary)
+
+        event = %EventRecord{}
         |> EventRecord.changeset(%{
           project_id: task.project_id,
           run_id: task.run_id,
           issue_identifier: task.issue_identifier,
           event_type: event_type,
-          payload: Map.merge(payload || %{}, %{"worker_id" => worker.id, "task_id" => task.id, "lease_id" => lease.id}),
+          payload: event_payload,
           occurred_at: DateTime.utc_now()
         })
         |> Repo.insert!()
+
+        log_worker_summary(event_type, correlation, summary)
+        event
       end)
     else
       {:error, reason} -> {:error, reason}
@@ -340,7 +354,9 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
       })
       |> Repo.insert!()
 
-    %{task: Repo.get!(TaskRecord, task.id), lease: lease}
+    task = Repo.get!(TaskRecord, task.id)
+    {:ok, correlation} = authoritative_correlation(task, lease, session)
+    %{task: task, lease: lease, correlation: correlation}
   end
 
   defp heartbeat!(worker, session, attrs) do
@@ -433,22 +449,24 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
     if DateTime.compare(expires_at, DateTime.utc_now()) == :lt, do: {:error, :lease_expired}, else: :ok
   end
 
-  defp transition_task_from_event!(task, event_type) do
+  defp transition_task_from_event!(task, event_type, summary) do
     now = DateTime.utc_now()
     attrs = RunLifecycle.task_event_attrs(event_type, now)
     attrs = if event_type == "task.accepted" and task.started_at, do: %{attrs | started_at: task.started_at}, else: attrs
+    attrs = if summary, do: Map.put(attrs, :execution_summary, summary), else: attrs
 
     if attrs != %{} do
       updated_task = task |> TaskRecord.changeset(attrs) |> Repo.update!()
-      transition_run_from_task_event!(updated_task, event_type, now)
+      transition_run_from_task_event!(updated_task, event_type, now, summary)
       release_lease_for_terminal_event!(updated_task, event_type)
     end
   end
 
-  defp transition_run_from_task_event!(%TaskRecord{run_id: nil}, _event_type, _now), do: :ok
+  defp transition_run_from_task_event!(%TaskRecord{run_id: nil}, _event_type, _now, _summary), do: :ok
 
-  defp transition_run_from_task_event!(%TaskRecord{} = task, event_type, now) do
+  defp transition_run_from_task_event!(%TaskRecord{} = task, event_type, now, summary) do
     attrs = RunLifecycle.run_event_attrs(event_type, now)
+    attrs = if summary, do: Map.put(attrs, :execution_summary, summary), else: attrs
 
     if attrs == %{} do
       :ok
@@ -469,6 +487,78 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   end
 
   defp release_lease_for_terminal_event!(_task, _event_type), do: :ok
+
+  defp authoritative_correlation(task, lease, session) do
+    run = if task.run_id, do: Repo.get(RunRecord, task.run_id)
+    issue = if run && run.issue_id, do: Repo.get(IssueRecord, run.issue_id)
+
+    {:ok,
+     %{
+       "project_id" => task.project_id,
+       "run_id" => task.run_id,
+       "issue_id" => issue && issue.tracker_issue_id,
+       "issue_identifier" => task.issue_identifier,
+       "run_attempt" => (run && run.attempt) || 0,
+       "task_id" => task.id,
+       "lease_id" => lease.id,
+       "lease_attempt" => lease.attempt,
+       "worker_session_id" => session.id
+     }}
+  end
+
+  defp validate_correlation(payload, authoritative) when is_map(payload) do
+    supplied = Map.get(payload, "correlation") || Map.get(payload, :correlation) || %{}
+
+    Enum.reduce_while(authoritative, :ok, fn {key, expected}, :ok ->
+      actual = Map.get(supplied, key) || Map.get(supplied, correlation_atom(key))
+
+      if is_nil(actual) or actual == expected,
+        do: {:cont, :ok},
+        else: {:halt, {:error, {:correlation_mismatch, key}}}
+    end)
+  end
+
+  defp correlation_atom("project_id"), do: :project_id
+  defp correlation_atom("run_id"), do: :run_id
+  defp correlation_atom("issue_id"), do: :issue_id
+  defp correlation_atom("issue_identifier"), do: :issue_identifier
+  defp correlation_atom("run_attempt"), do: :run_attempt
+  defp correlation_atom("task_id"), do: :task_id
+  defp correlation_atom("lease_id"), do: :lease_id
+  defp correlation_atom("lease_attempt"), do: :lease_attempt
+  defp correlation_atom("worker_session_id"), do: :worker_session_id
+
+  defp validate_event_summary(event_type, payload)
+       when event_type in ["task.progress", "task.completed", "task.failed", "task.cancelled"] do
+    summary = Map.get(payload, "summary") || Map.get(payload, :summary)
+    WorkerResult.validate(summary)
+  end
+
+  defp validate_event_summary(_event_type, _payload), do: {:ok, nil}
+
+  defp maybe_put_summary(payload, nil), do: payload
+  defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
+
+  defp log_worker_summary(_event_type, _correlation, nil), do: :ok
+
+  defp log_worker_summary(event_type, correlation, summary) do
+    Logger.info(
+      "Worker execution summary accepted" <>
+        " issue_id=#{correlation["issue_id"]}" <>
+        " issue_identifier=#{correlation["issue_identifier"]}" <>
+        " run_id=#{correlation["run_id"]}" <>
+        " task_id=#{correlation["task_id"]}" <>
+        " lease_id=#{correlation["lease_id"]}" <>
+        " run_attempt=#{correlation["run_attempt"]}" <>
+        " lease_attempt=#{correlation["lease_attempt"]}" <>
+        " session_id=#{Map.get(summary, "session_id")}" <>
+        " event_type=#{event_type}" <>
+        " phase=#{summary["phase"]}" <>
+        " outcome=#{summary["outcome"]}" <>
+        " validation_status=#{summary["validation_status"]}" <>
+        " gate_count=#{length(summary["gates"])}"
+    )
+  end
 
   defp credential_ref(name) when is_binary(name) do
     digest = :crypto.hash(:sha256, name) |> Base.encode16(case: :lower)

@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-08-27
+updated: 2026-08-28
 ---
 
 # Workflow and Configuration Specification
@@ -63,6 +63,7 @@ Top-level keys:
 - `hooks`
 - `agent`
 - `codex`
+- `project`
 
 Unknown keys SHOULD be ignored for forward compatibility.
 
@@ -117,6 +118,13 @@ Fields:
 - `interval_ms` (integer)
   - Default: `30000`
   - Changes SHOULD be re-applied at runtime and affect future tick scheduling without restart.
+
+#### 5.3.3 `project.required_gates` (ordered list)
+
+Worker execution snapshots resolve `project.required_gates` from the current PostgreSQL workflow
+when a task is queued. Each entry requires a stable non-blank `name`, non-blank `command`, and
+positive `timeout_ms`. Declaration order is execution and result order. The repository package
+declares one required gate: `make-all` running `make all` with a 1,800,000 ms timeout.
 
 #### 5.3.3 `workspace` (object)
 

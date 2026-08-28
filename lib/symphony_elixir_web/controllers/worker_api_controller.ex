@@ -40,14 +40,19 @@ defmodule SymphonyElixirWeb.WorkerApiController do
         nil ->
           json(conn, %{task: nil, poll_after_seconds: 5})
 
-        %{task: task, lease: lease} ->
+        %{task: task, lease: lease, correlation: correlation} ->
           json(conn, %{
+            correlation: correlation,
             task_id: task.id,
             lease_id: lease.id,
             lease_expires_at: lease.expires_at,
             project_id: task.project_id,
             run_id: task.run_id,
-            issue: %{identifier: task.issue_identifier},
+            issue_id: correlation["issue_id"],
+            issue_identifier: task.issue_identifier,
+            run_attempt: correlation["run_attempt"],
+            lease_attempt: lease.attempt,
+            worker_session_id: correlation["worker_session_id"],
             execution: task.payload || %{}
           })
       end
@@ -69,8 +74,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec task_event(Conn.t(), map()) :: Conn.t()
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
-         {:ok, event} <-
-           persistence().record_worker_task_event(worker_id, session_id, task_id, event_type, Map.get(params, "payload", %{})) do
+         {:ok, event} <- persistence().record_worker_task_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
       conn
       |> put_status(202)
       |> json(%{event_id: event.id, accepted: true})
@@ -136,6 +140,14 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     error_response(conn, 409, "lease_not_active", "Worker does not hold an active lease for this task")
   end
 
+  defp worker_error(conn, {:correlation_mismatch, field}) do
+    error_response(conn, 422, "worker_correlation_mismatch", "Correlation field #{field} does not match the active lease")
+  end
+
+  defp worker_error(conn, {:invalid_worker_summary, message}) do
+    error_response(conn, 422, "invalid_worker_summary", message)
+  end
+
   defp worker_error(conn, reason) do
     error_response(conn, 422, "worker_api_error", inspect(reason))
   end
@@ -144,5 +156,14 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     conn
     |> put_status(status)
     |> json(%{error: %{code: code, message: message}})
+  end
+
+  defp event_payload(params) do
+    payload = Map.get(params, "payload", %{})
+
+    case Map.get(params, "correlation") do
+      nil -> payload
+      correlation -> Map.put(payload, "correlation", correlation)
+    end
   end
 end

@@ -38,13 +38,19 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert run_attrs.execution_mode == "worker"
     assert run_attrs.attempt == 2
 
-    task_attrs = Events.worker_task_attrs(issue, run, workflow, "Prompt", "implementation")
+    task_attrs =
+      SymphonyElixir.Config.with_workflow_context(workflow_context(), fn ->
+        Events.worker_task_attrs(issue, run, workflow, "Prompt", "implementation")
+      end)
     assert task_attrs.project_id == "project-1"
     assert task_attrs.run_id == "run-1"
     assert task_attrs.payload["issue"]["identifier"] == "MT-1"
     assert task_attrs.payload["prompt"] == "Prompt"
     assert task_attrs.payload["workflow_profile"] == "implementation"
     assert task_attrs.payload["execution_mode"] == "worker"
+    assert task_attrs.payload["required_gates"] == [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
+    assert task_attrs.payload["repository"]["implementation_branch"] == "feature/mt-1"
+    refute recursively_has_key?(task_attrs.payload, "workflow_version_id")
   end
 
   test "event attrs cover run, task, and workspace events" do
@@ -89,10 +95,31 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
           priority: 1,
           state: "Ready",
           url: "https://linear.example/MT-1",
+          branch_name: "feature/mt-1",
           labels: []
         ],
         attrs
       )
     )
   end
+
+  defp workflow_context do
+    %{
+      config: %{
+        "project" => %{
+          "repository_url" => "https://github.com/openai/symphony",
+          "default_branch" => "main",
+          "required_gates" => [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
+        }
+      },
+      prompt_template: "Prompt"
+    }
+  end
+
+  defp recursively_has_key?(map, key) when is_map(map) do
+    Map.has_key?(map, key) or Enum.any?(Map.values(map), &recursively_has_key?(&1, key))
+  end
+
+  defp recursively_has_key?(list, key) when is_list(list), do: Enum.any?(list, &recursively_has_key?(&1, key))
+  defp recursively_has_key?(_value, _key), do: false
 end

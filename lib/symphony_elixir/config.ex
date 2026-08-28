@@ -93,6 +93,9 @@ defmodule SymphonyElixir.Config do
     settings!().workflow
   end
 
+  @spec required_gates() :: [map()]
+  def required_gates, do: settings!().project.required_gates
+
   @spec workflow_profile_for_state(String.t() | nil) :: String.t() | nil
   def workflow_profile_for_state(state_name) do
     Schema.workflow_profile_for_state(settings!(), state_name)
