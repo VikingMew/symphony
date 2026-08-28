@@ -5,8 +5,8 @@ on:
     branches:
       - main
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+"
-      - "v[0-9]+.[0-9]+.[0-9]+-*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
+      - "v[0-9]*.[0-9]*.[0-9]*-*"
   workflow_dispatch:
 
 permissions:
@@ -112,8 +112,17 @@ jobs:
           tags="${IMAGE}:sha-${GITHUB_SHA}"
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             tags+=$'\n'"${IMAGE}:latest"
-          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            tags+=$'\n'"${IMAGE}:${GITHUB_REF_NAME}"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
+            if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Tag does not follow vMAJOR.MINOR.PATCH[-prerelease]: ${GITHUB_REF_NAME}" >&2
+              exit 1
+            fi
+            release_tag="${IMAGE}:${GITHUB_REF_NAME}"
+            if docker buildx imagetools inspect "$release_tag" >/dev/null 2>&1; then
+              echo "Immutable release tag already exists: $release_tag" >&2
+              exit 1
+            fi
+            tags+=$'\n'"$release_tag"
           fi
           {
             echo "tags<<EOF"
