@@ -17,6 +17,10 @@ project:
 # The runtime authority is the current per-project workflow in PostgreSQL;
 # hooks may be overridden per project in Settings / Projects.
   repository_url: "https://github.com/openai/symphony"
+  required_gates:
+    - name: "make-all"
+      command: "make all"
+      timeout_ms: 1800000
   setup_commands: ["if command -v mise >/dev/null 2>&1; then mise trust && mise exec -- mix deps.get; fi"]
 tracker:
   active_states: ["Refining", "Ready", "In Progress"]

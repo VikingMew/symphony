@@ -57,9 +57,9 @@ Linear's GitHub automation owns the final move to `Done`.
 | Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
 | Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One current workflow exists per enabled project. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
-| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, and agent turns. Runs, issues, events, and worker tasks carry the originating `project_id`. |
+| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, and worker tasks carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
-| Worker mode | Optional HTTP task-queue mode where external workers claim tasks through `/api/worker/v1/*`. |
+| Worker mode | Optional HTTP task-queue mode where external workers claim current-workflow execution snapshots and return bounded validation/runtime/handoff evidence through `/api/worker/v1/*`. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
@@ -76,7 +76,9 @@ docker build --target execution-worker \
   -t symphony-worker:0.1.0 .
 ```
 
-Run it with `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
+The supported Compose stack exposes it only through the opt-in `execution-worker` profile; see
+[the worker operations guide](docs/execution-worker-operations.md). Run it with
+`SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
 `/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
 explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
 required gates, and handoff commands. The worker never derives a missing required gate.

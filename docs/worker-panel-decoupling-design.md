@@ -267,18 +267,24 @@ POST /api/worker/v1/tasks/claim
   "lease_expires_at": "2026-05-01T00:01:00Z",
   "project_id": "prj_...",
   "run_id": "run_...",
-  "issue": {
-    "identifier": "ABC-123",
-    "title": "Fix flaky retry handling"
-  },
+  "issue_id": "linear-issue-id",
+  "issue_identifier": "ABC-123",
+  "run_attempt": 2,
+  "lease_attempt": 1,
+  "worker_session_id": "wss_...",
   "execution": {
-    "workspace_policy": {},
-    "codex_command": ["codex"],
+    "repository": {"url": "...", "source_ref": "main", "implementation_branch": "exact-linear-branch"},
+    "required_gates": [{"name": "make-all", "command": "make all", "timeout_ms": 1800000}],
     "hooks": {},
-    "prompt": "..."
+    "prompt": "...",
+    "handoff": {"policy": "push_pr_then_restricted_linear"}
   }
 }
 ```
+
+The correlation fields are derived from persisted project/run/issue/task/lease/session records.
+The execution object is a queue-time snapshot of the current workflow and never contains a
+`workflow_version_id`.
 
 无任务时返回：
 
@@ -382,6 +388,13 @@ POST /api/worker/v1/tasks/:task_id/events
 - `task.cancelled`
 
 Panel 写入统一 events 表，并同步更新 runs、agent_turns、workspaces 或 task 状态。Dashboard 和 API 都从持久化状态读取，不依赖 worker 进程内存。
+
+`task.progress` and terminal task events carry one bounded `summary` object. It records phase,
+typed outcome/reason, timestamps/duration, source revision, image digest or exact tag, worker
+revision, overall validation, ordered gate results, and optional handoff references. The API rejects
+malformed or oversized summaries, secret-bearing detail, and worker-local paths with a typed 422.
+Accepted evidence and the task/run projections are written in the same transaction; lifecycle
+status and persisted event timestamps remain authoritative.
 
 ## 11. 数据模型
 

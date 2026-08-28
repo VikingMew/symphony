@@ -42,7 +42,7 @@ other documents link instead of restating.
 | --- | --- | --- |
 | [workflow-page-design.md](workflow-page-design.md) | Workflow settings page goals. | landed |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary. | landed |
-| [execution-runtime-design.md](execution-runtime-design.md) | Single trusted external worker runtime, in-lease validation, and handoff. | proposed |
+| [execution-runtime-design.md](execution-runtime-design.md) | Single trusted external worker runtime, in-lease validation, and handoff. | landed |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout. | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior. | landed |
 | [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow. | landed |
@@ -78,6 +78,7 @@ other documents link instead of restating.
 | [user-guide.zh-CN.md](user-guide.zh-CN.md) | Operator guide (zh-CN). |
 | [compose.md](compose.md) | Compose, PostgreSQL operations, backup/restore, and SQLite cutover guide. |
 | [deployment.md](deployment.md) | Reverse-proxy and Kubernetes deployment guide. |
+| [execution-worker-operations.md](execution-worker-operations.md) | Trusted HTTP execution worker deployment, verification, failure drills, and rollback guide. |
 
 ## Adding or Changing Documents
 
