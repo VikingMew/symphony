@@ -265,6 +265,10 @@ The persistence context owns PostgreSQL-backed records for projects, workflows, 
 turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
 worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
 Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
+The supported Compose deployment optionally runs the trusted HTTP runtime as `execution-worker`,
+on a control network shared with the Panel and a worker-only egress network. It has separate
+workspace, cache, log, and Codex volumes and no database-network membership or PostgreSQL secret.
+This is distinct from the SSH `worker` image target. Centralized execution remains the default.
 
 The observability boundary deliberately separates memory/current from persistence/history:
 `/api/v1/state` reads only the orchestrator snapshot, while issue enrichment and `/api/v1/runs`

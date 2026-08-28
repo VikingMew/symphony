@@ -107,6 +107,57 @@ services:
     networks:
       - database
       - egress
+      - worker_control
+
+  execution-worker:
+    profiles: ["execution-worker"]
+    build:
+      context: .
+      target: execution-worker
+      args:
+        SYMPHONY_WORKER_IMAGE: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
+        SYMPHONY_WORKER_SOURCE_REVISION: ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision}
+    image: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
+    environment:
+      SYMPHONY_ROLE: worker
+      SYMPHONY_PANEL_URL: http://symphony:4000
+      SYMPHONY_WORKER_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:?set the Panel worker registration token}
+      SYMPHONY_WORKER_NAME: ${SYMPHONY_EXECUTION_WORKER_NAME:-compose-execution-worker}
+      SYMPHONY_WORKER_IMAGE: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
+      SYMPHONY_WORKER_SOURCE_REVISION: ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision}
+      SYMPHONY_WORKER_WORKSPACE_ROOT: /worker/workspaces
+      SYMPHONY_WORKER_CACHE_ROOT: /worker/cache
+      SYMPHONY_WORKER_LOG_ROOT: /worker/logs
+      SYMPHONY_WORKER_SLOTS: ${SYMPHONY_EXECUTION_WORKER_SLOTS:-1}
+      SYMPHONY_WORKER_RETENTION_SECONDS: ${SYMPHONY_EXECUTION_WORKER_RETENTION_SECONDS:-86400}
+      SYMPHONY_WORKER_CACHE_MAX_BYTES: ${SYMPHONY_EXECUTION_WORKER_CACHE_MAX_BYTES:-10737418240}
+      OPENAI_API_KEY: ${SYMPHONY_EXECUTION_WORKER_OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${SYMPHONY_EXECUTION_WORKER_OPENAI_BASE_URL:-}
+      GH_TOKEN: ${SYMPHONY_EXECUTION_WORKER_GH_TOKEN:-}
+      SYMPHONY_RESTRICTED_LINEAR_TOKEN: ${SYMPHONY_EXECUTION_WORKER_RESTRICTED_LINEAR_TOKEN:-}
+      SYMPHONY_RESTRICTED_LINEAR_URL: ${SYMPHONY_EXECUTION_WORKER_RESTRICTED_LINEAR_URL:-}
+      HTTP_PROXY: ${SYMPHONY_EXECUTION_WORKER_HTTP_PROXY:-}
+      HTTPS_PROXY: ${SYMPHONY_EXECUTION_WORKER_HTTPS_PROXY:-}
+      NO_PROXY: ${SYMPHONY_EXECUTION_WORKER_NO_PROXY:-symphony,localhost,127.0.0.1}
+    depends_on:
+      symphony:
+        condition: service_healthy
+    volumes:
+      - execution_worker_workspaces:/worker/workspaces
+      - execution_worker_cache:/worker/cache
+      - execution_worker_logs:/worker/logs
+      - execution_worker_codex:/home/symphony/.codex
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    networks:
+      - worker_control
+      - worker_egress
 
 volumes:
   postgres_data:
@@ -115,8 +166,15 @@ volumes:
   codex_home:
   gh_config:
   ssh_home:
+  execution_worker_workspaces:
+  execution_worker_cache:
+  execution_worker_logs:
+  execution_worker_codex:
 
 networks:
   database:
     internal: true
   egress: {}
+  worker_control:
+    internal: true
+  worker_egress: {}

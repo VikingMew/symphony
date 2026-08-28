@@ -76,7 +76,9 @@ docker build --target execution-worker \
   -t symphony-worker:0.1.0 .
 ```
 
-Run it with `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
+The supported Compose stack exposes it only through the opt-in `execution-worker` profile; see
+[the worker operations guide](docs/execution-worker-operations.md). Run it with
+`SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
 `/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
 explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
 required gates, and handoff commands. The worker never derives a missing required gate.
