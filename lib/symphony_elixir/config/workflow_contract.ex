@@ -294,6 +294,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
   defp state_equal?(left, right) when is_binary(left) do
     Schema.normalize_issue_state(left) == Schema.normalize_issue_state(right)
   end
+
   defp state_equal?(_left, _right), do: false
 
   defp workflow_used_profiles(workflow) do

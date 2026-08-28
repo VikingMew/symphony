@@ -90,17 +90,13 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
     assert "workflow.human_review_states must include \"Ready to Merge\"" in errors
     assert "workflow.human_review_states must not include retired state \"In Review\"" in errors
     assert "workflow.states must not dispatch human-review state \"Ready to Merge\"" in errors
-    assert "profiles.implementation.allowed_updates.target_states must include \"In Progress\"" in
-             errors
+    assert "profiles.implementation.allowed_updates.target_states must include \"In Progress\"" in errors
 
-    assert "profiles.implementation.allowed_updates.target_states must include \"Ready to Merge\"" in
-             errors
+    assert "profiles.implementation.allowed_updates.target_states must include \"Ready to Merge\"" in errors
 
-    assert "profiles.implementation.allowed_updates.target_states must not include retired state \"In Review\"" in
-             errors
+    assert "profiles.implementation.allowed_updates.target_states must not include retired state \"In Review\"" in errors
 
-    assert "workflow.allowed_transitions must include In Progress -> Ready to Merge actor=codex profile=implementation" in
-             errors
+    assert "workflow.allowed_transitions must include In Progress -> Ready to Merge actor=codex profile=implementation" in errors
 
     assert "workflow.allowed_transitions must include Ready to Merge -> In Progress actor=human" in errors
   end
