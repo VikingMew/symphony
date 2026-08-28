@@ -1,0 +1,229 @@
+name: publish-image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    outputs:
+      started-at: ${{ steps.timing.outputs.started_at }}
+    steps:
+      - name: Record workflow start
+        id: timing
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up mise tools
+        uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
+        with:
+          install: true
+          cache: true
+
+      - name: Cache deps and build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-
+
+      - name: Verify make all
+        run: make all
+
+      - name: Validate local and published Compose models
+        env:
+          DATABASE_URL: postgresql://symphony:test@postgres/symphony
+          POSTGRES_PASSWORD: test
+          SECRET_KEY_BASE: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose config --format json | jq -e '
+            .services.migrate.image == "symphony:local" and
+            .services.symphony.image == "symphony:local" and
+            .services.migrate.build.target == "symphony" and
+            .services.symphony.build.target == "symphony"
+          '
+          export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+          docker compose -f compose.yaml -f compose.published.yaml config --format json | jq -e '
+            .services.migrate.image == env.SYMPHONY_IMAGE and
+            .services.symphony.image == .services.migrate.image and
+            (.services.migrate | has("build") | not) and
+            (.services.symphony | has("build") | not) and
+            .services.migrate.pull_policy == "always" and
+            .services.symphony.pull_policy == "always"
+          '
+
+  publish:
+    needs: quality-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/vikingmew/symphony
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Detect reusable BuildKit cache
+        id: build-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/symphony-buildkit-cache-marker
+          key: symphony-buildkit-linux-amd64-arm64-${{ hashFiles('Dockerfile', 'mix.lock') }}
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Select immutable and mutable tags
+        id: tags
+        shell: bash
+        run: |
+          set -euo pipefail
+          tags="${IMAGE}:sha-${GITHUB_SHA}"
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            tags+=$'\n'"${IMAGE}:latest"
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            tags+=$'\n'"${IMAGE}:${GITHUB_REF_NAME}"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve immutable SHA tag
+        id: existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha_tag="${IMAGE}:sha-${GITHUB_SHA}"
+          if digest="$(docker buildx imagetools inspect "$sha_tag" --format '{{json .Manifest.Digest}}' 2>/dev/null | jq -r .)"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish both platforms
+        id: build
+        if: steps.existing.outputs.exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: symphony
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=symphony-linux-amd64-arm64
+          cache-to: type=gha,mode=max,scope=symphony-linux-amd64-arm64
+          provenance: false
+          sbom: false
+
+      - name: Add tags to an existing immutable SHA image
+        if: steps.existing.outputs.exists == 'true'
+        shell: bash
+        env:
+          TAGS: ${{ steps.tags.outputs.tags }}
+        run: |
+          set -euo pipefail
+          source_ref="${IMAGE}@${{ steps.existing.outputs.digest }}"
+          while IFS= read -r tag; do
+            [[ "$tag" == "${IMAGE}:sha-${GITHUB_SHA}" ]] && continue
+            if [[ "$tag" != "${IMAGE}:latest" ]] && docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+              echo "Immutable release tag already exists: $tag" >&2
+              exit 1
+            fi
+            docker buildx imagetools create --tag "$tag" "$source_ref"
+          done <<< "$TAGS"
+
+      - name: Resolve published digest
+        id: published
+        shell: bash
+        env:
+          BUILT_DIGEST: ${{ steps.build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
+        run: echo "digest=${BUILT_DIGEST:-$EXISTING_DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Mark BuildKit cache available
+        if: steps.build.outcome == 'success'
+        run: touch /tmp/symphony-buildkit-cache-marker
+
+      - name: Inspect manifest platforms
+        id: manifest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ref="${IMAGE}@${DIGEST}"
+          platforms="$(docker buildx imagetools inspect --raw "$ref" | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort -u)"
+          expected=$'linux/amd64\nlinux/arm64'
+          if [[ "$platforms" != "$expected" ]]; then
+            echo "Expected exactly amd64 and arm64, found:" >&2
+            echo "$platforms" >&2
+            exit 1
+          fi
+          printf 'platforms<<EOF\n%s\nEOF\n' "$platforms" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke published release on both platforms
+        shell: bash
+        env:
+          DIGEST: ${{ steps.published.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for platform in linux/amd64 linux/arm64; do
+            docker run --rm --platform "$platform" "${IMAGE}@${DIGEST}" \
+              sh -lc '/app/bin/symphony version && node --version && codex --version'
+          done
+
+      - name: Summarize publication
+        if: always()
+        shell: bash
+        env:
+          DIGEST: ${{ steps.published.outputs.digest }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+          PLATFORMS: ${{ steps.manifest.outputs.platforms }}
+          CACHE_RESTORED: ${{ steps.build-cache.outputs.cache-hit }}
+          STARTED_AT: ${{ needs.quality-gate.outputs.started-at }}
+        run: |
+          duration="$(( $(date +%s) - STARTED_AT ))s"
+          {
+            echo "## Published Symphony image"
+            echo
+            echo "- Digest: \`${DIGEST:-unavailable}\`"
+            echo "- Tags:"
+            while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< "${TAGS:-unavailable}"
+            echo "- Manifest platforms: \`${PLATFORMS//$'\n'/, }\`"
+            echo "- Total workflow duration: \`$duration\`"
+            echo "- BuildKit cache restored: \`${CACHE_RESTORED:-false}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

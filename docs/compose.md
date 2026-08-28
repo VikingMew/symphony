@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-08-28
 owner: compose.yaml
 ---
 
@@ -48,7 +48,7 @@ process must see working `gh` credentials because SYM-1 PR lookup/creation happe
 boundary. Child Codex processes inherit the documented OpenAI, GitHub, Linear, and proxy
 environment after Symphony's existing sensitive-environment policy is applied.
 
-## Build and First Start
+## Local Build and First Start
 
 Validate the model before changing containers:
 
@@ -91,6 +91,48 @@ Run migrations explicitly when diagnosing or before a controlled start:
 docker compose up -d postgres
 docker compose run --rm migrate
 ```
+
+## Published Multi-architecture Image
+
+Successful `main`, release-tag (`vMAJOR.MINOR.PATCH`), and manually dispatched image workflows
+publish `ghcr.io/vikingmew/symphony` for exactly `linux/amd64` and `linux/arm64`. Every run publishes
+`sha-<full commit SHA>`; `main` also updates `latest`, and a release-tag push also publishes that
+exact tag. Manual runs never manufacture a release tag and update `latest` only when dispatched
+from `main`. The migration and application containers are the same image; only their commands
+differ.
+
+Use an immutable release, full-SHA tag, or recorded digest for deployments and rollback. The
+published override removes both Dockerfile builds, requires one shared image reference, and always
+pulls it:
+
+```bash
+export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+docker compose -f compose.yaml -f compose.published.yaml --env-file .env config --quiet
+docker compose -f compose.yaml -f compose.published.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml up -d postgres
+docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
+docker compose -f compose.yaml -f compose.published.yaml up -d symphony
+```
+
+Public GHCR packages allow anonymous pulls. If this package is private, authenticate with a GitHub
+token that has `read:packages` before pulling; do not put the token in `.env` or Compose:
+
+```bash
+printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USER --password-stdin
+```
+
+Inspect the immutable reference and verify its platforms without pulling either image:
+
+```bash
+docker buildx imagetools inspect "$SYMPHONY_IMAGE"
+docker buildx imagetools inspect --raw "$SYMPHONY_IMAGE" |
+  jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort -u
+```
+
+`latest` is available as a convenience for tracking `main`, but it is mutable and is not a
+rollback reference. The publication workflow records the digest, emitted tags, verified manifest
+platforms, duration, and cache restoration in its Actions summary, then runs the release version
+command under both platform variants through QEMU.
 
 ## Daily Operations
 
@@ -138,6 +180,21 @@ The migration job runs before the new service. Verify both health endpoints and 
 project/run/event state. To roll application code back, restore the prior image tag in Compose (or
 retag `symphony:rollback`), then start it only if its migration compatibility is understood. If a
 database restore is required, stop Symphony first and use the procedure below.
+
+For a published-image deployment, keep the same Compose file pair and replace only the immutable
+reference. Pull before migration so Compose cannot fall back to a local build:
+
+```bash
+export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:v1.2.3
+docker compose -f compose.yaml -f compose.published.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
+docker compose -f compose.yaml -f compose.published.yaml up -d symphony
+```
+
+To roll application code back, restore the previously recorded version/SHA tag or digest and run
+the same pull and start commands. Confirm migration compatibility first; schema migrations are not
+reversed by selecting an older image. Never rebuild an old commit or use `latest` as the rollback
+artifact because base images and npm inputs can change independently.
 
 ## PostgreSQL Backup and Restore
 

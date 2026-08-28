@@ -54,7 +54,7 @@ services:
     build:
       context: .
       target: symphony
-    image: symphony:local
+    image: ${SYMPHONY_IMAGE:-symphony:local}
     environment: *symphony-environment
     command: ["/app/bin/symphony", "eval", "SymphonyElixir.Release.migrate!()"]
     depends_on:
@@ -75,7 +75,7 @@ services:
     build:
       context: .
       target: symphony
-    image: symphony:local
+    image: ${SYMPHONY_IMAGE:-symphony:local}
     environment: *symphony-environment
     depends_on:
       postgres:

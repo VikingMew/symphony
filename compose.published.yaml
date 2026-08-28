@@ -1,0 +1,10 @@
+services:
+  migrate:
+    build: !reset null
+    image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
+    pull_policy: always
+
+  symphony:
+    build: !reset null
+    image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
+    pull_policy: always
