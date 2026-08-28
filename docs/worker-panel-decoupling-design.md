@@ -482,7 +482,7 @@ Panel UI 需要增加：
 
 ## 15. 演进路线
 
-这不是一个 exec plan，需要拆成多个后续计划：
+这需要拆成多个后续任务：
 
 1. Panel worker/task/lease 数据模型和 migration。
 2. Worker registration、credential 和 handshake API。

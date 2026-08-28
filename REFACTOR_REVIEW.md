@@ -16,7 +16,7 @@
 
 模块边界问题主要在 Web Settings 与 Persistence/Workflow 的依赖反向；建议做窄切口，不把 Orchestrator、Workspace 或 AppServer 按行数机械拆散。
 
-## 🔴 高优先（值得进 exec plan）
+## 🔴 高优先（值得进入跟踪任务）
 
 ### H1. 数据库故障仍会被投影成 setup-required 或“空数据”
 
@@ -24,7 +24,7 @@
 - **问题**：`WorkflowStore` 初始加载遇到 `:repo_unavailable` 时构造了 `source: %{type: :error}`，但 `current/0` 永远返回 `{:ok, workflow}`，`state_payload/1` 又在没有 workflow 时塞入 `setup_required_workflow/1`。`Config.settings/0` 因此只看到 `:setup_required`。同时多个 Persistence 读 API 在 Repo 不存在时返回 `nil`、`[]` 或空分页，Analytics 再用 catch-all 把任何异常变成 `[]`；页面最终会显示“No persisted runs yet”或全零指标。这里同时存在“错误 source”和“setup workflow”两套互相矛盾的事实。热重载保留 last-known-good 的行为是正确的，问题在初始错误和读 API 的错误类型被抹掉。
 - **违反原则**：**Explicit errors over silent tolerance**——AGENTS.md 明确禁止把数据库故障伪装成“setup required”；**Carmack: minimize the number of things that can go wrong**——同一状态被 `source: :error` 与 `workflow.setup_required: true` 双重表示。
 - **建议动作：REFACTOR（重构）**。让 `WorkflowStore.current/0`、关键 list/get API 返回 `{:ok, value} | {:error, reason}`，以 sum type 明确区分 `no_active_workflow`、`repo_unavailable`、查询失败；首次加载失败直接暴露错误，热重载仍保留 last-known-good。Web/Analytics 显示“数据不可用”，不能显示“零数据”。
-- **为何值得 / 风险**：这是运行时真相和运维诊断的基础，价值高于 API 改动成本。风险是调用方较多，应以一个 exec plan 逐层迁移并用断库测试锁定，不要一次顺带改查询模型。
+- **为何值得 / 风险**：这是运行时真相和运维诊断的基础，价值高于 API 改动成本。风险是调用方较多，应以一个跟踪任务逐层迁移并用断库测试锁定，不要一次顺带改查询模型。
 
 ### H2. 工作区磁盘安全门禁在自身异常时 fail-open
 
@@ -108,7 +108,7 @@
 - **问题**：完成后把 issue id 写入 `state.completed`，生产代码、snapshot 和 dispatch policy 从不读取它；真正继续行为由 retry entry 驱动。长运行进程会保留所有完成 id。
 - **违反原则**：**Linus: talk is cheap, show me the code**——删除无人使用的分支/状态是最直接验证；**Carmack: minimize the number of things that can go wrong**——无界但无语义的第二份生命周期记录。
 - **建议动作：DELETE（删除）**。删除字段、`complete_issue/2` 以及只验证内部实现的测试断言，保留删除 retry state 与 continuation scheduling。
-- **为何值得 / 风险**：改动小、无外部 contract；不值得单独开大型 exec plan，可随 Orchestrator 相关修改完成。
+- **为何值得 / 风险**：改动小、无外部 contract；不值得单独开大型任务，可随 Orchestrator 相关修改完成。
 
 ### L2. Tracker adapter resolver 有一个未使用值的隐藏配置副作用
 
@@ -221,7 +221,7 @@ exit 6
 - `[F] 0`；`[R] 22`；`[D] 1`。
 - 22 个 readability 中包含测试；生产代码主要是 3 个 one-clause `with ... else`、若干超长行和 alias 顺序。
 - 唯一 `[D]` 是 `status_dashboard.ex:262` 的 nested module alias 建议。
-- 没有 Credo complexity/refactoring 级信号支持“因为大就拆”。这些格式/alias 项不值得独立 exec plan，触碰相应文件时顺手修即可。
+- 没有 Credo complexity/refactoring 级信号支持“因为大就拆”。这些格式/alias 项不值得独立任务，触碰相应文件时顺手修即可。
 
 ### Xref
 

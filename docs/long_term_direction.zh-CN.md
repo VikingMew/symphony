@@ -31,7 +31,7 @@ Elixir / Phoenix Web Service
 
 一个关键原则是：runtime workflow contract 的全部内容都应该可配置并入库。这里的“全部”包括 tracker、polling、workspace、hooks、agent、codex、server 等运行配置，以及 base prompt 和 agent profile。Web UI 最终应该能够编辑、校验、版本化和审计整个 workflow contract，而不是只编辑其中一部分。`workflow.yml` 和 `profiles.yml` 可以作为导入/导出的交换格式，但不应再作为运行时配置来源。
 
-另一个关键原则是：当前仍处于 alpha 阶段，开发时不保留历史兼容路径。产品方向变化后，应直接删除旧 route、旧 source label、旧 schema alias、旧文件 fallback、旧 fixture 和旧测试断言；除非某个 execplan 明确把一次性数据迁移列为交付物，否则不要为了过去的配置格式在 runtime、UI 或测试里保留隐藏兼容层。测试应该固定当前公开契约，而不是证明旧行为仍然可用。
+另一个关键原则是：当前仍处于 alpha 阶段，开发时不保留历史兼容路径。产品方向变化后，应直接删除旧 route、旧 source label、旧 schema alias、旧文件 fallback、旧 fixture 和旧测试断言；除非 Linear 任务明确把一次性数据迁移列为交付物，否则不要为了过去的配置格式在 runtime、UI 或测试里保留隐藏兼容层。测试应该固定当前公开契约，而不是证明旧行为仍然可用。
 
 同一原则也适用于外部协议字段。Codex app-server 的 `approvalPolicy` 只使用当前协议支持的字符串枚举；历史遗留的结构化 `reject` approval policy 不属于公开配置契约，不能作为隐藏默认值继续存在。旧数据如需修正，应在 alpha 阶段按当前默认值重写或拒绝，而不是长期保留兼容分支。
 
@@ -61,10 +61,10 @@ Elixir / Phoenix Web Service
   `manual` / `external_worker` 仍是扩展契约。
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、Docker worker 和更强 sandbox runner 仍是后续阶段。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
-- `已落地`：独立历史 Analytics 页面已由 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md) 落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
-- `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已由 [159 Reverse Proxy and Kubernetes Deployment](exec-plans/completed/159-reverse-proxy-and-kubernetes-deployment.md) 落地，部署说明维护在 [Deployment Guide](deployment.md)。
-- `已落地`：GitHub 风格顶层 README 重写已由 [161 GitHub Style Project README](exec-plans/completed/161-github-style-project-readme.md) 落地，顶层 README 是项目入口文档。
-- 文档和 exec plan 的对齐矩阵维护在 [Documentation Alignment Matrix](documentation-alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的计划完成时，应同步更新该矩阵或对应 canonical docs。
+- `已落地`：独立历史 Analytics 页面已落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
+- `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已落地，部署说明维护在 [Deployment Guide](deployment.md)。
+- `已落地`：GitHub 风格顶层 README 已落地，顶层 README 是项目入口文档。
+- 文档对齐矩阵维护在 [Documentation Alignment Matrix](documentation-alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的实现完成时，应同步更新该矩阵或对应 canonical docs。
 - `文档偏差检查点`：凡是写成“当前已经”或“已支持”的句子，必须能在代码或测试中找到对应实现；否则应改成“目标”、“后续”或“部分落地”。
 
 ## 2. 技术选型结论
@@ -395,7 +395,7 @@ profiles:
 - `replace`：只使用 profile prompt。
 - `disabled`：只允许非 Codex executor 使用，不向 Codex 构造 prompt。
 
-这个契约由 [046 Profile Prompt Mode Clarity](exec-plans/completed/046-profile-prompt-mode-clarity.md) 落地。
+这个契约已落地并由 profile schema 和 prompt builder 的测试覆盖。
 
 现状对齐：profile schema、state -> profile 路由、prompt mode、allowed updates 和
 `codex_agent` 执行路径已经落地。实现显式请求 `Ready to Merge` 时，`AgentRunner` 使用 service
@@ -451,8 +451,8 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 ### 阶段 4：多项目和多 worker
 
 当前已经有 projects 页面、Panel 侧 worker/session/task/lease 数据模型和 worker HTTP API。
-运行时已支持按 project 隔离的 workflow version 和 orchestrator dispatch（plan 216-219 落地，
-Settings 顶部有 project 选择器），但多 worker 生产隔离还没完成。后续需要把这些能力扩展到完整多项目生产路径：
+运行时已支持按 project 隔离的 workflow version 和 orchestrator dispatch，
+Settings 顶部有 project 选择器，但多 worker 生产隔离还没完成。后续需要把这些能力扩展到完整多项目生产路径：
 
 - 多 project。✅ 已落地
 - 每个 project 独立 tracker 配置。✅ 已落地
@@ -502,7 +502,7 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - 配置 workspace root、hooks、Codex command。
 - 编辑完整 workflow package contract 的结构化字段，包括 `workflow.yml` 和 `profiles.yml`。当前已覆盖核心字段，仍需补齐所有配置域和更细字段校验。
 - 预览 workflow diff，并在保存前运行字段/schema 校验；跨字段和 Linear 外部匹配问题保存为 configuration check。当前已运行 schema 校验，diff 预览仍是后续。
-- 查看时间范围内的 runtime/project/profile 成果统计，见 `/analytics` 和 [158 Runtime Results Analytics Page](exec-plans/completed/158-runtime-results-analytics-page.md)。
+- 查看时间范围内的 runtime/project/profile 成果统计，见 `/analytics`。
 - 查看每个 run 绑定的 workflow version 和原始 workflow 内容。
 
 ## 8. 安全方向
@@ -638,7 +638,7 @@ lib/symphony_elixir_web/
 
 - 已有 `/` dashboard、`/runs`、`/events`、`/workers`、`/settings`、`/settings/projects`、`/settings/import` 和 `/diagnostics/linear`。
 - `/workers` 已提供 task cancel/requeue operator controls。
-- 已有 run detail、issue detail、events 页面、blocked session 可见性，以及 [158](exec-plans/completed/158-runtime-results-analytics-page.md) 落地的历史 Analytics 页面；仍可继续增加 logs 页面和更完整分页/筛选。
+- 已有 run detail、issue detail、events 页面、blocked session 可见性，以及历史 Analytics 页面；仍可继续增加 logs 页面和更完整分页/筛选。
 
 ### Milestone 3：配置 UI（结构化 Settings 基础路径已完成）
 

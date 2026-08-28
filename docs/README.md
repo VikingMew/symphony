@@ -12,8 +12,7 @@ updated: 2026-08-07
 This index classifies every Markdown document directly under `docs/` by the L0-L5 layer model
 (see [AGENTS.md](../AGENTS.md) and [documentation-system-design.md](documentation-system-design.md)).
 Each document belongs to exactly one layer; each contract has exactly one owning document and
-other documents link instead of restating. Exec plans are governed separately by
-[exec-plans/README.md](exec-plans/README.md) and are excluded here.
+other documents link instead of restating.
 
 ## L0 — Governance
 

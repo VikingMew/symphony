@@ -61,7 +61,7 @@ release, after which compatibility matters again.
 
 | Layer | Purpose |
 | --- | --- |
-| L0 | Governance: contributor rules, decisions, and exec-plan history. |
+| L0 | Governance: contributor rules and decision history. |
 | L1 | System architecture: topology, boundaries, invariants, and long-term direction. |
 | L2 | Backend design: package layout, implementation conventions, and the feature-design index. |
 | L3 | Feature designs: one concern and one owned contract per design document. |

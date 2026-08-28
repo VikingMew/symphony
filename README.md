@@ -219,7 +219,7 @@ upgrades, backup/restore, legacy SQLite cutover, volume verification, restart te
 - `lib/`: application code and Mix tasks.
 - `test/`: ExUnit coverage for runtime behavior.
 - `config/` and `priv/`: application configuration, migrations, and static assets.
-- `docs/`: architecture, operations, feature designs, and the exec-plan ledger.
+- `docs/`: architecture, operations, feature designs, and governance.
 - `workflow.yml` and `profiles.yml`: example import/export workflow package.
 - `bin/symphony`: command-line launcher.
 - `.codex/`: repository-local Codex skills and setup helpers.
@@ -233,7 +233,6 @@ provides the operator and settings surfaces, and Ecto persists runtime state in 
 mise exec -- mix test
 mise exec -- mix test --cover
 mise exec -- mix lint
-mise exec -- mix exec_plans.check
 ```
 
 The ordinary unit suite is database-free. Run the explicit PostgreSQL integration target only
@@ -256,12 +255,6 @@ make MIX="mise exec -- mix" e2e
 
 Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to a comma-separated host list to exercise existing SSH
 workers. When unset, the SSH scenario starts two disposable local worker containers.
-
-Exec plans are the implementation ledger:
-
-- Active work: [docs/exec-plans/active](docs/exec-plans/active)
-- Completed work: [docs/exec-plans/completed](docs/exec-plans/completed)
-- Index and rules: [docs/exec-plans/README.md](docs/exec-plans/README.md)
 
 ## Documentation
 

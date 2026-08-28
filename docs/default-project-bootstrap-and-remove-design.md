@@ -12,7 +12,7 @@ design_status: landed
 
 ## 背景
 
-Plan 250(remove default-project dependency)把 `default_project!` 改成纯查询,空库返回
+移除 default-project dependency 的实现把 `default_project!` 改成纯查询,空库返回
 `{:error, :not_found}`,**任何场景都不再自动创建**。这引入一个回归:第一次启动(零 project)
 时系统直接进入 setup-required,必须手动去 Settings 建 project,没有任何引导。
 
@@ -39,7 +39,7 @@ Plan 250(remove default-project dependency)把 `default_project!` 改成纯查�
 
 1. **零 project 引导**:`default_project!` 在 `list_projects() == []` 时自动创建
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: true}`,
-   并触发 first-run 默认 workflow 导入(恢复 plan 250 之前的首启体验)。
+   并触发 first-run 默认 workflow 导入(恢复原有首启体验)。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建、不参与解析。
 3. **手动移除 project**:Settings/Projects 每个 project 卡片加「移除」按钮;
@@ -51,7 +51,7 @@ Plan 250(remove default-project dependency)把 `default_project!` 改成纯查�
 
 ## 设计决策
 
-- **条件创建而非永久禁用**:守卫是「零 project」而不是「永远不」。这是与 plan 250 的唯一
+- **条件创建而非永久禁用**:守卫是「零 project」而不是「永远不」。这是与前一实现的唯一
   语义差异;解析链 / worker_queue / operator task 的显式化全部保留。
 - **显式删除而非自动清理**:不做启动时检测删除 default 的魔法。用户要删 default,点按钮。
 - **删除语义**:CASCADE workflow_versions(project 移除 = 其 workflow 配置随之移除);

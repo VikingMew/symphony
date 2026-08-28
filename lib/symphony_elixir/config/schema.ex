@@ -701,7 +701,7 @@ defmodule SymphonyElixir.Config.Schema do
         "prompt" => %{
           "mode" => "replace",
           "template" =>
-            "Workflow profile: day_dreaming\n\nRead the existing code, README, architecture docs, long-term direction docs, and relevant exec plans. Compare implementation reality with product direction and identify useful features or optimization opportunities that should be developed next. Every opportunity must be supported by evidence from code or documentation, align with the long-term direction, and not duplicate an existing Backlog issue.\n\nDo not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct product or engineering opportunity, create one Backlog Linear issue through the restricted issue creation tool with a concise title, evidence from code/docs, why it matters, suggested direction, and rough impact."
+            "Workflow profile: day_dreaming\n\nRead the existing code, README, architecture docs, long-term direction docs, and other relevant canonical documentation. Compare implementation reality with product direction and identify useful features or optimization opportunities that should be developed next. Every opportunity must be supported by evidence from code or documentation, align with the long-term direction, and not duplicate an existing Backlog issue.\n\nDo not modify code. Do not modify documentation. Do not create commits or pull requests. For every distinct product or engineering opportunity, create one Backlog Linear issue through the restricted issue creation tool with a concise title, evidence from code/docs, why it matters, suggested direction, and rough impact."
         },
         "allowed_updates" => %{
           "description" => false,
