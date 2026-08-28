@@ -3,13 +3,15 @@
 ARG ELIXIR_IMAGE=elixir:1.19-otp-28-slim
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG RUNTIME_IMAGE=debian:trixie-slim
+ARG CODEX_VERSION=0.150.1
 
 FROM ${NODE_IMAGE} AS codex
 
+ARG CODEX_VERSION
 ARG NPM_REGISTRY
 
 RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
-  && npm install --global @openai/codex
+  && npm install --global "@openai/codex@${CODEX_VERSION}"
 
 FROM ${NODE_IMAGE} AS worker
 

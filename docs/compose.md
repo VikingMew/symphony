@@ -75,6 +75,11 @@ docker compose run --rm --no-deps symphony sh -lc '
 '
 ```
 
+The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact supported Codex
+CLI release, `0.150.1`. The `symphony`, SSH `worker`, and `execution-worker` targets all copy the
+same installation from that stage. Override the argument only as an explicit, validated image
+change; builds never follow npm's mutable `latest` tag.
+
 Start the stack:
 
 ```bash
