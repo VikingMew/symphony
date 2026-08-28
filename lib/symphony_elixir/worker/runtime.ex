@@ -86,7 +86,8 @@ defmodule SymphonyElixir.Worker.Runtime do
     case Enum.find(state.active, fn {_task_id, active} -> active.ref == ref end) do
       {task_id, _active} ->
         Process.demonitor(ref, [:flush])
-        Client.event(state.config, state.identity, task_id, terminal_type(result), result)
+        payload = SymphonyElixir.Redaction.payload(result, 4_096)
+        Client.event(state.config, state.identity, task_id, terminal_type(result), payload)
         {:noreply, %{state | active: Map.delete(state.active, task_id)}}
 
       nil ->
@@ -122,6 +123,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp start_claim(state, task_id, claim) do
     if map_size(state.active) < state.config.slots and not Map.has_key?(state.active, task_id) do
       Client.event(state.config, state.identity, task_id, "task.accepted", %{phase: "accepted"})
+      Client.event(state.config, state.identity, task_id, "task.progress", %{phase: "execution_started"})
       task = Task.Supervisor.async_nolink(SymphonyElixir.Worker.TaskSupervisor, fn -> Executor.execute(state.config, claim) end)
       %{state | active: Map.put(state.active, task_id, %{ref: task.ref, pid: task.pid, claim: claim})}
     else

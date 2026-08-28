@@ -18,16 +18,16 @@ defmodule SymphonyElixir.Worker.Executor do
          %{status: :passed} = codex <- Command.run(payload.codex, workspace),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
-         :ok <- handoff(payload, workspace) do
+         {:ok, handoff} <- handoff(payload, workspace) do
       summary = summary(config, claim, revision, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
-      Map.merge(summary, %{status: :completed, phase: :handoff})
+      Map.merge(summary, %{status: :completed, phase: :handoff, handoff: Map.get(handoff, :references, %{})})
     else
       :cancelled ->
-        %{status: :cancelled, reason: :operator_requested, descendants_reaped: true}
+        cancelled_result()
 
       {:validation_cancelled, summary} ->
-        Map.merge(summary, %{status: :cancelled, phase: :validation, descendants_reaped: true})
+        Map.merge(summary, Map.merge(cancelled_result(), %{phase: :validation}))
 
       {:validation_failed, summary} ->
         Map.merge(summary, %{status: :failed, phase: :validation})
@@ -36,7 +36,7 @@ defmodule SymphonyElixir.Worker.Executor do
         %{status: :failed, reason: inspect(reason)}
 
       %{status: :cancelled} = result ->
-        %{status: :cancelled, reason: :operator_requested, detail: result.detail, descendants_reaped: true}
+        Map.put(cancelled_result(), :detail, result.detail)
 
       %{status: status} = result ->
         %{status: :failed, reason: status, detail: result.detail}
@@ -94,7 +94,7 @@ defmodule SymphonyElixir.Worker.Executor do
 
   defp handoff(%{handoff: %{"command" => command, "timeout_seconds" => timeout}}, workspace) do
     case Command.run(%{command: command, timeout_seconds: timeout}, workspace) do
-      %{status: :passed} -> :ok
+      %{status: :passed} = result -> {:ok, result}
       result -> {:error, {:handoff_failed, result}}
     end
   end
@@ -123,6 +123,15 @@ defmodule SymphonyElixir.Worker.Executor do
         0 -> :ok
       end
     end
+  end
+
+  defp cancelled_result do
+    %{
+      status: :cancelled,
+      reason: :operator_requested,
+      descendants_reaped: true,
+      cleanup: :quarantined
+    }
   end
 
   defp shell(value), do: "'" <> String.replace(value, "'", "'\\''") <> "'"

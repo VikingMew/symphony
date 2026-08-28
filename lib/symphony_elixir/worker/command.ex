@@ -14,6 +14,7 @@ defmodule SymphonyElixir.Worker.Command do
     result
     |> Map.put(:duration_ms, System.monotonic_time(:millisecond) - started)
     |> put_session_id()
+    |> put_references()
   end
 
   defp run_port(bash, command, cwd, timeout) do
@@ -98,6 +99,27 @@ defmodule SymphonyElixir.Worker.Command do
     case Regex.run(~r/(?:SYMPHONY_CODEX_SESSION_ID=|"session_id"\s*:\s*")([A-Za-z0-9._:-]+)/, detail) do
       [_match, session_id] -> Map.put(result, :session_id, session_id)
       nil -> result
+    end
+  end
+
+  defp put_references(%{detail: detail} = result) do
+    references =
+      %{
+        branch: marker(detail, "SYMPHONY_HANDOFF_BRANCH"),
+        commit: marker(detail, "SYMPHONY_HANDOFF_COMMIT"),
+        pr: marker(detail, "SYMPHONY_HANDOFF_PR"),
+        linear: marker(detail, "SYMPHONY_HANDOFF_LINEAR")
+      }
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+      |> Map.new()
+
+    if map_size(references) == 0, do: result, else: Map.put(result, :references, references)
+  end
+
+  defp marker(detail, name) do
+    case Regex.run(~r/#{name}=([^\s]+)/, detail) do
+      [_match, value] -> value
+      nil -> nil
     end
   end
 end

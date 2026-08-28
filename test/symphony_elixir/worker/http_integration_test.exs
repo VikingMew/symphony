@@ -88,14 +88,19 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert {:ok, heartbeat} = Client.heartbeat(config, identity, %{"active_leases" => [claim["lease_id"]]})
     assert heartbeat["lease_renewals"] == ["lease-1"]
 
+    assert {:ok, %{"accepted" => true}} =
+             Client.event(config, identity, claim["task_id"], "task.progress", %{phase: "execution_started"})
+
     result = Executor.execute(config, claim)
     assert result.status == :completed
     assert result.codex.session_id == "codex-session-1"
     assert result.validation.overall_status == :passed
+    assert result.handoff.commit == "fixture-commit"
+    assert result.handoff.pr == "PR-12"
 
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
-    assert [first, second] = Persistence.events()
+    assert [{"task-1", "task.progress", %{"phase" => "execution_started"}}, first, second] = Persistence.events()
     assert {"task-1", "task.completed", payload} = first
     assert {"task-1", "task.completed", ^payload} = second
     assert payload["codex"]["session_id"] == "codex-session-1"
@@ -125,7 +130,10 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "hooks" => [%{"command" => "git rev-parse HEAD", "timeout_seconds" => 10}],
       "codex" => %{"command" => "printf 'SYMPHONY_CODEX_SESSION_ID=codex-session-1\\n'", "timeout_seconds" => 10},
       "required_gates" => [%{"command" => "git status --porcelain", "timeout_seconds" => 10}],
-      "handoff" => %{"command" => "git rev-parse HEAD", "timeout_seconds" => 10}
+      "handoff" => %{
+        "command" => "printf 'SYMPHONY_HANDOFF_COMMIT=fixture-commit\\nSYMPHONY_HANDOFF_PR=PR-12\\n'",
+        "timeout_seconds" => 10
+      }
     }
   end
 
