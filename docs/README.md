@@ -42,7 +42,7 @@ other documents link instead of restating.
 | --- | --- | --- |
 | [workflow-page-design.md](workflow-page-design.md) | Workflow settings page goals. | landed |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary. | landed |
-| [execution-runtime-design.md](execution-runtime-design.md) | Production external worker runtime, validation, artifacts, and reconciliation. | proposed |
+| [execution-runtime-design.md](execution-runtime-design.md) | Single trusted external worker runtime, in-lease validation, and handoff. | proposed |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout. | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior. | landed |
 | [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow. | landed |

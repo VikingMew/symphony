@@ -10,360 +10,212 @@ design_status: proposed
 
 # External Execution Runtime Design
 
-## 1. Status, scope, and ownership
+## 1. Status and ownership
 
-This L3 document owns the **proposed production execution-runtime contract**: what runs outside
-the Phoenix release, how one leased task is executed, how validation and artifacts are reported,
-and how execution reconciles with the persisted Panel lifecycle. It does not redefine the landed
-Panel queue, authentication, claim, heartbeat, lease, or event protocol owned by
-[worker-panel-decoupling-design.md](worker-panel-decoupling-design.md).
+This L3 document proposes the first production execution runtime: one trusted,
+separately deployed worker that owns checkout, Codex, validation, and handoff. It is deliberately
+not a general distributed-execution design.
 
-The distinction is deliberate:
+The [Panel/Worker decoupling design](worker-panel-decoupling-design.md) remains the owner of the
+landed worker-v1 API, queue, capability matching, sessions, leases, heartbeats, cancellation,
+duplicate completion, expiry, and late-event behavior. PostgreSQL remains the only authority for
+`run`, `task`, `task_lease`, worker-session, and operator-visible history. This proposal adds no
+parallel lifecycle.
 
-- **Current** means behavior already present in this repository.
-- **Proposed** means the selected target for follow-up implementation.
-- **Deferred** means intentionally excluded from the first production worker.
+- **Current:** `centralized` is the default; the Panel-side worker-v1 lifecycle is landed; the
+  external worker does not exist; the Panel image intentionally lacks project build toolchains.
+- **Proposed:** the topology and execution responsibilities below, implemented in follow-up work.
+- **Deferred:** durable remote artifacts and every item listed in [Deferred work](#8-deferred-work).
 
-This ticket changes documentation only. All schema, API, runtime, dashboard, deployment, and
-default-mode changes below are follow-up work. Existing L4 contracts remain authoritative for
-current orchestration, agent execution, Linear handoff, observability, and safety; see
-[spec.md](spec.md), [spec-agent-runner.md](spec-agent-runner.md),
-[spec-orchestration.md](spec-orchestration.md),
-[spec-reliability-security.md](spec-reliability-security.md), and [logging.md](logging.md).
+This ticket changes documentation only. It does not change runtime code, schema, API, dashboard,
+Compose, or the default execution mode. Current L1/L4 contracts remain authoritative; see
+[Architecture](ARCHITECTURE.md), [spec.md](spec.md),
+[orchestration](spec-orchestration.md), [agent execution](spec-agent-runner.md),
+[reliability and security](spec-reliability-security.md), and [logging.md](logging.md).
 
-## 2. Decision
+## 2. Selected topology and boundaries
 
-### 2.1 Selected topology
-
-Use one independently deployable, out-of-process worker runtime per worker instance. It actively
-registers, claims, renews, and reports through `/api/worker/v1/*`. The worker contains repository
-cache/worktree management, Codex app-server and turns, hooks, the project toolchain, validation,
-artifact handling, and git/PR/Linear handoff.
-
-Validation runs in the same worker task and lease, in an isolated child process in the claimed
-workspace. There is no separately scheduled verifier in the initial topology. A verifier would add
-a second queue, lease, cancellation path, artifact transfer boundary, and reconciliation problem
-without improving reproducibility: reproducibility comes from a pinned worker image, immutable
-workflow version, repository revision, and declared gate commands. A future verifier requires a
-demonstrated stronger isolation requirement and its own design.
+Deploy one out-of-process worker in the same administrative trust domain as the Panel. It registers
+and claims tasks through the existing worker-v1 HTTP API. Validation is a phase of the same worker
+execution under the same lease; there is no verifier, second scheduler, or second lease.
 
 ```mermaid
 flowchart LR
-  subgraph CP[Control plane: Phoenix release]
-    T[Tracker / operator]
-    O[Orchestrator]
-    Q[Worker API and scheduler]
-    DB[(PostgreSQL: projects, workflow versions, issues, runs, tasks, leases, events)]
-    UI[Dashboard / analytics]
-    T --> O --> Q
-    O --> DB
-    Q <--> DB
+  subgraph Panel[Panel / control plane]
+    O[Orchestrator and worker-v1 API]
+    DB[(PostgreSQL: runs, tasks, leases, sessions, events)]
+    UI[Operator UI]
+    O <--> DB
     UI --> DB
   end
-
-  subgraph EP[Execution plane: independently deployed worker]
-    C[Claim / heartbeat / reporter]
-    W[Workspace and repository manager]
-    X[Codex app-server and hooks]
-    V[Project toolchain and validation]
-    H[Git / PR / restricted Linear handoff]
-    A[(Local cache and artifacts)]
-    C --> W --> X --> V --> H
-    W <--> A
-    X --> A
-    V --> A
+  subgraph Worker[Trusted worker / execution plane]
+    C[Claim, heartbeat, event reporter]
+    W[Checkout and worktree]
+    X[Codex and hooks]
+    V[Toolchain and required gates]
+    H[Git, PR, Linear handoff]
+    L[(Local caches, logs, validation summary)]
+    C --> W --> X --> V --> H --> C
+    W <--> L
+    X --> L
+    V --> L
   end
-
-  Q <-->|authenticated worker-v1 HTTPS| C
-  C -->|events, terminal proposal, artifact metadata| Q
-  Q -->|terminal acknowledgment| C
-  W -->|scoped repository access| R[Git host]
-  X -->|scoped API access| AI[Codex service]
-  H -->|scoped handoff access| GH[Git host / Linear gateway]
+  O <-->|authenticated worker-v1 HTTPS| C
+  W --> Git[Git host]
+  X --> Codex[Codex service]
+  H --> Services[Git host and restricted Linear gateway]
 ```
 
-The Phoenix image becomes a control-plane artifact: no project checkout, Codex executable, build
-compiler, or project toolchain is required in it once centralized execution is retired. The worker
-image owns those dependencies. This resolves the current single-image tension without bloating the
-Panel release.
+The worker owns repository checkout/worktree creation and cleanup below a configured workspace
+root, Codex app-server/session processes, workflow hooks, project toolchains, ordered validation,
+local caches and logs, and git/PR/Linear handoff. It reports progress and results; it does not own
+workflow selection, retries, leases, or terminal state.
 
-**SYM-7 disposition:** do not add the Elixir/Mix build toolchain to the existing `symphony`
-control-plane image. Supersede SYM-7's single-image approach with the worker-image/toolchain work
-defined here. If SYM-7 remains open, narrow it to building and verifying the first project-specific
-worker image; no runtime code is part of SYM-8.
+| Boundary | Contract for the initial deployment |
+| --- | --- |
+| Trust and authentication | Panel authenticates the worker/session as defined by worker-v1. Both deployments are operated by one administrator. Capability declarations remain scheduling hints, never security attestations or authorization. |
+| Filesystem | Panel never mounts or reads worker files. The non-root worker resolves every checkout, worktree, command cwd, and cleanup target beneath one configured absolute workspace root; caches have separate configured roots and are never command cwd. Repository content is untrusted. |
+| Secrets | Worker receives only its Panel credential and least-scope repository push, Codex, PR, and restricted Linear credentials. It never receives Panel database credentials or a general Linear token. Secrets are injected at runtime, excluded from task payloads and local summaries, redacted from uploaded event detail, and rotated independently. |
+| Network | Worker needs authenticated access only to Panel, Codex, configured Git/PR host, dependency registries required by the project, and the restricted Linear gateway. Deployment egress rules enforce this allow-list; capability fields do not. |
+| Process | One supervisor owns a process group for each lease, including hooks, Codex, gates, and handoff commands. It enforces time/resource limits and reaps descendants. No execution subprocess runs in the Panel release. |
 
-### 2.2 Boundaries
+This resolves SYM-7 by putting Elixir/OTP, `make`, and the other project-required tools in the
+worker image rather than expanding the minimal Panel image.
 
-| Boundary | Control plane | Execution plane |
+## 3. Minimal execution contract
+
+The worker consumes the payload that the Panel produces from the project's **current workflow** at
+an existing safe execution boundary. Runs and tasks do not pin a workflow record or version, and
+the contract contains no `workflow_version_id`.
+
+Every claimed execution identifies `project_id`, `run_id`, stable issue ID and human issue
+identifier, run `attempt`, `task_id`, `lease_id`, lease `attempt`, and worker session. A **run
+attempt** is an orchestrator retry or continuation and changes only when the Panel creates a new
+run. A **lease attempt** is a claim/reassignment of the same task and increments without changing
+the run attempt.
+
+| Boundary | Panel input / authority | Worker responsibility and output |
 | --- | --- | --- |
-| Trust | Validates worker identity, protocol, lease fencing, payload shape, and report size; never trusts claimed capabilities or paths as authorization. | Treats task payload, repository content, issue text, hooks, and model output as untrusted input. |
-| Filesystem | Owns database and control-plane logs; never mounts or reads worker workspaces. | A non-root process owns a configured absolute workspace root and cache/artifact roots. Resolved worktree and command cwd must remain beneath the workspace root; caches are mounted separately and never used as cwd. |
-| Secrets | Stores hashes/references and issues scoped worker credentials. Does not send the Panel's database or global Linear secret. | Receives only worker registration/session credentials plus project-scoped repository, Codex, PR, and restricted Linear-tool credentials. Secrets are injected at runtime, excluded from payloads/logs/artifacts, and rotated independently. |
-| Network | Accepts authenticated worker HTTPS and serves persisted metadata. | Default-deny except Panel, Codex endpoint, configured repository/PR host, dependency registries required by the pinned toolchain, and the restricted Linear gateway. Egress policy is a deployment concern, not a worker capability claim. |
-| Process | Schedules and fences; does not spawn execution subprocesses. | One supervisor per lease starts process groups for checkout, hooks, Codex, validation, and handoff. Cancellation terminates the group, then escalates after a grace period. Concurrency is slot- and resource-limited. |
+| Task queued | Persist `run` and `task` from the current workflow, including issue, repository/ref, prompt/command, hooks, required capabilities, and ordered required gates. | None until a compatible claim succeeds. |
+| Worker registered | Authenticate worker session and retain advertised slots/capabilities. | Register, heartbeat, and advertise only available capacity and scheduling hints. |
+| Claimed / lease acquired | Atomically return task and current lease identifiers, attempts, expiry, and execution payload. | Verify supported payload, start the lease supervisor, renew the lease, and emit accepted/progress events. |
+| Workspace prepared | Lease remains authoritative. | Create a contained checkout/worktree at the requested revision; report resolved source revision or a typed preparation failure. |
+| Codex / hooks | Payload supplies rendered prompt/command, hook commands, limits, and handoff policy resolved from the current workflow. | Run hooks and Codex in order; report phase, Codex session identifier, bounded redacted detail, duration, and typed outcome. |
+| Required validation | Payload supplies ordered commands and timeouts. | Run every required gate in the final worktree, in order, within this lease; write the local machine-readable summary and report its bounded summary. |
+| Git / PR / Linear handoff | Existing PR-first and restricted Linear rules remain authoritative. | Only after required gates pass, push the exact branch/commit, find or create the PR idempotently, then perform the allowed Linear handoff; report references or typed failure. |
+| Terminal event | Panel applies the landed current-lease check and updates persisted task/run state. | Send one of `task.completed`, `task.failed`, or `task.cancelled` with phase, reason, validation summary, runtime identity, and handoff references. Retry duplicate delivery using existing idempotency behavior. |
 
-Repository credentials are scoped read/write only where branch push is required. PR creation and
-Linear transition continue to follow the established PR-first contract in
-[spec-agent-runner.md](spec-agent-runner.md); the worker receives restricted operations, not general
-account credentials. Payload and event fields have allow-listed types and size limits. Logs are
-escaped as data in the UI, redacted before upload, and never interpreted as HTML or commands.
+Progress events need the envelope identifiers, phase/type, occurrence time, and bounded payload.
+Terminal payloads additionally need outcome/reason; source revision; worker image tag or digest and
+worker source revision; per-gate status, exit code, duration, and timeout; overall validation
+status; and branch/commit/PR/Linear references when present. Panel logs use the issue and Codex
+session context required by [logging.md](logging.md); local paths and secrets are not reported.
 
-## 3. One lifecycle, two attempt counters
+Only the current valid lease may change terminal task/run state. Duplicate terminal delivery is
+idempotent. Events from an expired, cancelled, or superseded lease may be retained as evidence but
+cannot overwrite newer work. These are existing Panel rules, not a new fencing subsystem.
 
-PostgreSQL on the Panel remains the sole durable authority. A worker journal is only a local
-delivery aid and cannot create a second run state machine. Existing `runs` are operator-facing
-execution history; `tasks` and `task_leases` are dispatch/fencing records; `events` are the audit
-timeline. Running sessions, Retry queue, worker pages, and analytics must project those same
-entities, not worker memory or worker filesystem state.
+Cancellation is cooperative first and forceful second. After a heartbeat returns `cancel_task`, the
+worker starts no new phase, sends termination to the lease process group, escalates after a bounded
+grace period, records whether descendants were reaped, cleans or quarantines the workspace, and
+reports `task.cancelled` while the lease remains valid. If the worker cannot report before expiry,
+Panel reconciliation remains authoritative and any later event is evidence only. External writes
+already completed are reported; cancellation does not silently undo or repeat them.
 
-- **Run attempt** (`runs.attempt`) counts an orchestrator retry/continuation of issue execution. It
-  is fixed for the task payload and changes only when the Panel creates the next run attempt under
-  the current retry policy.
-- **Lease attempt** (`task_leases.attempt`) counts reassignment of the same task after claim loss,
-  expiry, or explicit requeue. It changes on every new lease and must not increment the run attempt.
-- A lease attempt may repeat execution for one run attempt. Fencing ensures only the current lease
-  can affect the run. A semantic retry after an accepted terminal failure creates a new run/task;
-  transport recovery of an unacknowledged terminal proposal does not.
+### Small worker-v1 gaps for follow-up implementation
 
-Every execution request and every event/result carries this immutable envelope:
+The landed payload is already opaque enough to carry execution input. Implementation needs only:
 
-```json
-{
-  "project_id": "...",
-  "workflow_version_id": "...",
-  "run_id": "...",
-  "run_attempt": 2,
-  "issue": {"id": "tracker-id", "identifier": "SYM-8"},
-  "task_id": "...",
-  "lease_id": "...",
-  "lease_attempt": 3
-}
-```
+1. add stable issue ID, run attempt, and lease attempt to the claim payload/event envelope;
+2. add ordered required gate commands/timeouts and the repository/ref/branch/handoff inputs needed
+   by the worker; and
+3. add bounded validation/runtime identity and handoff fields to progress/terminal event payloads.
 
-The Panel compares the complete envelope with persisted relationships. Human-readable issue
-identifiers are never identity keys. `workflow_version_id` freezes the command, prompt, hooks,
-validation policy, repository policy, and required capabilities for that run even if the current
-workflow later changes.
+These are the minimum API/schema/UI follow-ups. They do not change terminal semantics, introduce a
+proposal/acknowledgment exchange, add cancellation epochs, or create another state machine.
 
-## 4. End-to-end execution contract
+## 4. Toolchain, validation, and local artifacts
 
-### 4.1 Phase contract
+The Symphony release owner builds and versions the project worker image alongside releases. A
+terminal result reports the immutable image digest when available (otherwise its exact release tag)
+and the worker source revision. The repository declares its ordered required commands in the
+execution policy consumed by the current workflow; for this repository the single required gate is
+`make all`, whose Makefile owns the internal order. The Panel places that resolved ordered list in
+the task payload; the worker does not guess gates.
 
-| Phase | Durable owner and inputs | Worker output and idempotency | Cancellation and worker-v1 status |
-| --- | --- | --- | --- |
-| Queue | Panel transaction owns `run` + one `task`; input is project, immutable workflow version, issue identity, run attempt, repository/ref, execution policy, required capabilities. A unique dispatch key is `(run_id, run_attempt)`. | `task.queued` audit event; repeating dispatch returns the existing task. | Cancel marks the persisted task/run cancelled. **Current:** queue, task/run IDs, project ID, issue identifier, opaque payload, capabilities. **Extend:** workflow version, full issue identity, run attempt, payload schema/version, dispatch key. |
-| Register/session | Panel owns stable `worker` and boot-scoped `worker_session`; worker sends version, instance ID, declared capabilities and slots. | Same registration idempotency key returns the active session; a changed boot ID creates a session and fences the old one. | Draining stops claims; revocation invalidates session/leases. **Current:** registration/version/session. **Extend:** registration idempotency, image digest, toolchain/capability attestations, drain state. |
-| Claim/lease | Panel transaction selects a compatible queued task and owns one active lease. Claim includes available slots, capabilities, and a request idempotency key. | Response includes the full envelope, lease expiry, frozen execution inputs, required gate policy, artifact upload policy, and cancellation epoch. Duplicate claim returns the same lease; another key cannot lease the task concurrently. | Cancel is returned by heartbeat; worker must not start another phase after observing it. **Current:** transactional claim, capability match, lease ID/expiry. **Extend:** request key, envelope fields, policy/image constraints, cancellation epoch. |
-| Prepare workspace | Task remains leased; worker journal owns only local step progress. Inputs are repository URL, exact base ref/commit, branch name, source/worktree policy, hooks, workspace limits. | Ordered `workspace.preparing/ready/failed` events include `event_id`, sequence, checkout commit, sanitized logical artifact references, durations. Replaying an event ID returns its first acceptance. Preparation reuses only a verified cache and recreates an isolated worktree. | Process group stops; partial worktree is quarantined then cleaned. **Current:** arbitrary progress events are stored but not interpreted. **Extend:** event id/sequence/schema and structured workspace result. |
-| Codex turns/hooks | The `run` remains the durable attempt; Panel events/agent turns own accepted history. Frozen prompt/profile/limits and restricted tools are inputs. | `hook.*`, `codex.started`, and turn events carry thread/session IDs, turn number, outcome, token/timing metadata, and bounded log references. Duplicate/late progress is audited once but cannot mutate terminal state. | Stop accepting new turns, interrupt app-server, run cancellation-safe cleanup; never perform handoff after cancellation. **Current:** event ingestion and terminal task mappings. **Extend:** typed events, sequence/idempotency, agent-turn persistence mapping, cancellation acknowledgment. |
-| Validate | Same task/lease; worker runs ordered required gates against the exact post-Codex commit/worktree and pinned toolchain. | One machine-readable validation manifest plus per-gate start/finish events and artifact references. Re-running after worker-local uncertainty is safe; only one manifest hash is accepted for the lease terminal proposal. | Kill the gate group and report `cancelled`. **Current:** no validation contract. **Extend:** gate policy/results, toolchain identity, manifest/artifact metadata and failure taxonomy. |
-| Git/PR/Linear handoff | Run/task remain non-terminal. Worker receives branch, remote policy, required workflow profile, and restricted handoff tools. | Idempotent push by exact branch/commit; find-or-create PR by repository/head/base; Linear update uses current task plus idempotency key. Report commit, branch, PR URL/ID, Linear state/action, or typed phase failure. | Cancellation before terminal proposal blocks all new external writes; an already completed write is reported, never blindly undone. **Current:** centralized PR-first contract, but worker payload/results do not encode it. **Extend:** handoff policy/result and idempotency keys. |
-| Terminal proposal/ack | Panel transaction validates active current lease and envelope, persists final event/result metadata, transitions task/run once, and releases lease. | Worker sends a stable terminal idempotency key and outcome (`completed`, `failed`, `cancelled`) with phase reason, validation manifest hash, commit/PR/Linear references, artifact metadata. It retries until Panel returns the persisted terminal record and acknowledgment ID. | Cancellation wins unless a completed terminal transaction was already committed. **Current:** terminal event immediately transitions and returns event ID. **Extend:** explicit proposal schema, compare-and-set fencing, idempotent duplicate response, durable terminal acknowledgment. |
+| Validation result | Meaning and terminal behavior |
+| --- | --- |
+| `passed` | Every required command exited zero within its limit. Handoff may proceed. |
+| `failed` | A command exited non-zero or its required result could not be parsed. Terminal validation failure; no successful handoff. |
+| `timed_out` | A command exceeded its declared limit and its process group was stopped. Terminal validation failure. |
+| `cancelled` | Panel/operator cancellation interrupted validation. Terminal cancellation, never success. |
+| `toolchain_unavailable` | A required executable/runtime is missing or incompatible. Terminal validation failure and worker/configuration evidence, never degraded success. |
 
-### 4.2 Event and terminal rules
+A missing required gate declaration, command, or tool is not a skipped gate and cannot produce a
+successful handoff.
 
-The proposed extension remains under worker-v1 only if it is additive: optional request fields,
-new typed events, and response fields ignored by old clients. Required envelope/fencing semantics or
-changed terminal behavior require a negotiated minor capability (for example
-`worker-api-v1; terminal-ack=1`) and the Panel must dispatch only to sessions advertising it. A
-breaking JSON meaning or removal requires `/api/worker/v2`; never infer compatibility from worker
-binary version.
-
-Each event has `event_id` (worker-generated UUID), monotonically increasing `sequence` within a
-lease, `occurred_at`, `event_type`, envelope, schema version, and bounded payload. Panel uniqueness
-on `(task_id, lease_id, event_id)` makes retries safe. Sequence gaps are visible but do not block
-later events; sequence regression and duplicates cannot roll state backward. An event from an
-expired, cancelled, released, wrong-session, or superseded lease is stored only as a rejected audit
-record when safe, with no lifecycle mutation.
-
-A transport `202 Accepted` for progress is not terminal acknowledgment. Terminal acknowledgment is
-the response to the atomic terminal proposal and includes `terminal_ack_id`, accepted outcome,
-persisted task/run status, and lease disposition. After sending a terminal proposal the worker
-stops side effects, retains its journal/artifacts, and retries the identical proposal until it
-receives that acknowledgment or learns that its lease was fenced. This closes the crash window
-between Panel commit and worker receipt.
-
-## 5. Reproducible validation and artifacts
-
-### 5.1 Toolchain and gate policy
-
-The worker deployment owner builds versioned worker images. An image is immutable and identified by
-registry digest; its software bill of materials and worker version are release artifacts. The base
-worker supplies repository tooling, Codex, the worker binary, process supervision, and common
-shell utilities. A project selects an allowed worker image/capability set in its workflow package;
-language runtimes and OS packages enter by a reviewed project-worker Dockerfile or derived image,
-not by installing compilers into the Panel container at task time.
-
-Language dependencies remain repository-locked (`mix.lock`, equivalent lockfiles) and are restored
-inside the worker. Network dependency access is constrained to configured registries. The terminal
-result records image digest, worker version, OS/architecture, tool versions, repository commit,
-workflow version, and lockfile digests. A mutable tag alone is insufficient.
-
-Gate discovery is explicit and deterministic:
-
-1. Use the ordered required/optional gate list frozen in the workflow version.
-2. A repository-owned command such as `make all` may be one required gate; its Makefile determines
-   its internal order.
-3. If no explicit list exists during migration, a project may opt into one named conventional gate
-   (`make all`), but the chosen command is resolved by the Panel before dispatch and recorded in the
-   task. Workers do not guess among CI files or silently invent gates.
-4. Run gates sequentially by default in the final worktree. Parallel gates require explicit
-   independence and separate output paths.
-
-| Result | Meaning | Task consequence |
-| --- | --- | --- |
-| `passed` | Command exited zero within limits and required result files parsed. | May proceed to handoff/completion. |
-| `failed` | Non-zero exit or malformed required result. | Terminal failure for this run attempt; retry policy remains Panel-owned. |
-| `timed_out` | Gate exceeded its declared wall/idle limit. | Terminal failure, typed as validation timeout. |
-| `cancelled` | Operator/Panel cancellation interrupted it. | Terminal cancellation; never a success. |
-| `toolchain_unavailable` | Required executable/runtime/image/capability is absent or incompatible. | Terminal failure and worker eligibility/configuration evidence; never a successful or degraded handoff. |
-| `skipped` | Gate was explicitly optional and its declared condition was false. | Recorded; allowed only for optional gates. A required gate cannot be skipped. |
-
-PR/Linear success cannot turn failed or unavailable required validation into completion. Validation
-must pass before implementation handoff is reported complete.
-
-### 5.2 Storage and retention
-
-All roots are absolute, configured on the worker, and mounted independently:
+Suggested worker-local layout (exact root names are deployment configuration):
 
 ```text
-WORKSPACE_ROOT/<project-id>/<task-id>/<lease-id>/     # isolated checkout/worktree
-CACHE_ROOT/repos/<repository-key>/                    # bare/mirror checkout cache
-CACHE_ROOT/deps/<project-key>/<lock-digest>/          # package deps
-CACHE_ROOT/build/<project-key>/<image>/<lock-digest>/ # _build or equivalent
-ARTIFACT_ROOT/<task-id>/<lease-id>/                    # logs + validation.json + manifest
+<workspace-root>/<project-id>/<task-id>/<lease-id>/  checkout/worktree, deps, _build
+<cache-root>/repos/                                  bounded repository cache
+<cache-root>/deps/                                   bounded dependency cache
+<cache-root>/build/                                  bounded build cache
+<log-root>/<task-id>/<lease-id>/                     redacted logs, validation.json
 ```
 
-Cache keys include project/repository identity, immutable image digest, relevant lockfile hashes,
-and architecture. Cache contents are never authoritative and are verified before reuse; corruption
-causes eviction and a clean retry. Writers use locking/atomic rename. Repository cache credentials
-are not embedded in remotes. `_build` and `deps` may be mounted or linked only in ways that keep the
-command cwd and all repository writes under the task worktree.
+Successful task worktrees are removed after terminal reporting; failed or cancelled worktrees and
+logs are quarantined for a short configured period (24 hours by default) and then removed. Caches
+use configured byte/age limits with least-recently-used eviction. Startup and periodic cleanup
+remove abandoned lease directories after confirming they are not active. Cleanup resolves and
+checks every target beneath its configured root before deletion.
 
-Default retention policy proposed for implementation:
+`validation.json` contains the envelope, source revision, runtime identity, ordered gate outcomes,
+durations, exit codes, and overall status; it contains no secrets. The Panel persists only overall
+and per-gate status, bounded failure detail, timestamps/durations, runtime identity, source/commit,
+and handoff references. It never assumes access to worker paths. Worker-local detail may disappear;
+durable remote logs or artifacts are deferred until a demonstrated operational need exists.
 
-- Successful worktree: delete after terminal acknowledgment; retain repository/dependency/build
-  caches by size/age LRU.
-- Failed/cancelled worktree: quarantine read-only for 24 hours, then delete; operators see expiry,
-  not a filesystem path they cannot access.
-- Structured manifest and bounded redacted logs: retain in artifact storage for the same policy as
-  run history, subject to deployment limits. Large raw logs use object storage or a worker-served
-  upload target; PostgreSQL stores metadata and bounded excerpts, never local paths.
-- Unacknowledged terminal artifacts: pin until acknowledgment or a configured recovery maximum;
-  expiration without acknowledgment emits an operator-visible worker error.
+## 5. Failure and recovery
 
-The Panel persists artifact ID/type, content hash, byte size, media type, created/expiry times,
-redaction status, storage provider reference or signed-access handle, gate/phase, and availability
-state. It persists validation summary, per-gate status/exit/timeout/duration, toolchain/image
-identity, commit, and manifest hash. It does not persist or display `WORKSPACE_ROOT` paths as if it
-could read them.
+The detailed reconciliation contract remains in the
+[Panel/Worker decoupling design](worker-panel-decoupling-design.md). The table below applies it only
+to the single-worker runtime. Panel owns the existing retry policy and exponential backoff; worker
+retries are bounded transport or idempotent phase operations within one live lease.
 
-## 6. Failure, recovery, and reconciliation
-
-Panel reconciliation is database-driven and runs after restart and periodically. Claim uses a
-database transaction and one-active-lease constraint; terminal transition uses compare-and-set on
-the current lease. A stale worker cannot overwrite a newer task/run result even if it continues
-running locally.
-
-| Case | Retry owner/backoff and accounting | Durable outcome and operator evidence | Concurrency/stale-result guard |
+| Case | Retry owner / attempt effect | Visible status and evidence | Stale-completion guard |
 | --- | --- | --- | --- |
-| No eligible worker/capability | Panel leaves task queued; scheduler poll/backoff, no run- or lease-attempt increment. Alert after configurable queue age. | Queued task shows unmet capabilities, eligible worker count, age; log includes project/run/task context. | No lease exists. Capability is scheduling input, not authorization. |
-| Crash/partition before terminal proposal | Worker retries connection; Panel expires lease after heartbeat/lease deadline and requeues same task. New claim increments lease attempt only. | Expired lease/session plus last accepted event/phase; run remains non-terminal until policy decides. | New lease fences old lease ID/session; old events rejected. |
-| Crash/partition after Panel commits terminal but before worker receives ack | Worker retries identical terminal proposal with transport backoff; Panel returns existing acknowledgment. No attempt increments. | One terminal task/run/event and duplicate-delivery counters. | Terminal idempotency key and atomic persisted ack. |
-| Worker sent terminal proposal but Panel never committed | Same proposal retried while lease valid. If lease expires first, Panel rejects it and reconciles/requeues according to policy. | Transport failures and eventual expired/rejected proposal visible. | Active-lease compare-and-set; local “sent” is not authority. |
-| Lease expiry and late completion | Panel expiry job requeues; worker stops on failed renewal. Same task gets next lease attempt. | Rejected late event with old/new lease IDs; current run unchanged. | Current lease ID + attempt + session fencing. |
-| Panel restart with active sessions/leases | Panel reloads DB, marks sessions by heartbeat timeout, preserves unexpired leases; worker heartbeats/retries. No attempt change unless lease expires. | Existing worker/task/lease pages recover from PostgreSQL. | No in-memory ownership is required for validity. |
-| Duplicate claim | Panel returns lease for same claim idempotency key; otherwise normal matching returns no second lease. | Claim request ID and one lease. | Transaction, row lock, unique active lease. |
-| Duplicate progress/event | Worker retries; Panel returns first event acceptance. No retry accounting. | Duplicate count, original event ID/sequence. | Unique event key; monotonic projections. |
-| Duplicate terminal proposal/ack | Panel returns the same terminal acknowledgment and state. | One terminal record; repeated delivery metric. | Terminal idempotency key and compare-and-set. |
-| Codex or required pre/post hook failure | Worker reports typed phase failure; Panel owns retry decision and existing exponential run retry policy. New semantic retry creates a new run attempt/task. Cleanup-hook failure is separately reported and cannot erase the primary result. | Run failure reason, hook/Codex phase, bounded logs/artifacts. | Terminal proposal fenced by current lease. |
-| Validation failure/timeout/unavailable | Worker reports typed terminal failure; Panel run retry policy applies. Toolchain unavailable additionally makes the session ineligible until capability/config changes. | Gate matrix, manifest, image/tool versions, logs, queue/worker warning. | Required gate status is checked by Panel before accepting `completed`. |
-| Git push failure | Worker may retry idempotently within lease using bounded phase backoff; exhaustion is terminal failure. Panel later owns run retry. | Remote, branch, intended commit, sanitized error; no false PR/Linear success. | Exact branch/commit checks; never force-push unless frozen policy explicitly allows it. |
-| PR handoff failure | Find existing PR before create; bounded retry within lease, then terminal failure. | Commit and any existing PR reference plus typed error. | Repository/head/base idempotency; retry reuses PR. |
-| Linear transition/update failure | Restricted tool retries safely with idempotency key; exhaustion is terminal failure even if push/PR succeeded. A later run reuses branch/PR. | PR reference, requested transition, response/error. | Current Linear task scope and idempotent handoff; terminal completion requires accepted handoff. |
-| Operator cancellation | Panel durably marks cancellation request and returns command on heartbeat. Worker cancels process tree and proposes cancelled. Panel may force terminal cancellation after lease expiry. No automatic retry. | Requester/reason/time, worker ack or forced expiry, cleanup result. | Cancellation epoch/state checked at every event and terminal transaction. |
-| Operator requeue | Panel cancels active lease, creates/requeues according to explicit policy, and records actor/reason. Requeue of transport loss increments lease attempt; re-run after terminal result increments run attempt. | Linked prior/new task or lease and reason. | Old lease revoked before queue eligibility; per-issue dispatch uniqueness. |
+| No worker or capability mismatch | Panel leaves task queued under scheduler polling/backoff; neither attempt changes. | Queued task, age, and mismatch/availability evidence. | No lease exists. |
+| Worker crash/network loss; lease expires | Panel expiry/reconciliation requeues per existing policy; replacement claim increments lease attempt only. A later semantic retry may increment run attempt under normal retry policy. | Expired lease/session and last accepted event; queued/retried/final status per Panel policy. | Old lease is no longer current, so late terminal input is evidence only. |
+| Panel restarts with active lease | Panel reloads PostgreSQL; worker resumes heartbeat. No attempt changes unless the lease expires. | Persisted active lease/session and accepted events remain visible. | Database current-lease record, not Panel memory, is authoritative. |
+| Duplicate or late terminal event | Worker retries delivery; Panel performs existing idempotent handling. No attempt changes for a duplicate; requeue after expiry changes lease attempt. | One terminal transition plus duplicate/late audit evidence. | Only the current valid lease may mutate state. |
+| Codex, hook, or validation failure | Worker reports typed terminal failure; Panel owns run retry/backoff. A semantic retry increments run attempt and creates its task. | Failed phase, bounded error/log detail, and validation summary where applicable. | Terminal event must match current lease. |
+| Git, PR, or Linear handoff failure | Worker may retry an idempotent action within lease; exhaustion is typed failure and Panel owns later run retry/backoff. | Existing branch/commit/PR references plus failed handoff step and redacted error. | Terminal event must match current lease; handoff success cannot override failed validation. |
+| Operator cancellation or requeue | Cancellation has no automatic run retry; worker stops process group and reports cleanup. Requeue follows existing Panel policy: replacement lease changes lease attempt, a new semantic run changes run attempt. | Actor/reason/time, cancellation or requeue state, cleanup outcome, and any completed external writes. | Revoked/expired lease cannot complete newer work. |
 
-Retry/backoff values remain owned by the Panel's frozen workflow policy. Worker-local backoff is only
-for transport retries and bounded idempotent operations within one lease; it never silently creates
-a run attempt. When remaining lease time cannot cover another operation, the worker reports phase
-state and stops rather than racing expiry.
+## 6. Delivery and rollback
 
-## 7. Operations and observability
-
-Every Panel and worker log follows [logging.md](logging.md). Where known, structured context includes
-`project_id`, `workflow_version_id`, `issue_id`, `issue_identifier`, `run_id`, `run_attempt`,
-`task_id`, `lease_id`, `lease_attempt`, `worker_id`, `worker_session_id`, `phase`, `event_id`, and
-outcome/reason. Secrets, prompts, repository content, raw model output, and untrusted log fragments
-are not interpolated into control messages; bounded redacted detail belongs in explicit fields or
-artifact references.
-
-Existing surfaces remain projections of persisted state:
-
-- **Running sessions** combines active run/task/lease/session identities and last accepted phase;
-  it does not poll worker memory.
-- **Retry queue** distinguishes the next run attempt/backoff from a task awaiting a replacement
-  lease. Lease expiry is not shown as a semantic run retry unless the Panel creates one.
-- **Workers/tasks/leases** add image/toolchain/capability compatibility, queue mismatch reasons,
-  cancellation state, last phase, and artifact/validation summaries.
-- **Run detail/events** show immutable workflow version, both attempts, validation and handoff
-  results, rejected late events, and terminal acknowledgment.
-- **Analytics** derive queue wait, claim latency, phase durations, lease churn, validation outcomes,
-  artifact availability, and failure taxonomy from persisted timestamps/events. They do not create
-  another status source.
-
-Minimum alerts are aged compatible queue with zero eligible workers, heartbeat/lease expiry rate,
-terminal proposals without acknowledgment, repeated toolchain unavailable, artifact upload/expiry
-failure, cancellation latency, and rejected stale terminal events.
-
-## 8. Rollout, compatibility, and rollback
-
-Each phase is independently shippable and preserves existing rows. Rollback means stop new dispatch
-to the affected capability/version, drain or cancel leases, switch the execution-mode routing for
-new work, and keep runs/tasks/leases/events/artifact metadata queryable. It never deletes or rewrites
-history.
-
-| Phase / follow-up issue | Delivery and gate | Principal risk | Rollback criterion and action |
+| Slice | Delivery and validation gate | Main risk | Rollback criterion and action |
 | --- | --- | --- | --- |
-| 0. Contract fixtures and fencing | Publish versioned worker-v1 JSON schemas/fixtures; add full envelope, event idempotency/sequence, cancellation epoch, terminal proposal/ack, validation/artifact schemas, and atomic fencing tests. Gate: old current clients still pass additive compatibility tests; incompatible sessions receive no extended task. | Existing immediate terminal semantics accept stale/duplicate results. | Any lifecycle regression: disable worker dispatch and retain centralized default; revert additive endpoints, not data. |
-| 1. Worker runtime skeleton | Separate repository/artifact builds pinned non-root worker image; register/claim/heartbeat/cancel, safe workspace root, process supervision, redacted logs. Gate: crash/partition/cancel conformance suite. | Workspace escape, secret leakage, orphan processes. | Any boundary violation or unreconciled lease: revoke worker credentials and stop its pool. |
-| 2. Repository, Codex, hooks | Implement frozen payload execution, app-server turns, restricted tools, git cache/worktrees, typed phase events. Gate: real disposable-repository end-to-end run and stale-lease fault injection. | Behavior divergence from centralized Agent Runner. | Mismatched output/handoff or stale mutation: drain worker pool; route new runs centralized. |
-| 3. Toolchains, validation, artifacts (SYM-7 replacement) | Build project worker image, run ordered gates including `make all`, publish manifests/logs, enforce required-unavailable failure. Gate: clean-cache and warm-cache reproducibility produce equivalent manifest inputs/outcomes. | Mutable images/cache contamination or silent gate degradation. | Digest mismatch, cross-project cache leakage, or required gate accepted unavailable: disable image capability and worker routing. |
-| 4. Handoff and UI/analytics | Idempotent push/PR/restricted Linear handoff; persist/display validation, artifacts, attempts, mismatch reasons, terminal ack; add structured metrics/log context. Gate: duplicate/restart matrix and operator cancel/requeue acceptance. | Duplicate external side effects or misleading status. | Duplicate PR/transition or UI state diverges from DB: stop completion-capable dispatch and fall back. |
-| 5. Controlled production rollout | Opt-in projects/pool, canary concurrency 1, then staged capacity. Make worker mode the production recommendation only after SLO and recovery soak. | Capacity starvation or unforeseen toolchain variance. | Aged queue, lease churn, validation false results, security event, or error-rate threshold breach: drain canary and route new eligible projects back. |
-| 6. Pre-release simplification | Make centralized mode development-only, then remove local/SSH production execution before first tagged release after worker parity and rollback rehearsal. Remove Codex/repository tooling from Panel image. | Losing emergency fallback too early. | Until parity gate passes, retain centralized rollback. After removal, rollback deploys the last compatible Panel/worker pair; history remains in PostgreSQL. |
+| 1. Worker image and runtime | Build the separately deployable non-root image; implement registration/claim/heartbeat, contained checkout, Codex/hooks, `make all`, process-group cancellation, local summaries, cleanup, and handoff. Gate: an end-to-end disposable-repository run plus clean-image `make all`, cancellation, workspace-escape, and crash/lease-expiry tests. | Workspace escape, leaked credential, orphan process, or silently skipped validation. | Any boundary violation or incorrect validation result: revoke/stop worker and route new work to `centralized`. |
+| 2. Minimal worker-v1 metadata and Panel projection | Add the three payload/event gaps from Section 3 and display/log the persisted bounded summary. Gate: API contract tests for attempts, all validation outcomes, current-lease rejection, duplicate/late events, and restart recovery; `make all`. | Persisted state or UI implies success/access that does not exist. | Any lifecycle regression or misleading terminal state: disable worker dispatch and revert the additive projection while retaining history. |
+| 3. Opt-in deployment and default decision | Deploy the trusted worker, verify one real project from claim through PR/Linear handoff, cleanup, and recovery; decide the default only after the worker path works. Gate: operational checklist plus required repository gate. | Toolchain/environment drift or unavailable worker stalls work. | Failed gate, repeated lease loss, or handoff divergence: stop new worker claims and switch execution back to `centralized`. |
 
-Deployment changes comprise independent Panel and worker releases, scoped worker registration/session
-credentials, project repository/PR credentials, Codex credentials, restricted Linear access,
-worker workspace/cache/artifact volumes, and network policy. Image digest and supported protocol
-features are advertised at registration and matched as required capabilities. When no matching
-worker exists, tasks stay queued with explicit mismatch evidence; the Panel does not fail open to
-local execution.
+Rollback changes routing for new work to `centralized`; it never deletes or rewrites persisted
+runs, tasks, leases, sessions, or events. Centralized mode remains the pre-release fallback. Its
+later removal requires a separate decision backed by a working worker path.
 
-During phases 0-5, `centralized` remains the default and supported rollback path. The selected
-pre-release destination is: centralized becomes development-only after worker parity, then its
-production local/SSH path and execution dependencies are removed before the first tagged release.
-There is no automatic per-task fallback between modes because that would obscure attempt and secret
-boundaries.
+## 7. Follow-up implementation surface
 
-## 9. Deferred work and non-goals
+Follow-up tickets may implement the worker image/runtime, the three worker-v1 payload/event gaps,
+bounded Panel persistence and display of validation/runtime/handoff summaries, and opt-in deployment
+configuration. This design does not authorize those changes in SYM-8.
 
-The following are deferred and require separate designs if pursued:
+## 8. Deferred work
 
-- an ephemeral verifier or second execution lifecycle;
-- Kubernetes selection, service mesh, public worker federation, or multi-tenant authorization;
-- live migration of an executing lease between workers;
-- arbitrary worker filesystem browsing from the Panel;
-- capability claims as security attestations (signed provenance may be added later);
-- parallel gates without explicit isolation; and
-- redesign of the landed Panel queue beyond the concrete additive/fencing gaps listed here.
-
-## 10. Acceptance cross-check
-
-This proposal keeps one Panel-owned persisted lifecycle, includes the complete dispatch-to-terminal
-acknowledgment path, distinguishes run and lease attempts, makes required gate unavailability a
-terminal failure, keeps workspaces/toolchains/secrets outside the Phoenix release, and defines
-fault fencing, cancellation, cleanup, artifacts, observability, compatibility, rollout, and
-rollback. It links rather than changes current L4 behavior. Therefore no update to `spec*.md`,
-`ARCHITECTURE.md`, deployment guides, or runtime examples is appropriate until a follow-up phase is
-implemented.
+The first worker does not include a verifier, object storage, signed artifact URLs, a generic
+artifact service, SBOM/provenance attestation, capability attestation, Kubernetes/service mesh,
+cluster canaries or capacity phases, multi-tenant/federated scheduling, live lease migration,
+workflow version pinning, a terminal proposal/acknowledgment protocol, cancellation epochs, or a new
+fencing/state subsystem. Durable remote artifacts require demonstrated loss/diagnostic needs and a
+separate design.
