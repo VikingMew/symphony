@@ -121,7 +121,7 @@ services:
     environment:
       SYMPHONY_ROLE: worker
       SYMPHONY_PANEL_URL: http://symphony:4000
-      SYMPHONY_WORKER_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:?set the Panel worker registration token}
+      SYMPHONY_WORKER_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:-}
       SYMPHONY_WORKER_NAME: ${SYMPHONY_EXECUTION_WORKER_NAME:-compose-execution-worker}
       SYMPHONY_WORKER_IMAGE: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
       SYMPHONY_WORKER_SOURCE_REVISION: ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision}

@@ -33,6 +33,7 @@ unrestricted `worker_egress` network as a failed production preflight.
 Validate without printing substituted secrets:
 
 ```bash
+grep -Eq '^SYMPHONY_WORKER_REGISTRATION_TOKEN=.+$' .env
 docker compose --env-file .env --profile execution-worker config --quiet
 docker compose --env-file .env --profile execution-worker build execution-worker
 docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
@@ -42,6 +43,9 @@ docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-work
   command -v codex && command -v git && command -v make && command -v mix
 '
 ```
+
+The explicit token check keeps the base Compose model valid for centralized-only deployments while
+failing the worker preflight before container startup when its registration credential is absent.
 
 Inspect the image ID/digest locally with `docker image inspect --format '{{.Id}} {{index
 .RepoDigests 0}}' "$SYMPHONY_EXECUTION_WORKER_IMAGE"`; record identifiers, never the full

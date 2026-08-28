@@ -12,6 +12,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "target: execution-worker"
     assert worker =~ "SYMPHONY_ROLE: worker"
     assert worker =~ "SYMPHONY_PANEL_URL: http://symphony:4000"
+    assert worker =~ "SYMPHONY_WORKER_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:-}"
     assert worker =~ "read_only: true"
     assert worker =~ "no-new-privileges:true"
     assert worker =~ "cap_drop:\n      - ALL"
