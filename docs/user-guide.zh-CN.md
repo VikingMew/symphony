@@ -216,12 +216,18 @@ workflow:
       profile: implementation
     In Progress:
       profile: implementation
-  human_review_states: ["Needs Refinement Review", "Ready to Merge"]
+  human_review_states: ["Needs Refinement Review", "Ready to Merge", "Blocked"]
   allowed_transitions:
     - {from: Refining, to: Needs Refinement Review, actor: codex, profile: refinement}
     - {from: Ready, to: In Progress, actor: codex, profile: implementation}
     - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
     - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
+    - {from: Refining, to: Blocked, actor: symphony}
+    - {from: Ready, to: Blocked, actor: symphony}
+    - {from: In Progress, to: Blocked, actor: symphony}
+    - {from: Blocked, to: Ready, actor: human}
+    - {from: Blocked, to: Needs Refinement Review, actor: human}
+    - {from: Blocked, to: Canceled, actor: human}
   tool_policy:
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]

@@ -53,6 +53,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:project_slug, :string)
       field(:assignee, :string)
       field(:active_states, {:array, :string}, default: ["Refining", "Ready", "In Progress"])
+
       field(:terminal_states, {:array, :string}, default: ["Canceled", "Cancelled", "Duplicate", "Done"])
     end
 
@@ -104,7 +105,13 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:root, :repository_base_root, :worktree_base_root, :initialize_timeout_ms, :min_free_bytes],
+        [
+          :root,
+          :repository_base_root,
+          :worktree_base_root,
+          :initialize_timeout_ms,
+          :min_free_bytes
+        ],
         empty_values: []
       )
       |> validate_optional_non_blank(:repository_base_root)
@@ -115,7 +122,9 @@ defmodule SymphonyElixir.Config.Schema do
 
     defp validate_optional_non_blank(changeset, field) do
       validate_change(changeset, field, fn ^field, value ->
-        if is_binary(value) and String.trim(value) == "", do: [{field, "must not be blank"}], else: []
+        if is_binary(value) and String.trim(value) == "",
+          do: [{field, "must not be blank"}],
+          else: []
       end)
     end
   end
@@ -167,7 +176,9 @@ defmodule SymphonyElixir.Config.Schema do
 
     defp validate_optional_non_blank(changeset, field) do
       validate_change(changeset, field, fn ^field, value ->
-        if is_binary(value) and String.trim(value) == "", do: [{field, "must not be blank"}], else: []
+        if is_binary(value) and String.trim(value) == "",
+          do: [{field, "must not be blank"}],
+          else: []
       end)
     end
 
@@ -249,7 +260,12 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state
+        ],
         empty_values: []
       )
       |> validate_number(:max_concurrent_agents, greater_than: 0)
@@ -314,8 +330,14 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
-      |> validate_number(:rate_limit_gate_5h_threshold_percent, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
-      |> validate_number(:rate_limit_gate_7d_threshold_percent, greater_than_or_equal_to: 0, less_than_or_equal_to: 100)
+      |> validate_number(:rate_limit_gate_5h_threshold_percent,
+        greater_than_or_equal_to: 0,
+        less_than_or_equal_to: 100
+      )
+      |> validate_number(:rate_limit_gate_7d_threshold_percent,
+        greater_than_or_equal_to: 0,
+        less_than_or_equal_to: 100
+      )
       |> validate_number(:rate_limit_gate_post_reset_delay_ms, greater_than_or_equal_to: 0)
     end
 
@@ -473,7 +495,8 @@ defmodule SymphonyElixir.Config.Schema do
 
   @doc false
   @spec workflow_profile_for_state(%__MODULE__{}, String.t() | nil) :: String.t() | nil
-  def workflow_profile_for_state(%__MODULE__{workflow: workflow}, state_name) when is_binary(state_name) do
+  def workflow_profile_for_state(%__MODULE__{workflow: workflow}, state_name)
+      when is_binary(state_name) do
     normalized_state = normalize_issue_state(String.trim(state_name))
 
     workflow
@@ -510,7 +533,8 @@ defmodule SymphonyElixir.Config.Schema do
 
   @doc false
   @spec human_review_state?(%__MODULE__{}, String.t() | nil) :: boolean()
-  def human_review_state?(%__MODULE__{workflow: workflow}, state_name) when is_binary(state_name) do
+  def human_review_state?(%__MODULE__{workflow: workflow}, state_name)
+      when is_binary(state_name) do
     normalized_state = normalize_issue_state(String.trim(state_name))
 
     workflow
@@ -523,7 +547,8 @@ defmodule SymphonyElixir.Config.Schema do
 
   @doc false
   @spec workflow_allowed_updates(%__MODULE__{}, String.t() | nil) :: map()
-  def workflow_allowed_updates(%__MODULE__{profiles: profiles}, profile) when is_binary(profile) do
+  def workflow_allowed_updates(%__MODULE__{profiles: profiles}, profile)
+      when is_binary(profile) do
     profiles
     |> get_in([profile, "allowed_updates"])
     |> case do
@@ -626,7 +651,11 @@ defmodule SymphonyElixir.Config.Schema do
     tracker = %{
       settings.tracker
       | api_key: RuntimeResolver.env_secret("LINEAR_API_KEY"),
-        assignee: RuntimeResolver.resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
+        assignee:
+          RuntimeResolver.resolve_secret_setting(
+            settings.tracker.assignee,
+            System.get_env("LINEAR_ASSIGNEE")
+          )
     }
 
     workspace = %{
@@ -645,7 +674,14 @@ defmodule SymphonyElixir.Config.Schema do
     workflow = normalize_workflow_policy(settings.workflow)
     profiles = normalize_profiles(settings.profiles)
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex, workflow: workflow, profiles: profiles}
+    %{
+      settings
+      | tracker: tracker,
+        workspace: workspace,
+        codex: codex,
+        workflow: workflow,
+        profiles: profiles
+    }
   end
 
   @doc false
@@ -657,14 +693,35 @@ defmodule SymphonyElixir.Config.Schema do
         "Ready" => %{"profile" => "implementation"},
         "In Progress" => %{"profile" => "implementation"}
       },
-      "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
+      "human_review_states" => ["Needs Refinement Review", "Ready to Merge", "Blocked"],
       "allowed_transitions" => [
-        %{"from" => "Refining", "to" => "Needs Refinement Review", "actor" => "codex", "profile" => "refinement"},
+        %{
+          "from" => "Refining",
+          "to" => "Needs Refinement Review",
+          "actor" => "codex",
+          "profile" => "refinement"
+        },
         %{"from" => "Needs Refinement Review", "to" => "Ready", "actor" => "human"},
         %{"from" => "Needs Refinement Review", "to" => "Refining", "actor" => "human"},
-        %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
-        %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
+        %{
+          "from" => "Ready",
+          "to" => "In Progress",
+          "actor" => "codex",
+          "profile" => "implementation"
+        },
+        %{
+          "from" => "In Progress",
+          "to" => "Ready to Merge",
+          "actor" => "codex",
+          "profile" => "implementation"
+        },
+        %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"},
+        %{"from" => "Refining", "to" => "Blocked", "actor" => "symphony"},
+        %{"from" => "Ready", "to" => "Blocked", "actor" => "symphony"},
+        %{"from" => "In Progress", "to" => "Blocked", "actor" => "symphony"},
+        %{"from" => "Blocked", "to" => "Ready", "actor" => "human"},
+        %{"from" => "Blocked", "to" => "Needs Refinement Review", "actor" => "human"},
+        %{"from" => "Blocked", "to" => "Canceled", "actor" => "human"}
       ],
       "tool_policy" => %{
         "linear" => %{
@@ -774,7 +831,9 @@ defmodule SymphonyElixir.Config.Schema do
       WorkflowContract.profile_errors(profiles)
 
     Enum.reduce(workflow_errors, changeset, &add_error(&2, :workflow, &1))
-    |> then(fn changeset -> Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1)) end)
+    |> then(fn changeset ->
+      Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1))
+    end)
   end
 
   defp normalize_keys(value) when is_map(value) do

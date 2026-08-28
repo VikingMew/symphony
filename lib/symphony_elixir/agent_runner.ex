@@ -35,7 +35,11 @@ defmodule SymphonyElixir.AgentRunner do
   @spec run(map(), pid() | nil, keyword()) :: :ok | {:error, term()}
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     # The orchestrator owns host retries so one worker lifetime never hops machines.
-    worker_host = Policy.selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+    worker_host =
+      Policy.selected_worker_host(
+        Keyword.get(opts, :worker_host),
+        Config.settings!().worker.ssh_hosts
+      )
 
     Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
@@ -45,6 +49,7 @@ defmodule SymphonyElixir.AgentRunner do
 
       {:error, reason} ->
         Logger.error("Agent run failed for #{issue_context(issue)}: #{Policy.failure_summary(reason)}")
+
         {:error, reason}
     end
   end
@@ -65,7 +70,12 @@ defmodule SymphonyElixir.AgentRunner do
       assigned_to_worker: false
     }
 
-    worker_host = Policy.selected_worker_host(Keyword.get(opts, :worker_host), Config.settings!().worker.ssh_hosts)
+    worker_host =
+      Policy.selected_worker_host(
+        Keyword.get(opts, :worker_host),
+        Config.settings!().worker.ssh_hosts
+      )
+
     opts = Keyword.put(opts, :operator_profile, profile)
 
     Logger.info("Starting operator run kind=#{profile} run_id=#{run_id} worker_host=#{worker_host_for_log(worker_host)}")
@@ -76,6 +86,7 @@ defmodule SymphonyElixir.AgentRunner do
 
       {:error, reason} ->
         Logger.error("Operator run failed kind=#{profile} run_id=#{run_id}: #{Policy.failure_summary(reason)}")
+
         {:error, reason}
     end
   end
@@ -101,19 +112,33 @@ defmodule SymphonyElixir.AgentRunner do
     Logger.info("Starting operator worker attempt for #{issue_context(issue)} profile=#{profile} worker_host=#{worker_host_for_log(worker_host)}")
 
     with_workspace(issue, codex_update_recipient, opts, worker_host, fn workspace ->
-      run_operator_codex_turn(workspace, issue, profile, codex_update_recipient, opts, worker_host)
+      run_operator_codex_turn(
+        workspace,
+        issue,
+        profile,
+        codex_update_recipient,
+        opts,
+        worker_host
+      )
     end)
   end
 
   defp with_workspace(issue, codex_update_recipient, opts, worker_host, run) do
     emit_phase(issue, :workspace_preparing, :started, worker_host, opts)
 
-    workspace_opts = [progress_recipient: codex_update_recipient, project_id: Keyword.get(opts, :project_id)]
+    workspace_opts = [
+      progress_recipient: codex_update_recipient,
+      project_id: Keyword.get(opts, :project_id)
+    ]
+
     workspace_creator = Keyword.get(opts, :workspace_creator, &Workspace.create_for_issue/3)
 
     case workspace_creator.(issue, worker_host, workspace_opts) do
       {:ok, workspace} ->
-        emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{workspace: workspace})
+        emit_phase(issue, :workspace_preparing, :completed, worker_host, opts, %{
+          workspace: workspace
+        })
+
         send_worker_runtime_info(codex_update_recipient, issue, worker_host, workspace)
 
         try do
@@ -125,7 +150,10 @@ defmodule SymphonyElixir.AgentRunner do
         end
 
       {:error, reason} ->
-        emit_phase(issue, :workspace_preparing, :failed, worker_host, opts, %{reason: inspect(reason)})
+        emit_phase(issue, :workspace_preparing, :failed, worker_host, opts, %{
+          reason: inspect(reason)
+        })
+
         {:error, reason}
     end
   end
@@ -178,12 +206,18 @@ defmodule SymphonyElixir.AgentRunner do
   defp prepare_implementation_branch(workspace, %Issue{} = issue, opts) do
     if project_repository_configured?() do
       with {:ok, branch} <- BranchName.validate(issue.branch_name),
-           :ok <- emit_branch_event(issue, :implementation_branch_validation, :completed, %{branch: branch}),
+           :ok <-
+             emit_branch_event(issue, :implementation_branch_validation, :completed, %{
+               branch: branch
+             }),
            {:ok, _output} <- checkout_implementation_branch(workspace, branch, opts) do
         emit_branch_event(issue, :implementation_branch_checkout, :completed, %{branch: branch})
       else
         {:error, reason} ->
-          emit_branch_event(issue, :implementation_branch_checkout, :failed, %{reason: inspect(reason)})
+          emit_branch_event(issue, :implementation_branch_checkout, :failed, %{
+            reason: inspect(reason)
+          })
+
           {:error, reason}
       end
     else
@@ -206,7 +240,9 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
-    issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+
+    issue_state_fetcher =
+      Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
     dynamic_tool_opts =
       opts
@@ -218,6 +254,10 @@ defmodule SymphonyElixir.AgentRunner do
       |> Keyword.put_new(
         :implementation_handoff_observer,
         implementation_handoff_observer(worker_host, opts)
+      )
+      |> Keyword.put_new(
+        :task_update_observer,
+        task_update_observer(codex_update_recipient, issue.id)
       )
 
     opts =
@@ -260,10 +300,22 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp transition_implementation_start(%Issue{id: issue_id} = issue, profile, opts)
        when is_binary(issue_id) and issue_id != "" do
-    with :ok <- validate_implementation_start_transition(issue.state, @implementation_started_state, profile),
+    with :ok <-
+           validate_implementation_start_transition(
+             issue.state,
+             @implementation_started_state,
+             profile
+           ),
          :ok <- call_implementation_start_transitioner(issue, @implementation_started_state, opts) do
       Logger.info("Moved issue to implementation start state for #{issue_context(issue)} state=#{@implementation_started_state}")
-      notify_backend_transition(issue, @implementation_start_state, @implementation_started_state, opts)
+
+      notify_backend_transition(
+        issue,
+        @implementation_start_state,
+        @implementation_started_state,
+        opts
+      )
+
       {:ok, %{issue | state: @implementation_started_state}}
     else
       {:error, reason} -> {:error, {:implementation_start_transition_failed, reason}}
@@ -287,7 +339,12 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp call_implementation_start_transitioner(issue, target_state, opts) do
-    transitioner = Keyword.get(opts, :implementation_start_transitioner, &default_implementation_start_transitioner/2)
+    transitioner =
+      Keyword.get(
+        opts,
+        :implementation_start_transitioner,
+        &default_implementation_start_transitioner/2
+      )
 
     case transitioner.(issue, target_state) do
       :ok -> :ok
@@ -325,7 +382,16 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp notify_backend_transition(_issue, _from_state, _to_state, _opts), do: :ok
 
-  defp do_run_codex_turns(app_session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, turn_number, max_turns) do
+  defp do_run_codex_turns(
+         app_session,
+         workspace,
+         issue,
+         codex_update_recipient,
+         opts,
+         issue_state_fetcher,
+         turn_number,
+         max_turns
+       ) do
     prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
 
     with {:ok, turn_session} <-
@@ -419,13 +485,33 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
+  defp task_update_observer(recipient, issue_id) do
+    fn result, payload, _tool_opts ->
+      send(recipient, {
+        :linear_task_update_result,
+        issue_id,
+        result,
+        Map.get(payload, "result"),
+        Map.get(payload, "references", %{}),
+        Map.get(payload, "target_state")
+      })
+    end
+  end
+
   defp handoff_event_opts(runner_opts, tool_opts) do
     runner_opts
     |> Keyword.put(:session_id, Keyword.get(tool_opts, :session_id))
     |> Keyword.put_new(:run_id, Keyword.get(tool_opts, :run_id))
   end
 
-  defp run_operator_codex_turn(workspace, issue, profile, codex_update_recipient, opts, worker_host) do
+  defp run_operator_codex_turn(
+         workspace,
+         issue,
+         profile,
+         codex_update_recipient,
+         opts,
+         worker_host
+       ) do
     opts = Keyword.put_new(opts, :codex_update_recipient, codex_update_recipient)
 
     with_codex_session(
@@ -456,6 +542,7 @@ defmodule SymphonyElixir.AgentRunner do
                  run_id: Keyword.get(opts, :run_id)
                ) do
           Logger.info("Completed operator run for #{issue_context(issue)} profile=#{profile} session_id=#{turn_session[:session_id]} workspace=#{workspace}")
+
           :ok
         end
       end
@@ -500,7 +587,11 @@ defmodule SymphonyElixir.AgentRunner do
         {:error, {:codex_rate_limit_gate_blocked, details}}
 
       {:error, reason} ->
-        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{workspace: workspace, reason: inspect(reason)})
+        emit_phase(issue, :codex_starting, :failed, worker_host, opts, %{
+          workspace: workspace,
+          reason: inspect(reason)
+        })
+
         {:error, reason}
     end
   end
@@ -574,8 +665,11 @@ defmodule SymphonyElixir.AgentRunner do
   defp operator_title(:nap), do: "Nap"
   defp operator_title(:day_dreaming), do: "Day dreaming"
 
-  defp operator_description(:nap), do: "Audit project context and create focused backlog issues without modifying the repository."
-  defp operator_description(:day_dreaming), do: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
+  defp operator_description(:nap),
+    do: "Audit project context and create focused backlog issues without modifying the repository."
+
+  defp operator_description(:day_dreaming),
+    do: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
 
   defp issue_context(%Issue{id: issue_id, identifier: identifier}) do
     "issue_id=#{issue_id} issue_identifier=#{identifier}"

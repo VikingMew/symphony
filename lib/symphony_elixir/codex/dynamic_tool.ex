@@ -154,15 +154,34 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @issue_create_schema %{
     "type" => "object",
     "additionalProperties" => false,
-    "required" => ["title", "problem", "evidence", "why_it_matters", "suggested_direction", "category"],
+    "required" => [
+      "title",
+      "problem",
+      "evidence",
+      "why_it_matters",
+      "suggested_direction",
+      "category"
+    ],
     "properties" => %{
       "title" => %{"type" => "string", "description" => "Concise backlog issue title."},
       "problem" => %{"type" => "string", "description" => "Problem or opportunity statement."},
-      "evidence" => %{"type" => "string", "description" => "Concrete evidence from repository code or docs."},
-      "why_it_matters" => %{"type" => "string", "description" => "Why this should become backlog work."},
-      "suggested_direction" => %{"type" => "string", "description" => "Suggested fix or product direction."},
+      "evidence" => %{
+        "type" => "string",
+        "description" => "Concrete evidence from repository code or docs."
+      },
+      "why_it_matters" => %{
+        "type" => "string",
+        "description" => "Why this should become backlog work."
+      },
+      "suggested_direction" => %{
+        "type" => "string",
+        "description" => "Suggested fix or product direction."
+      },
       "category" => %{"type" => "string", "description" => "Finding category."},
-      "source_run_id" => %{"type" => ["string", "null"], "description" => "Source nap/day dreaming run id."}
+      "source_run_id" => %{
+        "type" => ["string", "null"],
+        "description" => "Source nap/day dreaming run id."
+      }
     }
   }
 
@@ -170,13 +189,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   def execute(tool, arguments, opts \\ []) do
     case tool do
       @read_tool ->
-        execute_with_audit(@read_tool, arguments, opts, fn -> execute_task_read(arguments, opts) end)
+        execute_with_audit(@read_tool, arguments, opts, fn ->
+          execute_task_read(arguments, opts)
+        end)
 
       @update_tool ->
-        execute_with_audit(@update_tool, arguments, opts, fn -> execute_task_update(arguments, opts) end)
+        execute_with_audit(@update_tool, arguments, opts, fn ->
+          execute_task_update(arguments, opts)
+        end)
 
       @issue_create_tool ->
-        execute_with_audit(@issue_create_tool, arguments, opts, fn -> execute_issue_create(arguments, opts) end)
+        execute_with_audit(@issue_create_tool, arguments, opts, fn ->
+          execute_issue_create(arguments, opts)
+        end)
 
       other ->
         failure_response(%{
@@ -240,13 +265,23 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp execute_task_update(arguments, opts) do
-    updater = Keyword.get(opts, :task_updater, fn payload -> default_task_updater(payload, opts) end)
+    updater =
+      Keyword.get(opts, :task_updater, fn payload -> default_task_updater(payload, opts) end)
 
-    with {:ok, payload} <- Policy.normalize_update_arguments(arguments),
-         {:ok, result} <- updater.(payload) do
-      success_response(result)
-    else
+    case Policy.normalize_update_arguments(arguments) do
+      {:ok, payload} ->
+        case updater.(payload) do
+          {:ok, result} -> success_response(result)
+          {:error, reason} -> failure_response(tool_error_payload(@update_tool, reason))
+        end
+
       {:error, reason} ->
+        observe_task_update(
+          {:error, reason},
+          if(is_map(arguments), do: arguments, else: %{}),
+          opts
+        )
+
         failure_response(tool_error_payload(@update_tool, reason))
     end
   end
@@ -261,10 +296,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp normalize_read_arguments(nil), do: {:ok, %{"include_activity" => true, "activity_limit" => 50}}
+  defp normalize_read_arguments(nil),
+    do: {:ok, %{"include_activity" => true, "activity_limit" => 50}}
 
   defp normalize_read_arguments(arguments) when is_map(arguments) do
-    include_activity = Map.get(arguments, "include_activity", Map.get(arguments, :include_activity, true))
+    include_activity =
+      Map.get(arguments, "include_activity", Map.get(arguments, :include_activity, true))
+
     activity_limit = Map.get(arguments, "activity_limit", Map.get(arguments, :activity_limit, 50))
     since = Map.get(arguments, "since", Map.get(arguments, :since))
 
@@ -303,17 +341,28 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp default_task_updater(payload, opts) do
-    with {:ok, issue_id} <- issue_id_from_opts(opts),
-         {:ok, profile} <- profile_from_opts(opts),
-         :ok <- validate_update_policy(payload, profile) do
-      if implementation_completion_request?(payload, profile) do
-        complete_implementation_handoff(issue_id, payload, opts)
-      else
-        perform_regular_task_update(issue_id, payload, opts)
+    result =
+      with {:ok, issue_id} <- issue_id_from_opts(opts),
+           {:ok, profile} <- profile_from_opts(opts),
+           :ok <- validate_update_policy(payload, profile) do
+        if implementation_completion_request?(payload, profile) do
+          complete_implementation_handoff(issue_id, payload, opts)
+        else
+          perform_regular_task_update(issue_id, payload, opts)
+        end
       end
-    end
+
+    observe_task_update(result, payload, opts)
+    result
   catch
     {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp observe_task_update(result, payload, opts) do
+    case Keyword.get(opts, :task_update_observer) do
+      observer when is_function(observer, 3) -> observer.(result, payload, opts)
+      _missing -> :ok
+    end
   end
 
   defp perform_regular_task_update(issue_id, payload, opts) do
@@ -517,7 +566,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp lookup_state_id(issue_id, state_name, opts) do
     with {:ok, response} <- graphql(opts, @issue_team_states_query, %{"id" => issue_id}),
-         states when is_list(states) <- get_in(response, ["data", "issue", "team", "states", "nodes"]),
+         states when is_list(states) <-
+           get_in(response, ["data", "issue", "team", "states", "nodes"]),
          %{"id" => state_id} <-
            Enum.find(states, fn state -> Map.get(state, "name") == state_name end) do
       {:ok, state_id}
@@ -592,7 +642,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp tool_error_payload(@read_tool, :invalid_activity_limit) do
-    %{"error" => %{"message" => "`linear_task_read.activity_limit` must be an integer from 1 to 100."}}
+    %{
+      "error" => %{
+        "message" => "`linear_task_read.activity_limit` must be an integer from 1 to 100."
+      }
+    }
   end
 
   defp tool_error_payload(@read_tool, :invalid_since) do
@@ -651,11 +705,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp tool_error_payload(@issue_create_tool, {:issue_create_not_allowed, profile}) do
-    %{"error" => %{"message" => "`linear_issue_create` is not allowed in workflow profile `#{profile}`."}}
+    %{
+      "error" => %{
+        "message" => "`linear_issue_create` is not allowed in workflow profile `#{profile}`."
+      }
+    }
   end
 
   defp tool_error_payload(@issue_create_tool, :invalid_issue_create_payload) do
-    %{"error" => %{"message" => "`linear_issue_create` requires non-empty title, problem, evidence, why_it_matters, suggested_direction, and category."}}
+    %{
+      "error" => %{
+        "message" => "`linear_issue_create` requires non-empty title, problem, evidence, why_it_matters, suggested_direction, and category."
+      }
+    }
   end
 
   defp tool_error_payload(@issue_create_tool, :issue_create_payload_too_large) do

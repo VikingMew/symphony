@@ -42,6 +42,11 @@ Design note:
 The default package contains refinement and implementation profiles only. There is no backend merge
 profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
 
+`Blocked` is a human-review state and MUST NOT appear in `tracker.active_states` or
+`workflow.states`. Each active state MUST transition to `Blocked` with actor `symphony`;
+`Blocked` may transition to `Ready`, `Needs Refinement Review`, or `Canceled` only with actor
+`human`. Imports and current-workflow upgrades MUST preserve this non-dispatch contract.
+
 Parsing rules:
 
 - YAML files MUST decode to map/object roots; non-map YAML is an error.

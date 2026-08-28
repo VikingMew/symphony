@@ -104,9 +104,17 @@ defmodule SymphonyElixir.Persistence do
   defdelegate export_workflow(workflow), to: WorkflowStore
 
   defp delete_project!(project) do
-    Repo.update_all(from(run in RunRecord, where: run.project_id == ^project.id), set: [project_id: nil])
-    Repo.update_all(from(issue in IssueRecord, where: issue.project_id == ^project.id), set: [project_id: nil])
-    Repo.update_all(from(task in TaskRecord, where: task.project_id == ^project.id), set: [project_id: nil])
+    Repo.update_all(from(run in RunRecord, where: run.project_id == ^project.id),
+      set: [project_id: nil]
+    )
+
+    Repo.update_all(from(issue in IssueRecord, where: issue.project_id == ^project.id),
+      set: [project_id: nil]
+    )
+
+    Repo.update_all(from(task in TaskRecord, where: task.project_id == ^project.id),
+      set: [project_id: nil]
+    )
 
     case Repo.delete(project) do
       {:ok, deleted_project} -> deleted_project
@@ -138,14 +146,23 @@ defmodule SymphonyElixir.Persistence do
   end
 
   @spec update_run(RunRecord.t(), map()) :: {:ok, RunRecord.t()} | {:error, Ecto.Changeset.t()}
-  def update_run(%RunRecord{} = run, attrs), do: run |> RunRecord.changeset(attrs) |> Repo.update()
+  def update_run(%RunRecord{} = run, attrs),
+    do: run |> RunRecord.changeset(attrs) |> Repo.update()
 
   @spec finish_run(String.t(), String.t(), String.t() | nil, keyword()) ::
           {:ok, RunRecord.t()} | {:error, term()}
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) when is_binary(run_id) and is_binary(status) do
+  def finish_run(run_id, status, failure_reason \\ nil, opts \\ [])
+      when is_binary(run_id) and is_binary(status) do
     with true <- repo_available?() || {:error, :repo_unavailable},
          %RunRecord{} = run <- Repo.get(RunRecord, run_id) || {:error, :not_found} do
-      update_run(run, RunLifecycle.terminal_attrs(status, failure_reason, Keyword.get(opts, :finished_at, DateTime.utc_now())))
+      update_run(
+        run,
+        RunLifecycle.terminal_attrs(
+          status,
+          failure_reason,
+          Keyword.get(opts, :finished_at, DateTime.utc_now())
+        )
+      )
     end
   end
 
@@ -159,12 +176,30 @@ defmodule SymphonyElixir.Persistence do
     read(fn -> Repo.get_by(IssueRecord, identifier: identifier) end)
   end
 
+  @spec list_blocked_issues() :: [IssueRecord.t()] | {:error, read_error()}
+  def list_blocked_issues do
+    read(fn ->
+      Repo.all(from(issue in IssueRecord, where: not is_nil(issue.blocking_decision)))
+    end)
+  end
+
+  @spec update_issue(IssueRecord.t(), map()) ::
+          {:ok, IssueRecord.t()} | {:error, Ecto.Changeset.t()}
+  def update_issue(%IssueRecord{} = issue, attrs),
+    do: issue |> IssueRecord.changeset(attrs) |> Repo.update()
+
   @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do
     limit = Keyword.get(opts, :limit, 100)
 
     read(fn ->
-      Repo.all(from(r in RunRecord, where: r.issue_identifier == ^identifier, order_by: [desc: r.started_at], limit: ^limit))
+      Repo.all(
+        from(r in RunRecord,
+          where: r.issue_identifier == ^identifier,
+          order_by: [desc: r.started_at],
+          limit: ^limit
+        )
+      )
     end)
   end
 
@@ -260,7 +295,8 @@ defmodule SymphonyElixir.Persistence do
 
   defp publish_runtime_snapshot(other), do: other
 
-  defp maybe_filter_event_project(query, project_id) when is_binary(project_id) and project_id != "" do
+  defp maybe_filter_event_project(query, project_id)
+       when is_binary(project_id) and project_id != "" do
     where(query, [e], e.project_id == ^project_id)
   end
 
@@ -273,7 +309,8 @@ defmodule SymphonyElixir.Persistence do
     |> maybe_filter_run_project(Keyword.get(opts, :project_id))
   end
 
-  defp maybe_filter_run_project(query, project_id) when is_binary(project_id) and project_id != "" do
+  defp maybe_filter_run_project(query, project_id)
+       when is_binary(project_id) and project_id != "" do
     where(query, [r], r.project_id == ^project_id)
   end
 
@@ -297,7 +334,11 @@ defmodule SymphonyElixir.Persistence do
   defp maybe_apply_run_cursor(query, cursor) when is_binary(cursor) do
     case decode_run_cursor(cursor) do
       {:ok, inserted_at, id} ->
-        where(query, [r], r.inserted_at < ^inserted_at or (r.inserted_at == ^inserted_at and r.id < ^id))
+        where(
+          query,
+          [r],
+          r.inserted_at < ^inserted_at or (r.inserted_at == ^inserted_at and r.id < ^id)
+        )
 
       :error ->
         query
@@ -310,7 +351,9 @@ defmodule SymphonyElixir.Persistence do
   defp next_run_cursor(nil, _has_more), do: nil
 
   defp next_run_cursor(run, true) do
-    encoded = Jason.encode!(%{"inserted_at" => DateTime.to_iso8601(run.inserted_at), "id" => run.id})
+    encoded =
+      Jason.encode!(%{"inserted_at" => DateTime.to_iso8601(run.inserted_at), "id" => run.id})
+
     Base.url_encode64(encoded, padding: false)
   end
 
@@ -329,7 +372,8 @@ defmodule SymphonyElixir.Persistence do
   defp order_events(query, "asc"), do: order_by(query, [e], asc: e.occurred_at)
   defp order_events(query, _order), do: order_by(query, [e], desc: e.occurred_at)
 
-  defp maybe_filter_event_issue(query, issue_identifier) when is_binary(issue_identifier) and issue_identifier != "" do
+  defp maybe_filter_event_issue(query, issue_identifier)
+       when is_binary(issue_identifier) and issue_identifier != "" do
     where(query, [e], e.issue_identifier == ^issue_identifier)
   end
 
@@ -341,7 +385,8 @@ defmodule SymphonyElixir.Persistence do
 
   defp maybe_filter_event_run(query, _run_id), do: query
 
-  defp maybe_filter_event_type(query, event_type) when is_binary(event_type) and event_type != "" do
+  defp maybe_filter_event_type(query, event_type)
+       when is_binary(event_type) and event_type != "" do
     where(query, [e], e.event_type == ^event_type)
   end
 
@@ -412,5 +457,12 @@ defmodule SymphonyElixir.Persistence do
 
   @spec record_worker_task_event(String.t(), String.t(), String.t(), String.t(), map()) ::
           {:ok, EventRecord.t()} | {:error, term()}
-  defdelegate record_worker_task_event(worker_id, session_id, task_id, event_type, payload \\ %{}), to: WorkerQueue
+  defdelegate record_worker_task_event(
+                worker_id,
+                session_id,
+                task_id,
+                event_type,
+                payload \\ %{}
+              ),
+              to: WorkerQueue
 end

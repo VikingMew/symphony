@@ -42,10 +42,13 @@ The default workflow is intentionally gated by human review states:
 ```text
 Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
   -> Ready to Merge -> Done
+              \-> Blocked --human recovery--> Ready / Needs Refinement Review / Canceled
 ```
 
 `Refining`, `Ready`, and `In Progress` are agent-work states. `Needs Refinement Review` and
-`Ready to Merge` are human-review states and are never dispatched. Implementation completion is
+`Ready to Merge` and `Blocked` are human-review states and are never dispatched. Symphony persists
+a blocking decision before commenting and moving an issue to `Blocked`, so failed Linear writes or
+a service restart cannot dispatch another Codex run. Implementation completion is
 explicit: after Codex validates, commits, and pushes the exact Linear branch, Symphony finds or
 opens the GitHub PR and only then moves the issue to `Ready to Merge`. A human merges on GitHub;
 Linear's GitHub automation owns the final move to `Done`.

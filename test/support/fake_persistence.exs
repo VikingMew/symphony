@@ -48,6 +48,39 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :issues, issues))
   end
 
+  def get_issue_by_identifier(identifier) do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier))
+    end)
+  end
+
+  def update_issue(issue, attrs) do
+    ensure_started()
+    updated = Map.merge(issue, attrs)
+
+    Agent.update(@name, fn state ->
+      Map.update!(state, :issues, fn issues ->
+        Enum.map(issues, fn candidate ->
+          if Map.get(candidate, :identifier) == Map.get(issue, :identifier),
+            do: updated,
+            else: candidate
+        end)
+      end)
+    end)
+
+    {:ok, updated}
+  end
+
+  def list_blocked_issues do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      Enum.filter(state.issues, &is_map(Map.get(&1, :blocking_decision)))
+    end)
+  end
+
   def put_workflow(workflow) do
     ensure_started()
 
@@ -127,7 +160,9 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def current_workflow(%{id: project_id}) do
     ensure_started()
 
-    Agent.get(@name, fn state -> Enum.find(state.workflows, &(Map.get(&1, :project_id) == project_id)) end)
+    Agent.get(@name, fn state ->
+      Enum.find(state.workflows, &(Map.get(&1, :project_id) == project_id))
+    end)
   end
 
   def current_workflow(_project) do
@@ -149,7 +184,10 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
           |> atomize_project_attrs()
           |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
 
-        {{:ok, project}, state |> record_call({:create_project, attrs}) |> Map.update!(:projects, &(&1 ++ [project]))}
+        {{:ok, project},
+         state
+         |> record_call({:create_project, attrs})
+         |> Map.update!(:projects, &(&1 ++ [project]))}
       end)
 
     maybe_publish_runtime()
@@ -395,7 +433,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp fake_run_cursor(nil, _has_more), do: nil
 
   defp fake_run_cursor(run, true) do
-    encoded = Jason.encode!(%{"inserted_at" => DateTime.to_iso8601(run_inserted_at(run)), "id" => Map.get(run, :id)})
+    encoded =
+      Jason.encode!(%{
+        "inserted_at" => DateTime.to_iso8601(run_inserted_at(run)),
+        "id" => Map.get(run, :id)
+      })
+
     Base.url_encode64(encoded, padding: false)
   end
 
@@ -431,14 +474,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end
   end
 
-  def get_issue_by_identifier(identifier) do
-    ensure_started()
-    Agent.get(@name, fn state -> Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) end)
-  end
-
   def list_runs_for_issue(identifier, _opts \\ []) do
     ensure_started()
-    Agent.get(@name, fn state -> Enum.filter(state.runs, &(Map.get(&1, :issue_identifier) == identifier)) end)
+
+    Agent.get(@name, fn state ->
+      Enum.filter(state.runs, &(Map.get(&1, :issue_identifier) == identifier))
+    end)
   end
 
   def get_user(username) do
@@ -588,7 +629,15 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def record_worker_task_event(worker_id, session_id, task_id, event_type, payload) do
     ensure_started()
     event = %{id: "fake-event-#{System.unique_integer([:positive])}"}
-    Agent.update(@name, &record_call(&1, {:record_worker_task_event, worker_id, session_id, task_id, event_type, payload}))
+
+    Agent.update(
+      @name,
+      &record_call(
+        &1,
+        {:record_worker_task_event, worker_id, session_id, task_id, event_type, payload}
+      )
+    )
+
     {:ok, event}
   end
 
