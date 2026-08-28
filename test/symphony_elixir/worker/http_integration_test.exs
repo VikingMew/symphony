@@ -3,6 +3,32 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
   alias SymphonyElixir.Worker.{Client, Config, Executor}
 
+  defmodule WorkerApiSurface do
+    use Plug.Router
+
+    alias SymphonyElixirWeb.WorkerApiController
+
+    plug(Plug.Parsers, parsers: [:json], json_decoder: Jason)
+    plug(:match)
+    plug(:dispatch)
+
+    post "/api/worker/v1/register" do
+      WorkerApiController.register(conn, conn.body_params)
+    end
+
+    post "/api/worker/v1/tasks/claim" do
+      WorkerApiController.claim(conn, conn.body_params)
+    end
+
+    post "/api/worker/v1/heartbeat" do
+      WorkerApiController.heartbeat(conn, conn.body_params)
+    end
+
+    post "/api/worker/v1/tasks/:task_id/events" do
+      WorkerApiController.task_event(conn, Map.put(conn.body_params, "task_id", task_id))
+    end
+  end
+
   defmodule Persistence do
     use Agent
 
@@ -117,7 +143,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       log_root: Path.join(root, "logs"),
       image_reference: "symphony-worker:test",
       source_revision: "worker-revision",
-      request_options: [plug: SymphonyElixirWeb.Endpoint]
+      request_options: [plug: WorkerApiSurface]
     }
   end
 
