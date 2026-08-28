@@ -51,8 +51,8 @@ worker-image-check: worker-image
 	test "$$(docker run --rm --entrypoint id $(WORKER_IMAGE) -u)" != "0"
 	docker run --rm --entrypoint bash $(WORKER_IMAGE) -lc \
 		'command -v codex && command -v git && command -v make && command -v cc && command -v mix && command -v elixir'
-	docker run --rm --entrypoint bash --volume "$(CURDIR):/source:ro" $(WORKER_IMAGE) -lc \
-		'cp -a /source/. /worker/workspaces/symphony && cd /worker/workspaces/symphony && make all'
+	git archive HEAD | docker run --rm --interactive --entrypoint bash $(WORKER_IMAGE) -lc \
+		'mkdir /worker/workspaces/symphony && tar -x -C /worker/workspaces/symphony && cd /worker/workspaces/symphony && make all'
 
 ci:
 	$(MAKE) setup
