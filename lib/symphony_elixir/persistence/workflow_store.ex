@@ -7,10 +7,9 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.{Repo, Workflow}
   alias SymphonyElixir.Config.Schema
-
   alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
+  alias SymphonyElixir.{Repo, Workflow}
 
   @default_project_slug "default"
 
