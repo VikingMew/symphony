@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   alias Ecto.Adapters.SQL
   alias SymphonyElixir.{Repo, Workflow}
+  alias SymphonyElixir.Config.Schema
 
   alias SymphonyElixir.Persistence.{Project, WorkflowVersion}
 
@@ -76,7 +77,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowVersion.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import") when is_binary(raw_workflow_md) do
-    with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md) do
+    with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
+         {:ok, _settings} <- Schema.parse(loaded.config) do
       create_workflow_version(project, %{
         raw_workflow_md: raw_workflow_md,
         yaml_config: loaded.config,
@@ -140,14 +142,14 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   @spec activate_workflow_version(WorkflowVersion.t()) :: {:ok, WorkflowVersion.t()} | {:error, term()}
   def activate_workflow_version(%WorkflowVersion{source: "test"} = version) do
     if test_workflow_source_allowed?() do
-      activate_workflow_version!(version)
+      validate_and_activate_workflow_version(version)
     else
       {:error, :test_workflow_source_not_allowed}
     end
   end
 
   def activate_workflow_version(%WorkflowVersion{} = version) do
-    activate_workflow_version!(version)
+    validate_and_activate_workflow_version(version)
   end
 
   @spec list_workflow_versions() :: [WorkflowVersion.t()]
@@ -307,6 +309,12 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       |> WorkflowVersion.changeset(%{active: true})
       |> Repo.update!()
     end)
+  end
+
+  defp validate_and_activate_workflow_version(%WorkflowVersion{} = version) do
+    with {:ok, _settings} <- Schema.parse(version.yaml_config || %{}) do
+      activate_workflow_version!(version)
+    end
   end
 
   defp create_workflow_version(%Project{} = project, attrs) do

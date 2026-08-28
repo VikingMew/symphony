@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
 
   import ExUnit.CaptureLog
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Persistence
   alias SymphonyElixir.Persistence.Project
   alias SymphonyElixir.Persistence.WorkflowStore
@@ -80,6 +81,24 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
 
     assert WorkflowStore.activate_workflow_version(%WorkflowVersion{source: "test"}) ==
              {:error, :test_workflow_source_not_allowed}
+  end
+
+  test "historical workflow activation rejects the retired implementation lifecycle" do
+    Application.put_env(:symphony_elixir, :allow_test_workflow_source, true)
+
+    config =
+      Schema.defaults()
+      |> put_in(["workflow", "human_review_states"], ["Needs Refinement Review", "In Review"])
+      |> put_in(
+        ["profiles", "implementation", "allowed_updates", "target_states"],
+        ["In Progress", "In Review"]
+      )
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             WorkflowStore.activate_workflow_version(%WorkflowVersion{source: "test", yaml_config: config})
+
+    assert message =~ "Ready to Merge"
+    assert message =~ "retired state"
   end
 
   test "public persistence context delegates workflow store compatibility functions" do

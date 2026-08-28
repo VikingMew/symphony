@@ -61,6 +61,74 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
     assert MapSet.member?(states, Schema.normalize_issue_state("Done"))
   end
 
+  test "rejects the retired implementation review lifecycle" do
+    workflow = %{
+      "states" => %{
+        "In Progress" => %{"profile" => "implementation"},
+        "Ready to Merge" => %{"profile" => "implementation"}
+      },
+      "human_review_states" => ["Needs Refinement Review", "In Review"],
+      "allowed_transitions" => [
+        %{
+          "from" => "In Progress",
+          "to" => "In Review",
+          "actor" => "codex",
+          "profile" => "implementation"
+        },
+        %{"from" => "In Review", "to" => "In Progress", "actor" => "human"}
+      ]
+    }
+
+    profiles = %{
+      "implementation" => %{
+        "allowed_updates" => %{"target_states" => ["In Review"]}
+      }
+    }
+
+    errors = WorkflowContract.workflow_errors(workflow, profiles, tracker())
+
+    assert "workflow.human_review_states must include \"Ready to Merge\"" in errors
+    assert "workflow.human_review_states must not include retired state \"In Review\"" in errors
+    assert "workflow.states must not dispatch human-review state \"Ready to Merge\"" in errors
+    assert "profiles.implementation.allowed_updates.target_states must include \"In Progress\"" in
+             errors
+
+    assert "profiles.implementation.allowed_updates.target_states must include \"Ready to Merge\"" in
+             errors
+
+    assert "profiles.implementation.allowed_updates.target_states must not include retired state \"In Review\"" in
+             errors
+
+    assert "workflow.allowed_transitions must include In Progress -> Ready to Merge actor=codex profile=implementation" in
+             errors
+
+    assert "workflow.allowed_transitions must include Ready to Merge -> In Progress actor=human" in errors
+  end
+
+  test "accepts the PR-first implementation lifecycle" do
+    workflow = %{
+      "states" => %{"In Progress" => %{"profile" => "implementation"}},
+      "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
+      "allowed_transitions" => [
+        %{
+          "from" => "In Progress",
+          "to" => "Ready to Merge",
+          "actor" => "codex",
+          "profile" => "implementation"
+        },
+        %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
+      ]
+    }
+
+    profiles = %{
+      "implementation" => %{
+        "allowed_updates" => %{"target_states" => ["In Progress", "Ready to Merge"]}
+      }
+    }
+
+    assert WorkflowContract.workflow_errors(workflow, profiles, tracker()) == []
+  end
+
   defp tracker(overrides \\ []) do
     struct!(
       Schema.Tracker,
