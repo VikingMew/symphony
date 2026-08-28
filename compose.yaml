@@ -31,6 +31,9 @@ x-symphony-environment: &symphony-environment
   all_proxy: ${all_proxy:-}
   no_proxy: ${no_proxy:-postgres,localhost,127.0.0.1}
 
+x-symphony-execution-worker-image: &symphony-execution-worker-image ${SYMPHONY_EXECUTION_WORKER_IMAGE:-symphony-execution-worker:8e5f7fead76fe82fab6c72ac4e637cea8a1e23b2}
+x-symphony-execution-worker-source: &symphony-execution-worker-source ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-8e5f7fead76fe82fab6c72ac4e637cea8a1e23b2}
+
 services:
   postgres:
     image: postgres:17-bookworm
@@ -115,16 +118,16 @@ services:
       context: .
       target: execution-worker
       args:
-        SYMPHONY_WORKER_IMAGE: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
-        SYMPHONY_WORKER_SOURCE_REVISION: ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision}
-    image: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
+        SYMPHONY_WORKER_IMAGE: *symphony-execution-worker-image
+        SYMPHONY_WORKER_SOURCE_REVISION: *symphony-execution-worker-source
+    image: *symphony-execution-worker-image
     environment:
       SYMPHONY_ROLE: worker
       SYMPHONY_PANEL_URL: http://symphony:4000
       SYMPHONY_WORKER_TOKEN: ${SYMPHONY_WORKER_REGISTRATION_TOKEN:-}
       SYMPHONY_WORKER_NAME: ${SYMPHONY_EXECUTION_WORKER_NAME:-compose-execution-worker}
-      SYMPHONY_WORKER_IMAGE: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest}
-      SYMPHONY_WORKER_SOURCE_REVISION: ${SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision}
+      SYMPHONY_WORKER_IMAGE: *symphony-execution-worker-image
+      SYMPHONY_WORKER_SOURCE_REVISION: *symphony-execution-worker-source
       SYMPHONY_WORKER_WORKSPACE_ROOT: /worker/workspaces
       SYMPHONY_WORKER_CACHE_ROOT: /worker/cache
       SYMPHONY_WORKER_LOG_ROOT: /worker/logs

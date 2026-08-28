@@ -17,8 +17,9 @@ only when `SYMPHONY_EXECUTION_MODE=worker` is applied to a newly started Panel.
 
 ## Preflight and credentials
 
-Copy `.env.example` to the ignored `.env`. Set an immutable image digest or an exact tag containing
-the full source revision, and set the matching full `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
+Copy `.env.example` to the ignored `.env`. Compose defaults to the checked-in exact image tag and
+source revision. For a release, set an immutable image digest or an exact tag containing the full
+source revision, and set the matching full `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
 Give the worker only these credentials: the Panel registration token, a least-scope Codex token,
 a repository push/PR token, and a restricted-Linear gateway token. Never set `DATABASE_URL`,
 `POSTGRES_*`, or `LINEAR_API_KEY` on `execution-worker`.

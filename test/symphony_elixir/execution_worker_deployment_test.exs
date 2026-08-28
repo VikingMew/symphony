@@ -30,8 +30,8 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     compose = File.read!(@compose)
     env = File.read!(Path.expand("../../.env.example", __DIR__))
 
-    assert compose =~ "SYMPHONY_EXECUTION_WORKER_IMAGE:?set an exact execution worker image tag or digest"
-    assert compose =~ "SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:?set the full worker source revision"
+    assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE:-\S+:[0-9a-f]{40}/
+    assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-[0-9a-f]{40}/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE=\S+:[0-9a-f]{40}\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
   end
