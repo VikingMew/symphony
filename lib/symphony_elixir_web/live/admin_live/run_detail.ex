@@ -23,13 +23,37 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
             <tr><th>Status</th><td><span class={ObservabilityPresenter.status_class(@run_detail.run.status)}><%= @run_detail.run.status %></span></td></tr>
             <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
             <tr><th>Worker</th><td><%= Map.get(@run_detail.run, :worker_host) || "local" %></td></tr>
-            <tr><th>Workspace</th><td class="mono"><%= Map.get(@run_detail.run, :workspace_path) || "n/a" %></td></tr>
+            <tr :if={Map.get(@run_detail.run, :execution_mode) != "worker"}><th>Workspace</th><td class="mono"><%= Map.get(@run_detail.run, :workspace_path) || "n/a" %></td></tr>
             <tr><th>Started</th><td class="mono"><%= ObservabilityPresenter.fmt_dt(@run_detail.run.started_at) %></td></tr>
             <tr><th>Finished</th><td class="mono"><%= ObservabilityPresenter.fmt_dt(@run_detail.run.finished_at) %></td></tr>
             <tr><th>Duration</th><td><%= ObservabilityPresenter.fmt_duration(@run_detail.run.started_at, @run_detail.run.finished_at) %></td></tr>
             <tr><th>Failure</th><td><%= Map.get(@run_detail.run, :failure_reason) || "n/a" %></td></tr>
           </tbody>
         </table>
+
+        <%= if summary = Map.get(@run_detail.run, :execution_summary) do %>
+          <h2 class="section-title">Worker Execution Evidence</h2>
+          <table class="data-table">
+            <tbody>
+              <tr><th>Phase / outcome</th><td><%= summary["phase"] %> / <%= summary["outcome"] %></td></tr>
+              <tr><th>Validation</th><td><%= summary["validation_status"] %></td></tr>
+              <tr><th>Occurred</th><td class="mono"><%= summary["occurred_at"] %></td></tr>
+              <tr><th>Duration</th><td><%= duration_ms(summary["duration_ms"]) %></td></tr>
+              <tr><th>Source revision</th><td class="mono"><%= summary["source_revision"] %></td></tr>
+              <tr><th>Runtime</th><td class="mono"><%= runtime_identity(summary["runtime"]) %></td></tr>
+              <tr><th>Handoff</th><td class="mono"><%= handoff_refs(summary["handoff"]) %></td></tr>
+            </tbody>
+          </table>
+          <table :if={summary["gates"] != []} class="data-table">
+            <thead><tr><th>Gate</th><th>Status</th><th>Exit</th><th>Duration</th><th>Timeout</th><th>Detail</th></tr></thead>
+            <tbody>
+              <tr :for={gate <- summary["gates"]}>
+                <td><%= gate["name"] %></td><td><%= gate["status"] %></td><td><%= gate["exit_code"] || "n/a" %></td>
+                <td><%= duration_ms(gate["duration_ms"]) %></td><td><%= duration_ms(gate["timeout_ms"]) %></td><td><%= gate["failure_detail"] || "n/a" %></td>
+              </tr>
+            </tbody>
+          </table>
+        <% end %>
 
         <%= if @run_detail.history_error do %>
           <h2 class="section-title">Agent Summary</h2>
@@ -147,6 +171,33 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
 
   defp list_summary([]), do: "n/a"
   defp list_summary(values) when is_list(values), do: Enum.join(values, " | ")
+
+  defp duration_ms(value) when is_integer(value), do: "#{value} ms"
+  defp duration_ms(_value), do: "n/a"
+  defp runtime_identity(nil), do: "n/a"
+  defp runtime_identity(runtime) do
+    [runtime["image_digest"] || runtime["image_tag"], runtime["worker_source_revision"]]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" | ")
+  end
+  defp handoff_refs(nil), do: "n/a"
+
+  defp handoff_refs(handoff) do
+    [
+      handoff["branch"],
+      handoff["commit"],
+      handoff["pr_identifier"],
+      handoff["pr_url"],
+      handoff["linear_issue"],
+      handoff["linear_state"]
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" | ")
+    |> case do
+      "" -> "n/a"
+      refs -> refs
+    end
+  end
 
   defp persistence, do: PersistenceProvider.module()
 end

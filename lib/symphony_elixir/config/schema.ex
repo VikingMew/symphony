@@ -135,6 +135,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:worktree_cleanup, :boolean, default: true)
       field(:setup_commands, {:array, :string}, default: [])
       field(:cleanup_commands, {:array, :string}, default: [])
+      field(:required_gates, {:array, :map}, default: [])
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -150,7 +151,8 @@ defmodule SymphonyElixir.Config.Schema do
           :worktree_fetch,
           :worktree_cleanup,
           :setup_commands,
-          :cleanup_commands
+          :cleanup_commands,
+          :required_gates
         ],
         empty_values: []
       )
@@ -160,6 +162,7 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_inclusion(:source_strategy, ["clone", "worktree"])
       |> validate_command_list(:setup_commands)
       |> validate_command_list(:cleanup_commands)
+      |> validate_required_gates()
     end
 
     defp validate_optional_non_blank(changeset, field) do
@@ -179,6 +182,23 @@ defmodule SymphonyElixir.Config.Schema do
     end
 
     defp command_error(field, _command), do: [{field, "commands must be strings"}]
+
+    defp validate_required_gates(changeset) do
+      validate_change(changeset, :required_gates, fn :required_gates, gates ->
+        gates
+        |> Enum.with_index()
+        |> Enum.flat_map(fn {gate, index} ->
+          name = is_map(gate) && (Map.get(gate, "name") || Map.get(gate, :name))
+          command = is_map(gate) && (Map.get(gate, "command") || Map.get(gate, :command))
+          timeout = is_map(gate) && (Map.get(gate, "timeout_ms") || Map.get(gate, :timeout_ms))
+
+          if is_binary(name) and String.trim(name) != "" and is_binary(command) and String.trim(command) != "" and
+               is_integer(timeout) and timeout > 0,
+             do: [],
+             else: [required_gates: "gate #{index} requires name, command, and positive timeout_ms"]
+        end)
+      end)
+    end
   end
 
   defmodule Worker do
