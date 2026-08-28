@@ -106,7 +106,7 @@ worker
 
 Panel 负责：
 
-- 保存项目、tracker、workflow version 和运行配置。
+- 保存项目、tracker、current workflow 和运行配置。
 - 根据 tracker 状态创建 run/task。
 - 保存 worker identity、session、credential metadata。
 - 验证 worker token 和协议版本。
@@ -136,7 +136,7 @@ Rust worker 负责：
 - 持续回传状态事件。
 - 在 lease 有效期内提交完成、失败或取消结果。
 
-Rust worker 不拥有 workflow 配置来源。workflow 由 Panel 管理和版本化，worker 只消费任务 payload 或 workflow version 引用。
+Rust worker 不拥有 workflow 配置来源。current workflow 由 Panel 管理；worker 只消费 Panel 在安全执行边界生成的任务 payload，不选择或拉取历史配置。
 
 ## 7. 握手机制
 
@@ -267,7 +267,6 @@ POST /api/worker/v1/tasks/claim
   "lease_expires_at": "2026-05-01T00:01:00Z",
   "project_id": "prj_...",
   "run_id": "run_...",
-  "workflow_version_id": "wfv_...",
   "issue": {
     "identifier": "ABC-123",
     "title": "Fix flaky retry handling"
@@ -415,7 +414,6 @@ tasks
 ├── id
 ├── project_id
 ├── run_id
-├── workflow_version_id
 ├── status
 ├── priority
 ├── required_capabilities_json
@@ -443,7 +441,7 @@ task_leases
 第一版调度保持保守：
 
 - project 必须 enabled。
-- workflow version 必须存在且可执行。
+- 项目的 current workflow 必须存在且可执行。
 - run 不在 terminal state。
 - retry/backoff 未到期的 task 不分配。
 - 按 worker max concurrency 限制分配。
@@ -497,7 +495,7 @@ Panel UI 需要增加：
 
 - 第一版 worker API 使用纯 HTTP polling，还是 heartbeat 使用 long-polling？
 - worker token 是全局 registration token，还是先做 per-worker token？
-- task payload 是否直接包含完整 prompt，还是只包含 workflow version id 并由 worker 单独拉取？
+- task payload 直接包含 Panel 解析出的执行输入；worker 不拉取或选择 workflow。
 - 日志内容直接入库、写文件后只入库 metadata，还是两者混合？
 - Rust worker 仓库和 Panel 仓库之间如何同步 API fixture？
 - in-process execution 兼容路径保留多久？

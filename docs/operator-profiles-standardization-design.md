@@ -19,7 +19,7 @@ Symphony 的 workflow 里有两类"巡检型"operator profile:**nap**(工程审�
 | 来源 | nap | day_dreaming | 问题 |
 | --- | --- | --- | --- |
 | `lib/symphony_elixir/config/schema.ex` 默认值 | ✅(旧版 prompt) | ✅ | nap 默认 prompt 是旧版,未包含 2026-08-09 确立的"冗余错误处理/门控、不合理依赖、降复杂度 + Linus & Carmack 逐条对照"标准 |
-| DB `workflow_versions.yaml_config`(每 project 一份) | ✅(Koroni 已改新版) | ✅ | 与代码默认值可能不一致;新标准只进了 Koroni,Default 及其他 project 仍是旧版 |
+| DB `workflows.yaml_config`（每 project 一份） | ✅ | ✅ | 与代码默认值可能不一致；标准需通过 Settings 保存到各 project 的 current workflow |
 | `profiles.yml` 包文件 | ❌ **缺失** | ❌ **缺失** | import/export 包不完整,巡检 profile 无法随包迁移 |
 
 漂移的后果:同一个 profile 在不同 project 里行为不同;审计标准升级要改三处且易漏;包文件迁移丢失巡检 profile 定义。

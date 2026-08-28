@@ -108,10 +108,9 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     def default_project, do: {:error, :not_found}
 
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate export_workflow(version), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate list_workflow_versions(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_runs_page(opts), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_events(opts), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_tasks(opts), to: SymphonyElixir.TestSupport.FakePersistence
@@ -329,11 +328,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "Runtime source:"
     assert html =~ "setup_required"
-    assert html =~ "No active workflow is configured yet."
+    assert html =~ "No workflow is configured yet."
     assert html =~ "Workflow configuration checklist"
     assert html =~ "Workflow"
-    assert html =~ "Active workflow version"
-    assert html =~ "Save the draft below to create the first active workflow version."
+    assert html =~ "Current workflow"
     refute html =~ "Project configuration checklist"
     refute html =~ "Runtime configuration checklist"
     refute html =~ "Validation failed"
@@ -524,7 +522,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _view, workflow_html} = live(build_conn(), "/settings/workflow")
 
     assert workflow_html =~ "Workflow configuration checklist"
-    assert workflow_html =~ "Active workflow version"
+    assert workflow_html =~ "Current workflow"
     refute workflow_html =~ "Project configuration checklist"
     refute workflow_html =~ "Runtime configuration checklist"
     refute workflow_html =~ "Linear project slug"
@@ -597,7 +595,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "Runtime workflow refreshed"
     assert html =~ "workflow-save-toast-success"
     assert html =~ "Workflow settings saved"
-    assert html =~ "Version 1 is active"
+    assert html =~ "Current workflow updated"
 
     assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
              Enum.find(FakePersistence.calls(), fn
@@ -695,7 +693,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     {:ok, _view, workflow_html} = live(build_conn(), "/settings/workflow")
     assert workflow_html =~ "Draft Configuration"
-    assert workflow_html =~ "Version History"
+    refute workflow_html =~ "Version History"
     refute workflow_html =~ "Add Project"
     refute workflow_html =~ "Profile Configuration"
     refute workflow_html =~ "Execution mode:"
@@ -703,7 +701,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
     assert agents_html =~ "Profile Configuration"
     assert agents_html =~ "Base Prompt"
-    assert agents_html =~ "Version History"
+    refute agents_html =~ "Version History"
     refute agents_html =~ "Draft Configuration"
     refute agents_html =~ "Execution mode:"
 
@@ -778,8 +776,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute Process.whereis(SymphonyElixir.Repo)
 
     raw = workflow_raw!(workflow_form_params())
-    active = workflow_version("active-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
-    FakePersistence.put_workflow_versions([active], active)
+    active = workflow_record("current-workflow", "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow(active)
 
     start_test_endpoint()
 
@@ -845,7 +843,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
     assert workflow_html =~ ~s(phx-disable-with="Saving...")
     assert workflow_html =~ "novalidate"
-    assert workflow_html =~ "Save workflow version"
+    assert workflow_html =~ "Save workflow"
     refute workflow_html =~ ~s(disabled="disabled")
 
     workflow_saved_html =
@@ -882,7 +880,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute agent_saved_html =~ "Validation failed"
 
     {:ok, _runtime_view, runtime_html} = live(build_conn(), "/settings/runtime")
-    refute runtime_html =~ "Save workflow version"
+    refute runtime_html =~ "Save workflow"
     refute runtime_html =~ "Save agent settings"
     refute runtime_html =~ "Save project"
   end
@@ -891,8 +889,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute Process.whereis(SymphonyElixir.Repo)
 
     raw = workflow_raw!(workflow_form_params())
-    active = workflow_version("active-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
-    FakePersistence.put_workflow_versions([active], active)
+    active = workflow_record("current-workflow", "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow(active)
 
     start_test_endpoint()
 
@@ -972,8 +970,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       })
 
     raw = workflow_raw!(invalid_params)
-    active = workflow_version("active-invalid-workflow-version", 1, "web_workflow_settings", raw, DateTime.utc_now())
-    FakePersistence.put_workflow_versions([active], active)
+    active = workflow_record("current-invalid-workflow", "web_workflow_settings", raw, DateTime.utc_now())
+    FakePersistence.put_workflow(active)
 
     start_test_endpoint()
 
@@ -1001,92 +999,17 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
-  test "settings pages show separate version histories" do
+  test "settings pages do not expose workflow history or restore controls" do
     refute Process.whereis(SymphonyElixir.Repo)
-
-    now = DateTime.utc_now()
-
-    workflow_version = workflow_version("workflow-version", 3, "web_workflow_settings", workflow_import_raw("git@github.com:org/workflow.git"), now)
-    manual_version = workflow_version("manual-version", 2, "manual_import", workflow_import_raw("git@github.com:org/manual.git"), now)
-    agent_version = workflow_version("agent-version", 4, "web_agent_settings", agent_history_raw("git@github.com:org/agent.git"), now)
-
-    FakePersistence.put_workflow_versions([agent_version, workflow_version, manual_version], workflow_version)
     start_test_endpoint()
 
-    {:ok, _view, workflow_html} = live(build_conn(), "/settings/workflow")
-    assert workflow_html =~ "web_workflow_settings"
-    refute workflow_html =~ "manual_import"
-    assert workflow_html =~ "Restore workflow settings"
-    assert workflow_html =~ ~s(phx-disable-with="Restoring...")
-    refute workflow_html =~ "web_agent_settings"
-    refute workflow_html =~ "Restore agent settings"
-
-    {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
-    assert agents_html =~ "web_agent_settings"
-    assert agents_html =~ "Restore agent settings"
-    assert agents_html =~ ~s(phx-disable-with="Restoring...")
-    refute agents_html =~ "web_workflow_settings"
-    refute agents_html =~ "manual_import"
-    refute agents_html =~ "Restore workflow settings"
-  end
-
-  test "agent settings history restore only restores prompt and profiles" do
-    refute Process.whereis(SymphonyElixir.Repo)
-
-    now = DateTime.utc_now()
-    current = workflow_version("current-version", 10, "web_workflow_settings", agent_history_raw("git@github.com:org/current.git"), now)
-    history = workflow_version("agent-history", 9, "web_agent_settings", agent_history_raw("git@github.com:org/agent-history.git"), now)
-
-    FakePersistence.put_workflow_versions([current, history], current)
-    start_test_endpoint()
-
-    {:ok, view, html} = live(build_conn(), "/settings/agents")
-    assert html =~ "Restore agent settings"
-
-    html = render_click(view, "restore_settings_version", %{"id" => "agent-history"})
-    assert html =~ "Agent settings restored"
-
-    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_agent_settings"} =
-             Enum.find(FakePersistence.calls(), fn
-               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_agent_settings"} -> true
-               _ -> false
-             end)
-
-    assert raw =~ "git@github.com:org/repo.git"
-    refute raw =~ "git@github.com:org/current.git"
-    refute raw =~ "git@github.com:org/agent-history.git"
-    assert raw =~ "Agent history prompt."
-    assert raw =~ "History implementation prompt."
-  end
-
-  test "workflow settings history restore keeps current prompt and profiles" do
-    refute Process.whereis(SymphonyElixir.Repo)
-
-    now = DateTime.utc_now()
-    current = workflow_version("current-version", 10, "web_agent_settings", agent_history_raw("git@github.com:org/current.git"), now)
-    history = workflow_version("workflow-history", 9, "web_workflow_settings", workflow_import_raw("git@github.com:org/workflow-history.git"), now)
-
-    FakePersistence.put_workflow_versions([current, history], current)
-    start_test_endpoint()
-
-    {:ok, view, html} = live(build_conn(), "/settings/workflow")
-    assert html =~ "Restore workflow settings"
-
-    html = render_click(view, "restore_settings_version", %{"id" => "workflow-history"})
-    assert html =~ "Workflow settings restored"
-
-    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
-             Enum.find(FakePersistence.calls(), fn
-               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
-               _ -> false
-             end)
-
-    assert raw =~ "git@github.com:org/repo.git"
-    refute raw =~ "git@github.com:org/workflow-history.git"
-    assert raw =~ "Agent history prompt."
-    assert raw =~ "History implementation prompt."
-    refute raw =~ "Imported workflow prompt."
-    refute raw =~ "Implement the task."
+    for path <- ["/settings/workflow", "/settings/agents"] do
+      {:ok, _view, html} = live(build_conn(), path)
+      refute html =~ "Version History"
+      refute html =~ "Restore workflow settings"
+      refute html =~ "Restore agent settings"
+      refute html =~ "restore_settings_version"
+    end
   end
 
   test "old workflow and agent settings routes are removed" do
@@ -1426,36 +1349,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
-  test "workflow page restores parseable historical workflow version with semantic errors" do
-    refute Process.whereis(SymphonyElixir.Repo)
-
-    invalid = %{
-      id: "invalid-version",
-      project_id: "fake-project-id",
-      version: 2,
-      source: "web_workflow_settings",
-      active: false,
-      inserted_at: DateTime.utc_now(),
-      raw_workflow_md: "---\nworkflow:\n  allowed_transitions:\n    - {from: Ready, to: Done, actor: robot}\n---\nPrompt\n"
-    }
-
-    FakePersistence.put_workflow_versions([invalid])
-    start_test_endpoint()
-
-    {:ok, view, _html} = live(build_conn(), "/settings/workflow")
-    html = render_click(view, "restore_settings_version", %{"id" => "invalid-version"})
-
-    assert html =~ "workflow-save-toast-success"
-    assert html =~ "Workflow settings restored"
-    assert html =~ "Configuration check failed"
-    assert html =~ "allowed_transitions.actor"
-
-    assert Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
-             _ -> false
-           end)
-  end
-
   test "workflow settings page switches project via query parameter" do
     refute Process.whereis(SymphonyElixir.Repo)
 
@@ -1560,7 +1453,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
              _ -> false
            end)
 
-    a_version = FakePersistence.active_workflow_version(project_a)
+    a_version = FakePersistence.current_workflow(project_a)
     assert a_version.raw_workflow_md =~ "git@github.com:org/repo-a.git"
     refute a_version.raw_workflow_md =~ "git@github.com:org/repo-b.git"
   end
@@ -1677,13 +1570,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     end
   end
 
-  defp workflow_version(id, version, source, raw, inserted_at) do
+  defp workflow_record(id, source, raw, inserted_at) do
     %{
       id: id,
       project_id: "fake-project-id",
-      version: version,
       source: source,
-      active: false,
       inserted_at: inserted_at,
       raw_workflow_md: raw
     }
@@ -1760,13 +1651,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     Imported workflow prompt.
     """
-  end
-
-  defp agent_history_raw(repository_url) do
-    repository_url
-    |> workflow_import_raw()
-    |> String.replace("Imported workflow prompt.", "Agent history prompt.")
-    |> String.replace("Implement the task.", "History implementation prompt.")
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

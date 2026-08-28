@@ -12,7 +12,6 @@ defmodule SymphonyElixir.Persistence.TaskRecord do
   schema "tasks" do
     belongs_to(:project, SymphonyElixir.Persistence.Project)
     belongs_to(:run, SymphonyElixir.Persistence.RunRecord)
-    belongs_to(:workflow_version, SymphonyElixir.Persistence.WorkflowVersion)
     field(:issue_identifier, :string)
     field(:status, :string, default: "queued")
     field(:priority, :integer, default: 0)
@@ -31,7 +30,6 @@ defmodule SymphonyElixir.Persistence.TaskRecord do
     |> cast(attrs, [
       :project_id,
       :run_id,
-      :workflow_version_id,
       :issue_identifier,
       :status,
       :priority,

@@ -10,8 +10,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
     only: [settings_check_messages: 1, settings_check_summary: 1]
 
   alias SymphonyElixir.{Config, WorkflowForm}
-  alias SymphonyElixirWeb.Admin.{ObservabilityPresenter, ProjectSettings, SettingsCheck}
-  alias SymphonyElixirWeb.AdminLive.WorkflowState
+  alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -23,11 +22,8 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
         <span class="status-badge status-info"><%= @runtime_workflow_source.type %></span>
         <span class="muted mono"><%= @runtime_workflow_source.detail %></span>
       </p>
-      <%= if @db_runtime_mismatch do %>
-        <p class="empty-state">A database workflow is active, but runtime is currently using a different source.</p>
-      <% end %>
       <%= if @workflow_setup_required do %>
-        <p class="empty-state">No active workflow is configured yet. Fill the structured draft below.</p>
+        <p class="empty-state">No workflow is configured yet. Fill the structured draft below.</p>
       <% end %>
       <%= if @workflow_configuration_items != [] do %>
         <aside class="setup-guidance-card" role="status" aria-live="polite">
@@ -77,9 +73,9 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
         <div class="workflow-form-header">
           <div>
             <h2 class="section-title">Draft Configuration</h2>
-            <p class="metric-label">Edit fields, review validation, then save a database workflow version.</p>
+            <p class="metric-label">Edit fields, review validation, then save the current database workflow.</p>
           </div>
-          <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save workflow version</button>
+          <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save workflow</button>
         </div>
 
         <div class="workflow-summary-grid">
@@ -257,27 +253,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
           </div>
         </section>
       </form>
-    </section>
-    <section class="section-card">
-      <h2 class="section-title">Version History</h2>
-      <%= if WorkflowState.section_versions(@workflow_versions, :workflow) == [] do %>
-        <p class="empty-state">No workflow versions yet.</p>
-      <% else %>
-        <table class="data-table">
-          <thead><tr><th>Version</th><th>Source</th><th>Active</th><th>Created</th><th></th></tr></thead>
-          <tbody>
-            <tr :for={version <- WorkflowState.section_versions(@workflow_versions, :workflow)}>
-              <td><%= version.version %></td>
-              <td><%= version.source %></td>
-              <td><%= version.active %></td>
-              <td class="mono"><%= ObservabilityPresenter.fmt_dt(version.inserted_at) %></td>
-              <td>
-                <button class="subtle-button" phx-click="restore_settings_version" phx-value-id={version.id} phx-disable-with="Restoring...">Restore workflow settings</button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      <% end %>
     </section>
     """
   end

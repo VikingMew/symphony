@@ -112,7 +112,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Persistence.TrackerConfig => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.User => "count with password/hash schema tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.WorkerSession => "count with schema changeset tests when persistence schemas leave the blanket group",
-          SymphonyElixir.Persistence.WorkflowVersion => "count with schema changeset tests when persistence schemas leave the blanket group",
+          SymphonyElixir.Persistence.WorkflowRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Repo => "permanent framework adapter shell unless a DB integration target is reintroduced"
         },
         modules: [
@@ -126,7 +126,7 @@ defmodule SymphonyElixir.MixProject do
           SymphonyElixir.Persistence.TrackerConfig,
           SymphonyElixir.Persistence.User,
           SymphonyElixir.Persistence.WorkerSession,
-          SymphonyElixir.Persistence.WorkflowVersion,
+          SymphonyElixir.Persistence.WorkflowRecord,
           SymphonyElixir.Repo
         ]
       },

@@ -40,7 +40,7 @@ only after that service succeeds.
 
 ## Durable Workflow Authority
 
-PostgreSQL owns projects, workflow versions, issues, runs, events, agent turns, workspaces, workers,
+PostgreSQL owns projects, current workflows, issues, runs, events, agent turns, workspaces, workers,
 sessions, tasks, leases, users, tracker configuration, and application settings. One active workflow
 version exists per enabled project.
 
@@ -58,7 +58,7 @@ poll Linear or schedule agents until Settings creates a project and active workf
 
 The supported one-way path imports a stopped, backed-up legacy `symphony.db` into an already
 migrated, empty PostgreSQL database. It preserves IDs, foreign-key relationships, timestamps,
-JSON/map values, and active workflow versions, verifies every table count, and refuses a non-empty
+JSON/map values, and only each source project's active legacy workflow into the current workflow row, verifies every table count, and refuses a non-empty
 target or a source with live `-wal`/`-shm` sidecars.
 
 The complete maintenance-window, verification, switch, and rollback procedure is owned by

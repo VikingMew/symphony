@@ -160,16 +160,16 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp setup_required_message([]) do
-    "No active workflow is configured yet. Open Settings / Workflow to save a workflow version, then run Linear diagnostics again."
+    "No workflow is configured yet. Open Settings / Workflow to save it, then run Linear diagnostics again."
   end
 
   defp setup_required_message(project_items) do
     items = Enum.join(project_items, " and ")
 
-    "No active workflow is configured yet. Open Settings / Workflow to save a workflow version. Open Settings / Projects to set #{items}, then run Linear diagnostics again."
+    "No workflow is configured yet. Open Settings / Workflow to save it. Open Settings / Projects to set #{items}, then run Linear diagnostics again."
   end
 
-  defp setup_required_skip_message([]), do: "Skipped because no active workflow version is configured."
+  defp setup_required_skip_message([]), do: "Skipped because no workflow is configured."
   defp setup_required_skip_message(_project_items), do: "Skipped because setup is not complete."
 
   defp missing_project_setup_items do
@@ -361,7 +361,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
   defp format_runtime_source(_source), do: %{type: "unknown", detail: "unknown"}
 
-  defp runtime_source_detail(%{type: :database, workflow_version_id: id}), do: display_value(id)
+  defp runtime_source_detail(%{type: :database}), do: "current workflow"
   defp runtime_source_detail(%{type: :setup_required}), do: "setup required"
   defp runtime_source_detail(_source), do: "n/a"
 

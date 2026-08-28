@@ -10,7 +10,7 @@ defmodule SymphonyElixir.ObservabilityHistoryTest do
 
     defdelegate default_project(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
 
     defp response(key), do: Application.fetch_env!(:symphony_elixir, key)
@@ -21,7 +21,7 @@ defmodule SymphonyElixir.ObservabilityHistoryTest do
 
     defdelegate default_project(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate active_workflow_version(project), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
   end
 

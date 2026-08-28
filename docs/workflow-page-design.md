@@ -38,15 +38,15 @@ Settings 长期应提供几个互相一致的 tab/入口：
 - `/settings/workflow` 结构化编辑：按 tracker、bootstrap、workspace、hooks、agent、codex、workflow routing 等区域编辑策略（通过 Settings 顶部 project 选择器限定到指定 project）。
 - `/settings/agents` 结构化编辑：编辑 base prompt、profiles、profile prompt policy、allowed updates、executor policy。
 - `/settings/runtime` 运行时摘要：展示 tracker/config 摘要和运行时相关配置。
-- Split package 导入：`/settings/import` 可粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，显示 staged diff 和校验结果。导入根据 YAML 字段自动识别 package 类型；确认导入只修改 editable draft，运行时只有正常 Save 后才变化。字段可解析时可以保存为新的 workflow version；语义校验失败时保存 configuration check failure，并阻止运行时监听。
+- Split package 导入：`/settings/import` 可粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，显示 staged diff 和校验结果。导入根据 YAML 字段自动识别 package 类型；确认导入只修改 editable draft，运行时只有正常 Save 后才变化。字段可解析时可以保存为 current workflow；语义校验失败时保存 configuration check failure，并阻止运行时监听。
 
-这些入口必须写入同一个 workflow version 模型，避免 UI 配置、导入文件和导出的 Markdown 配置分裂。
+这些入口必须写入同一个 current workflow 模型，避免 UI 配置、导入文件和导出的 Markdown 配置分裂。
 
 ## 页面结构
 
 `/settings/workflow` 的目标状态是一个可逐步保存、可验证、可审计的配置工作台。页面应按配置域拆分，而不是要求用户直接编辑完整 YAML。
 
-- Overview：显示 runtime source、active workflow version、最近保存/激活时间、是否有未保存变更、当前配置是否通过校验。
+- Overview：显示 runtime source、current workflow、最近保存时间、是否有未保存变更、当前配置是否通过校验。
 - Tracker：编辑 assignee、active states、terminal states。Linear project slug 在 `/settings/projects` 按 project 配置；tracker kind 和 endpoint 不在这里编辑。
 - Bootstrap：编辑 initialize timeout、setup commands、cleanup commands。repository URL、default branch、checkout depth 和 source strategy 在 `/settings/projects` 按 project 配置；repository base root 和 worktree base root 在共享 Workspace/Runtime 设置中配置。
 - Workspace：编辑 workspace root 和清理策略。
@@ -98,13 +98,13 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 2. 解析 runtime/routing YAML、profiles YAML 和 `base_prompt`。
 3. 映射到结构化 workflow form state。
 4. 运行 field、section、contract 三层 verification，并区分“不能解析/不能保存”和“能保存但运行时不可用”。
-5. 展示与当前 active workflow version 的 diff。
-6. 字段可解析时保存为新的 workflow version；语义校验结果随版本一起展示为 configuration check。
+5. 展示与 current workflow 的 diff。
+6. 字段可解析时原位保存 current workflow；语义校验结果展示为 configuration check。
 7. 用户显式激活或保存即激活，取决于页面当前操作语义。
 
 ## 导出
 
-页面应支持把当前 active workflow version 或指定历史 version 导出为完整 split package。导出的文件必须可以重新上传导入，并得到等价的 workflow version。
+页面应支持把 current workflow 导出为完整 split package。导出的文件必须可以重新上传导入，并得到等价的 current workflow。
 
 长期目标不提供原文查看或高级 raw editor 作为编辑入口。需要修改 workflow 时应通过结构化表单完成；需要迁移或备份时使用导出文件。
 
@@ -116,8 +116,8 @@ UI 行为上，字段失效时应在对应输入附近显示错误，同时页�
 - 修改单个字段会在该字段附近显示 field verification 结果。
 - 跨字段错误会显示在对应 section 和页面顶部汇总里。
 - 语义错误不会让保存按钮失效；保存后会刷新 configuration check，并明确说明下一步去 Projects、Workflow、Agents 还是环境变量修。
-- 导入无效 split package 不会创建 workflow version。
-- 导入有效 split package 会生成结构化表单 state、展示 diff，并能保存为 workflow version。
+- 导入无效 split package 不会修改 current workflow。
+- 导入有效 split package 会生成结构化表单 state、展示 diff，并能保存为 current workflow。
 - 导入入口必须清楚标明导入只填充 draft，不等于保存或激活。当前实现允许粘贴或上传 `workflow.yml` / `profiles.yml` 内容，并自动识别类型；后续导入体验优化必须复用同一 parser、diff 和 draft flow。
 - 页面不提供原文查看或高级 raw editor 编辑入口。
-- 导出的 split package 可以重新上传导入并得到等价 workflow version。
+- 导出的 split package 可以重新上传导入并得到等价 current workflow。

@@ -13,9 +13,8 @@ defmodule SymphonyElixir.FirstRunDefaults do
   @source "first_run_default_yaml"
 
   @type deps :: %{
-          active_workflow_version: (-> term() | nil),
+          current_workflow: (-> term() | nil),
           list_projects: (-> [term()]),
-          list_workflow_versions: (term() -> [term()]),
           import_workflow: (term(), String.t(), String.t() -> {:ok, term()} | {:error, term()}),
           package_root: (-> String.t()),
           read_file: (String.t() -> {:ok, String.t()} | {:error, term()}),
@@ -31,7 +30,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
         deps.log.(:info, "Default YAML first-run prompt is disabled.")
         :ok
 
-      deps.active_workflow_version.() != nil ->
+      deps.current_workflow.() != nil ->
         :ok
 
       true ->
@@ -40,17 +39,11 @@ defmodule SymphonyElixir.FirstRunDefaults do
   end
 
   defp maybe_import_for_projects(opts, deps, projects) do
-    cond do
-      projects == [] ->
-        deps.log.(:info, "No enabled projects are configured; start in setup-required mode and configure a project before importing defaults.")
-        :ok
-
-      Enum.any?(projects, &(deps.list_workflow_versions.(&1) != [])) ->
-        deps.log.(:info, "Workflow versions already exist; default YAML first-run import was not offered.")
-        :ok
-
-      true ->
-        maybe_offer_import(opts, deps, projects)
+    if projects == [] do
+      deps.log.(:info, "No enabled projects are configured; start in setup-required mode and configure a project before importing defaults.")
+      :ok
+    else
+      maybe_offer_import(opts, deps, projects)
     end
   end
 
@@ -92,7 +85,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
       project ->
         raw = Workflow.to_markdown(loaded.config, loaded.prompt)
 
-        with {:ok, _version} <- deps.import_workflow.(project, raw, @source) do
+        with {:ok, _workflow} <- deps.import_workflow.(project, raw, @source) do
           deps.log.(:info, "Imported default workflow.yml and profiles.yml into the database.")
           :ok
         end
@@ -139,9 +132,8 @@ defmodule SymphonyElixir.FirstRunDefaults do
 
   defp default_deps do
     %{
-      active_workflow_version: &Persistence.active_workflow_version/0,
+      current_workflow: &Persistence.current_workflow/0,
       list_projects: &Persistence.list_projects/0,
-      list_workflow_versions: &Persistence.list_workflow_versions/1,
       import_workflow: &Persistence.WorkflowStore.import_workflow/3,
       package_root: &File.cwd!/0,
       read_file: &File.read/1,

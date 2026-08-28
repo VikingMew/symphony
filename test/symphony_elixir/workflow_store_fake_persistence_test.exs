@@ -17,7 +17,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     :ok
   end
 
-  test "database source loads active workflow through fake persistence when file is missing" do
+  test "database source loads current workflow through fake persistence when file is missing" do
     raw =
       Workflow.load()
       |> then(fn {:ok, workflow} ->
@@ -40,7 +40,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     refute Map.get(workflow, :setup_required, false)
   end
 
-  test "database source reports no active workflow when the database is empty even if local package exists" do
+  test "database source reports no workflow when the database is empty even if local package exists" do
     assert :ok = WorkflowStore.force_reload()
 
     assert {:ok, %{workflow: %{setup_required: true}, source: %{type: :setup_required}}} =
@@ -48,7 +48,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
 
     assert {:ok, %{setup_required: true}} = WorkflowStore.current()
     assert {:error, :setup_required} = Config.settings()
-    refute FakePersistence.active_workflow_version()
+    refute FakePersistence.current_workflow()
   end
 
   test "database source keeps setup-required semantics at the Config boundary when files and workflow are missing" do

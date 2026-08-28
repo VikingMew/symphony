@@ -48,14 +48,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :issues, issues))
   end
 
-  def put_workflow_versions(versions, active_version \\ nil) when is_list(versions) do
+  def put_workflow(workflow) do
     ensure_started()
 
     :ok =
       Agent.update(@name, fn state ->
-        state
-        |> Map.put(:workflow_versions, versions)
-        |> Map.put(:active_workflow_version, active_version)
+        Map.put(state, :workflows, put_workflow_record(state.workflows, workflow))
       end)
 
     maybe_publish_runtime()
@@ -93,18 +91,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def import_workflow(project, raw_workflow_md, source) do
     ensure_started()
 
-    version_number =
-      Agent.get(@name, fn state ->
-        Enum.count(state.workflow_versions, &(Map.get(&1, :project_id) == project.id)) + 1
-      end)
-
-    version = %{
-      id: "fake-workflow-version-#{Map.get(project, :slug) || "project"}-#{System.unique_integer([:positive])}",
+    workflow = %{
+      id: "fake-workflow-#{Map.get(project, :slug) || "project"}",
       project_id: project.id,
-      version: version_number,
       source: source,
-      active: true,
       inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now(),
       raw_workflow_md: raw_workflow_md
     }
 
@@ -114,62 +106,32 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
         case Map.get(state, :next_import_workflow_error) do
           nil ->
-            next_state =
-              state
-              |> Map.update!(:workflow_versions, &deactivate_project_versions(&1, project.id))
-              |> Map.put(:active_workflow_version, version)
-              |> Map.update(:workflow_versions, [version], &(&1 ++ [version]))
+            next_state = Map.update!(state, :workflows, &put_workflow_record(&1, workflow))
 
-            {{:ok, version}, next_state}
+            {{:ok, workflow}, next_state}
 
           reason ->
             {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
         end
       end)
 
-    if match?({:ok, _version}, result), do: maybe_publish_runtime()
+    if match?({:ok, _workflow}, result), do: maybe_publish_runtime()
     result
   end
 
-  def active_workflow_version do
+  def current_workflow do
     ensure_started()
-    Agent.get(@name, & &1.active_workflow_version)
+    Agent.get(@name, fn state -> List.first(state.workflows) end)
   end
 
-  def active_workflow_version(%{id: project_id}) do
+  def current_workflow(%{id: project_id}) do
     ensure_started()
 
-    Agent.get(@name, fn state ->
-      # Real persistence selects the newest active version
-      # (where: project_id == ^id and active == true, order_by: [desc: version]).
-      # Fake tests seed "active" two ways: import_workflow/3 stamps `active: true`
-      # on the version and appends it to the list (oldest first), while
-      # put_workflow_versions/2 seeds `active: false` versions and expresses
-      # active via the slot. Prefer the real semantics (the last appended active
-      # version wins — import_workflow always stamps version: 1, so ordering by
-      # the version field alone cannot distinguish re-imports), then fall back to
-      # the slot when no active version exists.
-      versions = state.workflow_versions || []
-
-      case Enum.filter(versions, &(Map.get(&1, :project_id) == project_id and Map.get(&1, :active) == true)) do
-        [] ->
-          fallback_workflow_version(state, versions, project_id)
-
-        active_versions ->
-          List.last(active_versions)
-      end
-    end)
+    Agent.get(@name, fn state -> Enum.find(state.workflows, &(Map.get(&1, :project_id) == project_id)) end)
   end
 
-  def active_workflow_version(_project) do
-    active_workflow_version()
-  end
-
-  defp fallback_workflow_version(state, versions, project_id) do
-    case Map.get(state, :active_workflow_version) do
-      %{project_id: ^project_id} = slot -> slot
-      _ -> versions |> Enum.reverse() |> Enum.find(&(Map.get(&1, :project_id) == project_id))
-    end
+  def current_workflow(_project) do
+    current_workflow()
   end
 
   def list_projects do
@@ -229,7 +191,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
               state
               |> record_call({:delete_project, id})
               |> Map.update!(:projects, &reject_by_id(&1, id))
-              |> Map.update!(:workflow_versions, &reject_by_project_id(&1, id))
+              |> Map.update!(:workflows, &reject_by_project_id(&1, id))
 
             {{:ok, project}, next_state}
         end
@@ -350,37 +312,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, & &1.task_leases)
   end
 
-  def list_workflow_versions do
-    ensure_started()
-    Agent.get(@name, & &1.workflow_versions)
-  end
-
-  def list_workflow_versions(%{id: project_id}) do
-    ensure_started()
-
-    Agent.get(@name, fn state ->
-      (state.workflow_versions || [])
-      |> Enum.filter(&(Map.get(&1, :project_id) == project_id))
-    end)
-  end
-
   def export_workflow(%{raw_workflow_md: raw}), do: raw
-
-  def activate_workflow_version(version) do
-    ensure_started()
-
-    Agent.update(@name, fn state ->
-      activated = Map.put(version, :active, true)
-
-      state
-      |> record_call({:activate_workflow_version, version})
-      |> Map.update!(:workflow_versions, &activate_version(&1, activated))
-      |> Map.put(:active_workflow_version, activated)
-    end)
-
-    maybe_publish_runtime()
-    {:ok, version}
-  end
 
   def cancel_task(id, reason \\ "cancelled") do
     ensure_started()
@@ -499,11 +431,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end
   end
 
-  def get_workflow_version(id) do
-    ensure_started()
-    Agent.get(@name, fn state -> Enum.find(state.workflow_versions, &(Map.get(&1, :id) == id)) end)
-  end
-
   def get_issue_by_identifier(identifier) do
     ensure_started()
     Agent.get(@name, fn state -> Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) end)
@@ -519,21 +446,20 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, fn state -> Map.get(state.users, username) end)
   end
 
-  def workflow_to_loaded(version) do
-    {:ok, workflow} = SymphonyElixir.Workflow.parse_content(version.raw_workflow_md)
-    project = project_for_version(version)
+  def workflow_to_loaded(record) do
+    {:ok, workflow} = SymphonyElixir.Workflow.parse_content(record.raw_workflow_md)
+    project = project_for_workflow(record)
 
     workflow
     |> Map.update!(:config, &apply_project_runtime_settings(&1, project))
-    |> Map.put(:workflow_version_id, version.id)
-    |> Map.put(:project_id, version.project_id)
+    |> Map.put(:project_id, record.project_id)
   end
 
-  defp project_for_version(version) do
+  defp project_for_workflow(workflow) do
     ensure_started()
 
     Agent.get(@name, fn state ->
-      Enum.find(state.projects, &(Map.get(&1, :id) == version.project_id)) || hd(state.projects)
+      Enum.find(state.projects, &(Map.get(&1, :id) == workflow.project_id)) || hd(state.projects)
     end)
   end
 
@@ -693,8 +619,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       cancel_task_errors: %{},
       task_leases: [],
       issues: [],
-      workflow_versions: [],
-      active_workflow_version: nil,
+      workflows: [],
       next_import_workflow_error: nil,
       users: %{}
     }
@@ -715,30 +640,16 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end
   end
 
-  defp deactivate_project_versions(versions, project_id) do
-    Enum.map(versions, fn
-      %{project_id: ^project_id} = version -> Map.put(version, :active, false)
-      version -> version
-    end)
+  defp put_workflow_record(workflows, nil), do: workflows
+
+  defp put_workflow_record(workflows, workflow) do
+    [workflow | reject_by_project_id(workflows, Map.get(workflow, :project_id))]
   end
 
   defp reject_by_id(records, id), do: Enum.reject(records, &(Map.get(&1, :id) == id))
 
   defp reject_by_project_id(records, project_id) do
     Enum.reject(records, &(Map.get(&1, :project_id) == project_id))
-  end
-
-  defp activate_version(versions, version) do
-    project_id = Map.get(version, :project_id)
-    version_id = Map.get(version, :id)
-
-    Enum.map(versions, fn existing ->
-      if Map.get(existing, :project_id) == project_id do
-        Map.put(existing, :active, Map.get(existing, :id) == version_id)
-      else
-        existing
-      end
-    end)
   end
 
   defp record_call(state, call), do: update_in(state.calls, &[call | &1])
@@ -805,7 +716,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     "profile" => :profile,
     "label" => :label,
     "project_id" => :project_id,
-    "workflow_version_id" => :workflow_version_id,
     "issue_id" => :issue_id,
     "issue_identifier" => :issue_identifier,
     "workspace_path" => :workspace_path,

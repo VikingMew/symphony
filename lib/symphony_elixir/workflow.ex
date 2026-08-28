@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  runtime source is the active workflow version in PostgreSQL.
+  runtime source is the project's current workflow in PostgreSQL.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -40,8 +40,7 @@ defmodule SymphonyElixir.Workflow do
           required(:prompt_template) => String.t(),
           optional(:project_id) => term(),
           optional(:setup_message) => String.t(),
-          optional(:setup_required) => boolean(),
-          optional(:workflow_version_id) => term()
+          optional(:setup_required) => boolean()
         }
 
   @spec load() :: {:ok, loaded_workflow()} | {:error, term()}

@@ -53,7 +53,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
                 class="subtle-button"
                 phx-click="remove_project"
                 phx-value-project_id={project.id}
-                data-confirm={"Remove #{project.name}? Its workflow versions will also be removed."}
+                data-confirm={"Remove #{project.name}? Its workflow will also be removed."}
               >
                 Remove
               </button>

@@ -44,11 +44,11 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     else
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
            :changed <- workflow_change_status(raw, socket),
-           {:ok, version} <- safe_import_workflow(project, raw, settings_source(section)) do
+           {:ok, _workflow} <- safe_import_workflow(project, raw, settings_source(section)) do
         {:saved,
          socket
          |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-         |> assign_save_notice(:success, "#{section_label(section)} saved", "Version #{version.version} is active. Runtime workflow refreshed.")
+         |> assign_save_notice(:success, "#{section_label(section)} saved", "Current workflow updated. Runtime workflow refreshed.")
          |> assign(:workflow_diagnostics_notice, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
          |> assign(:workflow_validation_visible?, true)
          |> assign(:workflow_form, draft)
@@ -88,57 +88,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
            |> assign(:workflow_field_errors, %{})
            |> assign(:workflow_form, draft)
            |> assign(:workflow_form_dirty?, true)}
-      end
-    end
-  end
-
-  @spec restore(String.t(), Phoenix.LiveView.Socket.t()) ::
-          {:saved, Phoenix.LiveView.Socket.t()} | {:error, Phoenix.LiveView.Socket.t()}
-  def restore(id, socket) do
-    section = Components.tab(socket.assigns.live_action)
-    version = Enum.find(section_versions(socket.assigns.workflow_versions, section), &(&1.id == id))
-    project = socket.assigns.selected_project
-
-    if is_nil(project) do
-      {:error, put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")}
-    else
-      with %{} = version <- version,
-           raw when is_binary(raw) <- persistence().export_workflow(version),
-           {:ok, history_draft} <- WorkflowForm.from_raw(raw),
-           draft <- WorkflowSettingsPackage.restore_section(section, socket.assigns.workflow_form, history_draft),
-           draft <- ProjectSettings.apply_to_workflow_draft(draft, socket.assigns.default_project),
-           {:ok, restored_raw} <- WorkflowForm.to_raw(draft),
-           {:ok, restored_version} <- safe_import_workflow(project, restored_raw, settings_source(section)) do
-        {:saved,
-         socket
-         |> put_flash(:info, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
-         |> assign_save_notice(:success, "#{section_label(section)} restored", "Version #{restored_version.version} is active. Runtime workflow refreshed.")
-         |> assign(:workflow_diagnostics_notice, "#{section_label(section)} restored. Runtime workflow refreshed. Re-run Linear diagnostics.")
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, false)
-         |> assign_validation(draft)}
-      else
-        nil ->
-          {:error, put_flash(socket, :error, "Settings version not found")}
-
-        {:error, message} when is_binary(message) ->
-          {:error,
-           socket
-           |> put_flash(:error, "Settings restore rejected: #{message}")
-           |> assign_save_notice(:error, "Settings restore failed", message)
-           |> assign(:workflow_validation_visible?, true)
-           |> assign(:workflow_validation_error, message)}
-
-        {:error, reason} ->
-          message = inspect(reason)
-
-          {:error,
-           socket
-           |> put_flash(:error, "Settings restore rejected: #{message}")
-           |> assign_save_notice(:error, "Settings restore failed", message)
-           |> assign(:workflow_validation_visible?, true)
-           |> assign(:workflow_validation_error, message)}
       end
     end
   end
@@ -185,8 +134,8 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     end
   end
 
-  def load_form(version, _runtime) do
-    version
+  def load_form(workflow, _runtime) do
+    workflow
     |> persistence().export_workflow()
     |> WorkflowForm.from_raw()
     |> case do
@@ -202,11 +151,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     else
       loaded_workflow_form
     end
-  end
-
-  @spec section_versions([map()], atom()) :: [map()]
-  def section_versions(versions, section) do
-    Enum.filter(versions, &(settings_version_section(&1) == section))
   end
 
   @spec section_label(atom()) :: String.t()
@@ -289,16 +233,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   defp settings_source(:agents), do: @agent_settings_source
   defp settings_source(_section), do: @workflow_settings_source
 
-  defp settings_version_section(version) do
-    atom_source = Map.get(version, :source)
-
-    case atom_source || Map.get(version, "source") do
-      @agent_settings_source -> :agents
-      @workflow_settings_source -> :workflow
-      _source -> nil
-    end
-  end
-
   defp safe_import_workflow(project, raw, source) do
     project
     |> persistence().import_workflow(raw, source)
@@ -310,12 +244,12 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   end
 
   defp workflow_change_status(raw, socket) do
-    case Map.get(socket.assigns, :active_workflow_version) do
+    case Map.get(socket.assigns, :current_workflow) do
       nil ->
         :changed
 
-      version ->
-        current_raw = persistence().export_workflow(version)
+      workflow ->
+        current_raw = persistence().export_workflow(workflow)
         if WorkflowSettingsPackage.changed?(current_raw, raw), do: :changed, else: :unchanged
     end
   end

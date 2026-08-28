@@ -179,7 +179,7 @@ defmodule SymphonyElixir.TestSupport do
     File.mkdir_p!(Path.dirname(workflow_path))
     File.write!(workflow_path, WorkflowFixtures.workflow_package_yaml(workflow_config))
     File.write!(profiles_path, WorkflowFixtures.profiles_package_yaml(profiles, loaded.prompt))
-    seed_fake_active_workflow(workflow_path)
+    seed_fake_current_workflow(workflow_path)
 
     if Process.whereis(WorkflowStore) do
       try do
@@ -192,7 +192,7 @@ defmodule SymphonyElixir.TestSupport do
     :ok
   end
 
-  defp seed_fake_active_workflow(workflow_path) do
+  defp seed_fake_current_workflow(workflow_path) do
     if Application.get_env(:symphony_elixir, :persistence_module) == FakePersistence do
       {:ok, loaded} = Workflow.load(workflow_path)
       FakePersistence.put_default_project_attrs!(project_attrs_from_workflow_config(loaded.config))

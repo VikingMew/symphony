@@ -20,7 +20,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     def get_issue_by_identifier(_identifier), do: {:error, :repo_unavailable}
     defdelegate default_project(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
-    defdelegate active_workflow_version(project), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
     defdelegate workflow_to_loaded(version), to: FakePersistence
   end
 
@@ -28,7 +28,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     def get_issue_by_identifier(_identifier), do: raise("history query failed")
     defdelegate default_project(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
-    defdelegate active_workflow_version(project), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
     defdelegate workflow_to_loaded(version), to: FakePersistence
   end
 
@@ -46,7 +46,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     def list_events(_opts), do: []
     defdelegate default_project(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
-    defdelegate active_workflow_version(project), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
     defdelegate workflow_to_loaded(version), to: FakePersistence
   end
 

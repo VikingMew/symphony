@@ -628,7 +628,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp config_validation_error_message(:missing_linear_project_slug), do: "Linear project slug missing in Project Settings"
   defp config_validation_error_message(:missing_project_repository_url), do: "Project repository URL missing in Project Settings"
   defp config_validation_error_message(:missing_tracker_kind), do: "Tracker kind missing in runtime tracker settings"
-  defp config_validation_error_message(:setup_required), do: "No active workflow is configured. Open /settings/workflow to create one."
+  defp config_validation_error_message(:setup_required), do: "No workflow is configured. Open /settings/workflow to create one."
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
     "Failed to parse workflow config: front matter must decode to a map"
@@ -2241,10 +2241,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp load_operator_workflow(project) do
-    case persistence().active_workflow_version(project) do
-      nil -> {:error, :no_active_workflow}
+    case persistence().current_workflow(project) do
+      nil -> {:error, :no_workflow}
       {:error, reason} -> {:error, {:workflow_lookup_failed, reason}}
-      workflow_version -> {:ok, persistence().workflow_to_loaded(workflow_version)}
+      workflow -> {:ok, persistence().workflow_to_loaded(workflow)}
     end
   rescue
     error -> {:error, {:workflow_lookup_failed, error}}
@@ -2264,7 +2264,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp operator_project_failure_reason(:project_required, _project_id), do: "project required"
   defp operator_project_failure_reason(:unknown_project, project_id), do: "unknown project: #{project_id}"
-  defp operator_project_failure_reason(:no_active_workflow, project_id), do: "no active workflow for project: #{project_id}"
+  defp operator_project_failure_reason(:no_workflow, project_id), do: "no workflow for project: #{project_id}"
 
   defp operator_project_failure_reason({:project_lookup_failed, reason}, _project_id),
     do: "project lookup failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
@@ -2803,11 +2803,14 @@ defmodule SymphonyElixir.Orchestrator do
     workflow
   end
 
-  defp context_workflow_version(%{workflow_version_id: version_id}) when is_binary(version_id) do
-    persistence().get_workflow_version(version_id) || persistence().active_workflow_version()
+  defp current_workflow_record(%{project_id: project_id}) when is_binary(project_id) do
+    case Enum.find(persistence().list_projects(), &(&1.id == project_id)) do
+      nil -> nil
+      project -> persistence().current_workflow(project)
+    end
   end
 
-  defp context_workflow_version(_workflow), do: persistence().active_workflow_version()
+  defp current_workflow_record(_workflow), do: persistence().current_workflow()
 
   defp persist_run_started_event(issue, run, worker_host) do
     case persist_event(Events.run_started_event(issue, run, worker_host)) do
@@ -2842,10 +2845,10 @@ defmodule SymphonyElixir.Orchestrator do
     context = persistence_context(issue)
 
     with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
-         workflow_version = context_workflow_version(workflow),
+         workflow_record = current_workflow_record(workflow),
          run_attrs =
            issue
-           |> Events.run_attrs(workflow_version, "centralized", attempt)
+           |> Events.run_attrs(workflow_record, "centralized", attempt)
            |> Map.put(:issue_id, issue_record.id)
            |> Map.put_new(:project_id, project_id),
          {:ok, run} <- persist_create_run(context, run_attrs) do
@@ -2883,21 +2886,21 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_run_started_persist(task) do
-    workflow_version = context_workflow_version(current_workflow_context())
+    workflow_record = current_workflow_record(current_workflow_context())
     context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
 
-    with {:ok, run} <- persist_create_operator_run(context, task, workflow_version) do
+    with {:ok, run} <- persist_create_operator_run(context, task, workflow_record) do
       persist_operator_started_event(task, run)
     end
   end
 
-  defp persist_create_operator_run(context, task, workflow_version) do
+  defp persist_create_operator_run(context, task, workflow_record) do
     required_persistence_write(:create_operator_run, context, fn ->
-      create_operator_run!(task, workflow_version)
+      create_operator_run!(task, workflow_record)
     end)
   end
 
-  defp create_operator_run!(task, workflow_version) do
+  defp create_operator_run!(task, _workflow_record) do
     persistence().create_run(%{
       kind: to_string(task.kind),
       profile: to_string(task.kind),
@@ -2906,7 +2909,6 @@ defmodule SymphonyElixir.Orchestrator do
       status: "running",
       execution_mode: "centralized",
       attempt: 0,
-      workflow_version_id: workflow_version && workflow_version.id,
       started_at: task.started_at
     })
   end
@@ -2920,11 +2922,11 @@ defmodule SymphonyElixir.Orchestrator do
     {:ok, issue_record} =
       persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
 
-    workflow_version = context_workflow_version(workflow)
+    workflow_record = current_workflow_record(workflow)
 
     run_attrs =
       issue
-      |> Events.run_attrs(workflow_version, "worker", attempt)
+      |> Events.run_attrs(workflow_record, "worker", attempt)
       |> Map.put(:issue_id, issue_record.id)
       |> Map.put_new(:project_id, project_id)
 
@@ -2935,7 +2937,7 @@ defmodule SymphonyElixir.Orchestrator do
         Events.worker_task_attrs(
           issue,
           run,
-          workflow_version,
+          workflow_record,
           Config.workflow_prompt(),
           Config.workflow_profile_for_state(issue.state)
         )

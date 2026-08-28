@@ -61,7 +61,7 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
   @spec configuration_missing_items(boolean(), map() | nil) :: [map()]
   def configuration_missing_items(workflow_setup_required, project) do
     []
-    |> maybe_add_workflow_version_item(workflow_setup_required)
+    |> maybe_add_workflow_item(workflow_setup_required)
     |> maybe_add_project_item(project, :linear_project_slug, "Linear project slug", "Set the Linear project slug on the default project.", "Edit projects")
     |> maybe_add_project_item(project, :repository_url, "Repository URL", "Set the repository URL on the default project so runs can create workspaces.", "Edit projects")
     |> maybe_add_linear_api_token_item()
@@ -102,20 +102,20 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
     |> Enum.map_join(", ", & &1.name)
   end
 
-  defp maybe_add_workflow_version_item(items, true) do
+  defp maybe_add_workflow_item(items, true) do
     items ++
       [
         %{
           scope: "Workflow",
-          title: "Active workflow version",
-          detail: "Save the draft below to create the first active workflow version.",
+          title: "Current workflow",
+          detail: "Save the draft below to create the project's workflow.",
           href: nil,
           action: nil
         }
       ]
   end
 
-  defp maybe_add_workflow_version_item(items, _workflow_setup_required), do: items
+  defp maybe_add_workflow_item(items, _workflow_setup_required), do: items
 
   defp maybe_add_project_item(items, nil, _key, title, detail, action) do
     items ++ [%{scope: "Project", title: title, detail: detail, href: "/settings/projects", action: action}]

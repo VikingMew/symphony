@@ -41,23 +41,6 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
     assert draft["active_states"] == "Ready\nIn Progress"
   end
 
-  test "restores only the selected settings section" do
-    current = %{"prompt_body" => "current prompt", "profiles" => %{"current" => %{}}, "active_states" => "Ready"}
-    history = %{"prompt_body" => "history prompt", "profiles" => %{"history" => %{}}, "active_states" => "Done"}
-
-    assert WorkflowSettingsPackage.restore_section(:agents, current, history) == %{
-             "prompt_body" => "history prompt",
-             "profiles" => %{"history" => %{}},
-             "active_states" => "Ready"
-           }
-
-    assert WorkflowSettingsPackage.restore_section(:workflow, current, history) == %{
-             "prompt_body" => "current prompt",
-             "profiles" => %{"current" => %{}},
-             "active_states" => "Done"
-           }
-  end
-
   test "canonical diff ignores equivalent workflow raw formatting" do
     raw = workflow_raw!(WorkflowForm.empty())
     changed_raw = workflow_raw!(WorkflowForm.empty() |> Map.put("prompt_body", "Run a workflow from the Web UI."))

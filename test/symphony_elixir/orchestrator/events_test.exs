@@ -29,17 +29,16 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   test "run and task attrs preserve existing payload contract" do
     issue = issue()
-    workflow_version = %{id: "workflow-version-1"}
+    workflow = %{}
     run = %{id: "run-1", project_id: "project-1"}
 
-    run_attrs = Events.run_attrs(issue, workflow_version, "worker", 2)
-    assert run_attrs.workflow_version_id == "workflow-version-1"
+    run_attrs = Events.run_attrs(issue, workflow, "worker", 2)
     assert run_attrs.issue_identifier == "MT-1"
     assert run_attrs.status == "queued"
     assert run_attrs.execution_mode == "worker"
     assert run_attrs.attempt == 2
 
-    task_attrs = Events.worker_task_attrs(issue, run, workflow_version, "Prompt", "implementation")
+    task_attrs = Events.worker_task_attrs(issue, run, workflow, "Prompt", "implementation")
     assert task_attrs.project_id == "project-1"
     assert task_attrs.run_id == "run-1"
     assert task_attrs.payload["issue"]["identifier"] == "MT-1"

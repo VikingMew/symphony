@@ -25,11 +25,11 @@ defmodule SymphonyElixirWeb.AdminLive.State do
         do: normalize_project_selection(socket, projects, selected_project),
         else: socket
 
-    {active, active_error} = active_workflow_version(selected_project)
+    {workflow, workflow_error} = current_workflow(selected_project)
     runtime = WorkflowStore.current_with_source()
-    {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(active, runtime)
+    {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(workflow, runtime)
     workflow_form = WorkflowState.refreshed_form(socket, loaded_workflow_form)
-    persistence_error = projects_error || default_project_error || active_error
+    persistence_error = projects_error || default_project_error || workflow_error
 
     configuration_items =
       ProjectSettings.configuration_missing_items(workflow_setup_required, selected_project)
@@ -39,16 +39,12 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:persistence_error, persistence_error)
     |> assign(:default_project, default_project)
     |> assign(:selected_project, selected_project)
-    |> assign(:active_workflow_version, active)
+    |> assign(:current_workflow, workflow)
     |> Runs.assign_page(reset: true)
     |> Events.assign_data()
     |> assign(:tasks, persistence().list_tasks(limit: 100, project_id: project_filter(socket)))
     |> assign(:task_leases, persistence().list_task_leases(limit: 100))
     |> assign(:execution_mode, Config.execution_mode())
-    |> assign(
-      :workflow_versions,
-      (selected_project && persistence().list_workflow_versions(selected_project)) || []
-    )
     |> assign(:workflow_form, workflow_form)
     |> WorkflowState.assign_validation(workflow_form)
     |> assign(:workflow_setup_required, workflow_setup_required)
@@ -65,7 +61,6 @@ defmodule SymphonyElixirWeb.AdminLive.State do
       ProjectSettings.scoped_configuration_items(configuration_items, "Runtime")
     )
     |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
-    |> assign(:db_runtime_mismatch, db_runtime_mismatch?(active, runtime))
     |> RunDetail.assign_data()
     |> IssueDetail.assign_data()
   end
@@ -85,12 +80,12 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     end
   end
 
-  defp active_workflow_version(nil), do: {nil, nil}
+  defp current_workflow(nil), do: {nil, nil}
 
-  defp active_workflow_version(project) do
-    case PersistenceProvider.read(fn -> persistence().active_workflow_version(project) end) do
+  defp current_workflow(project) do
+    case PersistenceProvider.read(fn -> persistence().current_workflow(project) end) do
       {:error, reason} -> {nil, reason}
-      version -> {version, nil}
+      workflow -> {workflow, nil}
     end
   end
 
@@ -145,17 +140,9 @@ defmodule SymphonyElixirWeb.AdminLive.State do
 
   defp source_summary(_source), do: %{type: "unknown", detail: "n/a"}
 
-  defp source_detail(%{type: :database, workflow_version_id: id}), do: id || "n/a"
+  defp source_detail(%{type: :database}), do: "current workflow"
   defp source_detail(%{type: :setup_required}), do: "setup required"
   defp source_detail(_source), do: "n/a"
-
-  defp db_runtime_mismatch?(nil, _runtime), do: false
-
-  defp db_runtime_mismatch?(version, {:ok, %{source: %{type: :database, workflow_version_id: id}}}) do
-    version.id != id
-  end
-
-  defp db_runtime_mismatch?(_version, _runtime), do: true
 
   defp persistence, do: PersistenceProvider.module()
 end

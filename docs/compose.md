@@ -117,7 +117,7 @@ The container paths are stable:
 | GitHub CLI state | `/home/symphony/.config/gh` | `gh_config` |
 | SSH state | `/home/symphony/.ssh` | `ssh_home` |
 
-Workflow versions imported from a host may contain host-only workspace paths. Before enabling
+Workflows imported from a host may contain host-only workspace paths. Before enabling
 listening, change the active workflow workspace root to `/data/workspaces` and verify repository,
 hook, SSH, and worktree paths are container-visible.
 
@@ -209,7 +209,7 @@ docker compose run --rm --no-deps \
   symphony /app/bin/symphony eval 'SymphonyElixir.Release.import_sqlite!()'
 ```
 
-The command imports users, projects, tracker configs, workflow versions, issues, runs, agent
+The command imports users, projects, tracker configs, the active legacy workflow for each project, issues, runs, agent
 turns, workspaces, events, app settings, workers, sessions, tasks, and leases in dependency order.
 It prints and verifies a row count for every table inside one PostgreSQL transaction. Any source
 schema error, invalid JSON, foreign-key error, count mismatch, or non-empty target rolls back the
@@ -219,14 +219,14 @@ Verify independently:
 
 ```bash
 docker compose exec -T postgres sh -lc \
-  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT project_id, version, active FROM workflow_versions ORDER BY project_id, version"'
+  'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT project_id, source, updated_at FROM workflows ORDER BY project_id"'
 docker compose exec -T postgres sh -lc \
   'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT status, COUNT(*) FROM runs GROUP BY status ORDER BY status"'
 docker compose exec -T postgres sh -lc \
   'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > post-cutover.dump
 ```
 
-Review Settings without enabling listening. Confirm active workflow versions, project repository
+Review Settings without enabling listening. Confirm current workflows, project repository
 URLs/default branches, `/data/workspaces`, hooks, SSH hosts, credentials, recent run/event history,
 and worker/task state.
 

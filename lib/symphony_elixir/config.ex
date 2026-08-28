@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Config do
   @moduledoc """
-  Runtime configuration loaded from the active workflow package.
+  Runtime configuration loaded from the current workflow.
   """
 
   alias SymphonyElixir.{Config.Schema, Text, Workflow, WorkflowStore}
@@ -207,7 +207,7 @@ defmodule SymphonyElixir.Config do
   defp format_config_error(reason) do
     case reason do
       :setup_required ->
-        "No active workflow is configured. Open /settings/workflow to create one."
+        "No workflow is configured. Open /settings/workflow to create one."
 
       {:invalid_workflow_config, message} ->
         "Invalid workflow config: #{message}"

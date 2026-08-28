@@ -84,7 +84,7 @@ Important boundary:
 - Create deterministic per-issue workspaces and preserve them across runs.
 - Stop active runs when issue state changes make them ineligible.
 - Recover from transient failures with exponential backoff.
-- Load runtime behavior from an implementation-defined active persisted workflow version.
+- Load runtime behavior from the project's current persisted workflow.
 - Expose operator-visible observability (at minimum structured logs).
 - Support tracker/filesystem-driven restart recovery without requiring a persistent database; exact
   in-memory scheduler state is not restored.
@@ -105,7 +105,7 @@ Important boundary:
 ### 3.1 Main Components
 
 1. `Workflow Loader`
-   - Reads an implementation-defined active persisted workflow version.
+   - Reads the project's current persisted workflow.
    - Parses the stored workflow config and prompt/profile data.
    - Returns `{config, prompt_template}`.
 

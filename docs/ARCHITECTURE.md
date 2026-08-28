@@ -31,8 +31,8 @@ runtime.
 - Create and preserve isolated per-issue workspaces.
 - Run lifecycle hooks to prepare and clean workspaces.
 - Launch Codex App Server sessions with issue-specific prompts.
-- Keep runtime behavior configurable through the active PostgreSQL workflow version.
-- Persist projects, workflow versions, issues, runs, agent turns, workspaces, worker tasks, leases,
+- Keep runtime behavior configurable through each project's current PostgreSQL workflow.
+- Persist projects, workflows, issues, runs, agent turns, workspaces, worker tasks, leases,
   and events in PostgreSQL when the Repo is available.
 - Provide logs, JSON state APIs, Linear diagnostics, worker APIs, and a Phoenix LiveView dashboard.
 - Stop or clean up active runs when issue states become terminal.
@@ -53,7 +53,7 @@ flowchart TD
     linear[Linear Project / Issues] -->|poll eligible issues| tracker[Tracker Layer]
     tracker --> orchestrator[Orchestrator]
 
-    workflow[PostgreSQL Workflow Version] --> loader[Workflow Store]
+    workflow[Current PostgreSQL Workflow] --> loader[Workflow Store]
     loader --> config[Config Layer]
     config --> orchestrator
     orchestrator --> postgres[(PostgreSQL / Ecto)]
@@ -132,7 +132,7 @@ The CLI is the local-development entrypoint built as `bin/symphony`. It accepts:
 
 The CLI stores runtime overrides, requires `DATABASE_URL`, applies PostgreSQL migrations, and
 starts the Elixir application. Production containers start the real OTP release after a separate
-one-shot release migration command. If no active workflow version exists, Symphony enters
+one-shot release migration command. If no current workflow exists, Symphony enters
 setup-required mode and the Settings UI creates the first active workflow.
 
 ### 6.2 Workflow Loader
@@ -261,7 +261,7 @@ Locations:
 - `lib/symphony_elixir/persistence/*`
 - `lib/symphony_elixir_web/controllers/worker_api_controller.ex`
 
-The persistence context owns PostgreSQL-backed records for projects, workflow versions, runs, agent
+The persistence context owns PostgreSQL-backed records for projects, workflows, runs, agent
 turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
 worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
 Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
@@ -273,8 +273,8 @@ request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 
 ## 7. Configuration Model
 
-The active workflow is a PostgreSQL-backed workflow version. Operators create and update it through the
-Settings UI; startup can enter setup-required mode when no active workflow version exists.
+The current workflow is a single PostgreSQL-backed row per project. Operators create and update it in
+place through the Settings UI; startup can enter setup-required mode when no current workflow exists.
 `workflow.yml` and `profiles.yml` are split package artifacts for import/export and examples, not
 startup authority.
 

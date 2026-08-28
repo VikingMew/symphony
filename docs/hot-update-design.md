@@ -18,7 +18,7 @@ Symphony 需要区分三种热更新：
 
 | 类型 | 当前状态 | 说明 |
 | --- | --- | --- |
-| Settings / workflow 配置热更新 | 已支持 | 通过 Web UI 保存新的 PostgreSQL active workflow version，运行时重新读取配置，不需要重启进程。 |
+| Settings / workflow 配置热更新 | 已支持 | 通过 Web UI 原位更新项目的 PostgreSQL current workflow，运行时重新读取配置，不需要重启进程。 |
 | 开发期代码热更新 | 部分支持 | Elixir VM 支持加载新 beam；当前 `bin/symphony` 不是 Phoenix dev server，代码改动通常需要重启，或在 `iex -S mix` 中手动 `recompile()`。 |
 | 生产期 OTP release 热代码升级 | 未支持 | BEAM 支持 hot code upgrade，但本项目还没有 release upgrade、appup/relup、进程状态迁移和发布流程。当前生产策略应是重启式部署。 |
 
@@ -26,7 +26,7 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自 PostgreSQL active workflow version。Settings 页面保存 Workflow 或 Agents 时，会写入新的 `workflow_versions` 记录并激活它。
+Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 页面保存 Workflow 或 Agents 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
 
 关键路径：
 
@@ -82,8 +82,9 @@ http://127.0.0.1:4000/settings
 
 推荐语义：
 
-- 新保存的 workflow version 影响后续读取配置、后续 dispatch 和后续 agent run。
-- 已经创建的 run 应记录当时绑定的 workflow version，便于审计。
+- 新保存的 workflow 影响后续读取配置、后续 dispatch、retry、resumed turn 和 operator task。
+- 已执行中的 turn 可使用已接收的输入完成；下一安全执行边界重新解析当前 workflow。
+- 保存时将尚未 claim 的 queued worker task 及其 queued run 标记失败，使 reconciliation 使用新 workflow 重新 dispatch；旧 payload 不会开始执行。
 - 已经启动的 Codex turn 不应被中途替换 prompt；下一次调度或下一次 run 才应使用新配置。
 - 如果新配置不通过 runtime validation，orchestrator 应停止监听或调度，而不是继续用旧配置假装成功。
 
@@ -147,7 +148,7 @@ Symphony 当前仍处于 alpha 阶段，配置模型和 UI 还在变化。此时
 - 配置变更走 Settings，不重启。
 - 代码变更走重启式部署。
 - 重启前确保没有需要保护的本地 workspace 操作正在进行。
-- 依赖数据库保存 run、event、workflow version 和 issue 快照来恢复可观测上下文。
+- 依赖数据库保存 run、event、当前 workflow 和 issue 快照来恢复可观测上下文。
 - 如果未来引入 worker runtime，优先做到 worker 可下线、任务 lease 可过期/重领，而不是先做 BEAM hot upgrade。
 
 ## 7. 后续演进方向
@@ -155,7 +156,7 @@ Symphony 当前仍处于 alpha 阶段，配置模型和 UI 还在变化。此时
 如果以后要增强“热更新”，建议按以下顺序推进：
 
 1. 完善配置热更新：所有 runtime contract 字段都能从 Settings 保存、校验、审计、恢复。
-2. 明确 running run 的配置绑定语义：每个 run 固定引用启动时的 workflow version。
+2. running turn 使用已经接收的输入完成，后续 turn 从发布的 current-workflow snapshot 重新解析配置。
 3. 增加 graceful pause / drain：暂停新任务，等待当前 run 完成或主动停止。
 4. 支持重启式零丢失部署：进程重启后能从 DB 恢复 dashboard、队列和任务状态。
 5. 最后再评估 OTP release hot upgrade：只有当重启式部署不能满足需求时再做。

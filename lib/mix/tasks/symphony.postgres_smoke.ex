@@ -160,7 +160,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         WHERE table_schema = 'public'
           AND (table_name, column_name) IN (
             ('projects', 'id'),
-            ('workflow_versions', 'yaml_config'),
+            ('workflows', 'yaml_config'),
             ('events', 'occurred_at')
           )
         ORDER BY CASE column_name
@@ -184,20 +184,20 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   end
 
   defp assert_imported_relationships!(repo) do
-    %{rows: [[@project_id, @workflow_id, true]]} =
+    %{rows: [[@project_id, @workflow_id]]} =
       SQL.query!(
         repo,
         """
-        SELECT p.id::text, w.id::text, w.active
+        SELECT p.id::text, w.id::text
         FROM projects p
-        JOIN workflow_versions w ON w.project_id = p.id
+        JOIN workflows w ON w.project_id = p.id
         WHERE p.id = $1::text::uuid
         """,
         [@project_id]
       )
 
-    %{rows: [[@run_id, @issue_id, @workflow_id]]} =
-      SQL.query!(repo, "SELECT id::text, issue_id::text, workflow_version_id::text FROM runs WHERE id = $1::text::uuid", [@run_id])
+    %{rows: [[@run_id, @issue_id]]} =
+      SQL.query!(repo, "SELECT id::text, issue_id::text FROM runs WHERE id = $1::text::uuid", [@run_id])
 
     %{rows: [[@lease_id, @task_id, @worker_id, @session_id]]} =
       SQL.query!(

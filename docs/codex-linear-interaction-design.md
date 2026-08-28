@@ -85,7 +85,7 @@ profiles:
       target_states: ["In Progress", "Ready to Merge"]
 ```
 
-运行时 authority 是每个 enabled project 的 PostgreSQL active workflow version。checked-in
+运行时 authority 是每个 enabled project 的 PostgreSQL current workflow。checked-in
 `workflow.yml` / `profiles.yml` 只是 split package 示例和导入导出 artifact。
 
 ## 工具契约

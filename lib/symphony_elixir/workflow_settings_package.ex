@@ -42,19 +42,6 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     end
   end
 
-  @spec restore_section(:workflow | :agents, WorkflowForm.draft(), WorkflowForm.draft()) :: WorkflowForm.draft()
-  def restore_section(:agents, current, history) do
-    current
-    |> Map.put("prompt_body", Map.get(history, "prompt_body", ""))
-    |> Map.put("profiles", Map.get(history, "profiles", %{}))
-  end
-
-  def restore_section(_workflow, current, history) do
-    history
-    |> Map.put("prompt_body", Map.get(current, "prompt_body", ""))
-    |> Map.put("profiles", Map.get(current, "profiles", %{}))
-  end
-
   @spec changed?(String.t(), String.t()) :: boolean()
   def changed?(current_raw, next_raw) when is_binary(current_raw) and is_binary(next_raw) do
     not canonical_equal?(current_raw, next_raw)

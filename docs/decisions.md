@@ -21,7 +21,7 @@ operator UI and service boundary without a separate frontend stack.
 
 Status: superseded by PostgreSQL runtime persistence
 
-SQLite workflow versions were the former runtime authority. SQLite is now only a frozen,
+SQLite workflow rows were the former runtime authority. SQLite is now only a frozen,
 one-way cutover source and cannot be selected as a runtime backend.
 
 ### PostgreSQL runtime persistence
@@ -29,15 +29,15 @@ one-way cutover source and cannot be selected as a runtime backend.
 Status: accepted
 
 PostgreSQL is the sole runtime database and `DATABASE_URL` is the connection contract. Active
-workflow versions remain the durable authority, while normal `WorkflowStore` reads use an atomic
+current workflows remain the durable authority, while normal `WorkflowStore` reads use an atomic
 in-memory snapshot. The only supported cutover imports a stopped SQLite backup into an
 already-migrated empty PostgreSQL database.
 
-### Per-project workflow versions and multi-project runtime
+### Per-project current workflows and multi-project runtime
 
 Status: accepted
 
-Each enabled project owns its active workflow version and project-scoped runtime settings. Plans
+Each enabled project owns one current workflow and project-scoped runtime settings. Plans
 215-219 established a single orchestrator that iterates those project contexts while preserving
 default-project compatibility for existing callers.
 

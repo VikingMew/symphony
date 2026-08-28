@@ -48,10 +48,10 @@ defmodule SymphonyElixirWeb.HealthController do
   end
 
   defp workflow_state(persistence) do
-    if function_exported?(persistence, :active_workflow_version, 0) do
-      case persistence.active_workflow_version() do
+    if function_exported?(persistence, :current_workflow, 0) do
+      case persistence.current_workflow() do
         nil -> "setup_required"
-        _version -> "configured"
+        _workflow -> "configured"
       end
     else
       "unknown"
