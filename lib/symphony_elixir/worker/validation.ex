@@ -22,21 +22,8 @@ defmodule SymphonyElixir.Worker.Validation do
 
   @spec write!(Path.t(), map()) :: :ok
   def write!(path, summary) do
-    safe = reject_secrets(summary)
+    safe = SymphonyElixir.Redaction.payload(summary, 4_096)
     path |> Path.dirname() |> File.mkdir_p!()
     File.write!(path, Jason.encode_to_iodata!(safe, pretty: true))
   end
-
-  defp reject_secrets(value) when is_map(value) do
-    Map.new(value, fn {key, item} ->
-      if String.contains?(String.downcase(to_string(key)), ["token", "secret", "password", "credential"]) do
-        {key, "[REDACTED]"}
-      else
-        {key, reject_secrets(item)}
-      end
-    end)
-  end
-
-  defp reject_secrets(value) when is_list(value), do: Enum.map(value, &reject_secrets/1)
-  defp reject_secrets(value), do: value
 end

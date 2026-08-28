@@ -32,3 +32,33 @@ jobs:
 
       - name: Verify make all
         run: make all
+
+  execution-worker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build execution worker
+        run: |
+          docker build \
+            --target execution-worker \
+            --build-arg SYMPHONY_WORKER_IMAGE=symphony-worker:${GITHUB_SHA} \
+            --build-arg SYMPHONY_WORKER_SOURCE_REVISION=${GITHUB_SHA} \
+            --tag symphony-worker:${GITHUB_SHA} \
+            .
+
+      - name: Verify non-root runtime and toolchain
+        run: |
+          test "$(docker run --rm --entrypoint id symphony-worker:${GITHUB_SHA} -u)" != "0"
+          docker run --rm --entrypoint bash symphony-worker:${GITHUB_SHA} -lc \
+            'command -v codex && command -v git && command -v make && command -v cc && command -v mix && command -v elixir'
+
+      - name: Run required gate in clean worker image
+        run: |
+          docker run --rm \
+            --entrypoint bash \
+            --volume "${PWD}:/source:ro" \
+            symphony-worker:${GITHUB_SHA} \
+            -lc 'cp -a /source/. /worker/workspaces/symphony && cd /worker/workspaces/symphony && make all'

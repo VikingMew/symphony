@@ -26,6 +26,8 @@ if worker_role do
     cache_root: System.get_env("SYMPHONY_WORKER_CACHE_ROOT") || "/worker/cache",
     log_root: System.get_env("SYMPHONY_WORKER_LOG_ROOT") || "/worker/logs",
     slots: positive_integer.("SYMPHONY_WORKER_SLOTS", "1"),
+    retention_seconds: positive_integer.("SYMPHONY_WORKER_RETENTION_SECONDS", "86400"),
+    cache_max_bytes: positive_integer.("SYMPHONY_WORKER_CACHE_MAX_BYTES", "10737418240"),
     image_reference: System.get_env("SYMPHONY_WORKER_IMAGE") || "unknown",
     source_revision: System.get_env("SYMPHONY_WORKER_SOURCE_REVISION") || "unknown"
 end

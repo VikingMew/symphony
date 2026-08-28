@@ -9,7 +9,9 @@ defmodule SymphonyElixir.Worker.Payload do
 
   @spec parse(map()) :: {:ok, t()} | {:error, {:invalid_execution_payload, String.t()}}
   def parse(%{"version" => 1} = payload) do
-    with {:ok, repository} <- required_string(payload, "repository"),
+    with :ok <- reject_forbidden(payload),
+         {:ok, repository} <- required_string(payload, "repository"),
+         :ok <- reject_repository_credentials(repository),
          {:ok, revision} <- required_string(payload, "revision"),
          {:ok, branch} <- required_string(payload, "branch"),
          {:ok, codex} <- command(Map.get(payload, "codex"), "codex"),
@@ -53,6 +55,40 @@ defmodule SymphonyElixir.Worker.Payload do
     case Map.get(payload, key) do
       value when is_binary(value) and value != "" -> {:ok, value}
       _ -> error("#{key} is required")
+    end
+  end
+
+  defp reject_forbidden(value) when is_map(value) do
+    Enum.reduce_while(value, :ok, fn {key, item}, :ok ->
+      normalized = String.downcase(to_string(key))
+
+      if normalized == "workflow_version_id" or
+           String.contains?(normalized, ["token", "secret", "password", "credential", "authorization"]) do
+        {:halt, error("forbidden field #{key}")}
+      else
+        case reject_forbidden(item) do
+          :ok -> {:cont, :ok}
+          error -> {:halt, error}
+        end
+      end
+    end)
+  end
+
+  defp reject_forbidden(value) when is_list(value) do
+    Enum.reduce_while(value, :ok, fn item, :ok ->
+      case reject_forbidden(item) do
+        :ok -> {:cont, :ok}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp reject_forbidden(_value), do: :ok
+
+  defp reject_repository_credentials(repository) do
+    case URI.parse(repository) do
+      %URI{userinfo: userinfo} when is_binary(userinfo) and userinfo != "" -> error("repository credentials are forbidden")
+      _ -> :ok
     end
   end
 

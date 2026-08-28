@@ -15,6 +15,19 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert {:error, {:invalid_execution_payload, _}} = Payload.parse(%{"version" => 2})
   end
 
+  test "rejects credentials and workflow version fields anywhere in the payload" do
+    assert {:error, {:invalid_execution_payload, "forbidden field token"}} =
+             Payload.parse(Map.put(valid_payload(), "token", "secret"))
+
+    assert {:error, {:invalid_execution_payload, "forbidden field workflow_version_id"}} =
+             Payload.parse(Map.put(valid_payload(), "workflow_version_id", "old"))
+
+    assert {:error, {:invalid_execution_payload, "repository credentials are forbidden"}} =
+             valid_payload()
+             |> Map.put("repository", "https://user:pass@example.test/repo.git")
+             |> Payload.parse()
+  end
+
   defp valid_payload do
     %{
       "version" => 1,
