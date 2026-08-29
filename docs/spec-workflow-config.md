@@ -112,6 +112,7 @@ Default workflow policy:
   `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
+- Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
 - `Ready to Merge` MUST NOT appear in `tracker.active_states` or `workflow.states`.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.

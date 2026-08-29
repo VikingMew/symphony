@@ -34,6 +34,14 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
 
     errors = WorkflowContract.workflow_errors(invalid_actor, %{}, tracker)
     assert Enum.any?(errors, &String.contains?(&1, "actor=symphony"))
+
+    assert Enum.any?(workflow["allowed_transitions"], fn transition ->
+             transition == %{
+               "from" => "Ready to Merge",
+               "to" => "Blocked",
+               "actor" => "symphony"
+             }
+           end)
   end
 
   test "validates state profile references and transition state references" do

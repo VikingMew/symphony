@@ -292,6 +292,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
       )
       |> reject_dispatched_review_state("Blocked", active_states, "tracker.active_states")
       |> require_blocked_transitions(active_states, transitions)
+      |> require_transition(transitions, "Ready to Merge", "Blocked", "symphony", nil)
       |> require_transition(transitions, "Blocked", "Ready", "human", nil)
       |> require_transition(transitions, "Blocked", "Needs Refinement Review", "human", nil)
       |> require_transition(transitions, "Blocked", "Canceled", "human", nil)
@@ -326,8 +327,10 @@ defmodule SymphonyElixir.Config.WorkflowContract do
 
       cond do
         state_equal?(to, "Blocked") and
-            (actor != "symphony" or not Enum.any?(active_states, &state_equal?(&1, from))) ->
-          ["transitions to Blocked must be active-state transitions with actor=symphony"]
+            (actor != "symphony" or
+               not (Enum.any?(active_states, &state_equal?(&1, from)) or
+                      state_equal?(from, "Ready to Merge"))) ->
+          ["transitions to Blocked must use actor=symphony and originate from an active state or Ready to Merge"]
 
         state_equal?(from, "Blocked") and actor != "human" ->
           ["transitions from Blocked must use actor=human"]

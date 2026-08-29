@@ -157,7 +157,10 @@ An issue is dispatch-eligible only if all are true:
 
 The default active states are `Refining`, `Ready`, and `In Progress`. The human-review states
 `Needs Refinement Review` and `Ready to Merge` are deliberately absent from `active_states` and
-MUST NOT have executable routes. In particular, no orchestrator path transitions `Ready to Merge`
+MUST NOT have executable routes. The control plane MAY transition `Ready to Merge -> Blocked`
+without dispatch when the exact handed-off open GitHub PR reports a definitive merge conflict.
+Unknown mergeability, CI, review, behind, or API failure states MUST NOT block. In particular, no
+orchestrator path transitions `Ready to Merge`
 to `Done`; GitHub review plus Linear automation owns that transition.
 
 Sorting order (stable intent):
