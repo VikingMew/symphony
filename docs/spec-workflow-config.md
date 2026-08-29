@@ -217,6 +217,12 @@ fields locally if they want stricter startup checks.
 ### 5.4 Prompt Template Contract
 
 The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
+For refinement and implementation profiles, Symphony appends a non-configurable, highest-priority
+container-validation safety contract after profile composition. It applies to every project even
+when a profile replaces the base prompt: agents MUST NOT invoke container engines, daemons,
+sockets, or image operations. A task that requires such validation MUST report blocker evidence
+and use the persistent `blocking_decision` / `Blocked` path; allowed task-authored validation
+remains mandatory. Static inspection of container source/configuration remains allowed.
 
 Rendering requirements:
 

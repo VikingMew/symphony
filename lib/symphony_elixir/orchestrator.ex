@@ -521,8 +521,8 @@ defmodule SymphonyElixir.Orchestrator do
     running_entry.linear_state_transitions != [] or running_entry.implementation_handoff_completed
   end
 
-  defp blocker_value(result) when is_map(result),
-    do: Map.get(result, "blockers") || Map.get(result, :blockers)
+  defp blocker_value(%{"blockers" => blocker}), do: blocker
+  defp blocker_value(%{blockers: blocker}), do: blocker
 
   defp blocker_value(_result), do: nil
 

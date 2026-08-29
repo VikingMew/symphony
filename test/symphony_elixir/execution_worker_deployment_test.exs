@@ -38,6 +38,33 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     refute worker =~ "- database"
   end
 
+  test "Compose application services have no container control plane" do
+    compose = File.read!(@compose)
+
+    for service <- ["migrate", "symphony", "execution-worker"] do
+      body = service_body(compose, service)
+
+      assert body =~ "read_only: true", "#{service} must keep a read-only filesystem"
+      assert body =~ "no-new-privileges:true", "#{service} must keep no-new-privileges"
+      assert body =~ "cap_drop:\n      - ALL", "#{service} must drop all capabilities"
+      refute body =~ ~r/^\s*privileged:\s*true\s*$/m
+      refute body =~ "/var/run/docker.sock"
+      refute body =~ "/run/docker.sock"
+      refute body =~ ~r/(?:podman|containerd|nerdctl).*\.sock/i
+    end
+  end
+
+  test "Panel and execution worker runtime stages do not install container-engine CLIs" do
+    dockerfile = File.read!(@dockerfile)
+
+    for stage <- ["symphony", "execution-worker"] do
+      body = stage_body(dockerfile, stage)
+
+      refute body =~ ~r/^\s*(?:docker(?:-\S+)?|buildx|podman(?:-\S+)?|nerdctl)\s*\\?\s*$/mi
+      refute body =~ ~r/^\s*(?:COPY|ADD)\s+.*(?:docker|buildx|podman|nerdctl)/mi
+    end
+  end
+
   test "image and source identity are required and example values are exact" do
     compose = File.read!(@compose)
     env = File.read!(Path.expand("../../.env.example", __DIR__))
@@ -46,5 +73,21 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-[0-9a-f]{40}/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE=\S+:[0-9a-f]{40}\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
+  end
+
+  defp service_body(compose, service) do
+    compose
+    |> String.split("  #{service}:\n", parts: 2)
+    |> List.last()
+    |> String.split(~r/^  [a-zA-Z0-9_-]+:\n/m, parts: 2)
+    |> List.first()
+  end
+
+  defp stage_body(dockerfile, stage) do
+    dockerfile
+    |> String.split(~r/^FROM .* AS #{Regex.escape(stage)}\s*$/m, parts: 2)
+    |> List.last()
+    |> String.split(~r/^FROM /m, parts: 2)
+    |> List.first()
   end
 end

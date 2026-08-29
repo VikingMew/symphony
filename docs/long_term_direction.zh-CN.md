@@ -59,7 +59,7 @@ Elixir / Phoenix Web Service
 - `已落地`：默认交付使用 refinement/implementation 两个 Codex profile；实现完成后由
   `AgentRunner` 确保 open GitHub PR，再进入 `Ready to Merge` 等待人 review。后端不 merge，
   `manual` / `external_worker` 仍是扩展契约。
-- `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、Docker worker 和更强 sandbox runner 仍是后续阶段。
+- `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、宿主或外部基础设施启动的容器隔离 worker 和更强 sandbox runner 仍是后续阶段；这不表示 Compose 内 DinD 或容器引擎 socket passthrough，边界见 [Compose 运维契约](compose.md#container-control-plane-boundary)。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
 - `已落地`：独立历史 Analytics 页面已落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
 - `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已落地，部署说明维护在 [Deployment Guide](deployment.md)。
@@ -518,7 +518,7 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - hooks 提供 UI 风险提示和审计记录。
 - agent run 使用最小权限环境变量。
 - 每个 run 记录审计事件。
-- 支持本地 worker、Docker worker、SSH worker 等隔离等级。
+- 支持本地 worker、由宿主或外部基础设施启动的容器隔离 worker、SSH worker 等隔离等级；不在 Compose 服务内运行 DinD 或透传容器引擎 socket。
 
 建议安全模型：
 
@@ -526,7 +526,7 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 Phoenix Web / Orchestrator
 └── Worker Runtime
     ├── Local Worker: 开发和可信环境
-    ├── Docker Worker: 中等隔离
+    ├── Host-managed Container Worker: 中等隔离（由宿主或外部基础设施启动）
     ├── SSH Worker: 远程隔离
     └── Future Rust Sandbox Runner: 更强边界
 ```
@@ -666,7 +666,7 @@ lib/symphony_elixir_web/
 - 已实现 worker API 协议版本、预共享注册 token、租约续期、任务取消/requeue、task event 上报。
 - 保留 local worker。
 - 稳定 SSH worker。
-- 增加 Docker worker。
+- 增加宿主或外部基础设施管理的容器隔离 worker；不得解释为 Compose 内 DinD 或 socket passthrough。
 - 评估是否需要 Rust sandbox runner。
 
 ## 13. 明确不做或暂缓

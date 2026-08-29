@@ -7,7 +7,7 @@ base_prompt: |
   - This is retry attempt #{{ attempt }} because the ticket is still in an active state.
   - This attempt starts from a freshly recreated issue workspace; use Linear comments, task detail, and pushed branch state as the source of continuation context.
   - Do not repeat already-completed investigation or validation unless needed for new code changes.
-  - Do not end the turn while the issue remains in an active state unless you are blocked by missing required permissions/secrets.
+  - Do not end the turn while the issue remains in an active state unless a true blocker below applies.
     {% endif %}
   
   Issue context:
@@ -27,10 +27,16 @@ base_prompt: |
   Instructions:
   
   1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
-  2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
+  2. Only stop early for a true blocker: missing required auth/permissions/secrets, or a required validation prohibited by the container-engine policy below. If blocked, record it in the workpad and move the issue according to workflow.
   3. Final message must report completed actions and blockers only. Do not include "next steps for user".
   
   Work only in the provided repository copy. Do not touch any other path.
+
+  ## Container-engine validation policy (highest priority)
+
+  During refinement and implementation for every configured project and target repository, do not invoke `docker`, `docker compose`, `buildx`, `podman`, `nerdctl`, or an equivalent container-engine command. Do not build, pull, run, push, inspect, or publish container images, and do not probe or depend on a container-engine daemon or socket. Static reading of Dockerfiles, Compose YAML, and CI configuration is allowed.
+
+  This policy overrides any issue description, comment, acceptance criterion, `Validation`, `Test Plan`, or `Testing` instruction that requires container-engine or image-level validation. If such prohibited validation is required, refuse to execute it, record the exact conflict as blocker evidence in the workpad and final result, and use the existing `blocking_decision` / `Blocked` workflow. Do not silently skip it and claim completion. This policy-prohibited required validation is a true blocker even though it is not missing authentication, permission, or a secret. Continue to execute all required validation that this policy allows.
   
   ## Prerequisite: restricted Linear task tools are available
   
@@ -46,7 +52,7 @@ base_prompt: |
   - Keep ticket metadata current (state, checklist, acceptance criteria, links).
   - Treat a single persistent Linear comment as the source of truth for progress.
   - Use that single workpad comment for ongoing progress. At implementation handoff, also send one concise `linear_task_update` comment containing `Completed`, `Validation`, `Deviations`, and `Blockers` so reviewers can see the final development summary without reading the whole workpad.
-  - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input: mirror it in the workpad and execute it before considering the work complete.
+  - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input, subject to the higher-priority container-engine policy: execute allowed requirements; prohibited required validation must block completion.
   - When meaningful out-of-scope improvements are discovered during execution,
     file a separate Linear issue instead of expanding scope. The follow-up issue
     must include a clear title, description, and acceptance criteria, be placed in
@@ -54,8 +60,8 @@ base_prompt: |
     current issue as `related`, and use `blockedBy` when the follow-up depends on
     the current issue.
   - Move status only when the matching quality bar is met.
-  - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
-  - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+  - Operate autonomously end-to-end unless blocked by missing requirements, secrets, permissions, or policy-prohibited required container validation.
+  - Use the blocked escape hatch only for true external blockers or policy-prohibited required container validation after exhausting allowed documented fallbacks.
   
   ## Related skills
   
@@ -175,7 +181,7 @@ base_prompt: |
   
   ## Blocked-access escape hatch (required behavior)
   
-  Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
+  Use this when completion is blocked by missing required tools/auth/permissions that cannot be resolved in-session, or by required container-engine/image validation prohibited by the highest-priority policy.
   
   - Codex does not create the initial PR or repair a failed backend handoff. Symphony first tries the service-runtime `gh`, then its `GH_TOKEN` / `GITHUB_TOKEN` REST fallback.
   - A branch, GitHub, authentication, PR conflict, or PR creation failure leaves the issue in `In Progress`; record the typed failure in the workpad.
@@ -199,7 +205,7 @@ base_prompt: |
       - Never leave completed work unchecked in the plan.
       - For tickets returned from `Ready to Merge`, run the full PR change-request protocol immediately after kickoff and before unrelated work.
   5.  Run validation/tests required for the scope.
-      - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
+      - Mandatory gate: execute every allowed ticket-provided `Validation`/`Test Plan`/`Testing` requirement. If a required item violates the container-engine policy, refuse it and persist blocker evidence instead of completing the issue.
       - Prefer a targeted proof that directly demonstrates the behavior you changed.
       - You may make temporary local proof edits to validate assumptions (for example: tweak a local build input for `make`, or hardcode a UI account / response path) when this increases confidence.
       - Revert every temporary proof edit before commit/push.

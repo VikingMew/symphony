@@ -59,4 +59,19 @@ defmodule SymphonyElixir.BlockingDecisionTest do
 
     refute BlockingDecision.terminal_handoff_failure?(:capacity_exhausted)
   end
+
+  test "persists policy-prohibited validation as ordinary reported blocker evidence" do
+    evidence =
+      "required image build conflicts with the container-engine validation policy"
+
+    assert {:ok, decision} =
+             BlockingDecision.decide("SYM-15", :reported_blocker, evidence, "run-policy")
+
+    assert decision["reason"] == "reported_blocker"
+    assert decision["evidence"] == evidence
+    assert decision["transition_status"] == "pending"
+
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert issue.blocking_decision == decision
+  end
 end
