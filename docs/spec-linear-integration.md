@@ -82,9 +82,10 @@ Orchestrator behavior on tracker errors:
 - Codex requests task-scoped mutations through the restricted `linear_task_update` tool; raw Linear
   GraphQL is not exposed to the agent.
 - The default implementation completion target is exactly `Ready to Merge` and requires a final
-  comment, structured result, and references.
-- `AgentRunner` MUST ensure the exact GitHub repository/base/head PR is open before the tool attaches
-  references, posts the comment, or moves Linear. The Linear state update is last.
+  comment, structured result, and references containing the same-session `create_pull_request` URL.
+- `AgentRunner` MUST ensure the exact GitHub repository/base/head PR is open through the restricted
+  tool backend before `linear_task_update` attaches references, posts the comment, or moves Linear.
+  The Linear state update is last.
 - PR failure leaves the issue in `In Progress`. Linear write failure after PR creation is typed and
   visible so a retry can reuse the already-open PR.
 - `Ready to Merge` is a waiting state. Symphony performs no `Ready to Merge -> Done` write; Linear's

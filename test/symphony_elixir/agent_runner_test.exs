@@ -782,9 +782,12 @@ defmodule SymphonyElixir.AgentRunnerTest do
             ;;
           4)
             printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-handoff"}}}'
-            printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":"None"},"references":{"branch":"feature/sym-1"}}}}'
+            printf '%s\n' '{"id":103,"method":"item/tool/call","params":{"tool":"create_pull_request","callId":"call-pr","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"title":"SYM-1: Ship PR handoff","body":"#### Summary\\n\\n- handoff\\n\\n#### Test Plan\\n\\n- [x] green\\n\\nFixes SYM-1"}}}'
             ;;
           5)
+            printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":"None"},"references":{"branch":"feature/sym-1","pr_url":"https://github.com/acme/app/pull/12","pr_proof":"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U"}}}}'
+            ;;
+          6)
             printf '%s\n' '{"method":"turn/completed"}'
             exit 0
             ;;
@@ -812,11 +815,15 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       test_pid = self()
 
-      pull_request_ensurer = fn handoff_issue, project, github_opts ->
+      pull_request_ensurer = fn handoff_issue, project, rendered, github_opts ->
         send(test_pid, {:handoff_order, :pr})
         assert handoff_issue.branch_name == "feature/sym-1"
         assert project.repository_url == "https://github.com/acme/app"
         assert github_opts == []
+        assert rendered.title == "SYM-1: Ship PR handoff"
+        assert rendered.body =~ "#### Summary\n\n- handoff"
+        assert rendered.body =~ "#### Test Plan\n\n- [x] green"
+        assert rendered.body =~ "\n\nFixes SYM-1"
 
         {:ok,
          %{
@@ -871,7 +878,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
                    {:ok, "checked out"}
                  end,
                  pull_request_ensurer: pull_request_ensurer,
-                 dynamic_tool_opts: [graphql: graphql],
+                 dynamic_tool_opts: [graphql: graphql, pull_request_proof_secret: "test-proof"],
                  issue_state_fetcher: fn ["issue-handoff"] ->
                    {:ok, [%{issue | state: "Ready to Merge"}]}
                  end,

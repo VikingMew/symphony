@@ -4,11 +4,14 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   alias SymphonyElixir.Codex.DynamicTool
   alias SymphonyElixir.Linear.Issue
 
-  test "tool_specs advertises restricted Linear task tools" do
+  test "tool_specs advertises restricted task and pull request tools" do
     specs = DynamicTool.tool_specs()
     assert %{"inputSchema" => %{"type" => "object", "properties" => read_props}} = Enum.find(specs, &(&1["name"] == "linear_task_read"))
     assert %{"inputSchema" => %{"type" => "object", "properties" => update_props}} = Enum.find(specs, &(&1["name"] == "linear_task_update"))
     assert %{"inputSchema" => %{"type" => "object", "properties" => create_props}} = Enum.find(specs, &(&1["name"] == "linear_issue_create"))
+
+    assert %{"inputSchema" => %{"required" => ["title", "body"]}} =
+             Enum.find(specs, &(&1["name"] == "create_pull_request"))
 
     assert Map.has_key?(read_props, "include_activity")
     assert Map.has_key?(read_props, "activity_limit")
@@ -26,7 +29,12 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_task_read", "linear_task_update", "linear_issue_create"]
+               "supportedTools" => [
+                 "linear_task_read",
+                 "linear_task_update",
+                 "linear_issue_create",
+                 "create_pull_request"
+               ]
              }
            }
 
@@ -36,6 +44,38 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "text" => response["output"]
              }
            ]
+  end
+
+  test "create_pull_request is restricted to implementation and passes Codex content to the backend" do
+    issue = %Issue{id: "issue-1", identifier: "SYM-1", branch_name: "feature/sym-1"}
+    payload = %{"title" => "SYM-1: Ship", "body" => "#### Summary\n\n- shipped\n\nFixes SYM-1"}
+
+    response =
+      DynamicTool.execute("create_pull_request", payload,
+        issue: issue,
+        profile: "implementation",
+        session_id: "thread-1-turn-1",
+        pull_request_proof_secret: "proof-secret",
+        pull_request_creator: fn ^issue, rendered, _opts ->
+          assert rendered == %{title: payload["title"], body: payload["body"]}
+          {:ok, %{url: "https://github.com/acme/app/pull/1"}}
+        end
+      )
+
+    assert response["success"]
+    assert Jason.decode!(response["output"])["url"] == "https://github.com/acme/app/pull/1"
+    assert is_binary(Jason.decode!(response["output"])["completion_proof"])
+
+    rejected =
+      DynamicTool.execute("create_pull_request", payload,
+        issue: issue,
+        profile: "refinement",
+        session_id: "thread-1-turn-2",
+        pull_request_proof_secret: "proof-secret"
+      )
+
+    refute rejected["success"]
+    assert rejected["output"] =~ "not allowed"
   end
 
   test "linear_issue_create is restricted to nap and day dreaming profiles" do

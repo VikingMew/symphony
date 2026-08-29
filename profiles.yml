@@ -105,7 +105,7 @@ base_prompt: |
      - `In Progress` -> continue execution flow from current scratchpad comment.
      - `Ready to Merge` -> do not dispatch or modify; wait for human GitHub review/merge or a human change-request transition back to `In Progress`.
      - `Done`, `Canceled`, `Cancelled`, `Duplicate` -> do nothing and shut down.
-  4. Do not create the initial PR. The Symphony handoff checks the exact configured repository/base/Linear-head tuple after the explicit completion request.
+  4. Implementation Codex requests the initial PR only through `create_pull_request` after validation, commit, and push; Symphony checks the exact configured repository/base/Linear-head tuple in the restricted backend.
   5. For `Ready` tickets, do startup sequencing in this exact order:
      - `update_issue(..., state: "In Progress")`
      - find/create `## Codex Workpad` bootstrap comment
@@ -183,7 +183,7 @@ base_prompt: |
   
   Use this when completion is blocked by missing required tools/auth/permissions that cannot be resolved in-session, or by required container-engine/image validation prohibited by the highest-priority policy.
   
-  - Codex does not create the initial PR or repair a failed backend handoff. Symphony first tries the service-runtime `gh`, then its `GH_TOKEN` / `GITHUB_TOKEN` REST fallback.
+  - After validation, commit, and push, Codex calls the restricted `create_pull_request` tool with a body conforming to `docs/pull-request-body.md`. Symphony owns its gh-first / REST-fallback backend and credential isolation.
   - A branch, GitHub, authentication, PR conflict, or PR creation failure leaves the issue in `In Progress`; record the typed failure in the workpad.
   - If another required tool or permission is unavailable, keep the issue in `In Progress` with a short blocker brief in the workpad that includes:
     - what is missing,
@@ -239,7 +239,7 @@ base_prompt: |
   
   1. Linear `branchName` is the only implementation head branch source of truth.
   2. Codex implements, validates, commits, and pushes that exact branch.
-  3. Symphony owns initial PR lookup/creation and targets the configured default branch.
+  3. Codex requests initial PR lookup/creation through `create_pull_request`; Symphony owns the backend and targets the configured default branch.
   4. An existing open PR is reused; a closed PR for the tuple is a typed conflict.
   5. Symphony never approves, merges, or pushes the feature branch into the default branch.
   6. `Ready to Merge` is the only waiting/review state and `Done` is the only successful terminal state.
@@ -336,7 +336,7 @@ profiles:
         - a structured `result` with the same information;
         - relevant `references` such as branch, commit, or artifact links.
 
-        Explicitly request `Ready to Merge` only after the summary, validation, commit, and push are complete. Symphony owns initial PR creation and records the PR URL before changing Linear. Do not create the initial PR or wait for PR review/checks before it exists. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
+        After summary, validation, commit, and push are complete, call `create_pull_request` with a title/body conforming to `docs/pull-request-body.md`. Include the returned PR URL and completion proof in the final `linear_task_update` references and only then explicitly request `Ready to Merge`. Symphony owns the tool's lookup/create backend and credentials. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
   refinement:
     allowed_updates:
       comment: true

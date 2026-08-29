@@ -20,7 +20,7 @@ GitHub PR 已打开，最后才把 Linear issue 移到人工等待状态。
 - Codex 可以追加评论、结构化结果、引用和受控状态请求。
 - Linear token、GraphQL 文档和 Authorization header 只存在于 Symphony 后端。
 - 实现完成由显式 `Ready to Merge` 请求触发，不由普通 turn exit 或 max-turn exhaustion 推断。
-- 初次 PR 创建只有一个 owner：中心化 `AgentRunner`。
+- 初次 PR 由 Codex 调用受限 `create_pull_request` tool 请求；中心化 `AgentRunner` 独占其 backend、认证和 lookup/create 行为。
 - GitHub/Linear automation 在 PR merge 后把 issue 移到 `Done`；Symphony 不执行 merge。
 
 ## 当前默认状态流
@@ -122,20 +122,20 @@ profiles:
 }
 ```
 
-缺少 comment/result/references、target 不允许、或没有 `AgentRunner` 注入的 handoff boundary
+缺少 comment/result/references（含 `pr_url`）、target 不允许、或没有 `AgentRunner` 注入的 PR backend
 时，请求失败。
 
 ## 原子实现 handoff
 
-收到显式完成请求后，顺序固定：
+validation、commit、push 后，顺序固定：
 
-1. 校验 Linear identifier/title、精确 `branchName`、configured default branch、GitHub repository
+1. Codex 按 [PR body contract](pull-request-body.md) 写 title/body 并调用 `create_pull_request`。
+2. Backend 校验 Linear identifier、精确 `branchName`、configured default branch、GitHub repository
    identity，以及 remote head branch 存在。
-2. 对精确 repository/base/head 查找 open PR。
-3. 已有 open PR 则复用；否则创建 title 包含 Linear identifier、body 包含精确
+3. 对精确 repository/base/head 查找 open PR。
+4. 已有 open PR 则复用；否则创建 title 包含 Linear identifier、body 包含精确
    `Fixes <ID>` 的 PR。
-4. 添加 branch/PR reference，写 final comment/result。
-5. 最后更新 Linear `In Progress -> Ready to Merge`。
+5. Codex 将返回的 PR URL 添加到 references，写 final comment/result，最后更新 Linear `In Progress -> Ready to Merge`。
 
 任何 branch/GitHub/auth/PR 失败都会返回 typed error，并让 issue 留在 `In Progress`。Linear
 transition 失败也必须可见；此时 PR 已存在，重试会 idempotently 复用。

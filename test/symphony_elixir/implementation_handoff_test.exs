@@ -4,33 +4,44 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
   alias SymphonyElixir.Codex.DynamicTool
   alias SymphonyElixir.Linear.Issue
 
-  test "completion prepares the PR before Linear writes and moves state last" do
+  @proof_secret "proof-secret"
+  @session_id "thread-1-turn-1"
+
+  test "Codex creates the PR before Linear writes and moves state last" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "https://github.com/acme/app"
     )
 
     {:ok, order} = Agent.start_link(fn -> [] end)
-    test_pid = self()
+
+    pr_response =
+      DynamicTool.execute("create_pull_request", pull_request_payload(),
+        issue: issue(),
+        profile: "implementation",
+        session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
+        pull_request_creator: fn handoff_issue, rendered, handoff_opts ->
+          Agent.update(order, &[{:pr, handoff_issue.branch_name} | &1])
+          assert rendered.body =~ "Fixes SYM-1"
+          refute Keyword.has_key?(handoff_opts, :workspace)
+          {:ok, pull_request()}
+        end,
+        graphql: graphql_recorder(order)
+      )
+
+    assert pr_response["success"]
 
     response =
       DynamicTool.execute("linear_task_update", completion_payload(),
         issue: issue(),
         profile: "implementation",
-        session_id: "thread-1-turn-1",
-        implementation_handoff_preparer: fn handoff_issue, handoff_opts ->
-          Agent.update(order, &[{:pr, handoff_issue.branch_name} | &1])
-          refute Keyword.has_key?(handoff_opts, :workspace)
-          {:ok, pull_request()}
-        end,
-        implementation_handoff_observer: fn status, _issue, details, opts ->
-          send(test_pid, {:handoff_observed, status, details, Keyword.get(opts, :session_id)})
-        end,
+        session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
         graphql: graphql_recorder(order)
       )
 
     assert response["success"]
     output = Jason.decode!(response["output"])
-    assert output["handoff"]["url"] == "https://github.com/acme/app/pull/12"
     assert output["requested_state"] == "Ready to Merge"
 
     assert Enum.reverse(Agent.get(order, & &1)) == [
@@ -41,8 +52,6 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
              :state_lookup,
              {:state_update, "state-ready-to-merge"}
            ]
-
-    assert_received {:handoff_observed, :completed, %{url: "https://github.com/acme/app/pull/12"}, "thread-1-turn-1"}
   end
 
   test "PR failure leaves Linear untouched and is visible" do
@@ -51,10 +60,12 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
     )
 
     response =
-      DynamicTool.execute("linear_task_update", completion_payload(),
+      DynamicTool.execute("create_pull_request", pull_request_payload(),
         issue: issue(),
         profile: "implementation",
-        implementation_handoff_preparer: fn _issue, _opts ->
+        session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
+        pull_request_creator: fn _issue, _payload, _opts ->
           {:error, {:implementation_handoff_failed, {:remote_branch_not_found, "feature/sym-1"}}}
         end,
         graphql: fn _query, _variables -> flunk("Linear must not be called before PR success") end
@@ -64,12 +75,10 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
     assert response["output"] =~ "remote_branch_not_found"
   end
 
-  test "Linear transition failure is typed and marks the prepared handoff failed" do
+  test "Linear transition failure is typed after PR creation" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "https://github.com/acme/app"
     )
-
-    test_pid = self()
 
     graphql = fn query, variables ->
       cond do
@@ -88,36 +97,31 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
       end
     end
 
+    assert DynamicTool.execute("create_pull_request", pull_request_payload(),
+             issue: issue(),
+             profile: "implementation",
+             session_id: @session_id,
+             pull_request_proof_secret: @proof_secret,
+             pull_request_creator: fn _issue, _rendered, _opts -> {:ok, pull_request()} end
+           )["success"]
+
     response =
       DynamicTool.execute("linear_task_update", completion_payload(),
         issue: issue(),
         profile: "implementation",
-        implementation_handoff_preparer: fn _issue, _opts -> {:ok, pull_request()} end,
-        implementation_handoff_observer: fn status, _issue, details, _opts ->
-          send(test_pid, {:handoff_observed, status, details})
-        end,
+        session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
         graphql: graphql
       )
 
     refute response["success"]
     assert response["output"] =~ "linear_issue_update_failed"
-    assert_received {:handoff_observed, :failed, %{reason: reason}}
-    assert reason =~ "transition denied"
   end
 
-  test "completion requires the AgentRunner-owned handoff and final handoff fields" do
+  test "completion requires final handoff fields including the PR URL" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "https://github.com/acme/app"
     )
-
-    unavailable =
-      DynamicTool.execute("linear_task_update", completion_payload(),
-        issue: issue(),
-        profile: "implementation"
-      )
-
-    refute unavailable["success"]
-    assert unavailable["output"] =~ "implementation_handoff_unavailable"
 
     Enum.each(["comment", "result", "references"], fn field ->
       payload = Map.delete(completion_payload(), field)
@@ -132,6 +136,25 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
       assert response["output"] =~ "implementation_handoff_field_required"
       assert response["output"] =~ field
     end)
+
+    missing_url = put_in(completion_payload(), ["references"], %{"branch" => "feature/sym-1"})
+    response = DynamicTool.execute("linear_task_update", missing_url, issue: issue(), profile: "implementation")
+    refute response["success"]
+    assert response["output"] =~ "references.pr_url"
+
+    forged = put_in(completion_payload(), ["references", "pr_proof"], "forged")
+
+    response =
+      DynamicTool.execute("linear_task_update", forged,
+        issue: issue(),
+        profile: "implementation",
+        session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
+        graphql: fn _query, _variables -> flunk("forged proof must fail before Linear writes") end
+      )
+
+    refute response["success"]
+    assert response["output"] =~ "create_pull_request"
   end
 
   test "handoff does not depend on a local or SSH worker workspace path" do
@@ -144,7 +167,9 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         [
           issue: issue(),
           profile: "implementation",
-          implementation_handoff_preparer: fn _issue, handoff_opts ->
+          session_id: @session_id,
+          pull_request_proof_secret: @proof_secret,
+          pull_request_creator: fn _issue, _payload, handoff_opts ->
             assert Keyword.get(handoff_opts, :workspace) == workspace
             {:ok, pull_request()}
           end,
@@ -152,7 +177,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         ]
         |> maybe_put_workspace(workspace)
 
-      assert DynamicTool.execute("linear_task_update", completion_payload(), opts)["success"]
+      assert DynamicTool.execute("create_pull_request", pull_request_payload(), opts)["success"]
     end
   end
 
@@ -168,9 +193,28 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
       },
       "references" => %{
         "branch_url" => "https://github.com/acme/app/tree/feature/sym-1",
-        "branch" => "feature/sym-1"
+        "branch" => "feature/sym-1",
+        "pr_url" => "https://github.com/acme/app/pull/12",
+        "pr_proof" => pull_request_proof()
       }
     }
+  end
+
+  defp pull_request_payload do
+    %{
+      "title" => "SYM-1: Ship PR handoff",
+      "body" => "#### Summary\n\n- handoff\n\n#### Test Plan\n\n- [x] green\n\nFixes SYM-1"
+    }
+  end
+
+  defp pull_request_proof do
+    :crypto.mac(
+      :hmac,
+      :sha256,
+      @proof_secret,
+      @session_id <> <<0>> <> "https://github.com/acme/app/pull/12"
+    )
+    |> Base.url_encode64(padding: false)
   end
 
   defp issue do

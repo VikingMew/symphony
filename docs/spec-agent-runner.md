@@ -242,14 +242,14 @@ Note:
 
 ### 10.8 Centralized GitHub PR Handoff
 
-For the default implementation profile, `AgentRunner` owns this ordered boundary:
+For the default implementation profile, `AgentRunner` owns the backend of this ordered boundary:
 
-1. Receive an explicit `Ready to Merge` request containing final comment, structured result, and
-   references.
-2. Validate the Linear identifier/title, exact Linear `branchName`, configured default branch,
+1. After validation, commit, and push, Codex calls the restricted `create_pull_request` tool with a
+   title/body conforming to [pull-request-body.md](pull-request-body.md).
+2. Validate the Linear identifier, exact Linear `branchName`, configured default branch,
    GitHub repository identity, and existence of the remote head branch.
 3. Ensure an open PR exists for the exact repository/base/head tuple.
-4. Attach the PR URL and post the final Linear comment/result/references.
+4. Return the PR URL; Codex includes it in the final Linear comment/result/references request.
 5. Update Linear from `In Progress` to `Ready to Merge` last.
 
 Step 5 MUST NOT run if PR preparation fails. Failures MUST be typed, visible, redacted, and leave
@@ -261,8 +261,10 @@ PR lookup/creation requirements:
 - Discover `gh` from the service process environment and use non-interactive, timeout-bounded
   commands.
 - Look up before create and return an existing open PR without duplication.
-- Create against the configured default branch with the exact validated head, a title containing
-  the Linear identifier, and an exact `Fixes <ID>` closing reference in the body.
+- Create against the configured default branch with the exact validated head and the already
+  validated renderer title/body. The body contains Summary bullets, Test Plan checkboxes, and the
+  exact `Fixes <ID>` closing reference required by [pull-request-body.md](pull-request-body.md).
+- Return an existing exact open PR without changing its title or body.
 - If `gh` is unavailable or unusable, use GitHub REST through the existing HTTP/proxy stack when
   `GH_TOKEN` or `GITHUB_TOKEN` is present; do not add a workflow token setting.
 - A closed or merged PR for the same branch is a typed conflict, not success and not permission to

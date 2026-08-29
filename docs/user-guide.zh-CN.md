@@ -273,8 +273,8 @@ profiles:
       mode: extend
       template: |
         Implement, test, verify, commit, and push the exact Linear branch. Submit the final
-        comment/result/references and explicitly request Ready to Merge. Symphony owns initial
-        PR creation.
+        call create_pull_request with a docs/pull-request-body.md-conformant title/body, then submit
+        comment/result/references with its URL and explicitly request Ready to Merge.
     allowed_updates:
       description: false
       comment: true
@@ -383,9 +383,12 @@ Backlog
 
 实现完成不是普通 Codex turn exit。Codex 完成 validation、commit、push 精确 Linear
 `branchName` 后，必须提交 final comment/result/references 并显式请求 `Ready to Merge`。Symphony
-随后校验 repository/default/head，复用或创建 open GitHub PR，记录 PR URL，最后才更新 Linear。
+随后 Codex 调用受限 `create_pull_request`；Symphony backend 校验 repository/default/head，复用或创建
+open GitHub PR。Codex 记录返回的 PR URL，最后才更新 Linear。
 GitHub/PR/auth 失败会让 issue 保持 `In Progress`。人要求修改时使用
-`Ready to Merge -> In Progress`；Codex 更新同一 branch/PR，再次验证并请求 handoff。人 merge PR
+`Ready to Merge -> In Progress`；Codex 更新同一 branch/PR，再次验证并请求 handoff。初始 PR
+正文由 Codex 按 [PR body contract](pull-request-body.md) 提交；已有
+open PR 的人工正文不会被覆盖。人 merge PR
 后，由 Linear GitHub automation 把 issue 移到 `Done`。
 
 Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、
