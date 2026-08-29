@@ -94,6 +94,10 @@ make all
 - `defp` specs are optional.
 - `@impl` callback implementations are exempt from local `@spec` requirement.
 - Keep changes narrowly scoped; avoid unrelated refactors.
+- Do not add invented version numbers to new or modified documentation or generated content, including
+  unsupported title/body versions, badges, or changelog-style labels for one-off plans.
+- Use version numbers only when they carry real release, compatibility, protocol/API, dependency, or
+  external meaning, such as repository releases, image tags, pinned tools/runtimes, and lockfiles.
 - Follow existing module/style patterns in `lib/symphony_elixir/*`.
 
 Validation command:
