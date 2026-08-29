@@ -582,6 +582,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute html =~ ~s(name="workflow[prompt_body]")
     assert html =~ "Agents"
     refute html =~ "Profile prompt template"
+    assert html =~ ~s(<option value="symphony" selected="">symphony</option>)
 
     params =
       workflow_page_form_params()

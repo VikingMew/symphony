@@ -541,7 +541,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp blocker_value(result) when is_map(result),
-    do: Map.get(result, "blockers") || Map.get(result, :blockers)
+    do: Payload.get_any(result, ["blockers", :blockers])
 
   defp blocker_value(_result), do: nil
 
