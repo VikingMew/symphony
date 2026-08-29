@@ -3,16 +3,60 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   @compose Path.expand("../../compose.yaml", __DIR__)
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
+  @mise Path.expand("../../mise.toml", __DIR__)
+  @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
     dockerfile = File.read!(@dockerfile)
 
     assert dockerfile =~ "ARG CODEX_VERSION=0.150.1"
     assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
-    assert dockerfile =~ "FROM ${NODE_IMAGE} AS worker"
-    assert dockerfile =~ "FROM ${RUNTIME_IMAGE} AS symphony"
+    assert dockerfile =~ "FROM toolchain AS worker"
+    assert dockerfile =~ "FROM toolchain AS symphony"
     assert length(Regex.scan(~r/COPY --from=codex \/usr\/local\/lib\/node_modules/, dockerfile)) == 3
     refute dockerfile =~ "npm install --global @openai/codex\n"
+  end
+
+  test "all Codex targets inherit one pinned mise-managed Elixir toolchain" do
+    dockerfile = File.read!(@dockerfile)
+    mise = File.read!(@mise)
+
+    assert dockerfile =~ "ARG ELIXIR_IMAGE=elixir:1.19.5-otp-28-slim"
+    assert dockerfile =~ "ARG MISE_VERSION=2025.8.16"
+    assert dockerfile =~ "FROM ${ELIXIR_IMAGE} AS toolchain"
+    assert dockerfile =~ "mise link erlang@28 /usr/local"
+    assert dockerfile =~ "mise link elixir@1.19.5-otp-28 /usr/local"
+    assert mise =~ ~s(erlang = "28")
+    assert mise =~ ~s(elixir = "1.19.5-otp-28")
+
+    for stage <- ["worker", "symphony", "execution-worker"] do
+      assert dockerfile =~ "FROM toolchain AS #{stage}"
+      body = stage_body(dockerfile, stage)
+      assert body =~ "MIX_HOME="
+      assert body =~ "HEX_HOME="
+      assert body =~ "MISE_CACHE_DIR="
+    end
+
+    refute dockerfile =~ ~r/mise[^\n]*(?:latest|releases\/latest)/i
+  end
+
+  test "publication CI statically owns non-root read-only toolchain smoke" do
+    workflow = File.read!(@publish_workflow)
+
+    for target <- ["symphony", "worker", "execution-worker"] do
+      assert workflow =~ "--target #{target}"
+      assert workflow =~ "symphony-toolchain:#{target}"
+    end
+
+    assert workflow =~ "command -v mise"
+    assert workflow =~ "command -v mix"
+    assert workflow =~ "command -v elixir"
+    assert workflow =~ "command -v erl"
+    assert workflow =~ "command -v make"
+    assert workflow =~ "--read-only"
+    assert workflow =~ "--user 10002:10002"
+    assert workflow =~ "mise exec -- mix --version"
+    assert workflow =~ "make all"
   end
 
   test "symphony image configures token-free GitHub credentials at system scope" do
@@ -72,7 +116,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   test "Panel and execution worker runtime stages do not install container-engine CLIs" do
     dockerfile = File.read!(@dockerfile)
 
-    for stage <- ["symphony", "execution-worker"] do
+    for stage <- ["toolchain", "worker", "symphony", "execution-worker"] do
       body = stage_body(dockerfile, stage)
 
       refute body =~ ~r/^\s*(?:docker(?:-\S+)?|buildx|podman(?:-\S+)?|nerdctl)\s*\\?\s*$/mi

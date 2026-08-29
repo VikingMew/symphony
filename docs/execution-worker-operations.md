@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-08-28
+updated: 2026-08-29
 owner: compose.yaml
 ---
 
@@ -41,9 +41,18 @@ docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-work
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
   test -z "$DATABASE_URL" && test -z "$LINEAR_API_KEY" &&
-  command -v codex && command -v git && command -v make && command -v mix
+  command -v codex && command -v git && command -v make && command -v mise &&
+  command -v mix && command -v elixir && command -v erl &&
+  mise --version && mise exec -- mix --version
 '
 ```
+
+The image installs mise `2025.8.16` and links its preinstalled Erlang `28` and Elixir
+`1.19.5-otp-28` runtimes at build time. Runtime setup never downloads a language toolchain.
+`MIX_HOME`, `HEX_HOME`, and `MISE_CACHE_DIR` all point into the writable `/worker/cache` volume;
+project build output remains in the writable `/worker/workspaces` volume while the root filesystem
+stays read-only. External publication CI owns the non-root image smoke and an in-image `make all`;
+Symphony implementation agents only run static configuration/source validation.
 
 The explicit token check keeps the base Compose model valid for centralized-only deployments while
 failing the worker preflight before container startup when its registration credential is absent.
