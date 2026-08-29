@@ -70,10 +70,19 @@ docker compose run --rm symphony gh auth login
 docker compose run --rm symphony ssh-keygen -t ed25519
 ```
 
-Token environment variables are an alternative to interactive `gh` authentication. The service
-process must see working `gh` credentials because SYM-1 PR lookup/creation happens at the Symphony
-boundary. Child Codex processes inherit the documented OpenAI, GitHub, Linear, and proxy
-environment after Symphony's existing sensitive-environment policy is applied.
+Token environment variables are an alternative to interactive `gh` authentication. For GitHub,
+`gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The image's system Git config installs a GitHub-scoped
+`gh auth git-credential` helper and rewrites `git@github.com:owner/repo.git` to the token-free
+`https://github.com/owner/repo.git` form. The helper resolves credentials only when Git
+authenticates; no token is written to a repository URL, Git config, image layer, or workspace.
+Because this static configuration lives in `/etc/gitconfig`, private clones work with an otherwise
+fresh `symphony_workspaces` volume and the read-only service never seeds `/home/symphony` or
+`/data/workspaces` with Git credentials. SSH URLs for hosts other than `github.com` remain SSH.
+
+The service process must see working `gh` credentials because PR lookup/creation and Git bootstrap
+and push happen at the Symphony boundary. Codex app-server children intentionally receive neither
+`GH_TOKEN` nor `GITHUB_TOKEN`; this prevents an agent turn from inheriting the service's GitHub
+credential while leaving bootstrap and PR handoff authenticated.
 
 ## Local Build and First Start
 
@@ -99,6 +108,21 @@ docker compose run --rm --no-deps symphony sh -lc '
   test ! -e /app/mix.exs && test ! -d /app/config && test ! -d /app/test
 '
 ```
+
+Inspect the credential wiring without expanding Compose environment values or asking Git to fill a
+credential:
+
+```bash
+docker compose run --rm --no-deps symphony sh -lc '
+  git config --system --get-all credential.https://github.com.helper
+  git config --system --get-all url.https://github.com/.insteadOf
+'
+```
+
+The expected values are `!gh auth git-credential` and `git@github.com:`. Use `docker compose
+config --quiet`, not `docker compose config`, in diagnostics where substituted secrets could be
+printed. Never use `git credential fill` as a display command because its output can contain the
+resolved credential.
 
 The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact supported Codex
 CLI release, `0.150.1`. The `symphony`, SSH `worker`, and `execution-worker` targets all copy the

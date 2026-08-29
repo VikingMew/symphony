@@ -192,7 +192,8 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
     assert ssh_hook =~ "GIT_ASKPASS="
     assert ssh_hook =~ "SSH_ASKPASS="
     assert ssh_hook =~ "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new'"
-    assert ssh_hook =~ "git -c credential.helper= -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'master' 'git@example.com:org/repo.git' ."
+    assert ssh_hook =~ "git -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'master' 'git@example.com:org/repo.git' ."
+    refute ssh_hook =~ "credential.helper="
 
     assert {:ok, https_settings} =
              Schema.parse(%{
@@ -208,7 +209,8 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
     assert https_hook =~ "GIT_ASKPASS="
     assert https_hook =~ "SSH_ASKPASS="
     refute https_hook =~ "GIT_SSH_COMMAND"
-    assert https_hook =~ "git -c credential.helper= -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'main' 'https://example.com/org/repo.git' ."
+    assert https_hook =~ "git -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'main' 'https://example.com/org/repo.git' ."
+    refute https_hook =~ "credential.helper="
   end
 
   test "explicit after_create hook runs after structured project bootstrap" do
