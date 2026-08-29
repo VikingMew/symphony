@@ -55,24 +55,28 @@ defmodule SymphonyElixir.BlockingDecision do
            PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end),
          streak = (Map.get(issue, :no_progress_streak) || 0) + 1,
          {:ok, updated} <- persistence.update_issue(issue, %{no_progress_streak: streak}) do
-      if streak >= 2 do
-        case persist_decision(
-               persistence,
-               updated,
-               :no_progress,
-               "#{streak} completed runs without progress",
-               run_id,
-               references
-             ) do
-          {:ok, decision} -> {:blocked, decision}
-          {:error, reason} -> {:error, reason}
-        end
-      else
-        {:streak, streak}
-      end
+      advance_streak(persistence, updated, streak, run_id, references)
     else
       nil -> {:error, :issue_not_persisted}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp advance_streak(persistence, issue, streak, run_id, references) do
+    if streak >= 2 do
+      case persist_decision(
+             persistence,
+             issue,
+             :no_progress,
+             "#{streak} completed runs without progress",
+             run_id,
+             references
+           ) do
+        {:ok, decision} -> {:blocked, decision}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:streak, streak}
     end
   end
 

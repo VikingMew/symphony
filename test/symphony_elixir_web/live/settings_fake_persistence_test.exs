@@ -59,6 +59,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                     %{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"},
                     %{"id" => "state-progress", "name" => "In Progress", "type" => "started"},
                     %{"id" => "state-review", "name" => "Ready to Merge", "type" => "started"},
+                    %{"id" => "state-blocked", "name" => "Blocked", "type" => "started"},
                     %{"id" => "state-done", "name" => "Done", "type" => "completed"}
                   ]
                 }
@@ -581,6 +582,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute html =~ ~s(name="workflow[prompt_body]")
     assert html =~ "Agents"
     refute html =~ "Profile prompt template"
+    assert html =~ ~s(<option value="symphony" selected="">symphony</option>)
 
     params =
       workflow_page_form_params()

@@ -73,6 +73,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                           %{"name" => "Ready"},
                           %{"name" => "In Progress"},
                           %{"name" => "Ready to Merge"},
+                          %{"name" => "Blocked"},
                           %{"name" => "Done"},
                           %{"name" => "Cancelled"},
                           %{"name" => "Canceled"},

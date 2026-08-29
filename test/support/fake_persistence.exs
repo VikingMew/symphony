@@ -61,16 +61,18 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     updated = Map.merge(issue, attrs)
 
     Agent.update(@name, fn state ->
-      Map.update!(state, :issues, fn issues ->
-        Enum.map(issues, fn candidate ->
-          if Map.get(candidate, :identifier) == Map.get(issue, :identifier),
-            do: updated,
-            else: candidate
-        end)
-      end)
+      Map.update!(state, :issues, &replace_issue(&1, issue, updated))
     end)
 
     {:ok, updated}
+  end
+
+  defp replace_issue(issues, issue, updated) do
+    Enum.map(issues, fn candidate ->
+      if Map.get(candidate, :identifier) == Map.get(issue, :identifier),
+        do: updated,
+        else: candidate
+    end)
   end
 
   def list_blocked_issues do

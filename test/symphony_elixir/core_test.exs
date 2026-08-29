@@ -668,7 +668,7 @@ defmodule SymphonyElixir.CoreTest do
       restore_app_env(:agent_runner_test_pid, previous_runner_pid)
       restore_app_env(:persistence_module, previous_persistence)
 
-      if pid = Process.whereis(SymphonyElixir.Orchestrator), do: GenServer.stop(pid)
+      stop_registered_orchestrator()
 
       if is_pid(orchestrator_pid) do
         case Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator) do
@@ -1142,6 +1142,10 @@ defmodule SymphonyElixir.CoreTest do
     orchestrator_name = Module.concat(__MODULE__, :ContinuationOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
+    FakePersistence.put_issues([
+      %{id: issue_id, identifier: "MT-558", state: "In Progress", no_progress_streak: 0}
+    ])
+
     on_exit(fn ->
       if Process.alive?(pid) do
         Process.exit(pid, :normal)
@@ -1175,6 +1179,20 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
     assert_due_after(due_at_ms, scheduled_from_ms, 500, 2_000)
+  end
+
+  defp stop_registered_orchestrator do
+    case Process.whereis(SymphonyElixir.Orchestrator) do
+      pid when is_pid(pid) ->
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, {:noproc, _details} -> :ok
+        end
+
+      nil ->
+        :ok
+    end
   end
 
   test "abnormal worker exit increments retry attempt progressively" do
