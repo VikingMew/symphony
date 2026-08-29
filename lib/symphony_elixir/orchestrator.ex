@@ -273,44 +273,16 @@ defmodule SymphonyElixir.Orchestrator do
       ) do
     case Map.get(running, issue_id) do
       %RunningIssue{} = entry ->
-        blocker = tool_result |> blocker_value() |> BlockingDecision.normalize_blocker()
-
-        cond do
-          is_binary(blocker) ->
-            {:noreply,
-             persist_and_block_issue(
-               state,
-               issue_id,
-               entry,
-               :reported_blocker,
-               blocker,
-               references
-             )}
-
-          match?({:error, _}, result) and
-              BlockingDecision.terminal_handoff_failure?(elem(result, 1)) ->
-            {:noreply,
-             persist_and_block_issue(
-               state,
-               issue_id,
-               entry,
-               :implementation_handoff_failure,
-               inspect(elem(result, 1)),
-               references
-             )}
-
-          match?({:ok, %{"handoff" => _}}, result) ->
-            updated = %{entry | implementation_handoff_completed: true}
-            _ = BlockingDecision.clear(entry.identifier)
-            {:noreply, %{state | running: Map.put(running, issue_id, updated)}}
-
-          is_binary(target_state) and match?({:ok, _}, result) ->
-            _ = BlockingDecision.clear(entry.identifier)
-            {:noreply, state}
-
-          true ->
-            {:noreply, state}
-        end
+        {:noreply,
+         handle_linear_task_update_result(
+           state,
+           issue_id,
+           entry,
+           result,
+           tool_result,
+           references,
+           target_state
+         )}
 
       _missing ->
         {:noreply, state}
@@ -424,6 +396,53 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_info(msg, state) do
     Logger.debug("Orchestrator ignored message: #{inspect(msg)}")
     {:noreply, state}
+  end
+
+  defp handle_linear_task_update_result(
+         state,
+         issue_id,
+         entry,
+         result,
+         tool_result,
+         references,
+         target_state
+       ) do
+    blocker = tool_result |> blocker_value() |> BlockingDecision.normalize_blocker()
+
+    cond do
+      is_binary(blocker) ->
+        persist_and_block_issue(
+          state,
+          issue_id,
+          entry,
+          :reported_blocker,
+          blocker,
+          references
+        )
+
+      match?({:error, _}, result) and
+          BlockingDecision.terminal_handoff_failure?(elem(result, 1)) ->
+        persist_and_block_issue(
+          state,
+          issue_id,
+          entry,
+          :implementation_handoff_failure,
+          inspect(elem(result, 1)),
+          references
+        )
+
+      match?({:ok, %{"handoff" => _}}, result) ->
+        updated = %{entry | implementation_handoff_completed: true}
+        _ = BlockingDecision.clear(entry.identifier)
+        {:noreply, %{state | running: Map.put(state.running, issue_id, updated)}}
+
+      is_binary(target_state) and match?({:ok, _}, result) ->
+        _ = BlockingDecision.clear(entry.identifier)
+        {:noreply, state}
+
+      true ->
+        {:noreply, state}
+    end
   end
 
   defp handle_worker_down_reason(
@@ -1115,39 +1134,41 @@ defmodule SymphonyElixir.Orchestrator do
 
     case PersistenceProvider.read(fn -> persistence.list_blocked_issues() end) do
       issues when is_list(issues) ->
-        Enum.reduce(issues, state, fn issue, acc ->
-          decision = Map.get(issue, :blocking_decision) || %{}
-          issue_id = Map.get(issue, :tracker_issue_id)
-
-          if is_binary(issue_id) do
-            entry = %{
-              issue_id: issue_id,
-              identifier: Map.get(issue, :identifier),
-              state: Map.get(issue, :state) || "Blocked",
-              run_id: decision["run_id"],
-              blocked_at: decision["decided_at"],
-              reason: decision["reason"],
-              detail: decision["evidence"],
-              worker_host: nil,
-              workspace_path: nil,
-              session_id: nil,
-              session_history: [],
-              session_history_total_count: 0
-            }
-
-            %{
-              acc
-              | blocked: Map.put(acc.blocked, issue_id, entry),
-                claimed: MapSet.put(acc.claimed, issue_id)
-            }
-          else
-            acc
-          end
-        end)
+        Enum.reduce(issues, state, &restore_blocked_entry(&1, &2))
 
       {:error, reason} ->
         Logger.error("Failed to restore persistent blocking decisions reason=#{inspect(reason)}")
         state
+    end
+  end
+
+  defp restore_blocked_entry(issue, acc) do
+    decision = Map.get(issue, :blocking_decision) || %{}
+    issue_id = Map.get(issue, :tracker_issue_id)
+
+    if is_binary(issue_id) do
+      entry = %{
+        issue_id: issue_id,
+        identifier: Map.get(issue, :identifier),
+        state: Map.get(issue, :state) || "Blocked",
+        run_id: decision["run_id"],
+        blocked_at: decision["decided_at"],
+        reason: decision["reason"],
+        detail: decision["evidence"],
+        worker_host: nil,
+        workspace_path: nil,
+        session_id: nil,
+        session_history: [],
+        session_history_total_count: 0
+      }
+
+      %{
+        acc
+        | blocked: Map.put(acc.blocked, issue_id, entry),
+          claimed: MapSet.put(acc.claimed, issue_id)
+      }
+    else
+      acc
     end
   end
 

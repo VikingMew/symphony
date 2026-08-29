@@ -2,12 +2,13 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
   use ExUnit.Case, async: true
 
   alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.Config.Schema.Tracker
   alias SymphonyElixir.Config.WorkflowContract
 
   test "Blocked is non-dispatchable and uses symphony and human actors" do
-    workflow = SymphonyElixir.Config.Schema.default_workflow_policy()
+    workflow = Schema.default_workflow_policy()
 
-    tracker = %SymphonyElixir.Config.Schema.Tracker{
+    tracker = %Tracker{
       active_states: ["Refining", "Ready", "In Progress"]
     }
 
