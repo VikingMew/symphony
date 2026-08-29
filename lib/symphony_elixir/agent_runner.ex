@@ -12,13 +12,14 @@ defmodule SymphonyElixir.AgentRunner do
     Codex.RateLimitGate,
     Config,
     Git,
-    GitHub.{PullRequest, PullRequestBody},
     Linear.Issue,
     PersistenceEventWriter,
     PromptBuilder,
     Tracker,
     Workspace
   }
+
+  alias SymphonyElixir.GitHub.PullRequest
 
   @implementation_profile "implementation"
   @implementation_start_state "Ready"
@@ -247,13 +248,10 @@ defmodule SymphonyElixir.AgentRunner do
     dynamic_tool_opts =
       opts
       |> Keyword.get(:dynamic_tool_opts, [])
+      |> Keyword.put_new(:pull_request_proof_secret, :crypto.strong_rand_bytes(32))
       |> Keyword.put_new(
-        :implementation_handoff_preparer,
-        implementation_handoff_preparer(issue, worker_host, opts)
-      )
-      |> Keyword.put_new(
-        :implementation_handoff_observer,
-        implementation_handoff_observer(worker_host, opts)
+        :pull_request_creator,
+        pull_request_creator(worker_host, opts)
       )
       |> Keyword.put_new(
         :task_update_observer,
@@ -439,8 +437,8 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp implementation_handoff_preparer(_run_issue, worker_host, runner_opts) do
-    fn issue, payload, tool_opts ->
+  defp pull_request_creator(worker_host, runner_opts) do
+    fn issue, rendered, tool_opts ->
       event_opts = handoff_event_opts(runner_opts, tool_opts)
       emit_phase(issue, :implementation_handoff, :started, worker_host, event_opts)
 
@@ -449,11 +447,24 @@ defmodule SymphonyElixir.AgentRunner do
 
       github_opts = Keyword.get(runner_opts, :github_opts, [])
 
-      with {:ok, rendered} <- PullRequestBody.render(issue, Map.fetch!(payload, "result")),
-           {:ok, pull_request} <-
-             pull_request_ensurer.(issue, Config.settings!().project, rendered, github_opts) do
-        {:ok, pull_request}
-      else
+      case pull_request_ensurer.(
+             issue,
+             Config.settings!().project,
+             rendered,
+             github_opts
+           ) do
+        {:ok, pull_request} ->
+          emit_phase(
+            issue,
+            :implementation_handoff,
+            :completed,
+            worker_host,
+            event_opts,
+            pull_request
+          )
+
+          {:ok, pull_request}
+
         {:error, reason} ->
           emit_phase(issue, :implementation_handoff, :failed, worker_host, event_opts, %{
             reason: inspect(reason)
@@ -470,19 +481,6 @@ defmodule SymphonyElixir.AgentRunner do
 
           {:error, {:implementation_handoff_failed, reason}}
       end
-    end
-  end
-
-  defp implementation_handoff_observer(worker_host, runner_opts) do
-    fn status, issue, details, tool_opts ->
-      emit_phase(
-        issue,
-        :implementation_handoff,
-        status,
-        worker_host,
-        handoff_event_opts(runner_opts, tool_opts),
-        details
-      )
     end
   end
 

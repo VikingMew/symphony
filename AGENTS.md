@@ -110,6 +110,9 @@ mix specs.check
 
 - PR bodies must follow the canonical [PR body contract](docs/pull-request-body.md).
   `.github/pull_request_template.md` is only the synchronized GitHub entry copy.
+- Implementation agents call the restricted `create_pull_request` tool only after validation,
+  commit, and push, then include its returned URL and completion proof in the final Linear
+  completion references.
 - Validate PR body locally when needed:
 
 ```bash

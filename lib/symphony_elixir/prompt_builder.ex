@@ -112,7 +112,7 @@ defmodule SymphonyElixir.PromptBuilder do
     """
     Workflow profile: implementation
 
-    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, validate, commit, and push the exact Linear `branchName`. Use `linear_task_update` to post the final result, references, and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. Symphony owns initial PR creation and renders it from `result.completed` and `result.validation` under `docs/pull-request-body.md`. If human changes return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again.
+    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, validate, commit, and push the exact Linear `branchName`. Then call `create_pull_request` with a title and body conforming to `docs/pull-request-body.md`; Symphony executes the exact repository/base/head lookup and gh-first/REST-fallback creation without exposing GitHub credentials. Use the returned PR URL and completion proof in `linear_task_update` references while posting the final result and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. If human changes return the issue to In Progress, update the same branch and existing PR before requesting Ready to Merge again.
     """
     |> String.trim()
   end
@@ -133,7 +133,7 @@ defmodule SymphonyElixir.PromptBuilder do
 
     if is_binary(branch_name) and String.trim(branch_name) != "" do
       prompt <>
-        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting Ready to Merge. Do not create or switch to a different task branch. Symphony creates the initial pull request after the explicit completion request."
+        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting Ready to Merge. Do not create or switch to a different task branch. After pushing, call `create_pull_request` with a body conforming to `docs/pull-request-body.md`, then include its URL and completion proof in the explicit completion request."
     else
       prompt
     end

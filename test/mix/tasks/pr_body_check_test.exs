@@ -90,15 +90,18 @@ defmodule Mix.Tasks.PrBody.CheckTest do
       String.replace(@valid_body, "- Added the handoff renderer.", "plain text"),
       "bullet item: #### Summary"
     )
+
     assert_invalid(String.replace(@valid_body, "- [x] `mix test`", "- ran tests"), "checkbox item: #### Test Plan")
   end
 
   test "rejects missing, imprecise, duplicate, and misplaced Linear closing references" do
     assert_invalid(String.replace(@valid_body, "Fixes SYM-21", ""), "Missing exact Linear closing reference")
+
     assert_invalid(
       String.replace(@valid_body, "Fixes SYM-21", "Fixes #SYM-21"),
       "Missing exact Linear closing reference"
     )
+
     assert_invalid(@valid_body <> "\nFixes SYM-22\n", "exactly one Linear closing reference")
     assert_invalid(@valid_body <> "\ntrailing prose\n", "must be the final independent line")
   end

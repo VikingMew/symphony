@@ -27,8 +27,8 @@ defmodule SymphonyElixir.GitHub.PullRequest do
           {:ok, pull_request()} | {:error, term()}
   def ensure_open(%Issue{} = issue, project, rendered, opts \\ []) do
     with {:ok, identifier} <- validate_identifier(issue.identifier),
-         {:ok, title} <- rendered_value(rendered, :title),
-         {:ok, body} <- rendered_value(rendered, :body),
+         {:ok, title} <- rendered_title(rendered, identifier),
+         {:ok, body} <- rendered_body(rendered, identifier),
          {:ok, head} <- BranchName.validate(issue.branch_name),
          {:ok, base} <- project_default_branch(project),
          {:ok, repository} <- project_repository(project) do
@@ -58,6 +58,63 @@ defmodule SymphonyElixir.GitHub.PullRequest do
     if String.trim(value) == "",
       do: {:error, {:invalid_pull_request_content, :body}},
       else: {:ok, value}
+  end
+
+  defp rendered_title(rendered, identifier) do
+    with {:ok, title} <- rendered_value(rendered, :title) do
+      if String.starts_with?(title, "#{identifier}:"),
+        do: {:ok, title},
+        else: {:error, {:invalid_pull_request_content, :title_identifier}}
+    end
+  end
+
+  defp rendered_body(rendered, identifier) do
+    with {:ok, body} <- rendered_value(rendered, :body),
+         :ok <- validate_no_placeholders(body),
+         :ok <- validate_body_section(body, "#### Summary", ~r/^- \S/m),
+         :ok <- validate_body_section(body, "#### Test Plan", ~r/^- \[[xX]\] \S/m),
+         :ok <- validate_body_order(body),
+         :ok <- validate_closing_reference(body, identifier) do
+      {:ok, body}
+    end
+  end
+
+  defp validate_no_placeholders(body) do
+    if String.contains?(body, "<!--"),
+      do: {:error, {:invalid_pull_request_content, :placeholder}},
+      else: :ok
+  end
+
+  defp validate_body_section(body, heading, shape) do
+    case :binary.match(body, heading) do
+      :nomatch ->
+        {:error, {:invalid_pull_request_content, heading}}
+
+      {_position, _length} ->
+        section =
+          body
+          |> String.split(heading, parts: 2)
+          |> List.last()
+          |> String.split("####", parts: 2)
+          |> hd()
+
+        if Regex.match?(shape, section), do: :ok, else: {:error, {:invalid_pull_request_content, heading}}
+    end
+  end
+
+  defp validate_body_order(body) do
+    {summary, _} = :binary.match(body, "#### Summary")
+    {test_plan, _} = :binary.match(body, "#### Test Plan")
+    if summary < test_plan, do: :ok, else: {:error, {:invalid_pull_request_content, :section_order}}
+  end
+
+  defp validate_closing_reference(body, identifier) do
+    reference = "Fixes #{identifier}"
+    matches = Regex.scan(~r/^Fixes [A-Z][A-Z0-9]+-\d+$/m, body) |> Enum.map(&hd/1)
+
+    if matches == [reference] and body |> String.trim() |> String.ends_with?(reference),
+      do: :ok,
+      else: {:error, {:invalid_pull_request_content, :closing_reference}}
   end
 
   defp ensure_with_available_client(request, opts) do
@@ -521,8 +578,6 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       true -> {:ok, title}
     end
   end
-
-  defp validate_title(_title), do: {:error, :missing_issue_title}
 
   defp project_default_branch(%{default_branch: default_branch}), do: BranchName.validate(default_branch)
   defp project_default_branch(%{"default_branch" => default_branch}), do: BranchName.validate(default_branch)

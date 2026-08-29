@@ -100,6 +100,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @read_tool "linear_task_read"
   @update_tool "linear_task_update"
   @issue_create_tool "linear_issue_create"
+  @pull_request_tool "create_pull_request"
 
   @read_schema %{
     "type" => "object",
@@ -185,6 +186,19 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @pull_request_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["title", "body"],
+    "properties" => %{
+      "title" => %{"type" => "string", "description" => "Pull request title."},
+      "body" => %{
+        "type" => "string",
+        "description" => "Pull request body conforming to docs/pull-request-body.md."
+      }
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
@@ -201,6 +215,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       @issue_create_tool ->
         execute_with_audit(@issue_create_tool, arguments, opts, fn ->
           execute_issue_create(arguments, opts)
+        end)
+
+      @pull_request_tool ->
+        execute_with_audit(@pull_request_tool, arguments, opts, fn ->
+          execute_pull_request(arguments, opts)
         end)
 
       other ->
@@ -248,6 +267,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @issue_create_tool,
         "description" => "Create a new backlog Linear issue through Symphony's restricted issue-creation policy. Only nap and day_dreaming profiles may use it.",
         "inputSchema" => @issue_create_schema
+      },
+      %{
+        "name" => @pull_request_tool,
+        "description" => "Create or find the implementation pull request after commit, validation, and push. Only the implementation profile may call it.",
+        "inputSchema" => @pull_request_schema
       }
     ]
   end
@@ -294,6 +318,57 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       {:error, reason} ->
         failure_response(tool_error_payload(@issue_create_tool, reason))
     end
+  end
+
+  defp execute_pull_request(arguments, opts) do
+    with :ok <- validate_pull_request_profile(opts),
+         {:ok, rendered} <- normalize_pull_request_arguments(arguments),
+         {:ok, issue} <- issue_from_opts(opts),
+         {:ok, pull_request} <- create_pull_request(issue, rendered, opts) do
+      success_response(put_pull_request_proof(pull_request, opts))
+    else
+      {:error, reason} -> failure_response(tool_error_payload(@pull_request_tool, reason))
+    end
+  end
+
+  defp validate_pull_request_profile(opts) do
+    case Keyword.get(opts, :profile) do
+      "implementation" -> :ok
+      profile when is_binary(profile) -> {:error, {:pull_request_not_allowed, profile}}
+      _ -> {:error, :workflow_profile_unavailable}
+    end
+  end
+
+  defp normalize_pull_request_arguments(arguments) when is_map(arguments) do
+    with {:ok, title} <- required_pull_request_text(arguments, "title"),
+         {:ok, body} <- required_pull_request_text(arguments, "body") do
+      {:ok, %{title: title, body: body}}
+    end
+  end
+
+  defp normalize_pull_request_arguments(_arguments), do: {:error, :invalid_pull_request_payload}
+
+  defp required_pull_request_text(arguments, field) do
+    case Map.get(arguments, field) do
+      value when is_binary(value) ->
+        if String.trim(value) == "",
+          do: {:error, {:invalid_pull_request_field, field}},
+          else: {:ok, value}
+
+      _ ->
+        {:error, {:invalid_pull_request_field, field}}
+    end
+  end
+
+  defp create_pull_request(issue, rendered, opts) do
+    case Keyword.get(opts, :pull_request_creator) do
+      creator when is_function(creator, 3) -> creator.(issue, rendered, opts)
+      _ -> {:error, :pull_request_creator_unavailable}
+    end
+  end
+
+  defp put_pull_request_proof(pull_request, opts) do
+    Map.put(pull_request, :completion_proof, pull_request_proof(Map.fetch!(pull_request, :url), opts))
   end
 
   defp normalize_read_arguments(nil),
@@ -344,7 +419,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result =
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
-           :ok <- validate_update_policy(payload, profile) do
+           :ok <- validate_update_policy(payload, profile),
+           :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
         else
@@ -380,26 +456,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp complete_implementation_handoff(issue_id, payload, opts) do
-    with {:ok, issue} <- issue_from_opts(opts),
-         {:ok, handoff} <- prepare_implementation_handoff(issue, payload, opts) do
-      payload = put_handoff_reference(payload, handoff)
-
-      result =
-        with {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
-             {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts),
-             {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts) do
-          {:ok,
-           %{
-             "issue_update" => issue_update,
-             "comment_update" => comment_update,
-             "reference_links" => reference_links,
-             "requested_state" => Map.get(payload, "target_state"),
-             "handoff" => handoff
-           }}
-        end
-
-      observe_implementation_handoff(result, issue, handoff, opts)
-      result
+    with {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
+         {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts),
+         {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts) do
+      {:ok,
+       %{
+         "issue_update" => issue_update,
+         "comment_update" => comment_update,
+         "reference_links" => reference_links,
+         "requested_state" => Map.get(payload, "target_state")
+       }}
     end
   end
 
@@ -431,39 +497,46 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp implementation_completion_request?(_payload, _profile), do: false
 
-  defp issue_from_opts(opts) do
-    case Keyword.get(opts, :issue) do
-      %Issue{} = issue -> {:ok, issue}
-      _ -> {:error, :linear_task_context_unavailable}
-    end
-  end
-
-  defp prepare_implementation_handoff(issue, payload, opts) do
-    case Keyword.get(opts, :implementation_handoff_preparer) do
-      preparer when is_function(preparer, 3) -> preparer.(issue, payload, opts)
-      _ -> {:error, :implementation_handoff_unavailable}
-    end
-  end
-
-  defp observe_implementation_handoff(result, issue, handoff, opts) do
-    case Keyword.get(opts, :implementation_handoff_observer) do
-      observer when is_function(observer, 4) ->
-        observer.(handoff_status(result), issue, handoff_details(result, handoff), opts)
+  defp validate_pull_request_created(payload, "implementation", opts) do
+    case Map.get(payload, "target_state") do
+      target_state when is_binary(target_state) ->
+        validate_pull_request_created_for_target(payload, target_state, opts)
 
       _ ->
         :ok
     end
   end
 
-  defp handoff_status({:ok, _result}), do: :completed
-  defp handoff_status({:error, _reason}), do: :failed
+  defp validate_pull_request_created(_payload, _profile, _opts), do: :ok
 
-  defp handoff_details({:ok, _result}, handoff), do: handoff
-  defp handoff_details({:error, reason}, handoff), do: Map.put(handoff, :reason, inspect(reason))
+  defp validate_pull_request_created_for_target(payload, target_state, opts) do
+    if Policy.implementation_completion_target?(target_state),
+      do: validate_pull_request_proof(payload, opts),
+      else: :ok
+  end
 
-  defp put_handoff_reference(payload, handoff) do
-    references = Map.get(payload, "references", %{})
-    Map.put(payload, "references", Map.put(references, "pr_url", Map.fetch!(handoff, :url)))
+  defp validate_pull_request_proof(payload, opts) do
+    url = get_in(payload, ["references", "pr_url"])
+    expected = pull_request_proof(url, opts)
+
+    if get_in(payload, ["references", "pr_proof"]) == expected,
+      do: :ok,
+      else: {:error, :pull_request_not_created}
+  end
+
+  defp pull_request_proof(url, opts) do
+    secret = Keyword.fetch!(opts, :pull_request_proof_secret)
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    :crypto.mac(:hmac, :sha256, secret, session_id <> <<0>> <> url)
+    |> Base.url_encode64(padding: false)
+  end
+
+  defp issue_from_opts(opts) do
+    case Keyword.get(opts, :issue) do
+      %Issue{} = issue -> {:ok, issue}
+      _ -> {:error, :linear_task_context_unavailable}
+    end
   end
 
   defp maybe_update_issue(issue_id, payload, opts) do
@@ -661,6 +734,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     %{"error" => %{"message" => "`linear_task_update.#{field}` has an invalid type."}}
   end
 
+  defp tool_error_payload(@update_tool, :pull_request_not_created) do
+    %{
+      "error" => %{
+        "message" => "Call `create_pull_request` successfully in this completion session before requesting Ready to Merge."
+      }
+    }
+  end
+
   defp tool_error_payload(_tool, :linear_task_context_unavailable) do
     %{
       "error" => %{
@@ -722,6 +803,34 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp tool_error_payload(@issue_create_tool, :issue_create_payload_too_large) do
     %{"error" => %{"message" => "`linear_issue_create` payload is too large."}}
+  end
+
+  defp tool_error_payload(@pull_request_tool, {:pull_request_not_allowed, profile}) do
+    %{
+      "error" => %{
+        "message" => "`create_pull_request` is not allowed in workflow profile `#{profile}`."
+      }
+    }
+  end
+
+  defp tool_error_payload(@pull_request_tool, {:invalid_pull_request_field, field}) do
+    %{
+      "error" => %{
+        "message" => "`create_pull_request.#{field}` must be a non-empty string."
+      }
+    }
+  end
+
+  defp tool_error_payload(@pull_request_tool, :invalid_pull_request_payload) do
+    %{"error" => %{"message" => "`create_pull_request` expects a JSON object argument."}}
+  end
+
+  defp tool_error_payload(@pull_request_tool, :pull_request_creator_unavailable) do
+    %{
+      "error" => %{
+        "message" => "Pull request creation is unavailable for this Codex session."
+      }
+    }
   end
 
   defp tool_error_payload(_tool, reason) do

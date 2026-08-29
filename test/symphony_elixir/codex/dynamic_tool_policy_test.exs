@@ -24,7 +24,11 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
                %{
                  "comment" => "ok",
                  "result" => %{"validation" => "green"},
-                 "references" => %{"branch" => "feature/sym-1"},
+                 "references" => %{
+                   "branch" => "feature/sym-1",
+                   "pr_url" => "https://github.com/acme/app/pull/1",
+                   "pr_proof" => "proof"
+                 },
                  "target_state" => "Ready to Merge"
                },
                policy,

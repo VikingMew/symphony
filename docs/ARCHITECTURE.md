@@ -226,11 +226,13 @@ Locations:
 - `lib/symphony_elixir/codex/dynamic_tool.ex`
 
 This layer launches and communicates with Codex App Server. It exposes restricted task-scoped
-Linear tools (`linear_task_read` and `linear_task_update`) to Codex. Raw Linear GraphQL remains an
-internal Symphony backend/client implementation detail and is not a Codex-visible workflow tool.
+Linear tools (`linear_task_read` and `linear_task_update`) plus the implementation-only
+`create_pull_request` tool. Raw Linear GraphQL and GitHub credentials remain internal Symphony
+backend details and are not Codex-visible workflow credentials.
 The implementation completion request is special: `Ready to Merge` is accepted only with final
-comment/result/references, and `AgentRunner` must prepare the GitHub PR before any Linear completion
-write. A normal turn exit or exhausted turn budget is not an implementation-completion signal.
+comment/result/references containing the PR URL returned by a successful same-session tool call,
+and `AgentRunner` must prepare the GitHub PR before any Linear completion write. A normal turn exit
+or exhausted turn budget is not an implementation-completion signal.
 
 ### 6.9 Observability
 
@@ -314,7 +316,8 @@ The agent owns, through the workflow prompt and tools:
 - updates to the same branch/PR after human change requests
 - reviewer feedback handling
 
-Symphony owns initial PR lookup/creation for centralized implementation handoff. It never approves
+Codex requests initial PR lookup/creation through `create_pull_request`; Symphony owns its centralized
+backend and credentials. It never approves
 or merges that PR and never pushes a feature result to the configured default branch. GitHub review
 and Linear's merged-PR automation own `Ready to Merge -> Done`.
 

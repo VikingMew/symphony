@@ -39,8 +39,10 @@ defmodule Mix.Tasks.PrBody.Check do
   end
 
   defp read_candidate(paths, label) do
+    separator = ", "
+
     case Enum.find_value(paths, &read_candidate_path/1) do
-      nil -> {:error, "Unable to read #{label} from any of: #{Enum.join(paths, ", ")}"
+      nil -> {:error, "Unable to read #{label} from any of: #{Enum.join(paths, separator)}"}
       result -> result
     end
   end
@@ -108,8 +110,7 @@ defmodule Mix.Tasks.PrBody.Check do
 
   defp check_required_headings(errors, body, headings) do
     missing_errors =
-      for heading <- headings, heading_position(body, heading) == :nomatch,
-        do: "Missing required heading: #{heading}"
+      for heading <- headings, heading_position(body, heading) == :nomatch, do: "Missing required heading: #{heading}"
 
     errors ++ missing_errors
   end
@@ -131,8 +132,12 @@ defmodule Mix.Tasks.PrBody.Check do
       body_section = capture_section(body, heading)
 
       cond do
-        is_nil(body_section) -> acc
-        String.trim(body_section) == "" -> acc ++ ["Section cannot be empty: #{heading}"]
+        is_nil(body_section) ->
+          acc
+
+        String.trim(body_section) == "" ->
+          acc ++ ["Section cannot be empty: #{heading}"]
+
         true ->
           acc
           |> require_shape(heading, template_section, body_section, :bullet)

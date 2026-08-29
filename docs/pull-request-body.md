@@ -19,6 +19,10 @@ MUST be bullets, Test Plan entries MUST be checkboxes, and both sections MUST be
 replacing the comments. The body MUST end with an independent, exact Linear closing-reference line
 in the form `Fixes SYM-123`.
 
+For implementation handoff, Codex supplies the completed title and body to the restricted
+`create_pull_request` tool after commit, validation, and branch push. Symphony owns the tool backend,
+credential isolation, exact repository/base/head lookup, and gh-first/REST-fallback creation.
+
 <!-- pr-body-template:start -->
 #### Summary
 

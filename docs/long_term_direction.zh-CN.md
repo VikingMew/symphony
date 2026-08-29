@@ -397,9 +397,10 @@ profiles:
 这个契约已落地并由 profile schema 和 prompt builder 的测试覆盖。
 
 现状对齐：profile schema、state -> profile 路由、prompt mode、allowed updates 和
-`codex_agent` 执行路径已经落地。实现显式请求 `Ready to Merge` 时，`AgentRunner` 使用 service
-environment 中的 `gh`，或在环境 token 存在时使用 REST fallback，lookup/create 精确
-repository/base/head 的 open PR。只有 PR 成功后才写 Linear completion；普通 turn exit/max turns
+`codex_agent` 执行路径已经落地。实现 validation、commit、push 后，Codex 按规范调用受限
+`create_pull_request`；`AgentRunner` backend 使用 service environment 中的 `gh`，或在环境 token
+存在时使用 REST fallback，lookup/create 精确 repository/base/head 的 open PR。Codex 把返回 URL
+放入显式 `Ready to Merge` 请求。只有 PR 成功后才写 Linear completion；普通 turn exit/max turns
 不会触发 handoff。`Ready to Merge -> In Progress` 返工会更新同一 branch/PR。
 
 ### 阶段 2.1：项目模板和 bootstrap 配置解耦

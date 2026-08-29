@@ -166,6 +166,12 @@ defmodule SymphonyElixir.CoreTest do
            ]
 
     assert get_in(config.workflow, ["tool_policy", "linear", "raw_graphql"]) == false
+
+    assert get_in(config.workflow, ["tool_policy", "github", "exposed_tools"]) == [
+             "create_pull_request"
+           ]
+
+    assert get_in(config.workflow, ["tool_policy", "github", "profiles"]) == ["implementation"]
     assert get_in(config.profiles, ["implementation", "name"]) == "Implementation"
   end
 

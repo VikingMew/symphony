@@ -41,5 +41,8 @@ workflow:
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]
       raw_graphql: false
+    github:
+      exposed_tools: ["create_pull_request"]
+      profiles: ["implementation"]
 workspace:
   root: "~/code/symphony-workspaces"

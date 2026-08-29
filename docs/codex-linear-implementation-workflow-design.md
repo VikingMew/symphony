@@ -74,15 +74,16 @@ Codex 的 `linear_task_update` 必须包含：
 
 - `comment`：`Completed`、`Validation`、`Deviations`、`Blockers`。
 - `result`：同样四类结构化信息。
-- `references`：至少 branch 和 commit；已有 PR update 可以带 PR URL。
+- `references`：至少 branch、commit 和 `create_pull_request` 返回的 PR URL/completion proof。
 - `target_state: Ready to Merge`。
 
-初次实现不调用 `gh pr create`。完成请求交给 `AgentRunner` 的 backend-owned boundary。
+初次实现不直接调用 `gh pr create`。Codex 按 [PR body contract](pull-request-body.md) 写 title/body
+并调用受限 `create_pull_request`；`AgentRunner` 提供 backend-owned lookup/create boundary。
 
 ### 6. Symphony 原子 handoff
 
-`AgentRunner` 校验 identifier/title、branch/default/repository、remote branch，lookup exact PR，必要时
-create，然后把 PR reference、comment/result 写入 Linear，最后更新 state。PR 必须：
+`AgentRunner` backend 校验 identifier、branch/default/repository、remote branch，lookup exact PR，必要时
+create。Codex 再把返回的 PR reference、comment/result 写入 Linear，最后更新 state。PR 必须：
 
 - repository 与配置/实际 remote identity 一致；
 - base 是 `project.default_branch`；
@@ -97,9 +98,8 @@ Linear completion write。
 
 人只在 GitHub review/merge。需要修改时，把 Linear 从 `Ready to Merge` 移回 `In Progress` 并留下
 comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新验证、commit、push，再次显式请求
-`Ready to Merge`。Symphony lookup 到同一 open PR 并复用且不覆盖人工正文；初始正文由
-`result.completed`、`result.validation` 和 issue identity 按 [PR body contract](pull-request-body.md)
-确定性生成。
+`Ready to Merge`。`create_pull_request` lookup 到同一 open PR 并复用且不覆盖人工正文；新建 PR
+正文由 Codex 按 [PR body contract](pull-request-body.md) 提交。
 
 ## Failure Matrix
 

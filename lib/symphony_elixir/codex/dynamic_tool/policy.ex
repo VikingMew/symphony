@@ -81,7 +81,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
       required_fields = ["comment", "result", "references"]
 
       case Enum.find(required_fields, &missing_completion_field?(payload, &1)) do
-        nil -> :ok
+        nil -> validate_pull_request_reference(payload)
         field -> {:error, {:implementation_handoff_field_required, field}}
       end
     else
@@ -99,6 +99,15 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
   end
 
   defp missing_completion_field?(payload, field), do: not is_map(Map.get(payload, field))
+
+  defp validate_pull_request_reference(payload) do
+    with "https://github.com/" <> _rest <- get_in(payload, ["references", "pr_url"]),
+         proof when is_binary(proof) and proof != "" <- get_in(payload, ["references", "pr_proof"]) do
+      :ok
+    else
+      _ -> {:error, {:implementation_handoff_field_required, "references.pr_url/pr_proof"}}
+    end
+  end
 
   defp put_optional_string(payload, arguments, field) do
     case SymphonyElixir.Payload.get_any(arguments, [field, argument_key(field)]) do

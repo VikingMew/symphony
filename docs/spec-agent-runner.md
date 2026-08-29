@@ -242,15 +242,14 @@ Note:
 
 ### 10.8 Centralized GitHub PR Handoff
 
-For the default implementation profile, `AgentRunner` owns this ordered boundary:
+For the default implementation profile, `AgentRunner` owns the backend of this ordered boundary:
 
-1. Receive an explicit `Ready to Merge` request containing final comment, structured result, and
-   references; render the initial title/body from `result.completed`, `result.validation`, and the
-   issue identity according to [pull-request-body.md](pull-request-body.md).
-2. Validate the Linear identifier/title, exact Linear `branchName`, configured default branch,
+1. After validation, commit, and push, Codex calls the restricted `create_pull_request` tool with a
+   title/body conforming to [pull-request-body.md](pull-request-body.md).
+2. Validate the Linear identifier, exact Linear `branchName`, configured default branch,
    GitHub repository identity, and existence of the remote head branch.
 3. Ensure an open PR exists for the exact repository/base/head tuple.
-4. Attach the PR URL and post the final Linear comment/result/references.
+4. Return the PR URL; Codex includes it in the final Linear comment/result/references request.
 5. Update Linear from `In Progress` to `Ready to Merge` last.
 
 Step 5 MUST NOT run if PR preparation fails. Failures MUST be typed, visible, redacted, and leave
