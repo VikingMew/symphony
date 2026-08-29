@@ -84,11 +84,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert %Orchestrator.State{} = :sys.get_state(pid)
 
-    send(
-      pid,
-      {:linear_task_update_result, issue_id, {:ok, %{"handoff" => %{}}}, %{}, %{},
-       "Ready to Merge"}
-    )
+    send(pid, {:linear_task_update_result, issue_id, {:ok, %{"handoff" => %{}}}, %{}, %{}, "Ready to Merge"})
 
     assert %Orchestrator.State{} = state = :sys.get_state(pid)
     assert state.running[issue_id].implementation_handoff_completed
