@@ -27,7 +27,7 @@ RUN if [ -n "$APT_DEBIAN_MIRROR" ]; then \
   && case "$TARGETARCH" in amd64) mise_arch=x64 ;; arm64) mise_arch=arm64 ;; *) exit 1 ;; esac \
   && curl --fail --location --silent --show-error \
     "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise_arch}.tar.gz" \
-    | tar --extract --gzip --directory /usr/local/bin --strip-components=2 "mise-v${MISE_VERSION}-linux-${mise_arch}/bin/mise" \
+    | tar --extract --gzip --directory /usr/local/bin --strip-components=2 mise/bin/mise \
   && mise link erlang@28 /usr/local \
   && mise link elixir@1.19.5-otp-28 /usr/local \
   && mise reshim

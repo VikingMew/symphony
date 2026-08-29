@@ -24,6 +24,12 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert dockerfile =~ "ARG ELIXIR_IMAGE=elixir:1.19.5-otp-28-slim"
     assert dockerfile =~ "ARG MISE_VERSION=2025.8.16"
     assert dockerfile =~ "FROM ${ELIXIR_IMAGE} AS toolchain"
+    assert dockerfile =~
+             ~s("https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise_arch}.tar.gz")
+
+    assert dockerfile =~
+             "tar --extract --gzip --directory /usr/local/bin --strip-components=2 mise/bin/mise"
+
     assert dockerfile =~ "mise link erlang@28 /usr/local"
     assert dockerfile =~ "mise link elixir@1.19.5-otp-28 /usr/local"
     assert mise =~ ~s(erlang = "28")
