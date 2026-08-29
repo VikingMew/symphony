@@ -195,25 +195,43 @@ jobs:
         run: |
           set -euo pipefail
           ref="${IMAGE}@${DIGEST}"
-          platforms="$(docker buildx imagetools inspect --raw "$ref" | jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort -u)"
+          manifest="$(docker buildx imagetools inspect --raw "$ref")"
+          platforms="$(jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' <<< "$manifest" | sort -u)"
           expected=$'linux/amd64\nlinux/arm64'
           if [[ "$platforms" != "$expected" ]]; then
             echo "Expected exactly amd64 and arm64, found:" >&2
             echo "$platforms" >&2
             exit 1
           fi
+          amd64_digest="$(jq -er '
+            [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")]
+            | if length == 1
+              then (.[0].digest | select(type == "string" and length > 0) // error("linux/amd64 child manifest has no digest"))
+              else error("expected exactly one linux/amd64 child manifest")
+              end
+          ' <<< "$manifest")"
+          arm64_digest="$(jq -er '
+            [.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")]
+            | if length == 1
+              then (.[0].digest | select(type == "string" and length > 0) // error("linux/arm64 child manifest has no digest"))
+              else error("expected exactly one linux/arm64 child manifest")
+              end
+          ' <<< "$manifest")"
           printf 'platforms<<EOF\n%s\nEOF\n' "$platforms" >> "$GITHUB_OUTPUT"
+          echo "amd64-digest=$amd64_digest" >> "$GITHUB_OUTPUT"
+          echo "arm64-digest=$arm64_digest" >> "$GITHUB_OUTPUT"
 
       - name: Smoke published release on both platforms
         shell: bash
         env:
-          DIGEST: ${{ steps.published.outputs.digest }}
+          AMD64_DIGEST: ${{ steps.manifest.outputs.amd64-digest }}
+          ARM64_DIGEST: ${{ steps.manifest.outputs.arm64-digest }}
         run: |
           set -euo pipefail
-          for platform in linux/amd64 linux/arm64; do
-            docker run --rm --platform "$platform" "${IMAGE}@${DIGEST}" \
-              sh -lc '/app/bin/symphony version && node --version && codex --version'
-          done
+          docker run --rm --platform linux/amd64 "${IMAGE}@${AMD64_DIGEST}" \
+            sh -lc '/app/bin/symphony version && node --version && codex --version'
+          docker run --rm --platform linux/arm64 "${IMAGE}@${ARM64_DIGEST}" \
+            sh -lc '/app/bin/symphony version && node --version && codex --version'
 
       - name: Summarize publication
         if: always()
