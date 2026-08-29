@@ -138,6 +138,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   @spec export_workflow(WorkflowRecord.t()) :: String.t()
+  def export_workflow(%WorkflowRecord{raw_workflow_md: raw} = workflow)
+      when is_binary(raw) and raw != "",
+      do: raw
+
   def export_workflow(%WorkflowRecord{} = workflow),
     do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
 
