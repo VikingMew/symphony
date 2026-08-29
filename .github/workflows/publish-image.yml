@@ -125,7 +125,7 @@ jobs:
               mise --version && mix --version
             '
           docker run --rm --read-only --user 10002:10002 \
-            --tmpfs /tmp:rw,mode=1777 --tmpfs /worker/cache:rw,mode=1777 \
+            --tmpfs /tmp:rw,mode=1777 --tmpfs /worker/cache:rw,exec,mode=1777 \
             --tmpfs /worker/workspaces:rw,mode=1777 \
             --mount type=bind,source="$PWD",target=/source,readonly \
             symphony-toolchain:execution-worker sh -lc '
