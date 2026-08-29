@@ -17,6 +17,31 @@ distinct from the SSH `worker` Docker target. PostgreSQL is reachable only on th
 network. The Panel and execution worker have separate egress networks and share only an internal
 control network.
 
+## Container Control-Plane Boundary
+
+This document owns the Compose container-control-plane contract. The `migrate`, `symphony`
+(Panel), and `execution-worker` services consume application images; they never control the host
+container engine or orchestrate other containers:
+
+- Their final runtime images do not install or invoke Docker, Docker Compose, Buildx, Podman,
+  Nerdctl, or equivalent container-engine CLIs.
+- They do not mount `/var/run/docker.sock`, `/run/docker.sock`, or an equivalent engine socket.
+- They do not use `privileged: true` or equivalent container-control permissions. They remain
+  non-root with read-only filesystems, `no-new-privileges:true`, and all capabilities dropped.
+- They do not run a Docker daemon, another container engine, or nested Compose inside a service.
+  The Panel exposes no container-management UI, API, or setting.
+
+Symphony agents may statically read Dockerfiles, Compose YAML, and image-publication CI, but their
+refinement and implementation validation must not invoke a container engine, depend on its daemon
+or socket, or build, pull, run, push, inspect, or publish images. A required task input that
+conflicts with this rule is persisted as a blocker and fails closed through the existing
+`blocking_decision` / `Blocked` workflow; it is not skipped while the task proceeds to delivery.
+
+Image building, image-level verification, and publication belong to dedicated external CI; this
+repository uses `.github/workflows/publish-image.yml`. Human operators may run the documented
+build, pull, Compose deployment, migration, and rollback commands from the host shell. Those host
+operations do not grant the Compose services a container control plane.
+
 ## Environment and Credentials
 
 Copy the template and replace every `change-me` value:

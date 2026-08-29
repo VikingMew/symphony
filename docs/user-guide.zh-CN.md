@@ -236,6 +236,13 @@ workflow:
 
 `profiles.yml` 里配置共享 base prompt 和 agent profile：
 
+每个项目的 PostgreSQL current workflow 仍是运行时权威；`profiles.yml` 只是默认导入/导出
+artifact。无论项目或目标仓库为何，refinement / implementation prompt 最终都会附加不可由
+profile 覆盖的容器验证安全契约：agent 只能静态审阅 Dockerfile、Compose YAML 和 CI 配置，
+不得调用容器引擎、daemon/socket 或执行镜像 build/pull/run/push/inspect/publish。若任务把
+此类验证列为必需项，agent 必须记录 blocker evidence 并沿持久 `blocking_decision` / `Blocked`
+路径 fail closed；其余允许的 ticket validation 仍必须执行。
+
 ```yaml
 base_prompt: |
   You are working on a Linear issue {{ issue.identifier }}.

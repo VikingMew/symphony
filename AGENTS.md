@@ -77,6 +77,10 @@ release, after which compatibility matters again.
 
 Run targeted tests while iterating, then run full gates before handoff.
 
+Symphony agent refinement and implementation must not perform container-engine or image-level
+validation. Review Compose deployment changes against the owning contract in
+[`docs/compose.md`](docs/compose.md); use static source/config tests only.
+
 ```bash
 make all
 ```

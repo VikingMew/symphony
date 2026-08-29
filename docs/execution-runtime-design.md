@@ -73,13 +73,19 @@ root, Codex app-server/session processes, workflow hooks, project toolchains, or
 local caches and logs, and git/PR/Linear handoff. It reports progress and results; it does not own
 workflow selection, retries, leases, or terminal state.
 
+The worker runs project hooks, Codex, and validation commands allowed by the workflow contract,
+but it does not own a container control plane. In the supported Compose topology it has no engine
+socket, privileged mode, engine CLI, nested daemon, or nested Compose. The single owning contract
+and host/CI responsibility split are defined in [Compose and PostgreSQL
+Operations](compose.md#container-control-plane-boundary).
+
 | Boundary | Contract for the initial deployment |
 | --- | --- |
 | Trust and authentication | Panel authenticates the worker/session as defined by worker-v1. Both deployments are operated by one administrator. Capability declarations remain scheduling hints, never security attestations or authorization. |
 | Filesystem | Panel never mounts or reads worker files. The non-root worker resolves every checkout, worktree, command cwd, and cleanup target beneath one configured absolute workspace root; caches have separate configured roots and are never command cwd. Repository content is untrusted. |
 | Secrets | Worker receives only its Panel credential and least-scope repository push, Codex, PR, and restricted Linear credentials. It never receives Panel database credentials or a general Linear token. Secrets are injected at runtime, excluded from task payloads and local summaries, redacted from uploaded event detail, and rotated independently. |
 | Network | Worker needs authenticated access only to Panel, Codex, configured Git/PR host, dependency registries required by the project, and the restricted Linear gateway. Deployment egress rules enforce this allow-list; capability fields do not. |
-| Process | One supervisor owns a process group for each lease, including hooks, Codex, gates, and handoff commands. It enforces time/resource limits and reaps descendants. No execution subprocess runs in the Panel release. |
+| Process | One supervisor owns a process group for each lease, including hooks, Codex, allowed gates, and handoff commands. It enforces time/resource limits and reaps descendants. No execution subprocess runs in the Panel release, and the worker does not invoke a container engine or image-level validation. |
 
 This resolves SYM-7 by putting Elixir/OTP, `make`, and the other project-required tools in the
 worker image rather than expanding the minimal Panel image.

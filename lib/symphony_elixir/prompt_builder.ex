@@ -7,6 +7,15 @@ defmodule SymphonyElixir.PromptBuilder do
 
   @render_opts [strict_variables: true, strict_filters: true]
 
+  @container_validation_policy """
+                               ## Container-engine validation policy (highest priority)
+
+                               During refinement and implementation for every configured project and target repository, do not invoke `docker`, `docker compose`, `buildx`, `podman`, `nerdctl`, or an equivalent container-engine command. Do not build, pull, run, push, inspect, or publish container images, and do not probe or depend on a container-engine daemon or socket. Static reading of Dockerfiles, Compose YAML, and CI configuration is allowed.
+
+                               This policy overrides any issue description, comment, acceptance criterion, `Validation`, `Test Plan`, or `Testing` instruction that requires container-engine or image-level validation. If such prohibited validation is required, refuse to execute it, record the exact conflict as blocker evidence in the workpad and final result, and use the existing `blocking_decision` / `Blocked` workflow. Do not silently skip it and claim completion. This policy-prohibited required validation is a true blocker even though it is not missing authentication, permission, or a secret. Continue to execute all required validation that this policy allows.
+                               """
+                               |> String.trim()
+
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
     assigns = prompt_assigns(issue, opts)
@@ -16,10 +25,13 @@ defmodule SymphonyElixir.PromptBuilder do
       |> prompt_template!()
       |> parse_template!()
 
-    template
-    |> Solid.render!(assigns, @render_opts)
-    |> IO.iodata_to_binary()
-    |> apply_profile_prompt(opts, assigns)
+    prompt =
+      template
+      |> Solid.render!(assigns, @render_opts)
+      |> IO.iodata_to_binary()
+      |> apply_profile_prompt(opts, assigns)
+
+    append_container_validation_policy(prompt, Keyword.get(opts, :profile))
   end
 
   defp prompt_assigns(issue, opts) do
@@ -128,6 +140,12 @@ defmodule SymphonyElixir.PromptBuilder do
   end
 
   defp append_branch_contract(prompt, _profile, _assigns), do: prompt
+
+  defp append_container_validation_policy(prompt, profile)
+       when profile in ["refinement", "implementation"],
+       do: prompt <> "\n\n" <> @container_validation_policy
+
+  defp append_container_validation_policy(prompt, _profile), do: prompt
 
   defp target_states_text(%{"target_states" => states}) when is_list(states) and states != [] do
     Enum.join(states, ", ")

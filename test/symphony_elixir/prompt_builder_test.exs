@@ -148,7 +148,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
 
     assert prompt =~ "Stage Implementation S-3"
     assert prompt =~ "Base S-3"
-    assert prompt == "Stage Implementation S-3\n\nBase S-3"
+    assert String.starts_with?(prompt, "Stage Implementation S-3\n\nBase S-3\n\n")
 
     prompt =
       PromptBuilder.build_prompt(issue,
@@ -160,7 +160,65 @@ defmodule SymphonyElixir.PromptBuilderTest do
         allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
-    assert prompt == "Replace S-3"
+    assert String.starts_with?(prompt, "Replace S-3\n\n")
+  end
+
+  test "refinement and implementation prompts enforce cross-project container validation policy" do
+    issue = %Issue{
+      identifier: "OTHER-1",
+      title: "Validate another repository",
+      description: "Validation: build and inspect the image",
+      state: "In Progress",
+      url: "https://example.org/issues/OTHER-1",
+      labels: []
+    }
+
+    for {project_prompt, profile} <- [
+          {"Project alpha requires every ticket Validation instruction", "refinement"},
+          {"Project beta requires every Test Plan instruction", "implementation"}
+        ] do
+      write_workflow_file!(Workflow.workflow_file_path(), prompt: project_prompt)
+
+      prompt =
+        PromptBuilder.build_prompt(issue,
+          profile: profile,
+          profile_policy: %{
+            "prompt" => %{"mode" => "extend", "template" => "Execute every Testing requirement"}
+          }
+        )
+
+      assert prompt =~ project_prompt
+      assert prompt =~ "Container-engine validation policy (highest priority)"
+      assert prompt =~ "every configured project and target repository"
+      assert prompt =~ "do not invoke `docker`, `docker compose`, `buildx`, `podman`, `nerdctl`"
+      assert prompt =~ "Do not build, pull, run, push, inspect, or publish container images"
+      assert prompt =~ "record the exact conflict as blocker evidence"
+      assert prompt =~ "`blocking_decision` / `Blocked` workflow"
+      assert prompt =~ "true blocker even though it is not missing authentication"
+      assert prompt =~ "Continue to execute all required validation that this policy allows"
+
+      assert :binary.match(prompt, "Execute every Testing requirement") <
+               :binary.match(prompt, "Container-engine validation policy (highest priority)")
+    end
+
+    replace_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: %{
+          "prompt" => %{"mode" => "replace", "template" => "Replacement project contract"}
+        }
+      )
+
+    assert replace_prompt =~ "Replacement project contract"
+    assert replace_prompt =~ "Container-engine validation policy (highest priority)"
+  end
+
+  test "profiles import artifact carries the same container validation priority" do
+    profiles = File.read!("profiles.yml")
+
+    assert profiles =~ "Container-engine validation policy (highest priority)"
+    assert profiles =~ "policy-prohibited required validation is a true blocker"
+    assert profiles =~ "execute every allowed ticket-provided"
   end
 
   test "prompt builder renders built-in refinement and custom profile contracts" do
@@ -216,7 +274,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
         allowed_updates: %{"target_states" => ["Ready to Merge"]}
       )
 
-    assert disabled_prompt == "Base S-5"
+    assert String.starts_with?(disabled_prompt, "Base S-5\n\n")
 
     branch_prompt =
       PromptBuilder.build_prompt(issue,
