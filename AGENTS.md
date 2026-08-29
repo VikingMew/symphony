@@ -45,6 +45,9 @@ discipline of Linus Torvalds and John Carmack:
 - **Carmack: hard to make simple is still worth it.** Code that is hard to understand is hard to
   make correct. If a reviewer needs a tour through a 2000-line LiveView or a five-way conditional,
   that is debt — simplify, don't document around it.
+- **No defensive programming.** Trust declared contracts and types: do not add `nil`/fallback
+  checks or branches for states the contract excludes, use catch-all `rescue`, or represent one
+  fact twice. Real failures must remain explicit and typed.
 - **Explicit errors over silent tolerance.** Failures must be visible (structured logs) and
   typed. Never disguise a database fault as "setup required", never swallow a crash to keep a
   pipeline alive with no record, never fail open on a rate-limit gate.
