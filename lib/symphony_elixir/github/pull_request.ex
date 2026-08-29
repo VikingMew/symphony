@@ -23,18 +23,19 @@ defmodule SymphonyElixir.GitHub.PullRequest do
           source: :gh | :rest
         }
 
-  @spec ensure_open(Issue.t(), map(), keyword()) ::
+  @spec ensure_open(Issue.t(), map(), map(), keyword()) ::
           {:ok, pull_request()} | {:error, term()}
-  def ensure_open(%Issue{} = issue, project, opts \\ []) do
+  def ensure_open(%Issue{} = issue, project, rendered, opts \\ []) do
     with {:ok, identifier} <- validate_identifier(issue.identifier),
-         {:ok, title} <- validate_title(issue.title),
+         {:ok, title} <- rendered_value(rendered, :title),
+         {:ok, body} <- rendered_value(rendered, :body),
          {:ok, head} <- BranchName.validate(issue.branch_name),
          {:ok, base} <- project_default_branch(project),
          {:ok, repository} <- project_repository(project) do
       request = %{
         identifier: identifier,
-        title: "#{identifier}: #{title}",
-        body: "Fixes #{identifier}",
+        title: title,
+        body: body,
         repository: repository,
         base: base,
         head: head
@@ -42,6 +43,21 @@ defmodule SymphonyElixir.GitHub.PullRequest do
 
       ensure_with_available_client(request, opts)
     end
+  end
+
+  defp rendered_value(rendered, field) do
+    case Map.get(rendered, field) do
+      value when is_binary(value) -> validate_rendered_value(value, field)
+      _ -> {:error, {:invalid_pull_request_content, field}}
+    end
+  end
+
+  defp validate_rendered_value(value, :title), do: validate_title(value)
+
+  defp validate_rendered_value(value, :body) do
+    if String.trim(value) == "",
+      do: {:error, {:invalid_pull_request_content, :body}},
+      else: {:ok, value}
   end
 
   defp ensure_with_available_client(request, opts) do

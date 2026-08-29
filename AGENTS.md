@@ -108,7 +108,8 @@ mix specs.check
 
 ## PR Requirements
 
-- PR body must follow `.github/pull_request_template.md` exactly.
+- PR bodies must follow the canonical [PR body contract](docs/pull-request-body.md).
+  `.github/pull_request_template.md` is only the synchronized GitHub entry copy.
 - Validate PR body locally when needed:
 
 ```bash

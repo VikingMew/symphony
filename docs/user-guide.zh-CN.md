@@ -385,7 +385,9 @@ Backlog
 `branchName` 后，必须提交 final comment/result/references 并显式请求 `Ready to Merge`。Symphony
 随后校验 repository/default/head，复用或创建 open GitHub PR，记录 PR URL，最后才更新 Linear。
 GitHub/PR/auth 失败会让 issue 保持 `In Progress`。人要求修改时使用
-`Ready to Merge -> In Progress`；Codex 更新同一 branch/PR，再次验证并请求 handoff。人 merge PR
+`Ready to Merge -> In Progress`；Codex 更新同一 branch/PR，再次验证并请求 handoff。初始 PR
+正文由 Symphony 根据 structured result 和 [PR body contract](pull-request-body.md) 生成；已有
+open PR 的人工正文不会被覆盖。人 merge PR
 后，由 Linear GitHub automation 把 issue 移到 `Done`。
 
 Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、

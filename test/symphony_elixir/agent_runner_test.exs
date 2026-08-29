@@ -812,11 +812,15 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       test_pid = self()
 
-      pull_request_ensurer = fn handoff_issue, project, github_opts ->
+      pull_request_ensurer = fn handoff_issue, project, rendered, github_opts ->
         send(test_pid, {:handoff_order, :pr})
         assert handoff_issue.branch_name == "feature/sym-1"
         assert project.repository_url == "https://github.com/acme/app"
         assert github_opts == []
+        assert rendered.title == "SYM-1: Ship PR handoff"
+        assert rendered.body =~ "#### Summary\n\n- handoff"
+        assert rendered.body =~ "#### Test Plan\n\n- [x] green"
+        assert rendered.body =~ "\n\nFixes SYM-1"
 
         {:ok,
          %{

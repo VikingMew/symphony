@@ -97,7 +97,9 @@ Linear completion write。
 
 人只在 GitHub review/merge。需要修改时，把 Linear 从 `Ready to Merge` 移回 `In Progress` 并留下
 comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新验证、commit、push，再次显式请求
-`Ready to Merge`。Symphony lookup 到同一 open PR 并复用。
+`Ready to Merge`。Symphony lookup 到同一 open PR 并复用且不覆盖人工正文；初始正文由
+`result.completed`、`result.validation` 和 issue identity 按 [PR body contract](pull-request-body.md)
+确定性生成。
 
 ## Failure Matrix
 

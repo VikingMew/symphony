@@ -245,7 +245,8 @@ Note:
 For the default implementation profile, `AgentRunner` owns this ordered boundary:
 
 1. Receive an explicit `Ready to Merge` request containing final comment, structured result, and
-   references.
+   references; render the initial title/body from `result.completed`, `result.validation`, and the
+   issue identity according to [pull-request-body.md](pull-request-body.md).
 2. Validate the Linear identifier/title, exact Linear `branchName`, configured default branch,
    GitHub repository identity, and existence of the remote head branch.
 3. Ensure an open PR exists for the exact repository/base/head tuple.
@@ -261,8 +262,10 @@ PR lookup/creation requirements:
 - Discover `gh` from the service process environment and use non-interactive, timeout-bounded
   commands.
 - Look up before create and return an existing open PR without duplication.
-- Create against the configured default branch with the exact validated head, a title containing
-  the Linear identifier, and an exact `Fixes <ID>` closing reference in the body.
+- Create against the configured default branch with the exact validated head and the already
+  validated renderer title/body. The body contains Summary bullets, Test Plan checkboxes, and the
+  exact `Fixes <ID>` closing reference required by [pull-request-body.md](pull-request-body.md).
+- Return an existing exact open PR without changing its title or body.
 - If `gh` is unavailable or unusable, use GitHub REST through the existing HTTP/proxy stack when
   `GH_TOKEN` or `GITHUB_TOKEN` is present; do not add a workflow token setting.
 - A closed or merged PR for the same branch is a typed conflict, not success and not permission to

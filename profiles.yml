@@ -336,7 +336,7 @@ profiles:
         - a structured `result` with the same information;
         - relevant `references` such as branch, commit, or artifact links.
 
-        Explicitly request `Ready to Merge` only after the summary, validation, commit, and push are complete. Symphony owns initial PR creation and records the PR URL before changing Linear. Do not create the initial PR or wait for PR review/checks before it exists. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
+        Explicitly request `Ready to Merge` only after the summary, validation, commit, and push are complete. Symphony owns initial PR creation, renders it from `result.completed` and `result.validation` according to `docs/pull-request-body.md`, and records the PR URL before changing Linear. Do not create the initial PR or wait for PR review/checks before it exists. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
   refinement:
     allowed_updates:
       comment: true

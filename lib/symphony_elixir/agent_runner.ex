@@ -12,7 +12,7 @@ defmodule SymphonyElixir.AgentRunner do
     Codex.RateLimitGate,
     Config,
     Git,
-    GitHub.PullRequest,
+    GitHub.{PullRequest, PullRequestBody},
     Linear.Issue,
     PersistenceEventWriter,
     PromptBuilder,
@@ -440,19 +440,20 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp implementation_handoff_preparer(_run_issue, worker_host, runner_opts) do
-    fn issue, tool_opts ->
+    fn issue, payload, tool_opts ->
       event_opts = handoff_event_opts(runner_opts, tool_opts)
       emit_phase(issue, :implementation_handoff, :started, worker_host, event_opts)
 
       pull_request_ensurer =
-        Keyword.get(runner_opts, :pull_request_ensurer, &PullRequest.ensure_open/3)
+        Keyword.get(runner_opts, :pull_request_ensurer, &PullRequest.ensure_open/4)
 
       github_opts = Keyword.get(runner_opts, :github_opts, [])
 
-      case pull_request_ensurer.(issue, Config.settings!().project, github_opts) do
-        {:ok, pull_request} ->
-          {:ok, pull_request}
-
+      with {:ok, rendered} <- PullRequestBody.render(issue, Map.fetch!(payload, "result")),
+           {:ok, pull_request} <-
+             pull_request_ensurer.(issue, Config.settings!().project, rendered, github_opts) do
+        {:ok, pull_request}
+      else
         {:error, reason} ->
           emit_phase(issue, :implementation_handoff, :failed, worker_host, event_opts, %{
             reason: inspect(reason)

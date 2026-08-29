@@ -17,8 +17,9 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         issue: issue(),
         profile: "implementation",
         session_id: "thread-1-turn-1",
-        implementation_handoff_preparer: fn handoff_issue, handoff_opts ->
+        implementation_handoff_preparer: fn handoff_issue, payload, handoff_opts ->
           Agent.update(order, &[{:pr, handoff_issue.branch_name} | &1])
+          assert payload["result"]["completed"] == "handoff"
           refute Keyword.has_key?(handoff_opts, :workspace)
           {:ok, pull_request()}
         end,
@@ -54,7 +55,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
       DynamicTool.execute("linear_task_update", completion_payload(),
         issue: issue(),
         profile: "implementation",
-        implementation_handoff_preparer: fn _issue, _opts ->
+        implementation_handoff_preparer: fn _issue, _payload, _opts ->
           {:error, {:implementation_handoff_failed, {:remote_branch_not_found, "feature/sym-1"}}}
         end,
         graphql: fn _query, _variables -> flunk("Linear must not be called before PR success") end
@@ -92,7 +93,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
       DynamicTool.execute("linear_task_update", completion_payload(),
         issue: issue(),
         profile: "implementation",
-        implementation_handoff_preparer: fn _issue, _opts -> {:ok, pull_request()} end,
+        implementation_handoff_preparer: fn _issue, _payload, _opts -> {:ok, pull_request()} end,
         implementation_handoff_observer: fn status, _issue, details, _opts ->
           send(test_pid, {:handoff_observed, status, details})
         end,
@@ -144,7 +145,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         [
           issue: issue(),
           profile: "implementation",
-          implementation_handoff_preparer: fn _issue, handoff_opts ->
+          implementation_handoff_preparer: fn _issue, _payload, handoff_opts ->
             assert Keyword.get(handoff_opts, :workspace) == workspace
             {:ok, pull_request()}
           end,

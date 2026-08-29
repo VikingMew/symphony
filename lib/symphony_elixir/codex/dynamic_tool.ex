@@ -381,7 +381,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp complete_implementation_handoff(issue_id, payload, opts) do
     with {:ok, issue} <- issue_from_opts(opts),
-         {:ok, handoff} <- prepare_implementation_handoff(issue, opts) do
+         {:ok, handoff} <- prepare_implementation_handoff(issue, payload, opts) do
       payload = put_handoff_reference(payload, handoff)
 
       result =
@@ -438,9 +438,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp prepare_implementation_handoff(issue, opts) do
+  defp prepare_implementation_handoff(issue, payload, opts) do
     case Keyword.get(opts, :implementation_handoff_preparer) do
-      preparer when is_function(preparer, 2) -> preparer.(issue, opts)
+      preparer when is_function(preparer, 3) -> preparer.(issue, payload, opts)
       _ -> {:error, :implementation_handoff_unavailable}
     end
   end

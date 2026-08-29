@@ -2,8 +2,20 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.GitHub.PullRequest
   alias SymphonyElixir.Linear.Issue
+
+  defmodule PullRequest do
+    def ensure_open(issue, project, opts) do
+      SymphonyElixir.GitHub.PullRequest.ensure_open(issue, project, rendered(), opts)
+    end
+
+    defp rendered do
+      %{
+        title: "SYM-1: Ship PR handoff",
+        body: "#### Summary\n\n- handoff\n\n#### Test Plan\n\n- [x] green\n\nFixes SYM-1"
+      }
+    end
+  end
 
   test "reuses an existing open pull request through gh without creating a duplicate" do
     runner = fn _executable, args, _timeout_ms ->
@@ -72,7 +84,8 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
     assert option(create_args, "--base") == "main"
     assert option(create_args, "--head") == "acme:feature/sym-1"
     assert option(create_args, "--title") == "SYM-1: Ship PR handoff"
-    assert option(create_args, "--body") == "Fixes SYM-1"
+    assert option(create_args, "--body") ==
+             "#### Summary\n\n- handoff\n\n#### Test Plan\n\n- [x] green\n\nFixes SYM-1"
   end
 
   test "returns a typed conflict for a closed branch pull request" do
@@ -147,7 +160,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
                        "title" => "SYM-1: Ship PR handoff",
                        "head" => "feature/sym-1",
                        "base" => "main",
-                       "body" => "Fixes SYM-1"
+                       "body" => "#### Summary\n\n- handoff\n\n#### Test Plan\n\n- [x] green\n\nFixes SYM-1"
                      }, 30_000}
 
     assert {"authorization", "Bearer rest-token"} in headers
@@ -199,10 +212,28 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
              PullRequest.ensure_open(%{issue() | identifier: "not-linear"}, project(), no_client)
 
     assert {:error, :missing_issue_title} =
-             PullRequest.ensure_open(%{issue() | title: "  "}, project(), no_client)
+             SymphonyElixir.GitHub.PullRequest.ensure_open(
+               issue(),
+               project(),
+               %{title: "  ", body: "body"},
+               no_client
+             )
 
     assert {:error, :invalid_issue_title} =
-             PullRequest.ensure_open(%{issue() | title: "bad\ntitle"}, project(), no_client)
+             SymphonyElixir.GitHub.PullRequest.ensure_open(
+               issue(),
+               project(),
+               %{title: "bad\ntitle", body: "body"},
+               no_client
+             )
+
+    assert {:error, {:invalid_pull_request_content, :body}} =
+             SymphonyElixir.GitHub.PullRequest.ensure_open(
+               issue(),
+               project(),
+               %{title: "SYM-1: title", body: " "},
+               no_client
+             )
 
     assert {:error, :missing_default_branch} =
              PullRequest.ensure_open(issue(), %{repository_url: "https://github.com/acme/app"}, no_client)

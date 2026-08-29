@@ -135,7 +135,7 @@ profiles:
 3. 已有 open PR 则复用；否则创建 title 包含 Linear identifier、body 包含精确
    `Fixes <ID>` 的 PR。
 4. 添加 branch/PR reference，写 final comment/result。
-5. 最后更新 Linear `In Progress -> Ready to Merge`。
+5. AgentRunner 按 [PR body contract](pull-request-body.md) 从 structured result 渲染初始 PR；最后更新 Linear `In Progress -> Ready to Merge`。
 
 任何 branch/GitHub/auth/PR 失败都会返回 typed error，并让 issue 留在 `In Progress`。Linear
 transition 失败也必须可见；此时 PR 已存在，重试会 idempotently 复用。

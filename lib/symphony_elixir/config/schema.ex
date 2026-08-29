@@ -757,7 +757,7 @@ defmodule SymphonyElixir.Config.Schema do
         "prompt" => %{
           "mode" => "extend",
           "template" =>
-            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, validate, commit, and push the exact Linear branchName. Post the final result, comment, and references, then explicitly request Ready to Merge. Symphony owns initial PR creation. After human change requests return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again."
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, validate, commit, and push the exact Linear branchName. Post the final result, comment, and references, then explicitly request Ready to Merge. Symphony owns initial PR creation and renders its body from result.completed and result.validation under docs/pull-request-body.md. After human change requests return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again."
         },
         "allowed_updates" => %{
           "description" => false,

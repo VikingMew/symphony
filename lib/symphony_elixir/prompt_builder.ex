@@ -112,7 +112,7 @@ defmodule SymphonyElixir.PromptBuilder do
     """
     Workflow profile: implementation
 
-    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, validate, commit, and push the exact Linear `branchName`. Use `linear_task_update` to post the final result, references, and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. Symphony owns initial PR creation. If human changes return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again.
+    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Implement, validate, commit, and push the exact Linear `branchName`. Use `linear_task_update` to post the final result, references, and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. Symphony owns initial PR creation and renders it from `result.completed` and `result.validation` under `docs/pull-request-body.md`. If human changes return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again.
     """
     |> String.trim()
   end
