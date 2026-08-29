@@ -242,6 +242,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
                   <option value="">Select</option>
                   <option value="codex" selected={transition["actor"] == "codex"}>codex</option>
                   <option value="human" selected={transition["actor"] == "human"}>human</option>
+                  <option value="symphony" selected={transition["actor"] == "symphony"}>symphony</option>
                 </select>
                 <select name={"workflow[allowed_transitions][#{index}][profile]"}>
                   <option value="">No profile</option>
