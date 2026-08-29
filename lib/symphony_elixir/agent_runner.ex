@@ -485,7 +485,7 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp task_update_observer(recipient, issue_id) do
+  defp task_update_observer(recipient, issue_id) when is_pid(recipient) do
     fn result, payload, _tool_opts ->
       send(recipient, {
         :linear_task_update_result,
@@ -497,6 +497,8 @@ defmodule SymphonyElixir.AgentRunner do
       })
     end
   end
+
+  defp task_update_observer(_recipient, _issue_id), do: fn _result, _payload, _tool_opts -> :ok end
 
   defp handoff_event_opts(runner_opts, tool_opts) do
     runner_opts
