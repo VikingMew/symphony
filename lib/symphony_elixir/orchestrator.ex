@@ -434,14 +434,14 @@ defmodule SymphonyElixir.Orchestrator do
       match?({:ok, %{"handoff" => _}}, result) ->
         updated = %{entry | implementation_handoff_completed: true}
         _ = BlockingDecision.clear(entry.identifier)
-        {:noreply, %{state | running: Map.put(state.running, issue_id, updated)}}
+        %{state | running: Map.put(state.running, issue_id, updated)}
 
       is_binary(target_state) and match?({:ok, _}, result) ->
         _ = BlockingDecision.clear(entry.identifier)
-        {:noreply, state}
+        state
 
       true ->
-        {:noreply, state}
+        state
     end
   end
 

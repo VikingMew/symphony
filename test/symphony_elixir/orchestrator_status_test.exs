@@ -48,6 +48,56 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     send(pid, :stop)
   end
 
+  test "linear task update completion preserves the live Orchestrator state invariant" do
+    issue_id = "issue-linear-update"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-UPDATE",
+      title: "Linear update",
+      description: "Preserve state",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-UPDATE"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :LinearUpdateStateOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    initial_state = :sys.get_state(pid)
+
+    running_entry = %Orchestrator.RunningIssue{
+      pid: self(),
+      ref: make_ref(),
+      run_id: "run-linear-update",
+      identifier: issue.identifier,
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn state ->
+      %{state | running: %{issue_id => running_entry}}
+    end)
+
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+
+    send(
+      pid,
+      {:linear_task_update_result, issue_id, {:ok, %{"handoff" => %{}}}, %{}, %{},
+       "Ready to Merge"}
+    )
+
+    assert %Orchestrator.State{} = state = :sys.get_state(pid)
+    assert state.running[issue_id].implementation_handoff_completed
+
+    assert %{running: [_]} = Orchestrator.snapshot(orchestrator_name, 1_000)
+    assert Process.alive?(pid)
+    assert initial_state.__struct__ == state.__struct__
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
@@ -1158,6 +1208,27 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert %{polling: %{listening?: true}} = GenServer.call(pid, :snapshot)
   end
 
+  test "public snapshot, refresh, and listening controls preserve the live state type" do
+    orchestrator_name = Module.concat(__MODULE__, :PublicControlStateOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+    assert %{polling: %{listening?: false}} = Orchestrator.snapshot(orchestrator_name, 1_000)
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+    assert %{listening?: true} = Orchestrator.start_refine_only_listening(orchestrator_name)
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+    assert %{queued: _} = Orchestrator.request_refresh(orchestrator_name)
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+    assert %{listening?: false} = Orchestrator.stop_listening(orchestrator_name)
+    assert %Orchestrator.State{} = :sys.get_state(pid)
+  end
+
   test "orchestrator poll cycle resets next refresh countdown after a check" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
@@ -1796,6 +1867,33 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     :sys.replace_state(pid, fn state ->
       %{state | last_snapshot_fingerprint: :force_next_change}
     end)
+  end
+
+  test "status dashboard repeated snapshot refreshes preserve Orchestrator state" do
+    orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
+    dashboard_name = Module.concat(__MODULE__, :RepeatedSnapshotDashboard)
+
+    {:ok, dashboard_pid} =
+      StatusDashboard.start_link(
+        name: dashboard_name,
+        enabled: true,
+        refresh_ms: 60_000
+      )
+
+    on_exit(fn ->
+      if Process.alive?(dashboard_pid), do: Process.exit(dashboard_pid, :normal)
+    end)
+
+    assert %Orchestrator.State{} = :sys.get_state(orchestrator_pid)
+
+    Enum.each(1..3, fn _ ->
+      StatusDashboard.notify_update(dashboard_name)
+      send(dashboard_pid, :tick)
+    end)
+
+    _ = :sys.get_state(dashboard_pid)
+    assert %Orchestrator.State{} = :sys.get_state(orchestrator_pid)
+    assert Process.alive?(orchestrator_pid)
   end
 
   test "application configures a rotating file logger handler" do

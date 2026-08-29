@@ -347,8 +347,19 @@ and worker/task state.
 
 ### 4. Switch or roll back
 
-Start the PostgreSQL release, verify `/health/live` and `/health/ready`, then enable listening.
-Monitor logs and confirm a new persistence write is visible after restart.
+Start the PostgreSQL release and verify `/health/live` and `/health/ready`. The Orchestrator starts
+in `not_listening` mode after every restart; after the health checks pass, enable listening through
+the public control API:
+
+```bash
+docker compose exec -T symphony bin/symphony rpc \
+  'SymphonyElixir.Orchestrator.start_listening() |> IO.inspect()'
+```
+
+Use `start_refine_only_listening/0` instead when only refinement work should run. Do not invoke a
+GenServer callback directly or use OTP `:sys` state functions for recovery; those are internal and
+debugging interfaces, not supported operational controls. Monitor logs and confirm a new
+persistence write is visible after restart.
 
 Rollback is bounded but not zero-downtime: stop the PostgreSQL release before further writes,
 retain its database/dump for diagnosis, restore the untouched pre-cutover SQLite database, and
