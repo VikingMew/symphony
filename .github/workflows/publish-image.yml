@@ -64,7 +64,7 @@ jobs:
           '
           export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
           export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
-          docker compose -f compose.yaml -f compose.published.yaml config --format json | jq -e '
+          docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker config --format json | jq -e '
             .services.migrate.image == env.SYMPHONY_IMAGE and
             .services.symphony.image == .services.migrate.image and
             (.services.migrate | has("build") | not) and
