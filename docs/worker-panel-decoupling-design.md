@@ -273,18 +273,23 @@ POST /api/worker/v1/tasks/claim
   "lease_attempt": 1,
   "worker_session_id": "wss_...",
   "execution": {
-    "repository": {"url": "...", "source_ref": "main", "implementation_branch": "exact-linear-branch"},
-    "required_gates": [{"name": "make-all", "command": "make all", "timeout_ms": 1800000}],
-    "hooks": {},
-    "prompt": "...",
+    "version": 1,
+    "repository": "https://github.com/example/repository.git",
+    "revision": "main",
+    "branch": "exact-linear-branch",
+    "codex": {"command": "codex exec --json -- 'rendered prompt'", "timeout_seconds": 3600},
+    "required_gates": [{"command": "make all", "timeout_seconds": 1800}],
+    "hooks": [],
     "handoff": {"policy": "push_pr_then_restricted_linear"}
   }
 }
 ```
 
 The correlation fields are derived from persisted project/run/issue/task/lease/session records.
-The execution object is a queue-time snapshot of the current workflow and never contains a
-`workflow_version_id`.
+The task retains the queue-time Panel snapshot for display and audit. At claim time the Panel
+converts that snapshot into the versioned execution object consumed by the worker, including a
+rendered issue/profile prompt and second-based command timeouts. The execution object never
+contains a `workflow_version_id`.
 
 无任务时返回：
 

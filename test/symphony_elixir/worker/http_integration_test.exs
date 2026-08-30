@@ -81,7 +81,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       project_id: "project-1",
       run_id: "run-1",
       issue_identifier: "SYM-12",
-      payload: execution(source, revision)
+      payload: panel_payload(source, revision)
     }
 
     lease = %{id: "lease-1", attempt: 1, expires_at: DateTime.add(DateTime.utc_now(), 60, :second)}
@@ -158,15 +158,27 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp execution(source, revision) do
+  defp panel_payload(source, revision) do
     %{
-      "version" => 1,
-      "repository" => source,
-      "revision" => revision,
-      "branch" => "vikingmew-sym-12",
-      "hooks" => [%{"command" => "git rev-parse HEAD", "timeout_seconds" => 10}],
-      "codex" => %{"command" => "printf 'SYMPHONY_CODEX_SESSION_ID=codex-session-1\\n'", "timeout_seconds" => 10},
-      "required_gates" => [%{"command" => "git status --porcelain", "timeout_seconds" => 10}],
+      "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
+      "prompt" => "Complete the task.",
+      "workflow_profile" => "implementation",
+      "execution_mode" => "worker",
+      "repository" => %{
+        "url" => source,
+        "source_ref" => revision,
+        "implementation_branch" => "vikingmew-sym-12"
+      },
+      "hooks" => %{
+        "after_create" => "git rev-parse HEAD",
+        "before_run" => nil,
+        "after_run" => nil,
+        "before_remove" => nil,
+        "timeout_ms" => 10_000
+      },
+      "codex" => %{"command" => "printf 'SYMPHONY_CODEX_SESSION_ID=codex-session-1\\n'"},
+      "limits" => %{"turn_timeout_ms" => 10_000},
+      "required_gates" => [%{"name" => "clean", "command" => "git status --porcelain", "timeout_ms" => 10_000}],
       "handoff" => %{
         "command" => "printf 'SYMPHONY_HANDOFF_COMMIT=fixture-commit\\nSYMPHONY_HANDOFF_PR=PR-12\\n'",
         "timeout_seconds" => 10
