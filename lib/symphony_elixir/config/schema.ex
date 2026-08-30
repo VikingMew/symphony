@@ -754,7 +754,8 @@ defmodule SymphonyElixir.Config.Schema do
           "comment" => true,
           "result" => false,
           "target_states" => ["Needs Refinement Review"]
-        }
+        },
+        "description_limits" => %{"characters" => 12_000, "lines" => 400, "label_overrides" => %{}}
       },
       "implementation" => %{
         "name" => "Implementation",

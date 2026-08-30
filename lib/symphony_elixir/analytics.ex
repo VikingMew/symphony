@@ -77,8 +77,19 @@ defmodule SymphonyElixir.Analytics do
       blocked_count: count_events(events, "blocked") + count_status(runs, "blocked"),
       duration: duration_summary(runs),
       tokens: token_summary(events)
+      ,refinement_description: refinement_description_summary(events)
     }
   end
+
+  defp refinement_description_summary(events) do
+    samples = Enum.filter(events, &(event_type(&1) == "refinement.description_measurement"))
+    chars = Enum.map(samples, &get_in(&1, [:payload, :characters]) || get_in(&1, [:payload, "characters"]) || 0) |> Enum.sort()
+    lines = Enum.map(samples, &get_in(&1, [:payload, :lines]) || get_in(&1, [:payload, "lines"]) || 0) |> Enum.sort()
+    over = Enum.count(samples, fn e -> get_in(e, [:payload, :over_limit]) == true or get_in(e, [:payload, "over_limit"]) == true end)
+    %{samples: length(samples), average_characters: average(chars), average_lines: average(lines), p95_characters: percentile(chars, 0.95), p95_lines: percentile(lines, 0.95), over_limit: over, over_rate: if(samples == [], do: 0.0, else: over / length(samples))}
+  end
+  defp average([]), do: 0.0
+  defp average(values), do: Enum.sum(values) / length(values)
 
   @spec range(String.t() | nil, DateTime.t()) :: map()
   def range(preset, %DateTime{} = now) do
