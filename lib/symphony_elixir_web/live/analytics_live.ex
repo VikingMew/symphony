@@ -121,6 +121,23 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
             <.breakdown title="Failures" rows={@summary.failure_rows} />
             <.breakdown title="Events" rows={@summary.event_rows} />
           </section>
+
+          <section class="section-card">
+            <h2 class="section-title">Issue-flow quality</h2>
+            <p class="section-copy">Derived from persisted issue runs and events in the selected range.</p>
+            <div class="metric-grid">
+              <article class="metric-card">
+                <p class="metric-label">Refinement rounds</p>
+                <p class="metric-value numeric"><%= Float.round(@summary.issue_quality.refinement_rounds.average, 2) %></p>
+                <p class="metric-detail">0: <%= @summary.issue_quality.refinement_rounds.distribution["0"] %> · 1: <%= @summary.issue_quality.refinement_rounds.distribution["1"] %> · 2: <%= @summary.issue_quality.refinement_rounds.distribution["2"] %> · 3+: <%= @summary.issue_quality.refinement_rounds.distribution["3+"] %></p>
+              </article>
+              <article class="metric-card">
+                <p class="metric-label">Blocked issue rate</p>
+                <p class="metric-value numeric"><%= @summary.issue_quality.blocked.numerator %>/<%= @summary.issue_quality.blocked.denominator %></p>
+                <p class="metric-detail">Unique issue cohort; workflow warning proxy</p>
+              </article>
+            </div>
+          </section>
         <% end %>
       <% end %>
     </section>
