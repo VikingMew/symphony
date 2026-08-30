@@ -52,6 +52,12 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
              Policy.pull_request_reference(%{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pull_request_completion_proof" => "proof"}})
 
     assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pr_proof" => ""}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pull_request" => "https://github.com/acme/app/pull/2"}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
              Policy.pull_request_reference(%{"references" => %{"pull_request" => "https://example.com/pr/1", "pull_request_completion_proof" => "proof"}})
   end
 
