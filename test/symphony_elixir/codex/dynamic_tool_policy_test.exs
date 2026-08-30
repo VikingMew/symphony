@@ -41,6 +41,29 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
              Policy.validate_update_policy(%{"target_state" => "Done"}, policy, "implementation")
   end
 
+  test "accepts legacy and Codex pull request reference pairs without mixing" do
+    legacy = %{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pr_proof" => "proof"}}
+    codex = %{"references" => %{"pull_request" => "https://github.com/acme/app/pull/2", "pull_request_completion_proof" => "proof-2"}}
+
+    assert {:ok, "https://github.com/acme/app/pull/1", "proof"} = Policy.pull_request_reference(legacy)
+    assert {:ok, "https://github.com/acme/app/pull/2", "proof-2"} = Policy.pull_request_reference(codex)
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pull_request_completion_proof" => "proof"}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pr_proof" => ""}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pull_request" => "https://github.com/acme/app/pull/2"}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pull_request" => "https://example.com/pr/1", "pull_request_completion_proof" => "proof"}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pr_url" => "", "pr_proof" => "proof"}})
+  end
+
   test "extracts and deduplicates concrete reference links" do
     links =
       Policy.reference_link_candidates(%{

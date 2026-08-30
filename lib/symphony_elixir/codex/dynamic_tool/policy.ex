@@ -44,6 +44,30 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
     |> dedupe_reference_links()
   end
 
+  @spec pull_request_reference(map()) :: {:ok, String.t(), String.t()} | {:error, term()}
+  def pull_request_reference(payload) do
+    references = Map.get(payload, "references", %{})
+
+    pairs = [
+      {"pr_url", "pr_proof", "references.pr_url/pr_proof"},
+      {"pull_request", "pull_request_completion_proof",
+       "references.pull_request/pull_request_completion_proof"}
+    ]
+
+    case Enum.find_value(pairs, fn {url_key, proof_key, _label} ->
+           with url when is_binary(url) and url != "" <- Map.get(references, url_key),
+                true <- String.starts_with?(url, "https://github.com/"),
+                proof when is_binary(proof) and proof != "" <- Map.get(references, proof_key) do
+             {:ok, url, proof}
+           else
+             _ -> nil
+           end
+         end) do
+      nil -> {:error, {:implementation_handoff_field_required, "references.pr_url/pr_proof"}}
+      result -> result
+    end
+  end
+
   defp validate_required_allow_true(payload, policy, profile, field) do
     if Map.has_key?(payload, field) and Map.get(policy, field) != true,
       do: {:error, {:update_not_allowed, field, profile}},
@@ -101,11 +125,9 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
   defp missing_completion_field?(payload, field), do: not is_map(Map.get(payload, field))
 
   defp validate_pull_request_reference(payload) do
-    with "https://github.com/" <> _rest <- get_in(payload, ["references", "pr_url"]),
-         proof when is_binary(proof) and proof != "" <- get_in(payload, ["references", "pr_proof"]) do
-      :ok
-    else
-      _ -> {:error, {:implementation_handoff_field_required, "references.pr_url/pr_proof"}}
+    case pull_request_reference(payload) do
+      {:ok, _url, _proof} -> :ok
+      error -> error
     end
   end
 
