@@ -24,6 +24,9 @@ defmodule SymphonyElixir.AgentRunner do
   @implementation_profile "implementation"
   @implementation_start_state "Ready"
   @implementation_started_state "In Progress"
+  @refinement_profile "refinement"
+  @refinement_start_state "Todo"
+  @refinement_started_state "Refining"
 
   @type worker_host :: String.t() | nil
   @type operator_kind :: :nap | :day_dreaming
@@ -270,7 +273,7 @@ defmodule SymphonyElixir.AgentRunner do
       worker_host,
       fn -> {:ok, nil} end,
       fn session, nil ->
-        with {:ok, started_issue} <- maybe_mark_implementation_started(issue, opts) do
+        with {:ok, started_issue} <- maybe_mark_started(issue, opts) do
           do_run_codex_turns(
             session,
             workspace,
@@ -293,6 +296,41 @@ defmodule SymphonyElixir.AgentRunner do
       transition_implementation_start(issue, profile, opts)
     else
       {:ok, issue}
+    end
+  end
+
+  defp maybe_mark_started(%Issue{} = issue, opts) do
+    profile = Config.workflow_profile_for_state(issue.state)
+
+    cond do
+      Policy.implementation_start_transition_required?(issue, profile) -> transition_implementation_start(issue, profile, opts)
+      Policy.refinement_start_transition_required?(issue, profile) -> transition_refinement_start(issue, profile, opts)
+      true -> {:ok, issue}
+    end
+  end
+
+  defp transition_refinement_start(%Issue{id: issue_id} = issue, profile, opts) when is_binary(issue_id) and issue_id != "" do
+    transitions = Config.settings!().workflow |> Map.get("allowed_transitions", [])
+
+    with :ok <- Policy.validate_refinement_start_transition(transitions, issue.state, profile),
+         :ok <- call_refinement_start_transitioner(issue, @refinement_started_state, opts) do
+      notify_backend_transition(issue, @refinement_start_state, @refinement_started_state, opts)
+      {:ok, %{issue | state: @refinement_started_state}}
+    else
+      {:error, reason} -> {:error, {:refinement_start_transition_failed, reason}}
+    end
+  end
+
+  defp transition_refinement_start(%Issue{} = issue, _profile, _opts), do: {:error, {:refinement_start_transition_failed, {:missing_issue_id, issue.identifier}}}
+
+  defp call_refinement_start_transitioner(issue, target_state, opts) do
+    transitioner = Keyword.get(opts, :refinement_start_transitioner, &default_implementation_start_transitioner/2)
+
+    case transitioner.(issue, target_state) do
+      :ok -> :ok
+      {:ok, %Issue{}} -> :ok
+      {:error, reason} -> {:error, reason}
+      other -> {:error, {:unexpected_transition_result, other}}
     end
   end
 

@@ -52,7 +52,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:api_key, :string)
       field(:project_slug, :string)
       field(:assignee, :string)
-      field(:active_states, {:array, :string}, default: ["Refining", "Ready", "In Progress"])
+      field(:active_states, {:array, :string}, default: ["Todo", "Ready", "In Progress"])
 
       field(:terminal_states, {:array, :string}, default: ["Canceled", "Cancelled", "Duplicate", "Done"])
     end
@@ -689,12 +689,14 @@ defmodule SymphonyElixir.Config.Schema do
   def default_workflow_policy do
     %{
       "states" => %{
+        "Todo" => %{"profile" => "refinement"},
         "Refining" => %{"profile" => "refinement"},
         "Ready" => %{"profile" => "implementation"},
         "In Progress" => %{"profile" => "implementation"}
       },
       "human_review_states" => ["Needs Refinement Review", "Ready to Merge", "Blocked"],
       "allowed_transitions" => [
+        %{"from" => "Todo", "to" => "Refining", "actor" => "codex", "profile" => "refinement"},
         %{
           "from" => "Refining",
           "to" => "Needs Refinement Review",
