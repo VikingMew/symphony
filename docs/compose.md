@@ -137,7 +137,9 @@ a runtime download. Mix, Hex, mise, and XDG-aware build-tool caches use
 `/data/workspaces/.cache` for the Panel,
 `/workspace/.cache` for the SSH worker, and `/worker/cache` for the HTTP execution worker. These
 paths are inside the targets' existing writable workspace/cache boundaries and remain writable
-when Compose mounts the root filesystem read-only.
+when Compose mounts the root filesystem read-only. The Panel and execution worker mount `/tmp`
+with execution enabled because workspace quality gates may create native libraries or executable
+test helpers there; migration keeps the default non-executable temporary mount.
 
 External `publish-image` CI builds and checks all three targets. It verifies command discovery for
 `mise`, `mix`, `elixir`, `erl`, and `make` as a non-root user with a read-only root filesystem, then

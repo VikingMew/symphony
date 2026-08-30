@@ -52,8 +52,9 @@ The image installs mise `2025.8.16` and links its preinstalled Erlang `28` and E
 `MIX_HOME`, `HEX_HOME`, `MISE_CACHE_DIR`, and `XDG_CACHE_HOME` all point into the writable
 `/worker/cache` volume;
 project build output remains in the writable `/worker/workspaces` volume while the root filesystem
-stays read-only. External publication CI owns the non-root image smoke and an in-image `make all`;
-Symphony implementation agents only run static configuration/source validation.
+stays read-only. The `/tmp` tmpfs permits execution for native libraries and test helpers created
+by project quality gates. External publication CI owns the non-root image smoke and an in-image
+`make all`; Symphony implementation agents only run static configuration/source validation.
 
 The explicit token check keeps the base Compose model valid for centralized-only deployments while
 failing the worker preflight before container startup when its registration credential is absent.

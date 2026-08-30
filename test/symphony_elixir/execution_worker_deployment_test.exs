@@ -50,6 +50,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   test "publication CI statically owns non-root read-only toolchain smoke" do
     workflow = File.read!(@publish_workflow)
+    compose = File.read!(@compose)
 
     for target <- ["symphony", "worker", "execution-worker"] do
       assert workflow =~ "--target #{target}"
@@ -63,10 +64,12 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "command -v make"
     assert workflow =~ "--read-only"
     assert workflow =~ "--user 10002:10002"
+    assert workflow =~ "--tmpfs /tmp:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/workspaces:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
     assert workflow =~ "env -u SYMPHONY_ROLE make all"
+    assert length(Regex.scan(~r/^      - \/tmp:exec,mode=1777$/m, compose)) == 2
   end
 
   test "symphony image configures token-free GitHub credentials at system scope" do
