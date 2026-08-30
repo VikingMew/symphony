@@ -1,0 +1,26 @@
+name: Documentation drift
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - name: Check implementation/documentation linkage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          impl=$(printf '%s\n' "$files" | awk '/^(lib|config)\//')
+          docs=$(printf '%s\n' "$files" | awk '/^(docs\/|README\.md$|AGENTS\.md$)/')
+          if [ -n "$impl" ] && [ -z "$docs" ]; then
+            if printf '%s' "$PR_BODY" | grep -qE '^Docs drift exemption:[[:space:]]+[^[:space:]].*'; then
+              echo "SKIP: exemption declared"
+            else
+              echo "::warning title=Documentation drift::Implementation changes without documentation: $impl"
+            fi
+          fi

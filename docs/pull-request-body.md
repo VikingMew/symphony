@@ -10,6 +10,8 @@ updated: 2026-08-29
 
 # Pull Request Body Contract
 
+Implementation-only pull requests may include `Docs drift exemption: <reason>` with a non-empty reason to skip the warning-only drift annotation.
+
 This file owns the repository's pull request body contract. `Summary` and `Test Plan` are the only
 required sections. Optional context or alternatives belong before `Summary` or between `Summary`
 and `Test Plan`, respectively, and should be omitted when they add no information.
