@@ -211,7 +211,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
          :ok <- reject_expired_lease(lease),
          {:ok, correlation} <- authoritative_correlation(task, lease, session),
          :ok <- validate_correlation(payload || %{}, correlation),
-         {:ok, summary} <- validate_event_summary(event_type, payload || %{}) do
+         {:ok, summary} <- WorkerResult.validate_event(event_type, payload || %{}) do
       Repo.transaction(fn -> persist_worker_event!(task, event_type, payload, correlation, summary) end)
     else
       {:error, reason} -> {:error, reason}
@@ -530,14 +530,6 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   defp correlation_atom("lease_id"), do: :lease_id
   defp correlation_atom("lease_attempt"), do: :lease_attempt
   defp correlation_atom("worker_session_id"), do: :worker_session_id
-
-  defp validate_event_summary(event_type, payload)
-       when event_type in ["task.progress", "task.completed", "task.failed", "task.cancelled"] do
-    summary = Map.get(payload, "summary") || Map.get(payload, :summary)
-    WorkerResult.validate(summary)
-  end
-
-  defp validate_event_summary(_event_type, _payload), do: {:ok, nil}
 
   defp maybe_put_summary(payload, nil), do: payload
   defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
