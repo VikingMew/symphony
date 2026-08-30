@@ -721,6 +721,7 @@ defmodule SymphonyElixir.Config.Schema do
         %{"from" => "In Progress", "to" => "Blocked", "actor" => "symphony"},
         %{"from" => "Ready to Merge", "to" => "Blocked", "actor" => "symphony"},
         %{"from" => "Blocked", "to" => "Ready", "actor" => "human"},
+        %{"from" => "Blocked", "to" => "In Progress", "actor" => "human"},
         %{"from" => "Blocked", "to" => "Needs Refinement Review", "actor" => "human"},
         %{"from" => "Blocked", "to" => "Canceled", "actor" => "human"}
       ],
