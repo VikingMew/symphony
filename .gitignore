@@ -49,7 +49,10 @@ erl_crash.dump
 .secrets
 .credentials
 status.txt
-.codex/original-user-prompt.txt
+/.codex/*
+!/.codex/skills/
+!/.codex/skills/**
+!/.codex/worktree_init.sh
 
 # Also ignore archive artifacts (built via "mix archive.build").
 *.ez
