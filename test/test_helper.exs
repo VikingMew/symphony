@@ -6,6 +6,14 @@ Application.put_env(:symphony_elixir, :start_repo, false)
 Application.put_env(:symphony_elixir, :allow_test_workflow_source, true)
 Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.TestSupport.FakePersistence)
 
+port =
+  case System.get_env("SYMPHONY_TEST_PORT") do
+    nil -> :rand.uniform(20_000) + 20_000
+    value -> String.to_integer(value)
+  end
+
+Application.put_env(:symphony_elixir, :server_port_override, port)
+
 on_exit = fn ->
   :ok
 end
