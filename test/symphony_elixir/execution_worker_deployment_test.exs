@@ -65,7 +65,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "--user 10002:10002"
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
-    assert workflow =~ "make all"
+    assert workflow =~ "env -u SYMPHONY_ROLE make all"
   end
 
   test "symphony image configures token-free GitHub credentials at system scope" do

@@ -133,7 +133,7 @@ jobs:
               mise --version && mix --version &&
               cp -R /source/. /worker/workspaces/symphony &&
               cd /worker/workspaces/symphony &&
-              mise exec -- mix --version && make all
+              mise exec -- mix --version && env -u SYMPHONY_ROLE make all
             '
 
       - name: Select immutable and mutable tags
