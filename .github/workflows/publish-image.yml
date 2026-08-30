@@ -71,10 +71,10 @@ jobs:
             (.services.symphony | has("build") | not) and
             .services.migrate.pull_policy == "always" and
             .services.symphony.pull_policy == "always" and
-            .services.execution-worker.image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
-            (.services.execution-worker | has("build") | not) and
-            .services.execution-worker.pull_policy == "always" and
-            .services.execution-worker.profiles == ["execution-worker"]
+            .services["execution-worker"].image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
+            (.services["execution-worker"] | has("build") | not) and
+            .services["execution-worker"].pull_policy == "always" and
+            .services["execution-worker"].profiles == ["execution-worker"]
           '
 
   publish:
