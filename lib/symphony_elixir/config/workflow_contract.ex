@@ -329,7 +329,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
         state_equal?(to, "Blocked") and
             (actor != "symphony" or
                not (Enum.any?(active_states, &state_equal?(&1, from)) or
-                      state_equal?(from, "Ready to Merge"))) ->
+                        state_equal?(from, "Ready to Merge"))) ->
           ["transitions to Blocked must use actor=symphony and originate from an active state or Ready to Merge"]
 
         state_equal?(from, "Blocked") and actor != "human" ->

@@ -160,6 +160,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
   test "accepts SYM-31 Codex-shaped completion handoff and verifies proof" do
     payload = completion_payload()
     refs = payload["references"]
+
     codex_refs =
       refs
       |> Map.delete("pr_url")
@@ -169,7 +170,9 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
 
     response =
       DynamicTool.execute("linear_task_update", %{payload | "references" => codex_refs},
-        issue: issue(), profile: "implementation", session_id: @session_id,
+        issue: issue(),
+        profile: "implementation",
+        session_id: @session_id,
         pull_request_proof_secret: @proof_secret,
         graphql: graphql_recorder(nil)
       )

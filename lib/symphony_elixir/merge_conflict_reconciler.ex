@@ -79,11 +79,19 @@ defmodule SymphonyElixir.MergeConflictReconciler do
              value(event.payload, "status") == "completed" and
              is_binary(value(event.payload, "url"))
          end) do
-      nil -> %{url: nil, repository: nil, base: nil, head: nil, run_id: nil}
+      nil ->
+        %{url: nil, repository: nil, base: nil, head: nil, run_id: nil}
+
       event ->
         payload = event.payload
-        %{url: value(payload, "url"), repository: value(payload, "repository"),
-          base: value(payload, "base"), head: value(payload, "head"), run_id: event.run_id}
+
+        %{
+          url: value(payload, "url"),
+          repository: value(payload, "repository"),
+          base: value(payload, "base"),
+          head: value(payload, "head"),
+          run_id: event.run_id
+        }
     end
   end
 
@@ -178,6 +186,6 @@ defmodule SymphonyElixir.MergeConflictReconciler do
   end
 
   defp value(map, key) when is_map(map) do
-    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
+    Map.get(map, key) || Map.get(map, :erlang.binary_to_existing_atom(key, :utf8))
   end
 end
