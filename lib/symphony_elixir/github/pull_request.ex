@@ -23,6 +23,31 @@ defmodule SymphonyElixir.GitHub.PullRequest do
           source: :gh | :rest
         }
 
+  @type mergeability :: %{
+          url: String.t(),
+          repository: String.t(),
+          base: String.t(),
+          head: String.t(),
+          source: :gh | :rest,
+          raw_status: String.t() | nil,
+          conflicting: boolean()
+        }
+
+  @doc """
+  Looks up the exact open pull request for an issue branch and reports GitHub's
+  current mergeability classification without creating or updating anything.
+  """
+  @spec mergeability(Issue.t(), map(), keyword()) ::
+          {:ok, mergeability() | nil} | {:error, term()}
+  def mergeability(%Issue{} = issue, project, opts \\ []) do
+    with {:ok, head} <- BranchName.validate(issue.branch_name),
+         {:ok, base} <- project_default_branch(project),
+         {:ok, repository} <- project_repository(project) do
+      request = %{repository: repository, base: base, head: head}
+      mergeability_with_available_client(request, opts)
+    end
+  end
+
   @spec ensure_open(Issue.t(), map(), map(), keyword()) ::
           {:ok, pull_request()} | {:error, term()}
   def ensure_open(%Issue{} = issue, project, rendered, opts \\ []) do
@@ -128,6 +153,68 @@ defmodule SymphonyElixir.GitHub.PullRequest do
         executable
         |> ensure_with_gh(request, opts)
         |> handle_gh_result(request, token, opts)
+    end
+  end
+
+  defp mergeability_with_available_client(request, opts) do
+    token = github_token(opts)
+
+    case gh_executable(opts) do
+      nil ->
+        mergeability_with_rest_or_auth_error(request, token, opts, :gh_not_found)
+
+      executable ->
+        executable
+        |> mergeability_with_gh(request, opts)
+        |> handle_mergeability_gh_result(request, token, opts)
+    end
+  end
+
+  defp handle_mergeability_gh_result({:ok, result}, _request, _token, _opts), do: {:ok, result}
+
+  defp handle_mergeability_gh_result({:error, reason}, request, token, opts),
+    do: mergeability_with_rest_or_auth_error(request, token, opts, reason)
+
+  defp mergeability_with_rest_or_auth_error(_request, nil, _opts, :gh_not_found),
+    do: {:error, {:github_auth_unavailable, :gh_not_found, @token_env_names}}
+
+  defp mergeability_with_rest_or_auth_error(_request, nil, _opts, reason),
+    do: {:error, {:github_cli_unusable, reason}}
+
+  defp mergeability_with_rest_or_auth_error(request, token, opts, _reason),
+    do: mergeability_with_rest(request, token, opts)
+
+  defp mergeability_with_gh(executable, request, opts) do
+    args = [
+      "pr",
+      "list",
+      "--repo",
+      request.repository,
+      "--state",
+      "open",
+      "--head",
+      "#{repository_owner(request.repository)}:#{request.head}",
+      "--base",
+      request.base,
+      "--limit",
+      "100",
+      "--json",
+      "state,url,headRefName,baseRefName,headRepository,headRepositoryOwner,mergeStateStatus"
+    ]
+
+    with {:ok, _auth} <- gh_auth_status(executable, opts),
+         {:ok, output} <- run_gh(executable, args, opts),
+         {:ok, pull_requests} when is_list(pull_requests) <- Jason.decode(output) do
+      pull_request =
+        pull_requests
+        |> Enum.map(&normalize_gh_pull_request(&1, request.repository))
+        |> Enum.find(&matching_pull_request?(&1, request))
+
+      {:ok, mergeability_result(pull_request, request, :gh)}
+    else
+      {:ok, other} -> {:error, {:github_cli_invalid_pull_request_response, safe_output(inspect(other))}}
+      {:error, %Jason.DecodeError{} = reason} -> {:error, {:github_cli_invalid_json, Exception.message(reason)}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -239,7 +326,8 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       head: Map.get(pull_request, "headRefName"),
       base: Map.get(pull_request, "baseRefName"),
       head_repository: head_repository,
-      source: :gh
+      source: :gh,
+      raw_status: map_value(pull_request, "mergeStateStatus")
     }
   end
 
@@ -397,9 +485,57 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       head: get_in_any(pull_request, ["head", "ref"]),
       base: get_in_any(pull_request, ["base", "ref"]),
       head_repository: get_in_any(pull_request, ["head", "repo", "full_name"]),
-      source: :rest
+      source: :rest,
+      number: map_value(pull_request, "number")
     }
   end
+
+  defp mergeability_with_rest(request, token, opts) do
+    with {:ok, pull_requests} <- rest_pull_requests(request, token, opts) do
+      case Enum.find(pull_requests, &(matching_pull_request?(&1, request) and &1.state == "open")) do
+        nil -> {:ok, nil}
+        pull_request -> rest_mergeability(pull_request, request, token, opts)
+      end
+    end
+  end
+
+  defp rest_mergeability(%{number: number} = pull_request, request, token, opts)
+       when is_integer(number) do
+    path = "/repos/#{request.repository}/pulls/#{number}"
+
+    case rest_request(:get, path, token, nil, opts) do
+      {:ok, %{status: 200, body: body}} ->
+        raw_status = map_value(body, "mergeable_state")
+        {:ok, mergeability_result(Map.put(pull_request, :raw_status, raw_status), request, :rest)}
+
+      {:ok, response} ->
+        {:error, github_http_error(:pull_request_mergeability, response, token)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp mergeability_result(nil, _request, _source), do: nil
+
+  defp mergeability_result(pull_request, request, source) do
+    raw_status = Map.get(pull_request, :raw_status)
+
+    %{
+      url: pull_request.url,
+      repository: request.repository,
+      base: request.base,
+      head: request.head,
+      source: source,
+      raw_status: raw_status,
+      conflicting: conflicting_status?(raw_status)
+    }
+  end
+
+  defp conflicting_status?(status) when is_binary(status),
+    do: String.downcase(status) in ["conflicting", "dirty"]
+
+  defp conflicting_status?(_status), do: false
 
   defp rest_create(request, token, opts) do
     body = %{

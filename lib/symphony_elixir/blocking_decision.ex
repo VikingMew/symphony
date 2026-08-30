@@ -5,7 +5,7 @@ defmodule SymphonyElixir.BlockingDecision do
 
   alias SymphonyElixir.{PersistenceProvider, Tracker}
 
-  @type reason :: :reported_blocker | :implementation_handoff_failure | :no_progress
+  @type reason :: :reported_blocker | :implementation_handoff_failure | :merge_conflict | :no_progress
 
   @spec normalize_blocker(term()) :: String.t() | nil
   def normalize_blocker(nil), do: nil

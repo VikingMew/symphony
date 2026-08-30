@@ -225,6 +225,7 @@ workflow:
     - {from: Refining, to: Blocked, actor: symphony}
     - {from: Ready, to: Blocked, actor: symphony}
     - {from: In Progress, to: Blocked, actor: symphony}
+    - {from: Ready to Merge, to: Blocked, actor: symphony}
     - {from: Blocked, to: Ready, actor: human}
     - {from: Blocked, to: Needs Refinement Review, actor: human}
     - {from: Blocked, to: Canceled, actor: human}
@@ -390,6 +391,9 @@ GitHub/PR/auth 失败会让 issue 保持 `In Progress`。人要求修改时使�
 正文由 Codex 按 [PR body contract](pull-request-body.md) 提交；已有
 open PR 的人工正文不会被覆盖。人 merge PR
 后，由 Linear GitHub automation 把 issue 移到 `Done`。
+control plane 会在常规 reconciliation 中检查该精确 open PR；仅 GitHub 明确返回
+`CONFLICTING`/`dirty` 时持久化 blocking decision 并执行 `Ready to Merge -> Blocked`。
+`unknown`、behind、CI、review 或查询失败不会触发持久阻塞，也不会启动 Codex 或 worker。
 
 Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_update`。Codex 不需要、
 也不应拿到 Linear API Key 或 raw GraphQL；Symphony 后端负责持有凭据，并按 workflow profile

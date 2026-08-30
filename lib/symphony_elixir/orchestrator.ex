@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Orchestrator do
     Codex.RateLimitGate,
     Codex.Update,
     Config,
+    MergeConflictReconciler,
     Nap.Results,
     Payload,
     PersistenceProvider,
@@ -33,6 +34,7 @@ defmodule SymphonyElixir.Orchestrator do
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
+  @mergeability_checks_per_poll 20
   @empty_codex_totals %{
     input_tokens: 0,
     output_tokens: 0,
@@ -810,6 +812,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
     with :ok <- Config.validate!(),
+         state = reconcile_ready_to_merge_issues(state),
          :allow <- rate_limit_gate_allows_dispatch(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0,
@@ -828,6 +831,51 @@ defmodule SymphonyElixir.Orchestrator do
 
       false ->
         %{state | last_config_error: nil}
+    end
+  end
+
+  defp reconcile_ready_to_merge_issues(%State{} = state) do
+    case Tracker.fetch_issues_by_states(["Ready to Merge"]) do
+      {:ok, issues} ->
+        persist_polled_issues(issues)
+
+        issues
+        |> Enum.take(@mergeability_checks_per_poll)
+        |> Enum.reduce(state, fn
+          %Issue{} = issue, state_acc -> reconcile_ready_to_merge_issue(state_acc, issue)
+          _issue, state_acc -> state_acc
+        end)
+
+      {:error, reason} ->
+        Logger.error("Failed to fetch Ready to Merge issues for mergeability reconciliation: #{inspect(reason)}")
+        state
+    end
+  end
+
+  defp reconcile_ready_to_merge_issue(state, issue) do
+    case MergeConflictReconciler.reconcile(issue, Config.settings!().project) do
+      {:blocked, decision, delivery} ->
+        blocked_entry = %{
+          issue_id: issue.id,
+          identifier: issue.identifier,
+          state: if(delivery_transition_completed?(delivery), do: "Blocked", else: issue.state),
+          run_id: decision["run_id"],
+          blocked_at: decision["decided_at"],
+          reason: decision["reason"],
+          detail: decision["evidence"],
+          worker_host: nil,
+          workspace_path: nil,
+          session_id: nil,
+          session_history: [],
+          session_history_total_count: 0
+        }
+
+        state
+        |> Map.update!(:blocked, &Map.put(&1, issue.id, blocked_entry))
+        |> Map.update!(:claimed, &MapSet.put(&1, issue.id))
+
+      _result ->
+        state
     end
   end
 

@@ -47,6 +47,45 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
     refute_received {:gh, ["pr", "create" | _rest]}
   end
 
+  test "reports only definitive gh merge conflicts for the exact open pull request" do
+    runner = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] -> {"authenticated", 0}
+        ["pr", "list" | _rest] ->
+          pull_request = Map.put(gh_pull_request("OPEN"), "mergeStateStatus", "CONFLICTING")
+          {Jason.encode!([pull_request]), 0}
+      end
+    end
+
+    assert {:ok, %{conflicting: true, raw_status: "CONFLICTING", source: :gh}} =
+             GitHubPullRequest.mergeability(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: runner
+             )
+  end
+
+  test "classifies exact REST dirty and unknown mergeability states" do
+    for {status, conflicting?} <- [{"dirty", true}, {"unknown", false}] do
+      http_request = fn :get, url, _headers, _body, _timeout_ms ->
+        cond do
+          String.contains?(url, "/pulls?") ->
+            {:ok, %{status: 200, body: [rest_pull_request()]}}
+
+          String.ends_with?(url, "/pulls/12") ->
+            {:ok, %{status: 200, body: %{"mergeable_state" => status}}}
+        end
+      end
+
+      assert {:ok, %{conflicting: ^conflicting?, raw_status: ^status, source: :rest}} =
+               GitHubPullRequest.mergeability(issue(), project(),
+                 gh_executable: nil,
+                 token: "token",
+                 http_request: http_request
+               )
+    end
+  end
+
   test "creates the exact pull request through gh and verifies it after creation" do
     {:ok, calls} = Agent.start_link(fn -> 0 end)
     test_pid = self()
@@ -432,6 +471,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
 
   defp rest_pull_request do
     %{
+      "number" => 12,
       "state" => "open",
       "html_url" => "https://github.com/acme/app/pull/12",
       "head" => %{"ref" => "feature/sym-1", "repo" => %{"full_name" => "acme/app"}},

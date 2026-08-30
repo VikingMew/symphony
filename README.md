@@ -46,7 +46,10 @@ Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
 ```
 
 `Refining`, `Ready`, and `In Progress` are agent-work states. `Needs Refinement Review` and
-`Ready to Merge` and `Blocked` are human-review states and are never dispatched. Symphony persists
+`Ready to Merge` and `Blocked` are human-review states and are never dispatched. During normal
+control-plane reconciliation, Symphony checks the exact open PR handed off for `Ready to Merge`
+issues. A definitive GitHub merge conflict moves the issue to persistent `Blocked`; unknown,
+behind, CI, review, and transient API states leave it waiting. Symphony persists
 a blocking decision before commenting and moving an issue to `Blocked`, so failed Linear writes or
 a service restart cannot dispatch another Codex run. Implementation completion is
 explicit: after Codex validates, commits, and pushes the exact Linear branch, Symphony finds or
