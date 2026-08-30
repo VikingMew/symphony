@@ -161,6 +161,16 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "Smoke published worker on both platforms"
   end
 
+  test "published Compose validation quotes the execution worker service key" do
+    workflow = File.read!(@publish_workflow)
+
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.image == env\.SYMPHONY_EXECUTION_WORKER_IMAGE/
+    assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.profiles == \["execution-worker"\]/
+    refute workflow =~ ".services.execution-worker"
+  end
+
   test "published Compose removes the worker build and requires its image" do
     compose = File.read!(@published_compose)
     worker = service_body(compose, "execution-worker")
