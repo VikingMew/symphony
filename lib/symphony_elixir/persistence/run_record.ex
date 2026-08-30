@@ -21,6 +21,8 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     field(:execution_mode, :string, default: "centralized")
     field(:attempt, :integer, default: 0)
     field(:failure_reason, :string)
+    field(:failure_code, Ecto.Enum, values: SymphonyElixir.FailureCode.values())
+    field(:failure_detail, :string)
     field(:execution_summary, :map)
     field(:started_at, :utc_datetime_usec)
     field(:finished_at, :utc_datetime_usec)
@@ -42,6 +44,8 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :execution_mode,
       :attempt,
       :failure_reason,
+      :failure_code,
+      :failure_detail,
       :execution_summary,
       :started_at,
       :finished_at
@@ -50,6 +54,15 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     |> validate_inclusion(:kind, ["issue", "nap", "day_dreaming"])
     |> validate_issue_identifier_for_issue_run()
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
+    |> validate_failure_code()
+  end
+
+  defp validate_failure_code(changeset) do
+    case get_change(changeset, :failure_code) do
+      nil -> changeset
+      code when code in SymphonyElixir.FailureCode.values() -> changeset
+      _ -> add_error(changeset, :failure_code, "is not a recognized failure code")
+    end
   end
 
   defp validate_issue_identifier_for_issue_run(changeset) do

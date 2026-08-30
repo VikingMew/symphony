@@ -35,6 +35,13 @@ defmodule SymphonyElixir.RunLifecycle do
     |> maybe_put_failure_reason(failure_reason)
   end
 
+  @spec terminal_failure_attrs(String.t(), atom(), term(), DateTime.t()) :: map()
+  def terminal_failure_attrs(status, code, detail, now \\ DateTime.utc_now()) when is_binary(status) do
+    {:ok, parsed} = SymphonyElixir.FailureCode.parse(code)
+    %{status: status, finished_at: now, failure_code: parsed,
+      failure_detail: SymphonyElixir.FailureCode.bound_detail(detail)}
+  end
+
   @spec finish_run(module(), String.t() | nil, String.t(), String.t() | nil, keyword()) ::
           {:ok, term()} | {:error, term()} | :noop
   def finish_run(persistence, run_id, status, failure_reason, opts \\ [])
