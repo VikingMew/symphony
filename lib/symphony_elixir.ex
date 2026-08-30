@@ -43,7 +43,7 @@ defmodule SymphonyElixir.Application do
         SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
         SymphonyElixir.Orchestrator,
-        SymphonyElixir.HttpServer,
+        http_server_child(),
         SymphonyElixir.StatusDashboard
       ]
       |> Enum.reject(&is_nil/1)
@@ -64,6 +64,12 @@ defmodule SymphonyElixir.Application do
   defp repo_child do
     if Application.get_env(:symphony_elixir, :start_repo, true) do
       SymphonyElixir.Repo
+    end
+  end
+
+  defp http_server_child do
+    if Application.get_env(:symphony_elixir, :start_http_server, true) do
+      SymphonyElixir.HttpServer
     end
   end
 
