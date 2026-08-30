@@ -78,7 +78,8 @@ RUN chown symphony:symphony /workspace
 ENV HOME=/home/symphony \
     MIX_HOME=/workspace/.cache/mix \
     HEX_HOME=/workspace/.cache/hex \
-    MISE_CACHE_DIR=/workspace/.cache/mise
+    MISE_CACHE_DIR=/workspace/.cache/mise \
+    XDG_CACHE_HOME=/workspace/.cache
 
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -131,6 +132,7 @@ ENV HOME=/home/symphony \
     MIX_HOME=/data/workspaces/.cache/mix \
     HEX_HOME=/data/workspaces/.cache/hex \
     MISE_CACHE_DIR=/data/workspaces/.cache/mise \
+    XDG_CACHE_HOME=/data/workspaces/.cache \
     PORT=4000 \
     SYMPHONY_SERVER_HOST=0.0.0.0 \
     SYMPHONY_LOGS_ROOT=/data/logs \
@@ -199,6 +201,7 @@ ENV HOME=/home/symphony \
     MIX_HOME=/worker/cache/mix \
     HEX_HOME=/worker/cache/hex \
     MISE_CACHE_DIR=/worker/cache/mise \
+    XDG_CACHE_HOME=/worker/cache \
     SYMPHONY_ROLE=worker \
     SYMPHONY_WORKER_WORKSPACE_ROOT=/worker/workspaces \
     SYMPHONY_WORKER_CACHE_ROOT=/worker/cache \

@@ -42,6 +42,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~ "MIX_HOME="
       assert body =~ "HEX_HOME="
       assert body =~ "MISE_CACHE_DIR="
+      assert body =~ "XDG_CACHE_HOME="
     end
 
     refute dockerfile =~ ~r/mise[^\n]*(?:latest|releases\/latest)/i

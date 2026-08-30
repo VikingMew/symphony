@@ -133,7 +133,8 @@ Those three Codex-capable targets also inherit one build-time toolchain stage. I
 `2025.8.16` and the base image to Elixir `1.19.5-otp-28`; `mise.toml` remains the project contract
 for Erlang `28` and Elixir `1.19.5-otp-28`. The stage links the already installed language runtime
 into mise's immutable `/opt/mise` data tree, so `mise exec` resolves the project versions without
-a runtime download. Mix, Hex, and mise mutable caches use `/data/workspaces/.cache` for the Panel,
+a runtime download. Mix, Hex, mise, and XDG-aware build-tool caches use
+`/data/workspaces/.cache` for the Panel,
 `/workspace/.cache` for the SSH worker, and `/worker/cache` for the HTTP execution worker. These
 paths are inside the targets' existing writable workspace/cache boundaries and remain writable
 when Compose mounts the root filesystem read-only.
