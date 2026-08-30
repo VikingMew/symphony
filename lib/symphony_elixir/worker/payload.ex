@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Worker.Payload do
          {:ok, branch} <- required_string(payload, "branch"),
          {:ok, codex} <- command(Map.get(payload, "codex"), "codex"),
          {:ok, hooks} <- commands(Map.get(payload, "hooks", []), "hooks", true),
-         {:ok, gates} <- commands(Map.get(payload, "required_gates"), "required_gates", false) do
+         {:ok, gates} <- commands(Map.get(payload, "required_gates"), "required_gates", true) do
       {:ok, %__MODULE__{repository: repository, revision: revision, branch: branch, codex: codex, hooks: hooks, gates: gates, handoff: Map.get(payload, "handoff", %{})}}
     end
   end
