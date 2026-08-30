@@ -50,21 +50,22 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
 
     pairs = [
       {"pr_url", "pr_proof", "references.pr_url/pr_proof"},
-      {"pull_request", "pull_request_completion_proof",
-       "references.pull_request/pull_request_completion_proof"}
+      {"pull_request", "pull_request_completion_proof", "references.pull_request/pull_request_completion_proof"}
     ]
 
-    case Enum.find_value(pairs, fn {url_key, proof_key, _label} ->
-           with url when is_binary(url) and url != "" <- Map.get(references, url_key),
-                true <- String.starts_with?(url, "https://github.com/"),
-                proof when is_binary(proof) and proof != "" <- Map.get(references, proof_key) do
-             {:ok, url, proof}
-           else
-             _ -> nil
-           end
-         end) do
+    case Enum.find_value(pairs, &extract_reference_pair(references, &1)) do
       nil -> {:error, {:implementation_handoff_field_required, "references.pr_url/pr_proof"}}
       result -> result
+    end
+  end
+
+  defp extract_reference_pair(references, {url_key, proof_key, _label}) do
+    with url when is_binary(url) and url != "" <- Map.get(references, url_key),
+         true <- String.starts_with?(url, "https://github.com/"),
+         proof when is_binary(proof) and proof != "" <- Map.get(references, proof_key) do
+      {:ok, url, proof}
+    else
+      _ -> nil
     end
   end
 

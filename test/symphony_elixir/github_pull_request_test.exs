@@ -50,7 +50,9 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
   test "reports only definitive gh merge conflicts for the exact open pull request" do
     runner = fn _executable, args, _timeout_ms ->
       case args do
-        ["auth", "status"] -> {"authenticated", 0}
+        ["auth", "status"] ->
+          {"authenticated", 0}
+
         ["pr", "list" | _rest] ->
           pull_request = Map.put(gh_pull_request("OPEN"), "mergeStateStatus", "CONFLICTING")
           {Jason.encode!([pull_request]), 0}
