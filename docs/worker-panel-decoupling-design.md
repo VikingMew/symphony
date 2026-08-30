@@ -389,12 +389,13 @@ POST /api/worker/v1/tasks/:task_id/events
 
 Panel 写入统一 events 表，并同步更新 runs、agent_turns、workspaces 或 task 状态。Dashboard 和 API 都从持久化状态读取，不依赖 worker 进程内存。
 
-`task.progress` and terminal task events carry one bounded `summary` object. It records phase,
-typed outcome/reason, timestamps/duration, source revision, image digest or exact tag, worker
-revision, overall validation, ordered gate results, and optional handoff references. The API rejects
-malformed or oversized summaries, secret-bearing detail, and worker-local paths with a typed 422.
-Accepted evidence and the task/run projections are written in the same transaction; lifecycle
-status and persisted event timestamps remain authoritative.
+`task.progress` is a lightweight intermediate event and does not require a `summary`. Terminal task
+events carry one bounded `summary` object recording phase, typed outcome/reason,
+timestamps/duration, source revision, image digest or exact tag, worker revision, overall
+validation, ordered gate results, and optional handoff references. The API rejects malformed or
+oversized terminal summaries, secret-bearing detail, and worker-local paths with a typed 422.
+Accepted evidence and the task/run projections are written in the same transaction; lifecycle status
+and persisted event timestamps remain authoritative.
 
 ## 11. 数据模型
 
