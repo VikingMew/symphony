@@ -63,13 +63,18 @@ jobs:
             .services.symphony.build.target == "symphony"
           '
           export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+          export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
           docker compose -f compose.yaml -f compose.published.yaml config --format json | jq -e '
             .services.migrate.image == env.SYMPHONY_IMAGE and
             .services.symphony.image == .services.migrate.image and
             (.services.migrate | has("build") | not) and
             (.services.symphony | has("build") | not) and
             .services.migrate.pull_policy == "always" and
-            .services.symphony.pull_policy == "always"
+            .services.symphony.pull_policy == "always" and
+            .services.execution-worker.image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
+            (.services.execution-worker | has("build") | not) and
+            .services.execution-worker.pull_policy == "always" and
+            .services.execution-worker.profiles == ["execution-worker"]
           '
 
   publish:
@@ -80,6 +85,7 @@ jobs:
       packages: write
     env:
       IMAGE: ghcr.io/vikingmew/symphony
+      WORKER_IMAGE: ghcr.io/vikingmew/symphony-execution-worker
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -142,8 +148,10 @@ jobs:
         run: |
           set -euo pipefail
           tags="${IMAGE}:sha-${GITHUB_SHA}"
+          worker_tags="${WORKER_IMAGE}:sha-${GITHUB_SHA}"
           if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
             tags+=$'\n'"${IMAGE}:latest"
+            worker_tags+=$'\n'"${WORKER_IMAGE}:latest"
           elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
             if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "Tag does not follow vMAJOR.MINOR.PATCH[-prerelease]: ${GITHUB_REF_NAME}" >&2
@@ -155,10 +163,19 @@ jobs:
               exit 1
             fi
             tags+=$'\n'"$release_tag"
+            worker_release_tag="${WORKER_IMAGE}:${GITHUB_REF_NAME}"
+            if docker buildx imagetools inspect "$worker_release_tag" >/dev/null 2>&1; then
+              echo "Immutable release tag already exists: $worker_release_tag" >&2
+              exit 1
+            fi
+            worker_tags+=$'\n'"$worker_release_tag"
           fi
           {
             echo "tags<<EOF"
             echo "$tags"
+            echo "EOF"
+            echo "worker-tags<<EOF"
+            echo "$worker_tags"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -190,6 +207,34 @@ jobs:
           provenance: false
           sbom: false
 
+      - name: Resolve immutable worker SHA tag
+        id: worker-existing
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha_tag="${WORKER_IMAGE}:sha-${GITHUB_SHA}"
+          if digest="$(docker buildx imagetools inspect "$sha_tag" --format '{{json .Manifest.Digest}}' 2>/dev/null | jq -r .)"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish worker on both platforms
+        id: worker-build
+        if: steps.worker-existing.outputs.exists != 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: execution-worker
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.worker-tags }}
+          cache-from: type=gha,scope=execution-worker-linux-amd64-arm64
+          cache-to: type=gha,mode=max,scope=execution-worker-linux-amd64-arm64
+          provenance: false
+          sbom: false
+
       - name: Add tags to an existing immutable SHA image
         if: steps.existing.outputs.exists == 'true'
         shell: bash
@@ -207,6 +252,23 @@ jobs:
             docker buildx imagetools create --tag "$tag" "$source_ref"
           done <<< "$TAGS"
 
+      - name: Add tags to an existing immutable worker SHA image
+        if: steps.worker-existing.outputs.exists == 'true'
+        shell: bash
+        env:
+          TAGS: ${{ steps.tags.outputs.worker-tags }}
+        run: |
+          set -euo pipefail
+          source_ref="${WORKER_IMAGE}@${{ steps.worker-existing.outputs.digest }}"
+          while IFS= read -r tag; do
+            [[ "$tag" == "${WORKER_IMAGE}:sha-${GITHUB_SHA}" ]] && continue
+            if [[ "$tag" != "${WORKER_IMAGE}:latest" ]] && docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+              echo "Immutable release tag already exists: $tag" >&2
+              exit 1
+            fi
+            docker buildx imagetools create --tag "$tag" "$source_ref"
+          done <<< "$TAGS"
+
       - name: Resolve published digest
         id: published
         shell: bash
@@ -215,8 +277,16 @@ jobs:
           EXISTING_DIGEST: ${{ steps.existing.outputs.digest }}
         run: echo "digest=${BUILT_DIGEST:-$EXISTING_DIGEST}" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve published worker digest
+        id: worker-published
+        shell: bash
+        env:
+          BUILT_DIGEST: ${{ steps.worker-build.outputs.digest }}
+          EXISTING_DIGEST: ${{ steps.worker-existing.outputs.digest }}
+        run: echo "digest=${BUILT_DIGEST:-$EXISTING_DIGEST}" >> "$GITHUB_OUTPUT"
+
       - name: Mark BuildKit cache available
-        if: steps.build.outcome == 'success'
+        if: steps.build.outcome == 'success' || steps.worker-build.outcome == 'success'
         run: touch /tmp/symphony-buildkit-cache-marker
 
       - name: Inspect manifest platforms
@@ -265,6 +335,36 @@ jobs:
           docker run --rm --platform linux/arm64 "${IMAGE}@${ARM64_DIGEST}" \
             sh -lc '/app/bin/symphony version && node --version && codex --version'
 
+      - name: Inspect worker manifest platforms
+        id: worker-manifest
+        shell: bash
+        env:
+          DIGEST: ${{ steps.worker-published.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ref="${WORKER_IMAGE}@${DIGEST}"
+          manifest="$(docker buildx imagetools inspect --raw "$ref")"
+          platforms="$(jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' <<< "$manifest" | sort -u)"
+          expected=$'linux/amd64\nlinux/arm64'
+          [[ "$platforms" == "$expected" ]] || { echo "Expected exactly amd64 and arm64, found: $platforms" >&2; exit 1; }
+          amd64_digest="$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64")] | if length == 1 then .[0].digest else error("expected exactly one linux/amd64 child manifest") end' <<< "$manifest")"
+          arm64_digest="$(jq -er '[.manifests[] | select(.platform.os == "linux" and .platform.architecture == "arm64")] | if length == 1 then .[0].digest else error("expected exactly one linux/arm64 child manifest") end' <<< "$manifest")"
+          printf 'platforms<<EOF\n%s\nEOF\n' "$platforms" >> "$GITHUB_OUTPUT"
+          echo "amd64-digest=$amd64_digest" >> "$GITHUB_OUTPUT"
+          echo "arm64-digest=$arm64_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke published worker on both platforms
+        shell: bash
+        env:
+          AMD64_DIGEST: ${{ steps.worker-manifest.outputs.amd64-digest }}
+          ARM64_DIGEST: ${{ steps.worker-manifest.outputs.arm64-digest }}
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/amd64 --entrypoint sh "${WORKER_IMAGE}@${AMD64_DIGEST}" \
+            -lc 'test "$(id -u)" = 10002 && codex --version && mise --version && mix --version'
+          docker run --rm --platform linux/arm64 --entrypoint sh "${WORKER_IMAGE}@${ARM64_DIGEST}" \
+            -lc 'test "$(id -u)" = 10002 && codex --version && mise --version && mix --version'
+
       - name: Summarize publication
         if: always()
         shell: bash
@@ -272,6 +372,9 @@ jobs:
           DIGEST: ${{ steps.published.outputs.digest }}
           TAGS: ${{ steps.tags.outputs.tags }}
           PLATFORMS: ${{ steps.manifest.outputs.platforms }}
+          WORKER_DIGEST: ${{ steps.worker-published.outputs.digest }}
+          WORKER_TAGS: ${{ steps.tags.outputs.worker-tags }}
+          WORKER_PLATFORMS: ${{ steps.worker-manifest.outputs.platforms }}
           CACHE_RESTORED: ${{ steps.build-cache.outputs.cache-hit }}
           STARTED_AT: ${{ needs.quality-gate.outputs.started-at }}
         run: |
@@ -283,6 +386,13 @@ jobs:
             echo "- Tags:"
             while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< "${TAGS:-unavailable}"
             echo "- Manifest platforms: \`${PLATFORMS//$'\n'/, }\`"
+            echo
+            echo "## Published Symphony execution-worker image"
+            echo
+            echo "- Digest: \`${WORKER_DIGEST:-unavailable}\`"
+            echo "- Tags:"
+            while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< "${WORKER_TAGS:-unavailable}"
+            echo "- Manifest platforms: \`${WORKER_PLATFORMS//$'\n'/, }\`"
             echo "- Total workflow duration: \`$duration\`"
             echo "- BuildKit cache restored: \`${CACHE_RESTORED:-false}\`"
           } >> "$GITHUB_STEP_SUMMARY"

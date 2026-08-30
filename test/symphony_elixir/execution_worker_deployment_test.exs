@@ -5,6 +5,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
+  @published_compose Path.expand("../../compose.published.yaml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
     dockerfile = File.read!(@dockerfile)
@@ -145,6 +146,28 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-[0-9a-f]{40}/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE=\S+:[0-9a-f]{40}\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
+  end
+
+  test "publication workflow publishes the execution worker image" do
+    workflow = File.read!(@publish_workflow)
+
+    assert workflow =~ "WORKER_IMAGE: ghcr.io/vikingmew/symphony-execution-worker"
+    assert workflow =~ "target: execution-worker"
+    assert workflow =~ "platforms: linux/amd64,linux/arm64"
+    assert workflow =~ "worker_tags=\"${WORKER_IMAGE}:sha-${GITHUB_SHA}\""
+    assert workflow =~ "${WORKER_IMAGE}:latest"
+    assert workflow =~ "worker_release_tag=\"${WORKER_IMAGE}:${GITHUB_REF_NAME}\""
+    assert workflow =~ "Inspect worker manifest platforms"
+    assert workflow =~ "Smoke published worker on both platforms"
+  end
+
+  test "published Compose removes the worker build and requires its image" do
+    compose = File.read!(@published_compose)
+    worker = service_body(compose, "execution-worker")
+
+    assert worker =~ "build: !reset null"
+    assert worker =~ "SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE"
+    assert worker =~ "pull_policy: always"
   end
 
   defp service_body(compose, service) do

@@ -17,9 +17,11 @@ only when `SYMPHONY_EXECUTION_MODE=worker` is applied to a newly started Panel.
 
 ## Preflight and credentials
 
-Copy `.env.example` to the ignored `.env`. Compose defaults to the checked-in exact image tag and
-source revision. For a release, set an immutable image digest or an exact tag containing the full
-source revision, and set the matching full `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
+Copy `.env.example` to the ignored `.env`. Base Compose defaults to the checked-in exact local image
+tag and source revision and builds from the checkout. Published Compose removes that build and
+requires an immutable `ghcr.io/vikingmew/symphony-execution-worker` SHA tag or digest. Select it
+from the same publication as `SYMPHONY_IMAGE` and set its full commit in
+`SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
 Give the worker only these credentials: the Panel registration token, a least-scope Codex token,
 a repository push/PR token, and a restricted-Linear gateway token. Never set `DATABASE_URL`,
 `POSTGRES_*`, or `LINEAR_API_KEY` on `execution-worker`.
@@ -64,6 +66,14 @@ Inspect the image ID/digest locally with `docker image inspect --format '{{.Id}}
 environment or rendered Compose output.
 
 ## Deploy, rotate, and inspect
+
+For a published deployment, include both Compose files and matching immutable Panel and worker
+references. The worker remains opt-in:
+
+```bash
+docker compose -f compose.yaml -f compose.published.yaml --env-file .env up -d postgres migrate symphony
+docker compose -f compose.yaml -f compose.published.yaml --env-file .env --profile execution-worker up -d execution-worker
+```
 
 Start the Panel in its existing `centralized` mode, then opt in the idle worker:
 
@@ -135,6 +145,10 @@ uses its separate byte and age limits. Investigate escapes, secrets, orphan desc
 validation, repeated lease loss, capacity loss, or divergent handoff as rollback triggers.
 
 Rollback affects new work only and preserves PostgreSQL runs, tasks, leases, sessions, and events:
+
+For a published rollback, first select a previously recorded matching pair of image references and
+set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that worker image's full commit. Add
+`-f compose.yaml -f compose.published.yaml` to the commands below.
 
 ```bash
 docker compose --env-file .env --profile execution-worker stop execution-worker

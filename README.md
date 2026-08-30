@@ -228,12 +228,15 @@ curl --fail http://127.0.0.1:4000/health/live
 curl --fail http://127.0.0.1:4000/health/ready
 ```
 
-CI also publishes one `ghcr.io/vikingmew/symphony` manifest for `linux/amd64` and `linux/arm64`.
-For a deployment that pulls an immutable image instead of building source, set `SYMPHONY_IMAGE`
-to a release or full-SHA tag and include `compose.published.yaml`:
+CI publishes matching `ghcr.io/vikingmew/symphony` and
+`ghcr.io/vikingmew/symphony-execution-worker` manifests for `linux/amd64` and `linux/arm64`.
+Local Compose still builds both targets from source. For a published deployment, select immutable
+references from the same workflow run and keep the worker source revision equal to its commit:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
 docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d
 ```
