@@ -55,7 +55,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
     ]
 
     case Enum.find_value(pairs, fn {url_key, proof_key, _label} ->
-           with url when is_binary(url) <- Map.get(references, url_key),
+           with url when is_binary(url) and url != "" <- Map.get(references, url_key),
                 true <- String.starts_with?(url, "https://github.com/"),
                 proof when is_binary(proof) and proof != "" <- Map.get(references, proof_key) do
              {:ok, url, proof}

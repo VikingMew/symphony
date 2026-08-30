@@ -59,6 +59,9 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
 
     assert {:error, {:implementation_handoff_field_required, _}} =
              Policy.pull_request_reference(%{"references" => %{"pull_request" => "https://example.com/pr/1", "pull_request_completion_proof" => "proof"}})
+
+    assert {:error, {:implementation_handoff_field_required, _}} =
+             Policy.pull_request_reference(%{"references" => %{"pr_url" => "", "pr_proof" => "proof"}})
   end
 
   test "extracts and deduplicates concrete reference links" do
