@@ -516,12 +516,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp validate_pull_request_proof(payload, opts) do
-    url = get_in(payload, ["references", "pr_url"])
-    expected = pull_request_proof(url, opts)
+    case Policy.pull_request_reference(payload) do
+      {:ok, url, proof} ->
+        if proof == pull_request_proof(url, opts), do: :ok, else: {:error, :pull_request_not_created}
 
-    if get_in(payload, ["references", "pr_proof"]) == expected,
-      do: :ok,
-      else: {:error, :pull_request_not_created}
+      _ ->
+        {:error, :pull_request_not_created}
+    end
   end
 
   defp pull_request_proof(url, opts) do

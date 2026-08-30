@@ -157,6 +157,26 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
     assert response["output"] =~ "create_pull_request"
   end
 
+  test "accepts SYM-31 Codex-shaped completion handoff and verifies proof" do
+    payload = completion_payload()
+    refs = payload["references"]
+    codex_refs =
+      refs
+      |> Map.delete("pr_url")
+      |> Map.delete("pr_proof")
+      |> Map.put("pull_request", refs["pr_url"])
+      |> Map.put("pull_request_completion_proof", refs["pr_proof"])
+
+    response =
+      DynamicTool.execute("linear_task_update", %{payload | "references" => codex_refs},
+        issue: issue(), profile: "implementation", session_id: @session_id,
+        pull_request_proof_secret: @proof_secret,
+        graphql: graphql_recorder(nil)
+      )
+
+    assert response["success"]
+  end
+
   test "handoff does not depend on a local or SSH worker workspace path" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "https://github.com/acme/app"
