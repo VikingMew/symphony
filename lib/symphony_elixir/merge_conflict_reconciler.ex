@@ -79,16 +79,23 @@ defmodule SymphonyElixir.MergeConflictReconciler do
              value(event.payload, "status") == "completed" and
              is_binary(value(event.payload, "url"))
          end) do
-      nil -> %{url: nil, run_id: nil}
-      event -> %{url: value(event.payload, "url"), run_id: event.run_id}
+      nil -> %{url: nil, repository: nil, base: nil, head: nil, run_id: nil}
+      event ->
+        payload = event.payload
+        %{url: value(payload, "url"), repository: value(payload, "repository"),
+          base: value(payload, "base"), head: value(payload, "head"), run_id: event.run_id}
     end
   end
 
   defp exact_handoff?(nil, _handoff), do: :ok
   defp exact_handoff?(_pull_request, %{url: nil}), do: :ok
 
-  defp exact_handoff?(%{url: url}, %{url: url}) when is_binary(url), do: :ok
-  defp exact_handoff?(_pull_request, _handoff), do: :stale
+  defp exact_handoff?(pull_request, handoff) do
+    if handoff.url == pull_request.url and
+         Enum.all?([:repository, :base, :head], fn field ->
+           is_nil(Map.get(handoff, field)) or Map.get(handoff, field) == Map.get(pull_request, field)
+         end), do: :ok, else: :stale
+  end
 
   defp conflicting?(%{conflicting: true}), do: true
   defp conflicting?(_pull_request), do: false
