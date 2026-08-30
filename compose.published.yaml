@@ -8,3 +8,8 @@ services:
     build: !reset null
     image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
     pull_policy: always
+
+  execution-worker:
+    build: !reset null
+    image: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE to an immutable ghcr.io/vikingmew/symphony-execution-worker tag or digest}
+    pull_policy: always
