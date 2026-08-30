@@ -219,6 +219,14 @@ fields locally if they want stricter startup checks.
 
 The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
 For refinement and implementation profiles, Symphony appends a non-configurable, highest-priority
+
+When a refinement run requests `Needs Refinement Review`, the candidate description is checked by a
+deterministic structural quality gate before any description or state write. It requires non-empty
+Goal, Scope, Out of scope, Acceptance criteria, and Validation sections; rejects explicit TODO,
+TBD, clarification, context-required, and `???` markers; requires a Markdown acceptance list; and
+rejects non-empty Open/Unresolved questions (except `None`/`无`). Failures produce one diagnostic
+comment and a typed tool error; the existing no-progress and `BlockingDecision` path remains in
+effect.
 container-validation safety contract after profile composition. It applies to every project even
 when a profile replaces the base prompt: agents MUST NOT invoke container engines, daemons,
 sockets, or image operations. A task that requires such validation MUST report blocker evidence

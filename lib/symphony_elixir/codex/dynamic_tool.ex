@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   """
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
+  alias SymphonyElixir.Codex.RefinementQualityGate
   alias SymphonyElixir.Codex.LinearToolAudit
   alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
@@ -420,6 +421,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
            :ok <- validate_update_policy(payload, profile),
+           :ok <- validate_refinement_quality(payload, profile, issue_id, opts),
            :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
@@ -433,6 +435,36 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   catch
     {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
   end
+
+  defp validate_refinement_quality(payload, "refinement", issue_id, opts) do
+    if Map.get(payload, "target_state") |> then(&(is_binary(&1) and SymphonyElixir.StateName.normalize(&1) == SymphonyElixir.StateName.normalize("Needs Refinement Review"))) do
+      case Map.get(payload, "description") do
+        description when is_binary(description) and byte_size(String.trim(description)) > 0 ->
+          case RefinementQualityGate.validate(description) do
+            :ok ->
+              :ok
+
+            {:error, items} ->
+              case create_comment(issue_id, "Refinement quality gate failed: " <> Enum.join(items, ", "), opts) do
+                {:ok, _} -> {:error, {:refinement_quality_gate_failed, items}}
+                {:error, reason} -> {:error, {:refinement_quality_gate_comment_failed, reason, items}}
+              end
+          end
+
+        _ ->
+          items = ["missing_required_section: description"]
+
+          case create_comment(issue_id, "Refinement quality gate failed: missing_required_section: description", opts) do
+            {:ok, _} -> {:error, {:refinement_quality_gate_failed, items}}
+            {:error, reason} -> {:error, {:refinement_quality_gate_comment_failed, reason, items}}
+          end
+      end
+    else
+      :ok
+    end
+  end
+
+  defp validate_refinement_quality(_payload, _profile, _issue_id, _opts), do: :ok
 
   defp observe_task_update(result, payload, opts) do
     case Keyword.get(opts, :task_update_observer) do
@@ -775,6 +807,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "allowedStates" => allowed
       }
     }
+  end
+
+  defp tool_error_payload(_tool, {:refinement_quality_gate_failed, items}) do
+    %{"error" => %{"code" => "refinement_quality_gate_failed", "message" => "Refinement quality gate failed.", "missing" => items}}
+  end
+
+  defp tool_error_payload(_tool, {:refinement_quality_gate_comment_failed, reason, items}) do
+    %{"error" => %{"code" => "refinement_quality_gate_comment_failed", "message" => "Unable to record refinement quality gate failure comment.", "missing" => items, "reason" => inspect(reason)}}
   end
 
   defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do
