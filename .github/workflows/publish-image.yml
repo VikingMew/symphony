@@ -104,6 +104,38 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build and smoke all Codex toolchain targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --target symphony --tag symphony-toolchain:symphony .
+          docker build --target worker --tag symphony-toolchain:worker .
+          docker build --target execution-worker --tag symphony-toolchain:execution-worker .
+
+          docker run --rm --read-only --user 10001:10001 \
+            --tmpfs /tmp:rw,mode=1777 --tmpfs /data/workspaces:rw,mode=1777 \
+            symphony-toolchain:symphony sh -lc '
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              mise --version && mix --version
+            '
+          docker run --rm --read-only --user 1000:1000 \
+            --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 \
+            symphony-toolchain:worker sh -lc '
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              mise --version && mix --version
+            '
+          docker run --rm --read-only --user 10002:10002 \
+            --tmpfs /tmp:rw,exec,mode=1777 --tmpfs /worker/cache:rw,exec,mode=1777 \
+            --tmpfs /worker/workspaces:rw,exec,mode=1777 \
+            --mount type=bind,source="$PWD",target=/source,readonly \
+            symphony-toolchain:execution-worker sh -lc '
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              mise --version && mix --version &&
+              cp -R /source/. /worker/workspaces/symphony &&
+              cd /worker/workspaces/symphony &&
+              mise exec -- mix --version && env -u SYMPHONY_ROLE make all
+            '
+
       - name: Select immutable and mutable tags
         id: tags
         shell: bash

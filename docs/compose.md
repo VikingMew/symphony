@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-08-28
+updated: 2026-08-29
 owner: compose.yaml
 ---
 
@@ -104,7 +104,7 @@ docker compose build
 docker compose run --rm --no-deps symphony sh -lc '
   id && test "$(id -u)" != 0 &&
   codex --version && gh --version && git --version && ssh -V && rg --version &&
-  test -z "$(command -v mix)" && test -z "$(command -v gcc)" &&
+  mise --version && mix --version && elixir --version && erl -version && make --version &&
   test ! -e /app/mix.exs && test ! -d /app/config && test ! -d /app/test
 '
 ```
@@ -128,6 +128,24 @@ The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact s
 CLI release, `0.150.1`. The `symphony`, SSH `worker`, and `execution-worker` targets all copy the
 same installation from that stage. Override the argument only as an explicit, validated image
 change; builds never follow npm's mutable `latest` tag.
+
+Those three Codex-capable targets also inherit one build-time toolchain stage. It pins mise to
+`2025.8.16` and the base image to Elixir `1.19.5-otp-28`; `mise.toml` remains the project contract
+for Erlang `28` and Elixir `1.19.5-otp-28`. The stage links the already installed language runtime
+into mise's immutable `/opt/mise` data tree, so `mise exec` resolves the project versions without
+a runtime download. Mix, Hex, mise, and XDG-aware build-tool caches use
+`/data/workspaces/.cache` for the Panel,
+`/workspace/.cache` for the SSH worker, and `/worker/cache` for the HTTP execution worker. These
+paths are inside the targets' existing writable workspace/cache boundaries and remain writable
+when Compose mounts the root filesystem read-only. The Panel and execution worker mount `/tmp`
+with execution enabled because workspace quality gates may create native libraries or executable
+test helpers there; migration keeps the default non-executable temporary mount.
+
+External `publish-image` CI builds and checks all three targets. It verifies command discovery for
+`mise`, `mix`, `elixir`, `erl`, and `make` as a non-root user with a read-only root filesystem, then
+runs `mise exec -- mix --version` and `make all` in the `execution-worker` workspace. Agent-side
+implementation validation is limited to static source/config tests and local source gates; it
+must not reproduce these image-level checks with a container engine.
 
 Start the stack:
 
