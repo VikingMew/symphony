@@ -1,15 +1,34 @@
 defmodule SymphonyElixir.Worker.Payload do
   @moduledoc "Validated slice-1 execution payload consumed from worker-v1."
 
+  alias SymphonyElixir.Config.Schema
+
+  @codex_config_fields ~w(
+    command
+    pre_start_commands
+    approval_policy
+    thread_sandbox
+    turn_sandbox_policy
+    turn_timeout_ms
+    read_timeout_ms
+    stall_timeout_ms
+  )
+
   @enforce_keys [:repository, :revision, :branch, :codex, :gates]
   defstruct @enforce_keys ++ [hooks: [], handoff: %{}]
 
   @type command :: %{required(:command) => String.t(), required(:timeout_seconds) => pos_integer()}
+  @type codex :: %{
+          required(:prompt) => String.t(),
+          required(:profile) => String.t(),
+          required(:issue) => %{required(:identifier) => String.t(), required(:title) => String.t()},
+          required(:config) => map()
+        }
   @type t :: %__MODULE__{
           repository: String.t(),
           revision: String.t(),
           branch: String.t(),
-          codex: command(),
+          codex: codex(),
           hooks: [command()],
           gates: [command()],
           handoff: map()
@@ -22,7 +41,7 @@ defmodule SymphonyElixir.Worker.Payload do
          :ok <- reject_repository_credentials(repository),
          {:ok, revision} <- required_string(payload, "revision"),
          {:ok, branch} <- required_string(payload, "branch"),
-         {:ok, codex} <- command(Map.get(payload, "codex"), "codex"),
+         {:ok, codex} <- codex(Map.get(payload, "codex")),
          {:ok, hooks} <- commands(Map.get(payload, "hooks", []), "hooks", true),
          {:ok, gates} <- commands(Map.get(payload, "required_gates"), "required_gates", true) do
       {:ok, %__MODULE__{repository: repository, revision: revision, branch: branch, codex: codex, hooks: hooks, gates: gates, handoff: Map.get(payload, "handoff", %{})}}
@@ -55,6 +74,54 @@ defmodule SymphonyElixir.Worker.Payload do
 
   defp reduce_command({:ok, parsed}, acc), do: {:cont, {:ok, [parsed | acc]}}
   defp reduce_command(error, _acc), do: {:halt, error}
+
+  defp codex(%{} = payload) do
+    with {:ok, prompt} <- required_string(payload, "prompt"),
+         {:ok, profile} <- required_string(payload, "profile"),
+         {:ok, issue} <- codex_issue(Map.get(payload, "issue")),
+         {:ok, config} <- codex_config(payload) do
+      {:ok, %{prompt: prompt, profile: profile, issue: issue, config: config}}
+    end
+  end
+
+  defp codex(_value), do: invalid_codex()
+
+  defp codex_issue(%{} = issue) do
+    with {:ok, identifier} <- required_string(issue, "identifier"),
+         {:ok, title} <- required_string(issue, "title") do
+      {:ok, %{identifier: identifier, title: title}}
+    end
+  end
+
+  defp codex_issue(_issue), do: invalid_codex()
+
+  defp codex_config(
+         %{
+           "command" => _command,
+           "pre_start_commands" => _pre_start_commands,
+           "approval_policy" => _approval_policy,
+           "thread_sandbox" => _thread_sandbox,
+           "turn_sandbox_policy" => _turn_sandbox_policy,
+           "turn_timeout_ms" => _turn_timeout_ms,
+           "read_timeout_ms" => _read_timeout_ms,
+           "stall_timeout_ms" => _stall_timeout_ms
+         } = payload
+       ) do
+    case Schema.parse(%{"codex" => Map.take(payload, @codex_config_fields)}) do
+      {:ok, settings} ->
+        config = settings |> Schema.to_external_config() |> Map.fetch!("codex")
+        {:ok, Map.take(config, @codex_config_fields)}
+
+      {:error, _reason} ->
+        invalid_codex()
+    end
+  end
+
+  defp codex_config(_payload), do: invalid_codex()
+
+  defp invalid_codex do
+    error("codex requires app-server settings, prompt, profile, and issue context")
+  end
 
   defp command(%{"command" => command, "timeout_seconds" => timeout}, _name)
        when is_binary(command) and command != "" and is_integer(timeout) and timeout > 0,

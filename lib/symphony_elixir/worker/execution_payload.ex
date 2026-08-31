@@ -13,27 +13,30 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "repository" => Map.fetch!(repository, "url"),
       "revision" => Map.fetch!(repository, "source_ref"),
       "branch" => Map.fetch!(repository, "implementation_branch"),
-      "codex" => %{
-        "command" => codex_command(payload),
-        "timeout_seconds" => seconds(Map.fetch!(limits, "turn_timeout_ms"))
-      },
+      "codex" => codex(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
       "required_gates" => Enum.map(Map.fetch!(payload, "required_gates"), &command/1),
       "handoff" => handoff(Map.fetch!(payload, "handoff"), Map.fetch!(repository, "implementation_branch"))
     }
   end
 
-  defp codex_command(payload) do
-    command = payload |> Map.fetch!("codex") |> Map.fetch!("command") |> exec_command()
-    command <> " -- " <> shell(prompt(payload))
-  end
+  defp codex(payload, limits) do
+    codex = Map.fetch!(payload, "codex")
+    issue = Map.fetch!(payload, "issue")
 
-  defp exec_command(command) do
-    if String.ends_with?(command, "app-server") do
-      String.replace_suffix(command, "app-server", "exec --json")
-    else
-      command
-    end
+    %{
+      "command" => Map.fetch!(codex, "command"),
+      "pre_start_commands" => Map.fetch!(codex, "pre_start_commands"),
+      "approval_policy" => Map.fetch!(codex, "approval_policy"),
+      "thread_sandbox" => Map.fetch!(codex, "thread_sandbox"),
+      "turn_sandbox_policy" => Map.fetch!(codex, "turn_sandbox_policy"),
+      "turn_timeout_ms" => Map.fetch!(limits, "turn_timeout_ms"),
+      "read_timeout_ms" => Map.fetch!(limits, "read_timeout_ms"),
+      "stall_timeout_ms" => Map.fetch!(limits, "stall_timeout_ms"),
+      "prompt" => prompt(payload),
+      "profile" => Map.fetch!(payload, "workflow_profile"),
+      "issue" => Map.take(issue, ["identifier", "title"])
+    }
   end
 
   defp prompt(payload) do

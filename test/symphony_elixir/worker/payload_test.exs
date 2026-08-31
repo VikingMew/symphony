@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Worker.PayloadTest do
   test "accepts the versioned opaque execution contract" do
     assert {:ok, payload} = Payload.parse(valid_payload())
     assert payload.repository == "https://example.test/repo.git"
+    assert payload.codex.prompt == "Implement the task."
+    assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
     assert Enum.map(payload.gates, & &1.command) == ["make all"]
     refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
   end
@@ -46,7 +48,19 @@ defmodule SymphonyElixir.Worker.PayloadTest do
       "revision" => "main",
       "branch" => "work",
       "hooks" => [],
-      "codex" => %{"command" => "codex app-server", "timeout_seconds" => 60},
+      "codex" => %{
+        "command" => "codex app-server",
+        "pre_start_commands" => [],
+        "approval_policy" => "never",
+        "thread_sandbox" => "workspace-write",
+        "turn_sandbox_policy" => nil,
+        "turn_timeout_ms" => 60_000,
+        "read_timeout_ms" => 5_000,
+        "stall_timeout_ms" => 30_000,
+        "prompt" => "Implement the task.",
+        "profile" => "implementation",
+        "issue" => %{"identifier" => "SYM-45", "title" => "Align worker payloads"}
+      },
       "required_gates" => [%{"command" => "make all", "timeout_seconds" => 600}],
       "handoff" => %{"command" => "handoff", "timeout_seconds" => 60}
     }

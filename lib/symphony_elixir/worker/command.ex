@@ -8,7 +8,7 @@ defmodule SymphonyElixir.Worker.Command do
     result =
       case System.find_executable("bash") do
         nil -> %{status: :toolchain_unavailable, exit_code: nil, detail: "bash unavailable"}
-        bash -> run_port(bash, command, cwd, timeout * 1_000)
+        bash -> run_port(bash, command <> " < /dev/null", cwd, timeout * 1_000)
       end
 
     result
