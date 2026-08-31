@@ -71,13 +71,15 @@ docker compose run --rm symphony ssh-keygen -t ed25519
 ```
 
 Token environment variables are an alternative to interactive `gh` authentication. For GitHub,
-`gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The image's system Git config installs a GitHub-scoped
-`gh auth git-credential` helper and rewrites `git@github.com:owner/repo.git` to the token-free
+`gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The `symphony`, SSH `worker`, and `execution-worker`
+images share system Git config that installs a GitHub-scoped `gh auth git-credential` helper and
+rewrites `git@github.com:owner/repo.git` to the token-free
 `https://github.com/owner/repo.git` form. The helper resolves credentials only when Git
 authenticates; no token is written to a repository URL, Git config, image layer, or workspace.
 Because this static configuration lives in `/etc/gitconfig`, private clones work with an otherwise
-fresh `symphony_workspaces` volume and the read-only service never seeds `/home/symphony` or
-`/data/workspaces` with Git credentials. SSH URLs for hosts other than `github.com` remain SSH.
+fresh workspace volume, and read-only services never seed home or workspace paths with Git
+credentials. Workers need a repository token with clone/push access, but do not need external Git
+config or GitHub SSH host-key injection. SSH URLs for hosts other than `github.com` remain SSH.
 
 The service process must see working `gh` credentials because PR lookup/creation and Git bootstrap
 and push happen at the Symphony boundary. Codex app-server children intentionally receive neither

@@ -121,13 +121,17 @@ jobs:
           docker run --rm --read-only --user 10001:10001 \
             --tmpfs /tmp:rw,mode=1777 --tmpfs /data/workspaces:rw,mode=1777 \
             symphony-toolchain:symphony sh -lc '
-              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make && command -v gh &&
+              test "$(git config --system --get-all credential.https://github.com.helper)" = "!gh auth git-credential" &&
+              test "$(git config --system --get-all url.https://github.com/.insteadOf)" = "git@github.com:" &&
               mise --version && mix --version
             '
           docker run --rm --read-only --user 1000:1000 \
             --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 \
             symphony-toolchain:worker sh -lc '
-              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make && command -v gh &&
+              test "$(git config --system --get-all credential.https://github.com.helper)" = "!gh auth git-credential" &&
+              test "$(git config --system --get-all url.https://github.com/.insteadOf)" = "git@github.com:" &&
               mise --version && mix --version
             '
           docker run --rm --read-only --user 10002:10002 \
@@ -135,7 +139,9 @@ jobs:
             --tmpfs /worker/workspaces:rw,exec,mode=1777 \
             --mount type=bind,source="$PWD",target=/source,readonly \
             symphony-toolchain:execution-worker sh -lc '
-              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make &&
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make && command -v gh &&
+              test "$(git config --system --get-all credential.https://github.com.helper)" = "!gh auth git-credential" &&
+              test "$(git config --system --get-all url.https://github.com/.insteadOf)" = "git@github.com:" &&
               mise --version && mix --version &&
               cp -R /source/. /worker/workspaces/symphony &&
               cd /worker/workspaces/symphony &&
