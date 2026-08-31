@@ -63,6 +63,23 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "command -v elixir"
     assert workflow =~ "command -v erl"
     assert workflow =~ "command -v make"
+    assert length(Regex.scan(~r/command -v gh/, workflow)) == 3
+
+    assert length(
+             Regex.scan(
+               ~r/git config --system --get-all credential\.https:\/\/github\.com\.helper/,
+               workflow
+             )
+           ) == 3
+
+    assert length(
+             Regex.scan(
+               ~r/git config --system --get-all url\.https:\/\/github\.com\/\.insteadOf/,
+               workflow
+             )
+           ) == 3
+
+    refute workflow =~ "git credential fill"
     assert workflow =~ "--read-only"
     assert workflow =~ "--user 10002:10002"
     assert workflow =~ "--tmpfs /tmp:rw,exec,mode=1777"
@@ -73,19 +90,26 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert length(Regex.scan(~r/^      - \/tmp:exec,mode=1777$/m, compose)) == 2
   end
 
-  test "symphony image configures token-free GitHub credentials at system scope" do
+  test "all Codex images configure token-free GitHub credentials at system scope" do
     dockerfile = File.read!(@dockerfile)
     compose = File.read!(@compose)
 
-    assert dockerfile =~
-             "git config --system credential.https://github.com.helper '!gh auth git-credential'"
+    for stage <- ["worker", "symphony", "execution-worker"] do
+      body = stage_body(dockerfile, stage)
 
-    assert dockerfile =~
-             "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
+      assert body =~ ~r/^\s*gh \\?$/m, "#{stage} must install gh"
 
-    refute dockerfile =~ "x-access-token"
-    refute dockerfile =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
-    refute compose =~ "GIT_CONFIG_GLOBAL"
+      assert body =~
+               "git config --system credential.https://github.com.helper '!gh auth git-credential'"
+
+      assert body =~
+               "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
+
+      refute body =~ "x-access-token"
+      refute body =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
+    end
+
+    refute compose =~ ~r/GIT_CONFIG_(?:GLOBAL|COUNT|KEY|VALUE)/
   end
 
   test "trusted HTTP worker is opt-in, isolated, and non-privileged" do

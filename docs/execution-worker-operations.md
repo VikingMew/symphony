@@ -28,6 +28,11 @@ Give the worker only these credentials: the Panel registration token, a least-sc
 a repository push/PR token, and a restricted-Linear gateway token. Never set `DATABASE_URL`,
 `POSTGRES_*`, or `LINEAR_API_KEY` on `execution-worker`.
 
+Provide the repository token as `GH_TOKEN` or `GITHUB_TOKEN` with clone and push permission for the
+configured repository. The image's `/etc/gitconfig` rewrites the exact GitHub SCP-style prefix to
+HTTPS and delegates credentials to `gh`; do not inject `GIT_CONFIG_*`, GitHub `known_hosts`, or SSH
+host-key policy for that URL form. Other hosts and SSH URL forms retain their normal SSH semantics.
+
 The worker joins `worker_control` to reach only `http://symphony:4000/api/worker/v1/*`; it does not
 join the database network. Its `worker_egress` network must be restricted by the deployment
 firewall or the configured HTTP proxy to Codex, the configured Git/PR host, Hex, npm, Debian and
@@ -45,7 +50,7 @@ docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-work
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
   test -z "$DATABASE_URL" && test -z "$LINEAR_API_KEY" &&
-  command -v codex && command -v git && command -v make && command -v mise &&
+  command -v codex && command -v gh && command -v git && command -v make && command -v mise &&
   command -v mix && command -v elixir && command -v erl &&
   mise --version && mise exec -- mix --version
 '
