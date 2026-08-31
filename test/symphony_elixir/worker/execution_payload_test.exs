@@ -11,15 +11,19 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["repository"] == "https://example.test/repo.git"
     assert execution["revision"] == "main"
     assert execution["branch"] == "vikingmew-sym-45"
-    assert execution["codex"]["timeout_seconds"] == 3_601
-    assert execution["codex"]["command"] =~ "codex exec --json --"
-    assert execution["codex"]["command"] =~ "Workflow profile: implementation"
+    assert execution["codex"]["command"] == "codex app-server"
+    assert execution["codex"]["turn_timeout_ms"] == 3_600_001
+    assert execution["codex"]["issue"] == %{"identifier" => "SYM-45", "title" => "Align worker payloads"}
+    assert execution["codex"]["prompt"] =~ "Workflow profile: implementation"
+    assert execution["codex"]["prompt"] =~ "Linear issue SYM-45: Align worker payloads"
     assert Enum.map(execution["hooks"], & &1["command"]) == ["mix setup", "mix test"]
     assert execution["required_gates"] == [%{"command" => "make all", "timeout_seconds" => 1_800}]
     assert execution["handoff"]["policy"] == panel_payload["handoff"]["policy"]
     assert execution["handoff"]["command"] =~ "SYMPHONY_HANDOFF_COMMIT"
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
+    assert parsed.codex.prompt == execution["codex"]["prompt"]
+    assert parsed.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
 
     refute Map.has_key?(execution, "issue")
     refute Map.has_key?(execution, "prompt")
@@ -50,8 +54,18 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
         "before_remove" => nil,
         "timeout_ms" => 30_000
       },
-      "limits" => %{"turn_timeout_ms" => 3_600_001},
-      "codex" => %{"command" => "codex app-server"},
+      "limits" => %{
+        "turn_timeout_ms" => 3_600_001,
+        "read_timeout_ms" => 5_000,
+        "stall_timeout_ms" => 300_000
+      },
+      "codex" => %{
+        "command" => "codex app-server",
+        "pre_start_commands" => [],
+        "approval_policy" => "never",
+        "thread_sandbox" => "workspace-write",
+        "turn_sandbox_policy" => nil
+      },
       "handoff" => %{"policy" => "push_pr_then_restricted_linear"}
     }
   end

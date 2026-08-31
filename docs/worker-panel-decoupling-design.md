@@ -277,7 +277,19 @@ POST /api/worker/v1/tasks/claim
     "repository": "https://github.com/example/repository.git",
     "revision": "main",
     "branch": "exact-linear-branch",
-    "codex": {"command": "codex exec --json -- 'rendered prompt'", "timeout_seconds": 3600},
+    "codex": {
+      "command": "codex app-server",
+      "pre_start_commands": [],
+      "approval_policy": "never",
+      "thread_sandbox": "workspace-write",
+      "turn_sandbox_policy": null,
+      "turn_timeout_ms": 3600000,
+      "read_timeout_ms": 5000,
+      "stall_timeout_ms": 300000,
+      "prompt": "rendered prompt",
+      "profile": "implementation",
+      "issue": {"identifier": "ABC-123", "title": "Issue title"}
+    },
     "required_gates": [{"command": "make all", "timeout_seconds": 1800}],
     "hooks": [],
     "handoff": {"policy": "push_pr_then_restricted_linear"}
@@ -288,7 +300,9 @@ POST /api/worker/v1/tasks/claim
 The correlation fields are derived from persisted project/run/issue/task/lease/session records.
 The task retains the queue-time Panel snapshot for display and audit. At claim time the Panel
 converts that snapshot into the versioned execution object consumed by the worker, including a
-rendered issue/profile prompt and second-based command timeouts. The execution object never
+structured rendered issue/profile prompt and app-server settings. The worker starts one app-server
+session, drives one turn over JSON-RPC stdio, and stops the session. Shell hooks, required gates,
+and handoff commands retain second-based command timeouts. The execution object never
 contains a `workflow_version_id`.
 
 无任务时返回：

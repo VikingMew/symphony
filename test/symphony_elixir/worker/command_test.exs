@@ -20,4 +20,11 @@ defmodule SymphonyElixir.Worker.CommandTest do
     assert result.status == :toolchain_unavailable
     assert result.exit_code == 127
   end
+
+  test "does not hang on commands that read stdin (regression: codex exec waits on stdin)" do
+    # `cat` blocks reading stdin; with stdin redirected to /dev/null it must exit immediately.
+    result = Command.run(%{command: "cat", timeout_seconds: 3}, File.cwd!())
+    assert result.status == :passed
+    assert result.exit_code == 0
+  end
 end

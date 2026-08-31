@@ -75,13 +75,15 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     git!(source, ["add", "README.md"])
     git!(source, ["commit", "-m", "fixture"])
     revision = git!(source, ["rev-parse", "HEAD"])
+    codex_trace = Path.join(root, "codex.jsonl")
+    codex_binary = fake_codex!(root, codex_trace)
 
     task = %{
       id: "task-1",
       project_id: "project-1",
       run_id: "run-1",
       issue_identifier: "SYM-12",
-      payload: panel_payload(source, revision)
+      payload: panel_payload(source, revision, codex_binary)
     }
 
     lease = %{id: "lease-1", attempt: 1, expires_at: DateTime.add(DateTime.utc_now(), 60, :second)}
@@ -102,10 +104,13 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       File.rm_rf(root)
     end)
 
-    {:ok, root: root}
+    {:ok, root: root, codex_trace: codex_trace, codex_binary: codex_binary}
   end
 
-  test "runs register through terminal event over the real worker HTTP surface", %{root: root} do
+  test "runs register through terminal event over the real worker HTTP surface", %{
+    root: root,
+    codex_trace: codex_trace
+  } do
     config = config(root)
     assert {:ok, registration} = Client.register(config)
 
@@ -130,7 +135,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
     result = Executor.execute(config, claim)
     assert result.status == :completed
-    assert result.codex.session_id == "codex-session-1"
+    assert result.codex.session_id == "thread-worker-turn-worker"
     assert result.validation.overall_status == :passed
     assert result.handoff.commit == "fixture-commit"
     assert result.handoff.pr == "PR-12"
@@ -140,8 +145,47 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert [{"task-1", "task.progress", %{"phase" => "execution_started"}}, first, second] = Persistence.events()
     assert {"task-1", "task.completed", payload} = first
     assert {"task-1", "task.completed", ^payload} = second
-    assert payload["codex"]["session_id"] == "codex-session-1"
+    assert payload["codex"]["session_id"] == "thread-worker-turn-worker"
     refute inspect(payload) =~ "workflow_version_id"
+
+    turn_start =
+      codex_trace
+      |> File.stream!()
+      |> Stream.map(&Jason.decode!/1)
+      |> Enum.find(&(&1["method"] == "turn/start"))
+
+    assert get_in(turn_start, ["params", "input", Access.at(0), "text"]) =~
+             "Linear issue SYM-12: Integration test"
+  end
+
+  test "surfaces app-server turn failures in the worker result detail", %{
+    root: root,
+    codex_trace: codex_trace,
+    codex_binary: codex_binary
+  } do
+    fake_codex!(
+      root,
+      codex_trace,
+      ~s({"method":"turn/failed","params":{"reason":"worker fixture failure"}})
+    )
+
+    config = config(root)
+    assert {:ok, registration} = Client.register(config)
+
+    identity = %{
+      "worker_id" => registration["worker_id"],
+      "session_id" => registration["session_id"],
+      "protocol_version" => Client.protocol_version()
+    }
+
+    assert {:ok, claim} = Client.claim(config, Map.put(identity, "available_slots", 1))
+    assert claim["execution"]["codex"]["command"] == "#{codex_binary} app-server"
+
+    result = Executor.execute(config, claim)
+    assert result.status == :failed
+    assert result.reason == :failed
+    assert result.detail =~ "turn_failed"
+    assert result.detail =~ "worker fixture failure"
   end
 
   defp config(root) do
@@ -158,7 +202,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp panel_payload(source, revision) do
+  defp panel_payload(source, revision, codex_binary) do
     %{
       "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
       "prompt" => "Complete the task.",
@@ -176,14 +220,51 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "before_remove" => nil,
         "timeout_ms" => 10_000
       },
-      "codex" => %{"command" => "printf 'SYMPHONY_CODEX_SESSION_ID=codex-session-1\\n'"},
-      "limits" => %{"turn_timeout_ms" => 10_000},
+      "codex" => %{
+        "command" => "#{codex_binary} app-server",
+        "pre_start_commands" => [],
+        "approval_policy" => "never",
+        "thread_sandbox" => "workspace-write",
+        "turn_sandbox_policy" => nil
+      },
+      "limits" => %{
+        "turn_timeout_ms" => 10_000,
+        "read_timeout_ms" => 5_000,
+        "stall_timeout_ms" => 5_000
+      },
       "required_gates" => [%{"name" => "clean", "command" => "git status --porcelain", "timeout_ms" => 10_000}],
       "handoff" => %{
         "command" => "printf 'SYMPHONY_HANDOFF_COMMIT=fixture-commit\\nSYMPHONY_HANDOFF_PR=PR-12\\n'",
         "timeout_seconds" => 10
       }
     }
+  end
+
+  defp fake_codex!(root, trace_file, turn_event \\ ~s({"method":"turn/completed"})) do
+    codex_binary = Path.join(root, "fake-codex")
+
+    File.write!(codex_binary, """
+    #!/bin/sh
+    while IFS= read -r line; do
+      printf '%s\n' "$line" >> #{trace_file}
+
+      case "$line" in
+        *'"method":"initialize"'*)
+          printf '%s\n' '{"id":1,"result":{}}'
+          ;;
+        *'"method":"thread/start"'*)
+          printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-worker"}}}'
+          ;;
+        *'"method":"turn/start"'*)
+          printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-worker"}}}'
+          printf '%s\n' '#{turn_event}'
+          ;;
+      esac
+    done
+    """)
+
+    File.chmod!(codex_binary, 0o755)
+    codex_binary
   end
 
   defp git!(cwd, args) do

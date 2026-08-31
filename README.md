@@ -87,7 +87,9 @@ The supported Compose stack exposes it only through the opt-in `execution-worker
 `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
 `/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
 explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
-required gates, and handoff commands. The worker never derives a missing required gate.
+required gates, and handoff commands. Its Codex section carries app-server settings and the
+rendered prompt as structured data; the worker drives one JSON-RPC turn over stdio. The worker
+never derives a missing required gate.
 
 ## Quick Start
 

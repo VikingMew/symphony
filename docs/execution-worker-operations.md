@@ -14,6 +14,8 @@ This L5 guide operates the opt-in Compose service named `execution-worker`. It i
 worker-v1 HTTP runtime, not the Dockerfile `worker` target used for centralized SSH execution.
 `centralized` remains the default. Enabling the profile alone does not route work; routing changes
 only when `SYMPHONY_EXECUTION_MODE=worker` is applied to a newly started Panel.
+For each claim, the worker launches `codex app-server`, drives one JSON-RPC turn over stdio, and
+stops the session before running required gates and handoff commands.
 
 ## Preflight and credentials
 

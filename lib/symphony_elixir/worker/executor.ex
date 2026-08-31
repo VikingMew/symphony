@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.Worker.Executor do
   @moduledoc "Lease-owned preparation, execution, validation, and handoff pipeline."
 
+  alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.Config, as: RuntimeConfig
   alias SymphonyElixir.Worker.{Command, Config, Paths, Payload, Validation}
 
   @spec execute(Config.t(), map()) :: map()
@@ -15,7 +17,7 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, revision} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
-         %{status: :passed} = codex <- Command.run(payload.codex, workspace),
+         %{status: :passed} = codex <- run_codex(config, claim, payload.codex, workspace),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
          {:ok, handoff} <- handoff(payload, workspace) do
@@ -44,6 +46,49 @@ defmodule SymphonyElixir.Worker.Executor do
       status when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable] ->
         %{status: :failed, reason: status}
     end
+  end
+
+  defp run_codex(config, claim, codex, workspace) do
+    started = System.monotonic_time(:millisecond)
+
+    result =
+      RuntimeConfig.with_workflow_context(codex_workflow(config, codex), fn ->
+        issue = %{
+          id: Map.fetch!(claim, "issue_id"),
+          identifier: codex.issue.identifier,
+          title: codex.issue.title
+        }
+
+        AppServer.run(workspace, codex.prompt, issue,
+          profile: codex.profile,
+          run_id: Map.fetch!(claim, "run_id")
+        )
+      end)
+
+    duration_ms = System.monotonic_time(:millisecond) - started
+
+    case result do
+      {:ok, app_server_result} ->
+        %{
+          status: :passed,
+          session_id: Map.fetch!(app_server_result, :session_id),
+          duration_ms: duration_ms
+        }
+
+      {:error, reason} ->
+        %{status: :failed, duration_ms: duration_ms, detail: inspect(reason)}
+    end
+  end
+
+  defp codex_workflow(config, codex) do
+    %{
+      config: %{
+        "workspace" => %{"root" => config.workspace_root},
+        "codex" => codex.config
+      },
+      prompt: "",
+      prompt_template: ""
+    }
   end
 
   defp prepare(payload, workspace) do
