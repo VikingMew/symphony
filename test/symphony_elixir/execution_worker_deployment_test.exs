@@ -166,6 +166,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
     assert workflow =~
              "docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker config --format json"
+
     assert workflow =~ ~r/\.services\["execution-worker"\]\.image == env\.SYMPHONY_EXECUTION_WORKER_IMAGE/
     assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
     assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
