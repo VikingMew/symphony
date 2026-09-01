@@ -1,8 +1,10 @@
 defmodule SymphonyElixir.Worker.Executor do
   @moduledoc "Lease-owned preparation, execution, validation, and handoff pipeline."
 
-  alias SymphonyElixir.Codex.AppServer
+  alias SymphonyElixir.Codex.{AppServer, DynamicTool}
   alias SymphonyElixir.Config, as: RuntimeConfig
+  alias SymphonyElixir.GitHub.PullRequest
+  alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Worker.{Command, Config, Paths, Payload, Validation}
 
   @spec execute(Config.t(), map()) :: map()
@@ -17,13 +19,13 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, revision} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
-         %{status: :passed} = codex <- run_codex(config, claim, payload.codex, workspace),
+         %{status: :passed} = codex <- run_codex(config, claim, payload, workspace),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
-         {:ok, handoff} <- handoff(payload, workspace) do
+         {:ok, handoff} <- handoff(claim, payload, codex) do
       summary = summary(config, claim, revision, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
-      Map.merge(summary, %{status: :completed, phase: :handoff, handoff: Map.get(handoff, :references, %{})})
+      Map.merge(summary, %{status: :completed, phase: :handoff, handoff: handoff})
     else
       :cancelled ->
         cancelled_result()
@@ -48,20 +50,30 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp run_codex(config, claim, codex, workspace) do
+  defp run_codex(config, claim, payload, workspace) do
+    codex = payload.codex
     started = System.monotonic_time(:millisecond)
+    proof_secret = :crypto.strong_rand_bytes(32)
 
     result =
       RuntimeConfig.with_workflow_context(codex_workflow(config, codex), fn ->
-        issue = %{
+        issue = %Issue{
           id: Map.fetch!(claim, "issue_id"),
           identifier: codex.issue.identifier,
-          title: codex.issue.title
+          title: codex.issue.title,
+          branch_name: payload.branch,
+          url: Map.get(payload.handoff, "issue_url")
         }
 
         AppServer.run(workspace, codex.prompt, issue,
           profile: codex.profile,
-          run_id: Map.fetch!(claim, "run_id")
+          run_id: Map.fetch!(claim, "run_id"),
+          dynamic_tool_opts: [
+            pull_request_proof_secret: proof_secret,
+            pull_request_creator: fn issue, rendered, _opts ->
+              PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
+            end
+          ]
         )
       end)
 
@@ -72,6 +84,8 @@ defmodule SymphonyElixir.Worker.Executor do
         %{
           status: :passed,
           session_id: Map.fetch!(app_server_result, :session_id),
+          handoff: Map.fetch!(app_server_result, :handoff),
+          proof_secret: proof_secret,
           duration_ms: duration_ms
         }
 
@@ -137,14 +151,26 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp handoff(%{handoff: %{"command" => command, "timeout_seconds" => timeout}}, workspace) do
-    case Command.run(%{command: command, timeout_seconds: timeout}, workspace) do
-      %{status: :passed} = result -> {:ok, result}
-      result -> {:error, {:handoff_failed, result}}
+  defp handoff(claim, payload, codex) do
+    update = Map.put(codex.handoff, "target_state", "Ready to Merge")
+
+    response =
+      DynamicTool.execute("linear_task_update", update,
+        issue: %Issue{id: Map.fetch!(claim, "issue_id")},
+        profile: payload.codex.profile,
+        session_id: codex.session_id,
+        pull_request_proof_secret: codex.proof_secret
+      )
+
+    case response do
+      %{"success" => true} ->
+        references = Map.fetch!(codex.handoff, "references")
+        {:ok, references |> Map.take(["branch", "commit", "pr_url", "pr_proof"]) |> Map.put("linear_state", "Ready to Merge")}
+
+      %{"success" => false, "output" => output} ->
+        {:error, {:handoff_failed, output}}
     end
   end
-
-  defp handoff(_payload, _workspace), do: {:error, :missing_handoff}
 
   defp summary(config, claim, revision, codex, validation) do
     %{

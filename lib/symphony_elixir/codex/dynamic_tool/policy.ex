@@ -61,7 +61,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
 
   defp extract_reference_pair(references, {url_key, proof_key, _label}) do
     with url when is_binary(url) and url != "" <- Map.get(references, url_key),
-         true <- String.starts_with?(url, "https://github.com/"),
+         true <- Regex.match?(~r/\Ahttps:\/\/github\.com\/[^\/]+\/[^\/]+\/pull\/[1-9][0-9]*\z/, url),
          proof when is_binary(proof) and proof != "" <- Map.get(references, proof_key) do
       {:ok, url, proof}
     else

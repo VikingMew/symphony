@@ -101,6 +101,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @update_tool "linear_task_update"
   @issue_create_tool "linear_issue_create"
   @pull_request_tool "create_pull_request"
+  @handoff_tool "handoff"
 
   @read_schema %{
     "type" => "object",
@@ -199,6 +200,21 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @handoff_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["comment", "result", "references"],
+    "properties" => %{
+      "comment" => %{"type" => "string"},
+      "result" => %{"type" => "object", "additionalProperties" => true},
+      "references" => %{
+        "type" => "object",
+        "additionalProperties" => true,
+        "required" => ["branch", "commit", "pr_url", "pr_proof"]
+      }
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
@@ -221,6 +237,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         execute_with_audit(@pull_request_tool, arguments, opts, fn ->
           execute_pull_request(arguments, opts)
         end)
+
+      @handoff_tool ->
+        execute_with_audit(@handoff_tool, arguments, opts, fn -> execute_handoff(arguments, opts) end)
 
       other ->
         failure_response(%{
@@ -272,8 +291,21 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @pull_request_tool,
         "description" => "Create or find the implementation pull request after commit, validation, and push. Only the implementation profile may call it.",
         "inputSchema" => @pull_request_schema
-      }
+      },
+      handoff_tool_spec()
     ]
+  end
+
+  @spec tool_specs(String.t() | nil) :: [map()]
+  def tool_specs("implementation"), do: tool_specs()
+  def tool_specs(_profile), do: tool_specs()
+
+  defp handoff_tool_spec do
+    %{
+      "name" => @handoff_tool,
+      "description" => "Submit the completed implementation payload after create_pull_request. Acceptance does not update Linear; the worker writes it back only after required gates pass.",
+      "inputSchema" => @handoff_schema
+    }
   end
 
   defp execute_task_read(arguments, opts) do
@@ -328,6 +360,53 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       success_response(put_pull_request_proof(pull_request, opts))
     else
       {:error, reason} -> failure_response(tool_error_payload(@pull_request_tool, reason))
+    end
+  end
+
+  defp execute_handoff(arguments, opts) do
+    with :ok <- validate_handoff_profile(opts),
+         {:ok, payload} <- normalize_handoff_arguments(arguments),
+         :ok <- validate_pull_request_proof(payload, opts),
+         submitter when is_function(submitter, 1) <- Keyword.get(opts, :handoff_submitter),
+         :ok <- submitter.(payload) do
+      success_response(%{"accepted" => true, "linear_updated" => false})
+    else
+      nil -> failure_response(tool_error_payload(@handoff_tool, :handoff_submitter_unavailable))
+      {:error, reason} -> failure_response(tool_error_payload(@handoff_tool, reason))
+    end
+  end
+
+  defp validate_handoff_profile(opts) do
+    if Keyword.get(opts, :profile) == "implementation",
+      do: :ok,
+      else: {:error, {:handoff_not_allowed, Keyword.get(opts, :profile)}}
+  end
+
+  defp normalize_handoff_arguments(arguments) when is_map(arguments) do
+    with {:ok, comment} <- required_handoff_text(arguments, "comment"),
+         {:ok, result} <- required_handoff_map(arguments, "result"),
+         {:ok, references} <- required_handoff_map(arguments, "references"),
+         {:ok, branch} <- required_handoff_text(references, "branch", "references.branch"),
+         {:ok, commit} <- required_handoff_text(references, "commit", "references.commit"),
+         {:ok, _url} <- required_handoff_text(references, "pr_url", "references.pr_url"),
+         {:ok, _proof} <- required_handoff_text(references, "pr_proof", "references.pr_proof") do
+      {:ok, %{"comment" => comment, "result" => result, "references" => Map.merge(references, %{"branch" => branch, "commit" => commit})}}
+    end
+  end
+
+  defp normalize_handoff_arguments(_), do: {:error, {:invalid_handoff_field, "handoff"}}
+
+  defp required_handoff_text(map, key, path \\ nil) do
+    case Map.get(map, key) do
+      value when is_binary(value) -> if String.trim(value) == "", do: {:error, {:invalid_handoff_field, path || key}}, else: {:ok, String.trim(value)}
+      _ -> {:error, {:invalid_handoff_field, path || key}}
+    end
+  end
+
+  defp required_handoff_map(map, key) do
+    case Map.get(map, key) do
+      value when is_map(value) and map_size(value) > 0 -> {:ok, value}
+      _ -> {:error, {:invalid_handoff_field, key}}
     end
   end
 
@@ -759,6 +838,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   end
 
+  defp tool_error_payload(@handoff_tool, {:handoff_not_allowed, profile}), do: %{"error" => %{"message" => "`handoff` is only available to implementation (got #{inspect(profile)})."}}
+  defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable), do: %{"error" => %{"message" => "handoff submission is unavailable in this session."}}
+  defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}), do: %{"error" => %{"message" => "`handoff.#{field}` is required and must be non-empty."}}
+  defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
+
   defp tool_error_payload(_tool, {:update_not_allowed, field, profile}) do
     %{
       "error" => %{
@@ -844,6 +928,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp supported_tool_names do
-    Enum.map(tool_specs(), & &1["name"])
+    tool_specs() |> Enum.reject(&(&1["name"] == @handoff_tool)) |> Enum.map(& &1["name"])
   end
 end

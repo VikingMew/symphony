@@ -19,7 +19,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert Enum.map(execution["hooks"], & &1["command"]) == ["mix setup", "mix test"]
     assert execution["required_gates"] == [%{"command" => "make all", "timeout_seconds" => 1_800}]
     assert execution["handoff"]["policy"] == panel_payload["handoff"]["policy"]
-    assert execution["handoff"]["command"] =~ "SYMPHONY_HANDOFF_COMMIT"
+    refute Map.has_key?(execution["handoff"], "command")
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
     assert parsed.codex.prompt == execution["codex"]["prompt"]
