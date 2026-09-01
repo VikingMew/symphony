@@ -383,7 +383,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
     end
   end
 
-  test "app server passes runtime proxy environment to codex child process" do
+  test "app server passes runtime proxy and credential environment to codex child process" do
     test_root =
       Path.join(
         System.tmp_dir!(),
@@ -469,7 +469,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
       trace = File.read!(trace_file)
       assert trace =~ "HTTPS_PROXY=http://user:pass@proxy.example.test:8080"
       assert trace =~ "NO_PROXY=127.0.0.1,localhost"
-      assert trace =~ "LINEAR_API_KEY=\n"
+      assert trace =~ "LINEAR_API_KEY=must-not-reach-codex"
     after
       File.rm_rf(test_root)
     end

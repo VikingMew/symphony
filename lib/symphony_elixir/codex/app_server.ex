@@ -22,15 +22,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   @thread_start_id 2
   @turn_start_id 3
   @port_line_bytes 1_048_576
-  @sensitive_codex_env_names ~w(
-    LINEAR_API_KEY
-    LINEAR_TOKEN
-    GITHUB_TOKEN
-    GH_TOKEN
-    SLACK_BOT_TOKEN
-    ANTHROPIC_API_KEY
-    OPENAI_API_KEY
-  )
 
   @type session :: %{
           port: port(),
@@ -285,7 +276,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
       RuntimeProxy.remote_exports(),
-      unset_sensitive_env_command(),
       "cd #{SymphonyElixir.Shell.escape(workspace)}",
       codex_launch_command()
     ]
@@ -311,14 +301,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp codex_port_env do
-    RuntimeProxy.port_env() ++
-      Enum.map(@sensitive_codex_env_names, fn name ->
-        {String.to_charlist(name), false}
-      end)
-  end
-
-  defp unset_sensitive_env_command do
-    "unset " <> Enum.join(@sensitive_codex_env_names, " ")
+    RuntimeProxy.port_env()
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do
