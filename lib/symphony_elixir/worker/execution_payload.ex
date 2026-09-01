@@ -16,7 +16,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "codex" => codex(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
       "required_gates" => Enum.map(Map.fetch!(payload, "required_gates"), &command/1),
-      "handoff" => handoff(Map.fetch!(payload, "handoff"), Map.fetch!(repository, "implementation_branch"))
+      "handoff" => Map.fetch!(payload, "handoff")
     }
   end
 
@@ -66,15 +66,5 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
     %{"command" => command, "timeout_seconds" => seconds(timeout)}
   end
 
-  defp handoff(%{"command" => _command} = handoff, _branch), do: handoff
-
-  defp handoff(handoff, branch) do
-    Map.merge(handoff, %{
-      "command" => "printf 'SYMPHONY_HANDOFF_BRANCH=%s\\nSYMPHONY_HANDOFF_COMMIT=%s\\n' #{shell(branch)} \"$(git rev-parse HEAD)\"",
-      "timeout_seconds" => 60
-    })
-  end
-
   defp seconds(milliseconds), do: div(milliseconds + 999, 1_000)
-  defp shell(value), do: "'" <> String.replace(value, "'", "'\\''") <> "'"
 end
