@@ -20,6 +20,7 @@ defmodule SymphonyElixir.Worker.Executor do
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace),
+         :ok <- require_handoff(payload, codex),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
          {:ok, handoff} <- handoff(claim, payload, codex) do
@@ -84,7 +85,7 @@ defmodule SymphonyElixir.Worker.Executor do
         %{
           status: :passed,
           session_id: Map.fetch!(app_server_result, :session_id),
-          handoff: Map.fetch!(app_server_result, :handoff),
+          handoff: Map.get(app_server_result, :handoff),
           proof_secret: proof_secret,
           duration_ms: duration_ms
         }
@@ -151,7 +152,13 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp handoff(claim, payload, codex) do
+  defp require_handoff(%{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}}, %{handoff: nil}),
+    do: {:error, {:handoff_failed, :missing_handoff}}
+
+  defp require_handoff(_payload, _codex), do: :ok
+
+  defp handoff(claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
+       when is_map(handoff) do
     update = Map.put(codex.handoff, "target_state", "Ready to Merge")
 
     response =
@@ -169,8 +176,13 @@ defmodule SymphonyElixir.Worker.Executor do
 
       %{"success" => false, "output" => output} ->
         {:error, {:handoff_failed, output}}
+
+      response ->
+        {:error, {:handoff_failed, response}}
     end
   end
+
+  defp handoff(_claim, _payload, _codex), do: {:ok, %{}}
 
   defp summary(config, claim, revision, codex, validation) do
     %{

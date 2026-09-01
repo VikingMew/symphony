@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.Worker.HttpIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias SymphonyElixir.Worker.{Client, Config, Executor}
+  alias SymphonyElixir.Worker.{Client, Config, ExecutionPayload, Executor}
 
   defmodule WorkerApiSurface do
     use Plug.Router
@@ -137,8 +137,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.status == :completed
     assert result.codex.session_id == "thread-worker-turn-worker"
     assert result.validation.overall_status == :passed
-    assert result.handoff.commit == "fixture-commit"
-    assert result.handoff.pr == "PR-12"
+    assert result.handoff == %{}
 
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
@@ -188,6 +187,30 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.detail =~ "worker fixture failure"
   end
 
+  test "fails an implementation run that completes without a handoff", %{
+    root: root,
+    codex_binary: codex_binary
+  } do
+    source = Path.join(root, "source")
+    revision = git!(source, ["rev-parse", "HEAD"])
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => "missing-handoff-task",
+      "lease_id" => "missing-handoff-lease",
+      "issue_id" => "issue-1",
+      "run_id" => "run-1",
+      "execution" =>
+        panel_payload(source, revision, codex_binary, "implementation")
+        |> ExecutionPayload.from_task_payload()
+    }
+
+    result = Executor.execute(config(root), claim)
+    assert result.status == :failed
+    assert result.reason =~ "handoff_failed"
+    assert result.reason =~ "missing_handoff"
+  end
+
   defp config(root) do
     %Config{
       panel_url: "http://panel.test",
@@ -202,11 +225,11 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp panel_payload(source, revision, codex_binary) do
+  defp panel_payload(source, revision, codex_binary, profile \\ "refinement") do
     %{
       "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
       "prompt" => "Complete the task.",
-      "workflow_profile" => "implementation",
+      "workflow_profile" => profile,
       "execution_mode" => "worker",
       "repository" => %{
         "url" => source,
@@ -233,10 +256,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "stall_timeout_ms" => 5_000
       },
       "required_gates" => [%{"name" => "clean", "command" => "git status --porcelain", "timeout_ms" => 10_000}],
-      "handoff" => %{
-        "command" => "printf 'SYMPHONY_HANDOFF_COMMIT=fixture-commit\\nSYMPHONY_HANDOFF_PR=PR-12\\n'",
-        "timeout_seconds" => 10
-      }
+      "handoff" => if(profile == "implementation", do: %{"policy" => "push_pr_then_restricted_linear"}, else: %{})
     }
   end
 

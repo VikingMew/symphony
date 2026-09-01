@@ -103,6 +103,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         session_id = "#{thread_id}-#{turn_id}"
         dynamic_tool_opts = Keyword.get(opts, :dynamic_tool_opts, [])
         handoff_key = {:codex_handoff, make_ref()}
+        pull_request_key = {:codex_pull_request, make_ref()}
 
         tool_executor =
           Keyword.get(opts, :tool_executor, fn tool, arguments ->
@@ -118,7 +119,9 @@ defmodule SymphonyElixir.Codex.AppServer do
               handoff_submitter: fn payload ->
                 Process.put(handoff_key, payload)
                 :ok
-              end
+              end,
+              pull_request_observer: &Process.put(pull_request_key, &1),
+              pull_request_result: fn -> Process.get(pull_request_key) end
             ]
 
             DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
@@ -148,11 +151,7 @@ defmodule SymphonyElixir.Codex.AppServer do
               turn_id: turn_id
             }
 
-            case {tool_profile, Process.delete(handoff_key)} do
-              {"implementation", nil} -> {:error, {:handoff_failed, :not_submitted}}
-              {"implementation", payload} -> {:ok, Map.put(completion, :handoff, payload)}
-              {_profile, _payload} -> {:ok, completion}
-            end
+            {:ok, Map.put(completion, :handoff, Process.delete(handoff_key))}
 
           {:error, reason} ->
             Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")

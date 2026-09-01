@@ -111,7 +111,7 @@ branch; commit; PR; allowed Linear transition; terminal event/time
 workspace cleanup or quarantine result; external-write idempotency result
 ```
 
-Success requires `make all` to pass inside the worker before handoff, one terminal completion, the
+Success requires `make all` to pass inside the worker before the structured `handoff` writeback, one terminal completion, the
 expected branch/commit/PR and allowed Linear update, and removal of the successful lease workspace.
 Do not retain credentials, Compose output, prompts, or raw logs. Redact URLs containing user info,
 headers, tokens, repository credentials, prompt text, and local file contents; keep only bounded

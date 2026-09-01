@@ -357,7 +357,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
          {:ok, rendered} <- normalize_pull_request_arguments(arguments),
          {:ok, issue} <- issue_from_opts(opts),
          {:ok, pull_request} <- create_pull_request(issue, rendered, opts) do
-      success_response(put_pull_request_proof(pull_request, opts))
+      result = put_pull_request_proof(pull_request, opts)
+      observe_pull_request(result, opts)
+      success_response(result)
     else
       {:error, reason} -> failure_response(tool_error_payload(@pull_request_tool, reason))
     end
@@ -366,7 +368,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp execute_handoff(arguments, opts) do
     with :ok <- validate_handoff_profile(opts),
          {:ok, payload} <- normalize_handoff_arguments(arguments),
-         :ok <- validate_pull_request_proof(payload, opts),
+         :ok <- validate_submitted_pull_request(payload, opts),
          submitter when is_function(submitter, 1) <- Keyword.get(opts, :handoff_submitter),
          :ok <- submitter.(payload) do
       success_response(%{"accepted" => true, "linear_updated" => false})
@@ -410,6 +412,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
+  defp validate_submitted_pull_request(payload, opts) do
+    with getter when is_function(getter, 0) <- Keyword.get(opts, :pull_request_result),
+         %{url: url, completion_proof: proof} <- getter.(),
+         {:ok, ^url, ^proof} <- Policy.pull_request_reference(payload) do
+      :ok
+    else
+      _ -> {:error, :pull_request_not_created}
+    end
+  end
+
   defp validate_pull_request_profile(opts) do
     case Keyword.get(opts, :profile) do
       "implementation" -> :ok
@@ -448,6 +460,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   defp put_pull_request_proof(pull_request, opts) do
     Map.put(pull_request, :completion_proof, pull_request_proof(Map.fetch!(pull_request, :url), opts))
+  end
+
+  defp observe_pull_request(result, opts) do
+    case Keyword.get(opts, :pull_request_observer) do
+      observer when is_function(observer, 1) -> observer.(result)
+      _ -> :ok
+    end
   end
 
   defp normalize_read_arguments(nil),
@@ -928,6 +947,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp supported_tool_names do
-    tool_specs() |> Enum.reject(&(&1["name"] == @handoff_tool)) |> Enum.map(& &1["name"])
+    Enum.map(tool_specs(), & &1["name"])
   end
 end

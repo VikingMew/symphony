@@ -33,7 +33,8 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                  "linear_task_read",
                  "linear_task_update",
                  "linear_issue_create",
-                 "create_pull_request"
+                 "create_pull_request",
+                 "handoff"
                ]
              }
            }
@@ -76,6 +77,78 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     refute rejected["success"]
     assert rejected["output"] =~ "not allowed"
+  end
+
+  test "handoff accepts only the pull request created by the current session" do
+    created = %{url: "https://github.com/acme/app/pull/1", completion_proof: "session-proof"}
+
+    payload = %{
+      "comment" => "  Shipped and verified.  ",
+      "result" => %{"outcome" => "shipped", "validation" => "make all"},
+      "references" => %{
+        "branch" => " feature/sym-1 ",
+        "commit" => " abc123 ",
+        "pr_url" => created.url,
+        "pr_proof" => created.completion_proof
+      }
+    }
+
+    response =
+      DynamicTool.execute("handoff", payload,
+        profile: "implementation",
+        pull_request_result: fn -> created end,
+        handoff_submitter: fn submitted ->
+          send(self(), {:handoff, submitted})
+          :ok
+        end
+      )
+
+    assert response["success"]
+    assert Jason.decode!(response["output"]) == %{"accepted" => true, "linear_updated" => false}
+    assert_receive {:handoff, submitted}
+    assert submitted["comment"] == "Shipped and verified."
+    assert submitted["references"]["branch"] == "feature/sym-1"
+    assert submitted["references"]["commit"] == "abc123"
+
+    mismatched = put_in(payload, ["references", "pr_proof"], "other-proof")
+    rejected = DynamicTool.execute("handoff", mismatched, profile: "implementation", pull_request_result: fn -> created end)
+    refute rejected["success"]
+    assert rejected["output"] =~ "create_pull_request"
+  end
+
+  test "handoff reports stable field paths for missing and empty values" do
+    valid = %{
+      "comment" => "done",
+      "result" => %{"validation" => "green"},
+      "references" => %{
+        "branch" => "feature/sym-1",
+        "commit" => "abc123",
+        "pr_url" => "https://github.com/acme/app/pull/1",
+        "pr_proof" => "proof"
+      }
+    }
+
+    cases = [
+      {Map.delete(valid, "comment"), "handoff.comment"},
+      {Map.put(valid, "comment", "  "), "handoff.comment"},
+      {Map.delete(valid, "result"), "handoff.result"},
+      {Map.put(valid, "result", %{}), "handoff.result"},
+      {Map.delete(valid, "references"), "handoff.references"},
+      {put_in(valid, ["references", "branch"], ""), "handoff.references.branch"},
+      {put_in(valid, ["references", "commit"], ""), "handoff.references.commit"},
+      {Map.put(valid, "references", Map.delete(valid["references"], "pr_url")), "handoff.references.pr_url"},
+      {Map.put(valid, "references", Map.delete(valid["references"], "pr_proof")), "handoff.references.pr_proof"}
+    ]
+
+    for {payload, field} <- cases do
+      response = DynamicTool.execute("handoff", payload, profile: "implementation")
+      refute response["success"]
+      assert response["output"] =~ field
+    end
+
+    rejected = DynamicTool.execute("handoff", valid, profile: "refinement")
+    refute rejected["success"]
+    assert rejected["output"] =~ "only available to implementation"
   end
 
   test "linear_issue_create is restricted to nap and day dreaming profiles" do

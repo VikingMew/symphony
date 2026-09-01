@@ -110,7 +110,7 @@ the run attempt.
 | Workspace prepared | Lease remains authoritative. | Create a contained checkout/worktree at the requested revision; report resolved source revision or a typed preparation failure. |
 | Codex / hooks | Payload supplies the structured rendered prompt, app-server settings, hook commands, limits, and handoff policy resolved from the current workflow. | Run hooks and one Codex app-server JSON-RPC turn in order; report phase, Codex session identifier, bounded redacted detail, duration, and typed outcome. |
 | Required validation | Payload supplies ordered commands and timeouts. | Run every required gate in the final worktree, in order, within this lease; write the local machine-readable summary and report its bounded summary. |
-| Git / PR / Linear handoff | Existing PR-first and restricted Linear rules remain authoritative. | Only after required gates pass, push the exact branch/commit, find or create the PR idempotently, then perform the allowed Linear handoff; report references or typed failure. |
+| Git / PR / Linear handoff | Existing PR-first and restricted Linear rules remain authoritative. | Codex submits a validated `handoff` payload after `create_pull_request`; only after required gates pass does the worker write the attachment, comment, and `Ready to Merge` state, then report references or typed failure. |
 | Terminal event | Panel applies the landed current-lease check and updates persisted task/run state. | Send one of `task.completed`, `task.failed`, or `task.cancelled` with phase, reason, validation summary, runtime identity, and handoff references. Retry duplicate delivery using existing idempotency behavior. |
 
 Progress events need the envelope identifiers, phase/type, occurrence time, and bounded payload.
