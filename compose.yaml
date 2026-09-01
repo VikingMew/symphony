@@ -22,13 +22,7 @@ x-symphony-environment: &symphony-environment
   SYMPHONY_SSH_CONFIG: ${SYMPHONY_SSH_CONFIG:-}
   SYMPHONY_TRUST_X_FORWARDED_HEADERS: ${SYMPHONY_TRUST_X_FORWARDED_HEADERS:-false}
   SYMPHONY_PUBLIC_URL: ${SYMPHONY_PUBLIC_URL:-}
-  HTTP_PROXY: ${HTTP_PROXY:-}
-  HTTPS_PROXY: ${HTTPS_PROXY:-}
-  ALL_PROXY: ${ALL_PROXY:-}
   NO_PROXY: ${NO_PROXY:-postgres,localhost,127.0.0.1}
-  http_proxy: ${http_proxy:-}
-  https_proxy: ${https_proxy:-}
-  all_proxy: ${all_proxy:-}
   no_proxy: ${no_proxy:-postgres,localhost,127.0.0.1}
 
 x-symphony-execution-worker-image: &symphony-execution-worker-image ${SYMPHONY_EXECUTION_WORKER_IMAGE:-symphony-execution-worker:8e5f7fead76fe82fab6c72ac4e637cea8a1e23b2}
