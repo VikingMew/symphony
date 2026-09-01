@@ -1106,6 +1106,7 @@ defmodule SymphonyElixir.Orchestrator do
       !DispatchPolicy.issue_routable_to_worker?(issue) ->
         Logger.info("Blocked issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; releasing blocked claim")
 
+        _ = BlockingDecision.clear(issue.identifier)
         release_blocked_issue(state, issue.id)
 
       active_issue_state?(issue.state, active_states) ->
