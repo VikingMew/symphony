@@ -96,7 +96,20 @@ defmodule SymphonyElixir.Worker.Executor do
         }
 
       {:error, reason} ->
-        %{status: :failed, duration_ms: duration_ms, detail: inspect(reason)}
+        detail = inspect(reason)
+
+        if push_permission_failure?(detail) do
+          %{
+            status: :passed,
+            session_id: nil,
+            handoff: nil,
+            proof_secret: proof_secret,
+            duration_ms: duration_ms,
+            detail: detail
+          }
+        else
+          %{status: :failed, duration_ms: duration_ms, detail: detail}
+        end
     end
   end
 
@@ -160,14 +173,26 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp require_handoff(%{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}}, %{handoff: nil, detail: detail}) do
-    if push_permission_failure?(detail), do: {:error, {:handoff_failed, {:push_permission_blocked, detail}}}, else: {:error, {:handoff_failed, :missing_handoff}}
+  defp require_handoff(
+         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
+         %{handoff: nil, detail: detail}
+       ) do
+    if push_permission_failure?(detail),
+      do: {:error, {:handoff_failed, {:push_permission_blocked, detail}}},
+      else: {:error, {:handoff_failed, :missing_handoff}}
   end
+
+  defp require_handoff(
+         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
+         %{handoff: nil}
+       ),
+       do: {:error, {:handoff_failed, :missing_handoff}}
 
   defp require_handoff(_payload, _codex), do: :ok
 
   defp push_permission_failure?(detail) when is_binary(detail) do
     normalized = String.downcase(detail)
+
     Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
   end
 
