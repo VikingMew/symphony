@@ -25,8 +25,8 @@ requires an immutable `ghcr.io/vikingmew/symphony-execution-worker` SHA tag or d
 from the same publication as `SYMPHONY_IMAGE` and set its full commit in
 `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
 Give the worker only these credentials: the Panel registration token, a least-scope Codex token,
-a repository push/PR token, and a restricted-Linear gateway token. Never set `DATABASE_URL`,
-`POSTGRES_*`, or `LINEAR_API_KEY` on `execution-worker`.
+a repository push/PR token, and the existing `LINEAR_API_KEY` credential. Never set
+`DATABASE_URL` or `POSTGRES_*` on `execution-worker`.
 
 Provide the repository token as `GH_TOKEN` or `GITHUB_TOKEN` with clone and push permission for the
 configured repository. The image's `/etc/gitconfig` rewrites the exact GitHub SCP-style prefix to
@@ -35,8 +35,8 @@ host-key policy for that URL form. Other hosts and SSH URL forms retain their no
 
 The worker joins `worker_control` to reach only `http://symphony:4000/api/worker/v1/*`; it does not
 join the database network. Its `worker_egress` network must be restricted by the deployment
-firewall or the configured HTTP proxy to Codex, the configured Git/PR host, Hex, npm, Debian and
-GitHub release registries required to build this repository, and the restricted Linear gateway.
+firewall or the configured HTTP proxy to Codex, the configured Git/PR host, Linear, Hex, npm,
+Debian and GitHub release registries required to build this repository.
 Set `SYMPHONY_EXECUTION_WORKER_NO_PROXY` only to the Panel service and loopback names. Treat an
 unrestricted `worker_egress` network as a failed production preflight.
 
@@ -49,7 +49,7 @@ docker compose --env-file .env --profile execution-worker build execution-worker
 docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
-  test -z "$DATABASE_URL" && test -z "$LINEAR_API_KEY" &&
+  test -z "$DATABASE_URL" && test -n "$LINEAR_API_KEY" &&
   command -v codex && command -v gh && command -v git && command -v make && command -v mise &&
   command -v mix && command -v elixir && command -v erl &&
   mise --version && mise exec -- mix --version
@@ -101,7 +101,7 @@ recreating the Panel.
 
 Use a real Symphony issue for this repository. Route only new work by setting
 `SYMPHONY_EXECUTION_MODE=worker` and recreating the Panel; then dispatch the issue normally. Retain
-this redacted record from `/workers`, `/runs/<id>`, Git, the PR host, and restricted Linear:
+this redacted record from `/workers`, `/runs/<id>`, Git, the PR host, and Linear:
 
 ```text
 date; project_id; issue identifier/stable ID; run_id/run_attempt

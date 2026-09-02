@@ -16,6 +16,7 @@ defmodule SymphonyElixir.Orchestrator do
     Nap.Results,
     Payload,
     PersistenceProvider,
+    PromptBuilder,
     RunLifecycle,
     StatusDashboard,
     Tracker,
@@ -3477,6 +3478,16 @@ defmodule SymphonyElixir.Orchestrator do
 
     workflow_record = current_workflow_record(workflow)
 
+    profile = Config.workflow_profile_for_state(issue.state)
+
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: profile,
+        profile_policy: Config.workflow_profile(profile),
+        allowed_updates: Config.workflow_allowed_updates(profile),
+        attempt: attempt
+      )
+
     run_attrs =
       issue
       |> Events.run_attrs(workflow_record, "worker", attempt)
@@ -3491,8 +3502,8 @@ defmodule SymphonyElixir.Orchestrator do
           issue,
           run,
           workflow_record,
-          Config.workflow_prompt(),
-          Config.workflow_profile_for_state(issue.state)
+          prompt,
+          profile
         )
       )
 

@@ -44,8 +44,9 @@ Codex 只看到两个 task-scoped tools：
 - `linear_task_read`：读取当前 issue detail 和可选的 recent activity。
 - `linear_task_update`：请求更新当前 issue 的允许字段。
 
-不暴露 raw GraphQL，不把 `LINEAR_API_KEY` 注入 Codex 环境，不允许操作其它 issue。profile 的
-`allowed_updates` 和 `workflow.allowed_transitions` 同时约束请求。
+不暴露 raw GraphQL；执行 worker 使用现有的 `LINEAR_API_KEY` 为这些请求认证，Codex 仍只能通过
+task-scoped tools 操作当前 issue，不能操作其它 issue。profile 的 `allowed_updates` 和
+`workflow.allowed_transitions` 同时约束请求。
 
 实现交付的所有权如下：
 
