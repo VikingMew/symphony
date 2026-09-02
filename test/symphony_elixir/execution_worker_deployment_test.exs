@@ -131,7 +131,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "- worker_control\n      - worker_egress"
     refute worker =~ "DATABASE_URL"
     refute worker =~ "POSTGRES_"
-    refute worker =~ "LINEAR_API_KEY"
+    assert worker =~ "LINEAR_API_KEY"
     refute worker =~ "- database"
   end
 

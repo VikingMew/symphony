@@ -313,5 +313,5 @@ Refining -> Needs Refinement Review
 - Codex 不能移动其它 issue。
 - Codex 不能跳过人工确认直接进入 `Ready`。
 - Codex 不能在未读取评论的情况下处理打回任务。
-- Codex 子进程环境中没有 `LINEAR_API_KEY`。
+- 执行 worker 使用现有的 `LINEAR_API_KEY`；Codex 对 Linear 的操作仍仅限 task-scoped tools。
 - 所有写操作有审计事件。
