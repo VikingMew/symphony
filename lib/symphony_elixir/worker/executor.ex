@@ -160,10 +160,18 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp require_handoff(%{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}}, %{handoff: nil}),
-    do: {:error, {:handoff_failed, :missing_handoff}}
+  defp require_handoff(%{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}}, %{handoff: nil, detail: detail}) do
+    if push_permission_failure?(detail), do: {:error, {:handoff_failed, {:push_permission_blocked, detail}}}, else: {:error, {:handoff_failed, :missing_handoff}}
+  end
 
   defp require_handoff(_payload, _codex), do: :ok
+
+  defp push_permission_failure?(detail) when is_binary(detail) do
+    normalized = String.downcase(detail)
+    Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
+  end
+
+  defp push_permission_failure?(_), do: false
 
   defp handoff(claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do
