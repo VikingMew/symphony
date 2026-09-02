@@ -5,7 +5,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
   alias SymphonyElixir.Codex.LinearToolAudit
-  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
 
@@ -505,11 +504,17 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     with {:ok, issue_id} <- issue_id_from_opts(opts),
          {:ok, profile} <- profile_from_opts(opts),
          {:ok, response} <-
-           Client.graphql(@task_read_query, %{
+           graphql(opts, @task_read_query, %{
              "id" => issue_id,
              "commentFirst" => Map.get(payload, "activity_limit", 50)
            }) do
-      {:ok, normalize_task_read_response(response, Map.get(payload, "include_activity", true), profile)}
+      {:ok,
+       normalize_task_read_response(
+         response,
+         Map.get(payload, "include_activity", true),
+         profile,
+         Keyword.get(opts, :allowed_updates, %{})
+       )}
     end
   end
 
@@ -517,7 +522,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result =
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
-           :ok <- validate_update_policy(payload, profile),
            :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
@@ -581,12 +585,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       profile when is_binary(profile) and profile != "" -> {:ok, profile}
       _ -> {:error, :workflow_profile_unavailable}
     end
-  end
-
-  defp validate_update_policy(payload, profile) do
-    policy = Config.workflow_allowed_updates(profile)
-
-    Policy.validate_update_policy(payload, policy, profile)
   end
 
   defp implementation_completion_request?(%{"target_state" => target_state}, "implementation") do
@@ -768,12 +766,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if base == "", do: section, else: base <> "\n\n" <> section
   end
 
-  defp normalize_task_read_response(response, include_activity, profile) do
+  defp normalize_task_read_response(response, include_activity, profile, allowed_updates) do
     response
     |> maybe_drop_activity(include_activity)
     |> Map.put("workflow", %{
       "profile" => profile,
-      "allowed_updates" => Config.workflow_allowed_updates(profile)
+      "allowed_updates" => allowed_updates
     })
   end
 
@@ -861,24 +859,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable), do: %{"error" => %{"message" => "handoff submission is unavailable in this session."}}
   defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}), do: %{"error" => %{"message" => "`handoff.#{field}` is required and must be non-empty."}}
   defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
-
-  defp tool_error_payload(_tool, {:update_not_allowed, field, profile}) do
-    %{
-      "error" => %{
-        "message" => "`linear_task_update.#{field}` is not allowed in workflow profile `#{profile}`."
-      }
-    }
-  end
-
-  defp tool_error_payload(_tool, {:target_state_not_allowed, state, profile, allowed}) do
-    %{
-      "error" => %{
-        "message" => "`linear_task_update.target_state` is not allowed in workflow profile `#{profile}`.",
-        "requestedState" => state,
-        "allowedStates" => allowed
-      }
-    }
-  end
 
   defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do
     %{

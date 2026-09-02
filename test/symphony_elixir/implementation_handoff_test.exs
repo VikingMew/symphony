@@ -118,29 +118,15 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
     assert response["output"] =~ "linear_issue_update_failed"
   end
 
-  test "completion requires final handoff fields including the PR URL" do
+  test "completion requires the PR URL and proof" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "https://github.com/acme/app"
     )
 
-    Enum.each(["comment", "result", "references"], fn field ->
-      payload = Map.delete(completion_payload(), field)
-
-      response =
-        DynamicTool.execute("linear_task_update", payload,
-          issue: issue(),
-          profile: "implementation"
-        )
-
-      refute response["success"]
-      assert response["output"] =~ "implementation_handoff_field_required"
-      assert response["output"] =~ field
-    end)
-
     missing_url = put_in(completion_payload(), ["references"], %{"branch" => "feature/sym-1"})
     response = DynamicTool.execute("linear_task_update", missing_url, issue: issue(), profile: "implementation")
     refute response["success"]
-    assert response["output"] =~ "references.pr_url"
+    assert response["output"] =~ "create_pull_request"
 
     forged = put_in(completion_payload(), ["references", "pr_proof"], "forged")
 

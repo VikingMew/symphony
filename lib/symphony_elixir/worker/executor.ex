@@ -3,9 +3,12 @@ defmodule SymphonyElixir.Worker.Executor do
 
   alias SymphonyElixir.Codex.{AppServer, DynamicTool}
   alias SymphonyElixir.Config, as: RuntimeConfig
+  alias SymphonyElixir.Config.RuntimeResolver
   alias SymphonyElixir.GitHub.PullRequest
-  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Linear.{Client, Issue}
   alias SymphonyElixir.Worker.{Command, Config, Paths, Payload, Validation}
+
+  @linear_endpoint "https://api.linear.app/graphql"
 
   @spec execute(Config.t(), map()) :: map()
   def execute(config, claim) do
@@ -70,6 +73,8 @@ defmodule SymphonyElixir.Worker.Executor do
           profile: codex.profile,
           run_id: Map.fetch!(claim, "run_id"),
           dynamic_tool_opts: [
+            allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+            graphql: &worker_graphql/2,
             pull_request_proof_secret: proof_secret,
             pull_request_creator: fn issue, rendered, _opts ->
               PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
@@ -169,7 +174,9 @@ defmodule SymphonyElixir.Worker.Executor do
         issue: %Issue{id: Map.fetch!(claim, "issue_id")},
         profile: payload.codex.profile,
         session_id: codex.session_id,
-        pull_request_proof_secret: codex.proof_secret
+        pull_request_proof_secret: codex.proof_secret,
+        allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+        graphql: &worker_graphql/2
       )
 
     case response do
@@ -186,6 +193,12 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   defp handoff(_claim, _payload, _codex), do: {:ok, %{}}
+
+  # Worker payloads do not include database-backed tracker settings. Linear
+  # access uses the worker's existing runtime token and the standard endpoint.
+  defp worker_graphql(query, variables) do
+    Client.graphql_with_auth(query, variables, RuntimeResolver.env_secret("LINEAR_API_KEY"), @linear_endpoint, [])
+  end
 
   defp summary(config, claim, revision, codex, validation) do
     %{
