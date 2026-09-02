@@ -89,10 +89,11 @@ The supported Compose stack exposes it only through the opt-in `execution-worker
 explicitly. Pass `GH_TOKEN` or `GITHUB_TOKEN` with the least repository clone/push permissions the
 workflow needs. The image rewrites GitHub SCP-style URLs to HTTPS and uses `gh` as the system
 credential helper, so it needs no external Git config or GitHub SSH host-key injection. The claimed
-opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
-required gates, and handoff commands. Its Codex section carries app-server settings and the
-rendered prompt as structured data; the worker drives one JSON-RPC turn over stdio. The worker
-never derives a missing required gate.
+opaque `execution` payload supplies repository/ref, project setup commands, ordered hooks, Codex,
+required gates, and handoff commands. After checkout, the worker runs the snapshotted setup
+commands before hooks and Codex, so the agent starts with project dependencies installed. Its
+Codex section carries app-server settings and the rendered prompt as structured data; the worker
+drives one JSON-RPC turn over stdio. The worker never derives a missing required gate.
 
 ## Quick Start
 

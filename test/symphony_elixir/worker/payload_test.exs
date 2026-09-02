@@ -15,6 +15,10 @@ defmodule SymphonyElixir.Worker.PayloadTest do
 
   test "rejects missing gates and unsupported versions" do
     assert {:error, {:invalid_execution_payload, _}} = Payload.parse(Map.delete(valid_payload(), "required_gates"))
+
+    assert {:error, {:invalid_execution_payload, "setup_commands must be a list"}} =
+             Payload.parse(Map.delete(valid_payload(), "setup_commands"))
+
     assert {:error, {:invalid_execution_payload, _}} = Payload.parse(%{"version" => 2})
   end
 

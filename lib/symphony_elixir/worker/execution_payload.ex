@@ -64,9 +64,9 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
   end
 
   defp setup_commands(payload, limits) do
-    timeout = Map.get(limits, "initialize_timeout_ms", 60_000)
+    timeout = Map.fetch!(limits, "initialize_timeout_ms")
 
-    Enum.map(Map.get(payload, "setup_commands", []), fn command ->
+    Enum.map(Map.fetch!(payload, "setup_commands"), fn command ->
       %{"command" => command, "timeout_seconds" => seconds(timeout)}
     end)
   end
