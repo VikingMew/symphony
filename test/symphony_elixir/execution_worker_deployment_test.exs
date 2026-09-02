@@ -86,7 +86,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/workspaces:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
-    assert workflow =~ "env -u SYMPHONY_ROLE make all"
+    assert workflow =~ "env -u SYMPHONY_ROLE scripts/check.sh"
     assert length(Regex.scan(~r/^      - \/tmp:exec,mode=1777$/m, compose)) == 2
   end
 

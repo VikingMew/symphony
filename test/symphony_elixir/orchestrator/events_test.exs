@@ -49,7 +49,13 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert task_attrs.payload["prompt"] == "Prompt"
     assert task_attrs.payload["workflow_profile"] == "implementation"
     assert task_attrs.payload["execution_mode"] == "worker"
-    assert task_attrs.payload["required_gates"] == [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
+
+    assert Enum.map(task_attrs.payload["required_gates"], & &1["command"]) == [
+             "scripts/check.sh",
+             "scripts/unit.sh",
+             "scripts/dialyzer.sh"
+           ]
+
     assert task_attrs.payload["repository"]["implementation_branch"] == "feature/mt-1"
     refute recursively_has_key?(task_attrs.payload, "workflow_version_id")
   end
@@ -110,7 +116,11 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
           "default_branch" => "main",
-          "required_gates" => [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
+          "required_gates" => [
+            %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
+            %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
+            %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
+          ]
         }
       },
       prompt_template: "Prompt"

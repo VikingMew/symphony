@@ -10,6 +10,10 @@ defmodule SymphonyElixir.DefaultTestBoundaryTest do
     assert PersistenceProvider.module() == FakePersistence
   end
 
+  test "unit suite disables the HTTP server" do
+    assert Application.fetch_env!(:symphony_elixir, :start_http_server) == false
+  end
+
   test "default suite does not create Symphony database artifacts under the test temp root" do
     temp_root = System.tmp_dir!()
 
