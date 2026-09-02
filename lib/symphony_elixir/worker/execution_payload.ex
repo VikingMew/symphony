@@ -16,6 +16,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "codex" => codex(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
       "required_gates" => Enum.map(Map.fetch!(payload, "required_gates"), &command/1),
+      "setup_commands" => Enum.map(Map.get(payload, "setup_commands", []), &command/1),
       "handoff" => Map.fetch!(payload, "handoff")
     }
   end

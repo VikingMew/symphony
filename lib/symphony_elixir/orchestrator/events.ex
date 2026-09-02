@@ -66,6 +66,10 @@ defmodule SymphonyElixir.Orchestrator.Events do
           "implementation_branch" => issue.branch_name
         },
         "required_gates" => settings.project.required_gates,
+        "setup_commands" => [
+          %{"command" => "if [ -f mix.exs ]; then mix local.hex --force && mix deps.get; fi", "timeout_ms" => settings.workspace.initialize_timeout_ms}
+          | Enum.map(settings.project.setup_commands, &%{"command" => &1, "timeout_ms" => settings.workspace.initialize_timeout_ms})
+        ],
         "hooks" => %{
           "after_create" => settings.hooks.after_create,
           "before_run" => settings.hooks.before_run,
