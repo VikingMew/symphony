@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert payload.repository == "https://example.test/repo.git"
     assert payload.codex.prompt == "Implement the task."
     assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
+    assert Enum.map(payload.setup_commands, & &1.command) == ["mix deps.get"]
     assert Enum.map(payload.gates, & &1.command) == ["make all"]
     refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
   end
@@ -48,6 +49,7 @@ defmodule SymphonyElixir.Worker.PayloadTest do
       "revision" => "main",
       "branch" => "work",
       "hooks" => [],
+      "setup_commands" => [%{"command" => "mix deps.get", "timeout_seconds" => 600}],
       "codex" => %{
         "command" => "codex app-server",
         "pre_start_commands" => [],

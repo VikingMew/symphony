@@ -50,6 +50,8 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert task_attrs.payload["workflow_profile"] == "implementation"
     assert task_attrs.payload["execution_mode"] == "worker"
     assert task_attrs.payload["required_gates"] == [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
+    assert task_attrs.payload["setup_commands"] == ["mix deps.get"]
+    assert task_attrs.payload["limits"]["initialize_timeout_ms"] == 60_000
     assert task_attrs.payload["repository"]["implementation_branch"] == "feature/mt-1"
     refute recursively_has_key?(task_attrs.payload, "workflow_version_id")
   end
@@ -110,6 +112,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
           "default_branch" => "main",
+          "setup_commands" => ["mix deps.get"],
           "required_gates" => [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}]
         }
       },
