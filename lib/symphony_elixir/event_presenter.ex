@@ -40,8 +40,8 @@ defmodule SymphonyElixir.EventPresenter do
       event_type: type,
       source: source(type, payload),
       severity: severity(type, payload),
-      summary: summary(type, payload),
-      detail: detail(type, payload),
+      summary: summary(type, payload) |> display_value(nil),
+      detail: detail(type, payload) |> display_value(nil),
       low_signal?: low_signal?(type, payload),
       raw_payload: Redaction.payload(payload, 500)
     }
@@ -87,8 +87,8 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp summary("linear.state_transition", payload) do
-    from = payload_value(payload, ["from_state", "from"])
-    to = payload_value(payload, ["to_state", "to"])
+    from = payload_value(payload, ["from_state", "from"]) |> display_value("n/a")
+    to = payload_value(payload, ["to_state", "to"]) |> display_value("n/a")
     "Linear state moved #{from || "n/a"} -> #{to || "n/a"}"
   end
 
@@ -105,7 +105,7 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp summary(type, payload) when is_binary(type) and type in ["run.failed", "run.completed", "run.started"] do
-    reason = payload_value(payload, ["failure_reason", "reason", "message"])
+    reason = payload_value(payload, ["failure_reason", "reason", "message"]) |> display_value(nil)
     if Text.blankish?(reason), do: type, else: "#{type}: #{reason}"
   end
 

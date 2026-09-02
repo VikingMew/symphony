@@ -84,4 +84,11 @@ defmodule SymphonyElixir.EventPresenterTest do
     assert is_binary(row.detail)
     assert is_binary(row.summary)
   end
+
+  test "coerces non-binary display values" do
+    row = EventPresenter.row(%{event_type: "task.failed", payload: %{"summary" => %{"detail" => %{"code" => 500}}}})
+
+    assert is_binary(row.detail)
+    assert is_binary(row.summary)
+  end
 end
