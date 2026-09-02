@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Worker.Executor do
     proof_secret = :crypto.strong_rand_bytes(32)
 
     result =
-      RuntimeConfig.with_workflow_context(codex_workflow(config, codex), fn ->
+      RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
         issue = %Issue{
           id: Map.fetch!(claim, "issue_id"),
           identifier: codex.issue.identifier,
@@ -95,11 +95,12 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp codex_workflow(config, codex) do
+  defp codex_workflow(config, codex, payload) do
     %{
       config: %{
         "workspace" => %{"root" => config.workspace_root},
-        "codex" => codex.config
+        "codex" => codex.config,
+        "project" => %{"repository_url" => payload.repository_url, "default_branch" => payload.default_branch}
       },
       prompt: "",
       prompt_template: ""

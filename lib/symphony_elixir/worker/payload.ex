@@ -15,7 +15,7 @@ defmodule SymphonyElixir.Worker.Payload do
   )
 
   @enforce_keys [:repository, :revision, :branch, :codex, :gates]
-  defstruct @enforce_keys ++ [hooks: [], handoff: %{}]
+  defstruct @enforce_keys ++ [repository_url: nil, default_branch: nil, hooks: [], handoff: %{}]
 
   @type command :: %{required(:command) => String.t(), required(:timeout_seconds) => pos_integer()}
   @type codex :: %{
@@ -26,6 +26,8 @@ defmodule SymphonyElixir.Worker.Payload do
         }
   @type t :: %__MODULE__{
           repository: String.t(),
+          repository_url: String.t(),
+          default_branch: String.t(),
           revision: String.t(),
           branch: String.t(),
           codex: codex(),
@@ -44,7 +46,18 @@ defmodule SymphonyElixir.Worker.Payload do
          {:ok, codex} <- codex(Map.get(payload, "codex")),
          {:ok, hooks} <- commands(Map.get(payload, "hooks", []), "hooks", true),
          {:ok, gates} <- commands(Map.get(payload, "required_gates"), "required_gates", true) do
-      {:ok, %__MODULE__{repository: repository, revision: revision, branch: branch, codex: codex, hooks: hooks, gates: gates, handoff: Map.get(payload, "handoff", %{})}}
+      {:ok,
+       %__MODULE__{
+         repository: repository,
+         repository_url: Map.get(payload, "repository_url", repository),
+         default_branch: Map.get(payload, "default_branch", revision),
+         revision: revision,
+         branch: branch,
+         codex: codex,
+         hooks: hooks,
+         gates: gates,
+         handoff: Map.get(payload, "handoff", %{})
+       }}
     end
   end
 
