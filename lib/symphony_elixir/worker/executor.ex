@@ -66,15 +66,19 @@ defmodule SymphonyElixir.Worker.Executor do
           url: Map.get(payload.handoff, "issue_url")
         }
 
-        AppServer.run(workspace, codex.prompt, issue,
-          profile: codex.profile,
-          run_id: Map.fetch!(claim, "run_id"),
-          dynamic_tool_opts: [
+        dynamic_tool_opts =
+          [
             pull_request_proof_secret: proof_secret,
             pull_request_creator: fn issue, rendered, _opts ->
               PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
             end
           ]
+          |> maybe_put_allowed_updates(payload.handoff)
+
+        AppServer.run(workspace, codex.prompt, issue,
+          profile: codex.profile,
+          run_id: Map.fetch!(claim, "run_id"),
+          dynamic_tool_opts: dynamic_tool_opts
         )
       end)
 
@@ -92,6 +96,13 @@ defmodule SymphonyElixir.Worker.Executor do
 
       {:error, reason} ->
         %{status: :failed, duration_ms: duration_ms, detail: inspect(reason)}
+    end
+  end
+
+  defp maybe_put_allowed_updates(opts, handoff) do
+    case Map.fetch(handoff, "allowed_updates") do
+      {:ok, allowed_updates} -> Keyword.put(opts, :allowed_updates, allowed_updates)
+      :error -> opts
     end
   end
 

@@ -509,7 +509,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
              "id" => issue_id,
              "commentFirst" => Map.get(payload, "activity_limit", 50)
            }) do
-      {:ok, normalize_task_read_response(response, Map.get(payload, "include_activity", true), profile)}
+      {:ok, normalize_task_read_response(response, Map.get(payload, "include_activity", true), profile, opts)}
     end
   end
 
@@ -517,7 +517,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result =
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
-           :ok <- validate_update_policy(payload, profile),
+           :ok <- validate_update_policy(payload, profile, opts),
            :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
@@ -583,8 +583,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp validate_update_policy(payload, profile) do
-    policy = Config.workflow_allowed_updates(profile)
+  defp validate_update_policy(payload, profile, opts) do
+    policy = Keyword.get(opts, :allowed_updates, Config.workflow_allowed_updates(profile))
 
     Policy.validate_update_policy(payload, policy, profile)
   end
@@ -768,12 +768,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if base == "", do: section, else: base <> "\n\n" <> section
   end
 
-  defp normalize_task_read_response(response, include_activity, profile) do
+  defp normalize_task_read_response(response, include_activity, profile, opts) do
     response
     |> maybe_drop_activity(include_activity)
     |> Map.put("workflow", %{
       "profile" => profile,
-      "allowed_updates" => Config.workflow_allowed_updates(profile)
+      "allowed_updates" => Keyword.get(opts, :allowed_updates, Config.workflow_allowed_updates(profile))
     })
   end
 
