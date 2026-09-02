@@ -291,17 +291,21 @@ against a disposable, already-created empty database:
 
 ```bash
 export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony_smoke
-make pg-smoke
+mise exec -- mix symphony.postgres_smoke
 ```
 
-The main CI workflow runs `make all`, which includes setup, build, formatting check, lint, coverage, and dialyzer.
+Make is reserved for build and image targets. Run quality checks independently with
+`scripts/check.sh` (format, lint, compile), `scripts/unit.sh` (85% coverage-bearing unit suite),
+`scripts/e2e.sh` (credentialed live integration suite), and `scripts/dialyzer.sh` (static analysis).
+CI orchestrates these scripts into fast, unit, E2E, and static jobs; publication uses only the fast
+check gate.
 
 The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
 run it only with explicit credentials:
 
 ```bash
 export LINEAR_API_KEY=...
-make MIX="mise exec -- mix" e2e
+scripts/e2e.sh
 ```
 
 Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to a comma-separated host list to exercise existing SSH

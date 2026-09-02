@@ -45,8 +45,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
 
-      - name: Verify make all
-        run: make all
+      - name: Run publish quality gate
+        run: scripts/check.sh
 
       - name: Validate local and published Compose models
         env:
@@ -145,7 +145,7 @@ jobs:
               mise --version && mix --version &&
               cp -R /source/. /worker/workspaces/symphony &&
               cd /worker/workspaces/symphony &&
-              mise exec -- mix --version && env -u SYMPHONY_ROLE make all
+              mise exec -- mix --version && env -u SYMPHONY_ROLE scripts/check.sh
             '
 
       - name: Select immutable and mutable tags

@@ -17,7 +17,13 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["codex"]["prompt"] =~ "Workflow profile: implementation"
     assert execution["codex"]["prompt"] =~ "Linear issue SYM-45: Align worker payloads"
     assert Enum.map(execution["hooks"], & &1["command"]) == ["mix setup", "mix test"]
-    assert execution["required_gates"] == [%{"command" => "make all", "timeout_seconds" => 1_800}]
+
+    assert Enum.map(execution["required_gates"], & &1["command"]) == [
+             "scripts/check.sh",
+             "scripts/unit.sh",
+             "scripts/dialyzer.sh"
+           ]
+
     assert execution["handoff"]["policy"] == panel_payload["handoff"]["policy"]
     refute Map.has_key?(execution["handoff"], "command")
     assert {:ok, parsed} = Payload.parse(execution)
@@ -46,7 +52,11 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
         "source_ref" => "main",
         "implementation_branch" => "vikingmew-sym-45"
       },
-      "required_gates" => [%{"name" => "make-all", "command" => "make all", "timeout_ms" => 1_800_000}],
+      "required_gates" => [
+        %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
+        %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
+        %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
+      ],
       "hooks" => %{
         "after_create" => "mix setup",
         "before_run" => "mix test",
