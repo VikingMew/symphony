@@ -171,8 +171,6 @@ defmodule SymphonyElixir.Worker.Executor do
     Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
   end
 
-  defp push_permission_failure?(_), do: false
-
   defp handoff(claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do
     update = Map.put(codex.handoff, "target_state", "Ready to Merge")
