@@ -40,8 +40,8 @@ defmodule SymphonyElixir.EventPresenter do
       event_type: type,
       source: source(type, payload),
       severity: severity(type, payload),
-      summary: summary(type, payload),
-      detail: detail(type, payload),
+      summary: summary(type, payload) |> display_value(nil),
+      detail: detail(type, payload) |> display_value(nil),
       low_signal?: low_signal?(type, payload),
       raw_payload: Redaction.payload(payload, 500)
     }
@@ -87,8 +87,8 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp summary("linear.state_transition", payload) do
-    from = payload_value(payload, ["from_state", "from"])
-    to = payload_value(payload, ["to_state", "to"])
+    from = payload_value(payload, ["from_state", "from"]) |> display_value("n/a")
+    to = payload_value(payload, ["to_state", "to"]) |> display_value("n/a")
     "Linear state moved #{from || "n/a"} -> #{to || "n/a"}"
   end
 
@@ -105,12 +105,12 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp summary(type, payload) when is_binary(type) and type in ["run.failed", "run.completed", "run.started"] do
-    reason = payload_value(payload, ["failure_reason", "reason", "message"])
+    reason = payload_value(payload, ["failure_reason", "reason", "message"]) |> display_value(nil)
     if Text.blankish?(reason), do: type, else: "#{type}: #{reason}"
   end
 
   defp summary(type, payload) do
-    payload_value(payload, ["message", "summary", "reason"]) || type
+    payload_value_nested(payload, ["message", "summary", "reason"]) |> display_value(type)
   end
 
   defp detail("codex.update", payload) do
@@ -118,7 +118,7 @@ defmodule SymphonyElixir.EventPresenter do
   end
 
   defp detail(type, payload) do
-    payload_value(payload, ["detail", "output", "recent_output", "phase"]) || type
+    payload_value_nested(payload, ["detail", "output", "recent_output", "phase"]) |> display_value(type)
   end
 
   defp low_signal?("codex.update", payload), do: empty_codex_notification?(payload)
@@ -140,6 +140,20 @@ defmodule SymphonyElixir.EventPresenter do
   defp payload_value(payload, keys) do
     Enum.find_value(keys, fn key -> Payload.get_any(payload, [key, known_atom_key(key)]) end)
   end
+
+  defp payload_value_nested(payload, keys) do
+    nested = Payload.get_any(payload, ["summary", :summary])
+
+    if is_map(nested) do
+      payload_value(nested, keys) || payload_value(payload, keys)
+    else
+      payload_value(payload, keys)
+    end
+  end
+
+  defp display_value(nil, fallback), do: fallback
+  defp display_value(value, _fallback) when is_binary(value), do: value
+  defp display_value(value, _fallback), do: inspect(value, pretty: false, limit: :infinity)
 
   defp known_atom_key("detail"), do: :detail
   defp known_atom_key("failure_reason"), do: :failure_reason
