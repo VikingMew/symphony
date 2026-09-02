@@ -95,7 +95,9 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp codex_workflow(config, codex, payload) do
+  @doc false
+  @spec codex_workflow(Config.t(), map(), Payload.t()) :: map()
+  def codex_workflow(config, codex, payload) do
     %{
       config: %{
         "workspace" => %{"root" => config.workspace_root},
