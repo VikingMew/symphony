@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Codex.DynamicTool.Policy do
   @moduledoc """
-  Pure argument normalization and update-policy helpers for Codex dynamic tools.
+  Pure argument normalization and handoff helpers for Codex dynamic tools.
   """
 
   @spec normalize_update_arguments(term()) :: {:ok, map()} | {:error, term()}
@@ -19,16 +19,6 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
   end
 
   def normalize_update_arguments(_arguments), do: {:error, :invalid_arguments}
-
-  @spec validate_update_policy(map(), map(), String.t()) :: :ok | {:error, term()}
-  def validate_update_policy(payload, policy, profile) do
-    with :ok <- validate_required_allow_true(payload, policy, profile, "description"),
-         :ok <- validate_required_allow_true(payload, policy, profile, "result"),
-         :ok <- validate_not_explicitly_false(payload, policy, profile, "comment"),
-         :ok <- validate_target_state_allowed(payload, policy, profile) do
-      validate_implementation_completion_payload(payload, profile)
-    end
-  end
 
   @spec implementation_completion_target?(String.t()) :: boolean()
   def implementation_completion_target?(target_state) when is_binary(target_state) do
@@ -66,69 +56,6 @@ defmodule SymphonyElixir.Codex.DynamicTool.Policy do
       {:ok, url, proof}
     else
       _ -> nil
-    end
-  end
-
-  defp validate_required_allow_true(payload, policy, profile, field) do
-    if Map.has_key?(payload, field) and Map.get(policy, field) != true,
-      do: {:error, {:update_not_allowed, field, profile}},
-      else: :ok
-  end
-
-  defp validate_not_explicitly_false(payload, policy, profile, field) do
-    if Map.has_key?(payload, field) and Map.get(policy, field) == false,
-      do: {:error, {:update_not_allowed, field, profile}},
-      else: :ok
-  end
-
-  defp validate_target_state_allowed(payload, policy, profile) do
-    case Map.get(payload, "target_state") do
-      nil -> :ok
-      target_state -> validate_target_state(target_state, policy, profile)
-    end
-  end
-
-  defp validate_target_state(target_state, policy, profile) do
-    allowed = Map.get(policy, "target_states", [])
-
-    if target_state in allowed do
-      :ok
-    else
-      {:error, {:target_state_not_allowed, target_state, profile, allowed}}
-    end
-  end
-
-  defp validate_implementation_completion_payload(
-         %{"target_state" => target_state} = payload,
-         "implementation"
-       ) do
-    if implementation_completion_target?(target_state) do
-      required_fields = ["comment", "result", "references"]
-
-      case Enum.find(required_fields, &missing_completion_field?(payload, &1)) do
-        nil -> validate_pull_request_reference(payload)
-        field -> {:error, {:implementation_handoff_field_required, field}}
-      end
-    else
-      :ok
-    end
-  end
-
-  defp validate_implementation_completion_payload(_payload, _profile), do: :ok
-
-  defp missing_completion_field?(payload, "comment") do
-    case Map.get(payload, "comment") do
-      value when is_binary(value) -> String.trim(value) == ""
-      _ -> true
-    end
-  end
-
-  defp missing_completion_field?(payload, field), do: not is_map(Map.get(payload, field))
-
-  defp validate_pull_request_reference(payload) do
-    case pull_request_reference(payload) do
-      {:ok, _url, _proof} -> :ok
-      error -> error
     end
   end
 

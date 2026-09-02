@@ -11,36 +11,6 @@ defmodule SymphonyElixir.Codex.DynamicTool.PolicyTest do
     assert {:error, {:invalid_field, "references"}} = Policy.normalize_update_arguments(%{"references" => ["bad"]})
   end
 
-  test "validates allowed update policy" do
-    policy = %{
-      "comment" => true,
-      "description" => false,
-      "result" => true,
-      "target_states" => ["In Progress", "Ready to Merge"]
-    }
-
-    assert :ok =
-             Policy.validate_update_policy(
-               %{
-                 "comment" => "ok",
-                 "result" => %{"validation" => "green"},
-                 "references" => %{
-                   "branch" => "feature/sym-1",
-                   "pr_url" => "https://github.com/acme/app/pull/1",
-                   "pr_proof" => "proof"
-                 },
-                 "target_state" => "Ready to Merge"
-               },
-               policy,
-               "implementation"
-             )
-
-    assert {:error, {:update_not_allowed, "description", "implementation"}} = Policy.validate_update_policy(%{"description" => "no"}, policy, "implementation")
-
-    assert {:error, {:target_state_not_allowed, "Done", "implementation", ["In Progress", "Ready to Merge"]}} =
-             Policy.validate_update_policy(%{"target_state" => "Done"}, policy, "implementation")
-  end
-
   test "accepts legacy and Codex pull request reference pairs without mixing" do
     legacy = %{"references" => %{"pr_url" => "https://github.com/acme/app/pull/1", "pr_proof" => "proof"}}
     codex = %{"references" => %{"pull_request" => "https://github.com/acme/app/pull/2", "pull_request_completion_proof" => "proof-2"}}
