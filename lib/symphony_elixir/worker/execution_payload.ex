@@ -14,6 +14,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "revision" => Map.fetch!(repository, "source_ref"),
       "branch" => Map.fetch!(repository, "implementation_branch"),
       "codex" => codex(payload, limits),
+      "setup_commands" => setup_commands(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
       "required_gates" => Enum.map(Map.fetch!(payload, "required_gates"), &command/1),
       "handoff" => Map.fetch!(payload, "handoff")
@@ -60,6 +61,14 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
         is_binary(value) and value != "" do
       %{"command" => value, "timeout_seconds" => seconds(timeout)}
     end
+  end
+
+  defp setup_commands(payload, limits) do
+    timeout = Map.fetch!(limits, "initialize_timeout_ms")
+
+    Enum.map(Map.fetch!(payload, "setup_commands"), fn command ->
+      %{"command" => command, "timeout_seconds" => seconds(timeout)}
+    end)
   end
 
   defp command(%{"command" => command, "timeout_ms" => timeout}) do

@@ -139,6 +139,9 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.validation.overall_status == :passed
     assert result.handoff == %{}
 
+    workspace = Path.join([root, "workspaces", "project-1", "task-1", "lease-1"])
+    assert File.read!(Path.join(workspace, "deps/installed")) == "ready"
+
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
     assert [{"task-1", "task.progress", %{"phase" => "execution_started"}}, first, second] = Persistence.events()
@@ -211,6 +214,36 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.reason =~ "missing_handoff"
   end
 
+  test "stops before Codex when workspace setup fails", %{
+    root: root,
+    codex_trace: codex_trace,
+    codex_binary: codex_binary
+  } do
+    source = Path.join(root, "source")
+    revision = git!(source, ["rev-parse", "HEAD"])
+
+    execution =
+      source
+      |> panel_payload(revision, codex_binary)
+      |> Map.put("setup_commands", ["exit 17"])
+      |> ExecutionPayload.from_task_payload()
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => "setup-failure-task",
+      "lease_id" => "setup-failure-lease",
+      "issue_id" => "issue-1",
+      "run_id" => "run-1",
+      "execution" => execution
+    }
+
+    result = Executor.execute(config(root), claim)
+
+    assert result.status == :failed
+    assert result.reason =~ "setup_failed"
+    refute File.exists?(codex_trace)
+  end
+
   defp config(root) do
     %Config{
       panel_url: "http://panel.test",
@@ -236,6 +269,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "source_ref" => revision,
         "implementation_branch" => "vikingmew-sym-12"
       },
+      "setup_commands" => ["mkdir -p deps && printf ready > deps/installed"],
       "hooks" => %{
         "after_create" => "git rev-parse HEAD",
         "before_run" => nil,
@@ -251,6 +285,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "turn_sandbox_policy" => nil
       },
       "limits" => %{
+        "initialize_timeout_ms" => 10_000,
         "turn_timeout_ms" => 10_000,
         "read_timeout_ms" => 5_000,
         "stall_timeout_ms" => 5_000

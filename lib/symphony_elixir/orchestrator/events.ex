@@ -66,6 +66,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
           "implementation_branch" => issue.branch_name
         },
         "required_gates" => settings.project.required_gates,
+        "setup_commands" => settings.project.setup_commands,
         "hooks" => %{
           "after_create" => settings.hooks.after_create,
           "before_run" => settings.hooks.before_run,
@@ -75,6 +76,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
         },
         "limits" => %{
           "max_turns" => settings.agent.max_turns,
+          "initialize_timeout_ms" => settings.workspace.initialize_timeout_ms,
           "turn_timeout_ms" => settings.codex.turn_timeout_ms,
           "read_timeout_ms" => settings.codex.read_timeout_ms,
           "stall_timeout_ms" => settings.codex.stall_timeout_ms

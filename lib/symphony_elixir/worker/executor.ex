@@ -17,6 +17,7 @@ defmodule SymphonyElixir.Worker.Executor do
          :ok <- File.mkdir_p(workspace),
          :ok <- not_cancelled(),
          {:ok, revision} <- prepare(payload, workspace),
+         :ok <- run_steps(payload.setup_commands, workspace, :setup_failed),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace),
