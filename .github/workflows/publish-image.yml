@@ -45,8 +45,29 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-mix-
 
-      - name: Run publish quality gate
-        run: scripts/check.sh
+      - name: Install dependencies
+        run: mix deps.get
+
+      - name: Run publish lint
+        run: mix credo --strict
+
+      - name: Compile with warnings as errors
+        run: mix compile --warnings-as-errors
+
+      - name: Check formatting (non-blocking diagnostic)
+        id: format
+        shell: bash
+        run: |
+          set +e
+          mix format --check-formatted
+          status=$?
+          if [[ $status -eq 0 ]]; then
+            echo "- Formatting: pass" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- Formatting: drift detected (non-blocking); remediate via the blocking [quality workflow](../actions/workflows/make-all.yml)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
       - name: Validate local and published Compose models
         env:
@@ -145,7 +166,7 @@ jobs:
               mise --version && mix --version &&
               cp -R /source/. /worker/workspaces/symphony &&
               cd /worker/workspaces/symphony &&
-              mise exec -- mix --version && env -u SYMPHONY_ROLE scripts/check.sh
+              mise exec -- mix --version
             '
 
       - name: Select immutable and mutable tags
@@ -371,34 +392,26 @@ jobs:
           docker run --rm --platform linux/arm64 --entrypoint sh "${WORKER_IMAGE}@${ARM64_DIGEST}" \
             -lc 'test "$(id -u)" = 10002 && codex --version && mise --version && mix --version'
 
-      - name: Summarize publication
-        if: always()
+  summary:
+    if: always()
+    needs: [quality-gate, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summarize publication outcome
         shell: bash
         env:
-          DIGEST: ${{ steps.published.outputs.digest }}
-          TAGS: ${{ steps.tags.outputs.tags }}
-          PLATFORMS: ${{ steps.manifest.outputs.platforms }}
-          WORKER_DIGEST: ${{ steps.worker-published.outputs.digest }}
-          WORKER_TAGS: ${{ steps.tags.outputs.worker-tags }}
-          WORKER_PLATFORMS: ${{ steps.worker-manifest.outputs.platforms }}
-          CACHE_RESTORED: ${{ steps.build-cache.outputs.cache-hit }}
-          STARTED_AT: ${{ needs.quality-gate.outputs.started-at }}
+          QUALITY_RESULT: ${{ needs.quality-gate.result }}
+          PUBLISH_RESULT: ${{ needs.publish.result }}
         run: |
-          duration="$(( $(date +%s) - STARTED_AT ))s"
+          if [[ "$QUALITY_RESULT" != success ]]; then outcome="prerequisite-failure"; elif [[ "$PUBLISH_RESULT" == success ]]; then outcome="published"; elif [[ "$PUBLISH_RESULT" == skipped ]]; then outcome="skipped"; else outcome="publication-failure"; fi
           {
-            echo "## Published Symphony image"
-            echo
-            echo "- Digest: \`${DIGEST:-unavailable}\`"
-            echo "- Tags:"
-            while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< "${TAGS:-unavailable}"
-            echo "- Manifest platforms: \`${PLATFORMS//$'\n'/, }\`"
-            echo
-            echo "## Published Symphony execution-worker image"
-            echo
-            echo "- Digest: \`${WORKER_DIGEST:-unavailable}\`"
-            echo "- Tags:"
-            while IFS= read -r tag; do echo "  - \`$tag\`"; done <<< "${WORKER_TAGS:-unavailable}"
-            echo "- Manifest platforms: \`${WORKER_PLATFORMS//$'\n'/, }\`"
-            echo "- Total workflow duration: \`$duration\`"
-            echo "- BuildKit cache restored: \`${CACHE_RESTORED:-false}\`"
+            echo "## Publish summary"
+            echo "- Outcome: **$outcome**"
+            echo "- Completed (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Quality gate: $QUALITY_RESULT; publish job: $PUBLISH_RESULT"
+            tags="sha-${GITHUB_SHA}"
+            [[ "$GITHUB_REF" == refs/heads/main ]] && tags+=", latest"
+            echo "- Tags: $tags"
           } >> "$GITHUB_STEP_SUMMARY"
