@@ -187,16 +187,40 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.detail =~ "worker fixture failure"
   end
 
-  test "fails an implementation run that completes without a handoff", %{
+  test "classifies a workflow-scope push rejection as permission blocked", %{
+    root: root,
+    codex_trace: codex_trace,
+    codex_binary: codex_binary
+  } do
+    fake_codex!(
+      root,
+      codex_trace,
+      ~s({"method":"turn/failed","params":{"reason":"GitHub rejected push with 403: token lacks the required workflow scope"}})
+    )
+
+    result = execute_implementation(root, codex_binary, "push-permission-task")
+    assert result.status == :failed
+    assert result.reason =~ "push_permission_blocked"
+    assert result.reason =~ "workflow scope"
+  end
+
+  test "fails a true missing implementation handoff", %{
     root: root,
     codex_binary: codex_binary
   } do
+    result = execute_implementation(root, codex_binary, "missing-handoff-task")
+    assert result.status == :failed
+    assert result.reason =~ "handoff_failed"
+    assert result.reason =~ "missing_handoff"
+  end
+
+  defp execute_implementation(root, codex_binary, task_id) do
     source = Path.join(root, "source")
     revision = git!(source, ["rev-parse", "HEAD"])
 
     claim = %{
       "project_id" => "project-1",
-      "task_id" => "missing-handoff-task",
+      "task_id" => task_id,
       "lease_id" => "missing-handoff-lease",
       "issue_id" => "issue-1",
       "run_id" => "run-1",
@@ -205,10 +229,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         |> ExecutionPayload.from_task_payload()
     }
 
-    result = Executor.execute(config(root), claim)
-    assert result.status == :failed
-    assert result.reason =~ "handoff_failed"
-    assert result.reason =~ "missing_handoff"
+    Executor.execute(config(root), claim)
   end
 
   defp config(root) do

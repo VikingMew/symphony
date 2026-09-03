@@ -425,12 +425,14 @@ defmodule SymphonyElixir.Orchestrator do
 
       match?({:error, _}, result) and
           BlockingDecision.terminal_handoff_failure?(elem(result, 1)) ->
+        {decision_reason, evidence} = handoff_blocking_decision(elem(result, 1))
+
         persist_and_block_issue(
           state,
           issue_id,
           entry,
-          :implementation_handoff_failure,
-          inspect(elem(result, 1)),
+          decision_reason,
+          evidence,
           references
         )
 
@@ -447,6 +449,12 @@ defmodule SymphonyElixir.Orchestrator do
         state
     end
   end
+
+  defp handoff_blocking_decision({:handoff_failed, {:push_permission_blocked, detail}}),
+    do: {:push_permission_blocked, "MANUAL_HANDOFF_REQUIRED: #{detail}"}
+
+  defp handoff_blocking_decision(reason),
+    do: {:implementation_handoff_failure, inspect(reason)}
 
   defp handle_worker_down_reason(
          state,
