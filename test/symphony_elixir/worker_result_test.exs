@@ -30,6 +30,21 @@ defmodule SymphonyElixir.WorkerResultTest do
     assert {:error, {:invalid_worker_summary, _}} = WorkerResult.validate(%{})
   end
 
+  test "allows lightweight progress events without a summary" do
+    assert WorkerResult.validate_event("task.progress", %{"phase" => "execution_started"}) == {:ok, nil}
+  end
+
+  test "requires a valid summary for terminal task events" do
+    valid_summary = summary([])
+
+    for event_type <- ["task.completed", "task.failed", "task.cancelled"] do
+      assert WorkerResult.validate_event(event_type, %{}) ==
+               {:error, {:invalid_worker_summary, "summary must be an object"}}
+
+      assert {:ok, ^valid_summary} = WorkerResult.validate_event(event_type, %{"summary" => valid_summary})
+    end
+  end
+
   defp summary(gates) do
     %{
       "phase" => "validation",

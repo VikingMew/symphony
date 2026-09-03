@@ -7,6 +7,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   alias Plug.Conn
   alias SymphonyElixir.PersistenceProvider
+  alias SymphonyElixir.Worker.ExecutionPayload
 
   @spec register(Conn.t(), map()) :: Conn.t()
   def register(conn, params) do
@@ -53,7 +54,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
             run_attempt: correlation["run_attempt"],
             lease_attempt: lease.attempt,
             worker_session_id: correlation["worker_session_id"],
-            execution: task.payload || %{}
+            execution: ExecutionPayload.from_task_payload(task.payload)
           })
       end
     else

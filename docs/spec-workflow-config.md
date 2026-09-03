@@ -130,7 +130,7 @@ Fields:
 Worker execution snapshots resolve `project.required_gates` from the current PostgreSQL workflow
 when a task is queued. Each entry requires a stable non-blank `name`, non-blank `command`, and
 positive `timeout_ms`. Declaration order is execution and result order. The repository package
-declares one required gate: `make-all` running `make all` with a 1,800,000 ms timeout.
+declares independent `check`, `unit`, and `dialyzer` script gates; live E2E is orchestrated by its separate workflow.
 
 #### 5.3.3 `workspace` (object)
 

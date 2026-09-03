@@ -5,6 +5,8 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
+  @published_compose Path.expand("../../compose.published.yaml", __DIR__)
+  @quality_workflow Path.expand("../../.github/workflows/make-all.yml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
     dockerfile = File.read!(@dockerfile)
@@ -62,29 +64,62 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "command -v elixir"
     assert workflow =~ "command -v erl"
     assert workflow =~ "command -v make"
+    assert length(Regex.scan(~r/command -v gh/, workflow)) == 3
+
+    assert length(
+             Regex.scan(
+               ~r/git config --system --get-all credential\.https:\/\/github\.com\.helper/,
+               workflow
+             )
+           ) == 3
+
+    assert length(
+             Regex.scan(
+               ~r/git config --system --get-all url\.https:\/\/github\.com\/\.insteadOf/,
+               workflow
+             )
+           ) == 3
+
+    refute workflow =~ "git credential fill"
     assert workflow =~ "--read-only"
     assert workflow =~ "--user 10002:10002"
     assert workflow =~ "--tmpfs /tmp:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/workspaces:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
-    assert workflow =~ "env -u SYMPHONY_ROLE make all"
+    refute workflow =~ "scripts/check.sh"
+    assert workflow =~ "mix format --check-formatted"
+    assert workflow =~ "Formatting: drift detected"
+    assert workflow =~ "needs: [quality-gate, publish]"
+    assert workflow =~ "if: always()"
     assert length(Regex.scan(~r/^      - \/tmp:exec,mode=1777$/m, compose)) == 2
   end
 
-  test "symphony image configures token-free GitHub credentials at system scope" do
+  test "blocking quality workflow owns repository aggregate" do
+    quality = File.read!(@quality_workflow)
+    assert quality =~ "scripts/check.sh"
+  end
+
+  test "all Codex images configure token-free GitHub credentials at system scope" do
     dockerfile = File.read!(@dockerfile)
     compose = File.read!(@compose)
 
-    assert dockerfile =~
-             "git config --system credential.https://github.com.helper '!gh auth git-credential'"
+    for stage <- ["worker", "symphony", "execution-worker"] do
+      body = stage_body(dockerfile, stage)
 
-    assert dockerfile =~
-             "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
+      assert body =~ ~r/^\s*gh \\?$/m, "#{stage} must install gh"
 
-    refute dockerfile =~ "x-access-token"
-    refute dockerfile =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
-    refute compose =~ "GIT_CONFIG_GLOBAL"
+      assert body =~
+               "git config --system credential.https://github.com.helper '!gh auth git-credential'"
+
+      assert body =~
+               "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
+
+      refute body =~ "x-access-token"
+      refute body =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
+    end
+
+    refute compose =~ ~r/GIT_CONFIG_(?:GLOBAL|COUNT|KEY|VALUE)/
   end
 
   test "trusted HTTP worker is opt-in, isolated, and non-privileged" do
@@ -106,7 +141,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "- worker_control\n      - worker_egress"
     refute worker =~ "DATABASE_URL"
     refute worker =~ "POSTGRES_"
-    refute worker =~ "LINEAR_API_KEY"
+    assert worker =~ "LINEAR_API_KEY"
     refute worker =~ "- database"
   end
 
@@ -145,6 +180,41 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-[0-9a-f]{40}/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE=\S+:[0-9a-f]{40}\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
+  end
+
+  test "publication workflow publishes the execution worker image" do
+    workflow = File.read!(@publish_workflow)
+
+    assert workflow =~ "WORKER_IMAGE: ghcr.io/vikingmew/symphony-execution-worker"
+    assert workflow =~ "target: execution-worker"
+    assert workflow =~ "platforms: linux/amd64,linux/arm64"
+    assert workflow =~ "worker_tags=\"${WORKER_IMAGE}:sha-${GITHUB_SHA}\""
+    assert workflow =~ "${WORKER_IMAGE}:latest"
+    assert workflow =~ "worker_release_tag=\"${WORKER_IMAGE}:${GITHUB_REF_NAME}\""
+    assert workflow =~ "Inspect worker manifest platforms"
+    assert workflow =~ "Smoke published worker on both platforms"
+  end
+
+  test "published Compose validation quotes the execution worker service key" do
+    workflow = File.read!(@publish_workflow)
+
+    assert workflow =~
+             "docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker config --format json"
+
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.image == env\.SYMPHONY_EXECUTION_WORKER_IMAGE/
+    assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
+    assert workflow =~ ~r/\.services\["execution-worker"\]\.profiles == \["execution-worker"\]/
+    refute workflow =~ ".services.execution-worker"
+  end
+
+  test "published Compose removes the worker build and requires its image" do
+    compose = File.read!(@published_compose)
+    worker = service_body(compose, "execution-worker")
+
+    assert worker =~ "build: !reset null"
+    assert worker =~ "SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE"
+    assert worker =~ "pull_policy: always"
   end
 
   defp service_body(compose, service) do

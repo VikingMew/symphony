@@ -242,7 +242,7 @@ defmodule SymphonyElixir.Workspace do
 
       _clone ->
         run_optional_hook(
-          Config.generated_project_bootstrap_commands(),
+          worker_project_bootstrap_commands(),
           workspace,
           issue_context,
           "project_bootstrap",
@@ -250,6 +250,17 @@ defmodule SymphonyElixir.Workspace do
           settings.workspace.initialize_timeout_ms,
           opts
         )
+    end
+  end
+
+  @spec worker_project_bootstrap_commands() :: String.t()
+  defp worker_project_bootstrap_commands do
+    case Config.generated_project_bootstrap_commands() do
+      nil ->
+        "if [ -f mix.exs ]; then mix local.hex --force && mix deps.get; fi"
+
+      commands ->
+        "if [ -f mix.exs ]; then mix local.hex --force && mix deps.get; fi\n" <> commands
     end
   end
 

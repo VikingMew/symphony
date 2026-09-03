@@ -86,8 +86,13 @@ The supported Compose stack exposes it only through the opt-in `execution-worker
 [the worker operations guide](docs/execution-worker-operations.md). Run it with
 `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
 `/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
-explicitly. The claimed opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
-required gates, and handoff commands. The worker never derives a missing required gate.
+explicitly. Pass `GH_TOKEN` or `GITHUB_TOKEN` with the least repository clone/push permissions the
+workflow needs. The image rewrites GitHub SCP-style URLs to HTTPS and uses `gh` as the system
+credential helper, so it needs no external Git config or GitHub SSH host-key injection. The claimed
+opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
+required gates, and handoff commands. Its Codex section carries app-server settings and the
+rendered prompt as structured data; the worker drives one JSON-RPC turn over stdio. The worker
+never derives a missing required gate.
 
 ## Quick Start
 
@@ -158,7 +163,7 @@ Common environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `LINEAR_API_KEY` | Linear API access. |
-| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub REST fallback for PR lookup/creation when authenticated `gh` is unavailable. |
+| `GH_TOKEN` / `GITHUB_TOKEN` | GitHub clone/push and PR access through the image's `gh` credential integration. |
 | `LINEAR_ASSIGNEE` | Optional default Linear assignee. |
 | `DATABASE_URL` | Required PostgreSQL connection URL for startup, migrations, and cutover. |
 | `SYMPHONY_DATABASE_POOL_SIZE` | PostgreSQL pool size; defaults to `5` locally and `10` in Compose. |
@@ -228,12 +233,15 @@ curl --fail http://127.0.0.1:4000/health/live
 curl --fail http://127.0.0.1:4000/health/ready
 ```
 
-CI also publishes one `ghcr.io/vikingmew/symphony` manifest for `linux/amd64` and `linux/arm64`.
-For a deployment that pulls an immutable image instead of building source, set `SYMPHONY_IMAGE`
-to a release or full-SHA tag and include `compose.published.yaml`:
+CI publishes matching `ghcr.io/vikingmew/symphony` and
+`ghcr.io/vikingmew/symphony-execution-worker` manifests for `linux/amd64` and `linux/arm64`.
+Local Compose still builds both targets from source. For a published deployment, select immutable
+references from the same workflow run and keep the worker source revision equal to its commit:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
 docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d
 ```
@@ -283,17 +291,21 @@ against a disposable, already-created empty database:
 
 ```bash
 export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony_smoke
-make pg-smoke
+mise exec -- mix symphony.postgres_smoke
 ```
 
-The main CI workflow runs `make all`, which includes setup, build, formatting check, lint, coverage, and dialyzer.
+Make is reserved for build and image targets. Run quality checks independently with
+`scripts/check.sh` (format, lint, compile), `scripts/unit.sh` (85% coverage-bearing unit suite),
+`scripts/e2e.sh` (credentialed live integration suite), and `scripts/dialyzer.sh` (static analysis).
+CI orchestrates these scripts into fast, unit, E2E, and static jobs; publication uses only the fast
+check gate.
 
 The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
 run it only with explicit credentials:
 
 ```bash
 export LINEAR_API_KEY=...
-make MIX="mise exec -- mix" e2e
+scripts/e2e.sh
 ```
 
 Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` to a comma-separated host list to exercise existing SSH
