@@ -798,6 +798,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_dispatch(%State{} = state) do
+    Logger.debug("event=poll_heartbeat listening_mode=#{listening_mode(state)} tick_timestamp=#{System.system_time(:millisecond)}")
+
     state =
       state
       |> reconcile_stale_operator_entries()
@@ -826,11 +828,16 @@ defmodule SymphonyElixir.Orchestrator do
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0,
          true <- workflow_slots_available?(state, workflow) do
+      Logger.info(
+        "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success candidate_count=#{length(issues)} dispatch=attempted"
+      )
+
       state = %{state | last_config_error: nil}
       persist_polled_issues(issues)
       choose_issues(issues, state)
     else
       {:error, reason} ->
+        Logger.warning("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked")
         handle_dispatch_error(state, reason)
 
       {:block, details} ->
@@ -839,6 +846,7 @@ defmodule SymphonyElixir.Orchestrator do
         |> Map.put(:last_config_error, nil)
 
       false ->
+        Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success dispatch=skipped reason=capacity")
         %{state | last_config_error: nil}
     end
   end
@@ -1389,10 +1397,15 @@ defmodule SymphonyElixir.Orchestrator do
          ) do
         dispatch_issue(state_acc, issue)
       else
+        reasons = DispatchPolicy.skip_reasons(issue, state, dispatch_settings, worker_settings)
+        Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
         state_acc
       end
     end)
   end
+
+  defp listening_mode(%State{} = state), do: listening_mode_string(state)
+  defp workflow_name(%{project_id: project_id}), do: project_id
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     DispatchPolicy.terminal_issue_state?(state_name, terminal_states)
