@@ -27,7 +27,7 @@ design_status: landed
 主要适用于需求细化阶段：
 
 ```text
-Backlog -> Refining -> Needs Refinement Review -> Ready
+Backlog -> Todo -> Needs Refinement Review -> Ready
 ```
 
 其中：
@@ -64,7 +64,7 @@ Ready -> Refining
 - task 没有被 terminal blocker 阻塞。
 - 当前 worker/run 有权限处理该 task。
 
-`Backlog -> Refining` 通常由人触发。Symphony 不应该自动把一句话想法从 `Backlog` 拉进 agent 执行，除非项目明确配置了这种自动化。
+`Backlog -> Todo` 通常由人触发。Symphony 不应该自动把一句话想法从 `Backlog` 拉进 agent 执行，除非项目明确配置了这种自动化。
 
 ## 工具契约
 

@@ -73,8 +73,8 @@ base_prompt: |
   
   ## Status map
   
-  - `Backlog` -> raw idea. Do not modify; wait for a human to move it to `Refining`.
-  - `Refining` -> agent expands a one-sentence idea into a complete, reviewable implementation ticket.
+  - `Backlog` -> raw idea. Do not modify; wait for a human to move it to `Todo`.
+  - `Todo` -> agent expands a one-sentence idea into a complete, reviewable implementation ticket.
   - `Needs Refinement Review` -> refinement is complete; do not implement. Human must move it to `Ready` or back to `Refining`.
   - `Ready` -> human-approved development queue. Agent may move it to `In Progress` and implement.
   - `In Progress` -> implementation actively underway.
@@ -84,8 +84,8 @@ base_prompt: |
   
   ## State Transition Authority
   
-  - Human moves `Backlog` -> `Refining`.
-  - Agent moves `Refining` -> `Needs Refinement Review` after producing a complete refinement.
+  - Human moves `Backlog` -> `Todo`.
+  - Agent moves `Todo` -> `Refining` before the run, then `Refining` -> `Needs Refinement Review` after producing a complete refinement.
   - Human moves `Needs Refinement Review` -> `Ready` when refinement is accepted.
   - Human moves `Needs Refinement Review` -> `Refining` when refinement needs another pass.
   - Agent may move `Ready` -> `In Progress` when starting implementation.
@@ -99,8 +99,8 @@ base_prompt: |
   1. Fetch the issue by explicit ticket ID.
   2. Read the current state.
   3. Route to the matching flow:
-     - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Refining`.
-     - `Refining` -> run the refinement flow.
+     - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
+     - `Todo` -> run the refinement flow; Symphony first moves it to `Refining`.
      - `Needs Refinement Review` -> do not modify; stop and wait for human review.
      - `Ready` -> move to `In Progress`, then run the implementation flow.
      - `In Progress` -> continue execution flow from current scratchpad comment.

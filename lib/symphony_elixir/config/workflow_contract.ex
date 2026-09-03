@@ -19,6 +19,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
     |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
+    |> Kernel.++(validate_refinement_lifecycle(workflow, profiles))
     |> Kernel.++(validate_implementation_lifecycle(workflow, profiles))
     |> Kernel.++(validate_blocked_lifecycle(workflow, tracker))
   end
@@ -271,6 +272,33 @@ defmodule SymphonyElixir.Config.WorkflowContract do
 
       _missing ->
         []
+    end
+  end
+
+  defp validate_refinement_lifecycle(workflow, profiles) do
+    states = Map.get(workflow, "states", %{})
+
+    if Map.has_key?(states, "Todo") or Map.has_key?(states, "Refining") or
+         Map.has_key?(profiles, "refinement") do
+      transitions = Map.get(workflow, "allowed_transitions", [])
+
+      refinement =
+        profiles
+        |> then(&Map.merge(Schema.default_profiles(), &1))
+        |> Map.get("refinement", %{})
+
+      []
+      |> require_state("Todo", Map.keys(states), "workflow.states")
+      |> require_state(
+        "Needs Refinement Review",
+        get_in(refinement, ["allowed_updates", "target_states"]) || [],
+        "profiles.refinement.allowed_updates.target_states"
+      )
+      |> require_transition(transitions, "Todo", "Refining", "codex", "refinement")
+      |> require_transition(transitions, "Refining", "Needs Refinement Review", "codex", "refinement")
+      |> require_transition(transitions, "Needs Refinement Review", "Refining", "human", nil)
+    else
+      []
     end
   end
 

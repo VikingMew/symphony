@@ -377,7 +377,7 @@ Backlog
   -> Done
 ```
 
-其中只有 `Refining`、`Ready`、`In Progress` 是可调度状态，会放进 `tracker.active_states` 并通过
+其中只有 `Todo`、`Ready`、`In Progress` 是可调度状态，会放进 `tracker.active_states` 并通过
 `workflow.states.<state>.profile` 路由。`Needs Refinement Review` 和 `Ready to Merge` 是人工等待
 状态，不进入 active states，也没有 executable route。`Done` 是唯一成功终态；`Canceled`、
 `Cancelled` 和 `Duplicate` 是取消终态。

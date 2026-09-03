@@ -10,6 +10,21 @@ defmodule SymphonyElixir.AgentRunner.PolicyTest do
     refute Policy.implementation_start_transition_required?(%Issue{state: "Ready"}, "refinement")
   end
 
+  test "detects and validates refinement kickoff only for Todo issues" do
+    issue = %Issue{state: "Todo"}
+    assert Policy.refinement_start_transition_required?(issue, "refinement")
+    refute Policy.refinement_start_transition_required?(%Issue{state: "Refining"}, "refinement")
+
+    transitions = [
+      %{"from" => "Todo", "to" => "Refining", "actor" => "codex", "profile" => "refinement"}
+    ]
+
+    assert :ok = Policy.validate_refinement_start_transition(transitions, "Todo", "refinement")
+
+    assert {:error, {:transition_not_allowed, "Todo", "Refining", "refinement"}} =
+             Policy.validate_refinement_start_transition([], "Todo", "refinement")
+  end
+
   test "matches allowed workflow transitions by state profile and actor" do
     transitions = [
       %{"from" => "Ready", "to" => "In Progress", "profile" => "implementation", "actor" => "codex"},
