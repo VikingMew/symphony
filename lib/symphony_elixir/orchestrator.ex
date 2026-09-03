@@ -1698,7 +1698,8 @@ defmodule SymphonyElixir.Orchestrator do
     %{
       state
       | completed: MapSet.put(state.completed, issue_id),
-        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+        retry_attempts: Map.delete(state.retry_attempts, issue_id),
+        claimed: MapSet.delete(state.claimed, issue_id)
     }
   end
 
@@ -1842,7 +1843,8 @@ defmodule SymphonyElixir.Orchestrator do
             state.retry_attempts,
             issue_id,
             RetryPolicy.retry_entry(prepared_retry, timer_ref, retry_token, due_at_ms)
-          )
+          ),
+        claimed: MapSet.put(state.claimed, issue_id)
     }
   end
 
