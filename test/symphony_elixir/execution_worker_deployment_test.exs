@@ -6,6 +6,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
   @published_compose Path.expand("../../compose.published.yaml", __DIR__)
+  @quality_workflow Path.expand("../../.github/workflows/make-all.yml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
     dockerfile = File.read!(@dockerfile)
@@ -86,8 +87,17 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/workspaces:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
-    assert workflow =~ "env -u SYMPHONY_ROLE scripts/check.sh"
+    refute workflow =~ "scripts/check.sh"
+    assert workflow =~ "mix format --check-formatted"
+    assert workflow =~ "Formatting: drift detected"
+    assert workflow =~ "needs: [quality-gate, publish]"
+    assert workflow =~ "if: always()"
     assert length(Regex.scan(~r/^      - \/tmp:exec,mode=1777$/m, compose)) == 2
+  end
+
+  test "blocking quality workflow owns repository aggregate" do
+    quality = File.read!(@quality_workflow)
+    assert quality =~ "scripts/check.sh"
   end
 
   test "all Codex images configure token-free GitHub credentials at system scope" do

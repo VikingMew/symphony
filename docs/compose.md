@@ -146,7 +146,8 @@ test helpers there; migration keeps the default non-executable temporary mount.
 External `publish-image` CI builds and checks all three targets and publishes the `symphony` and
 `execution-worker` targets to separate GHCR repositories in one run. It verifies command discovery for
 `mise`, `mix`, `elixir`, `erl`, and `make` as a non-root user with a read-only root filesystem, then
-runs `mise exec -- mix --version` and `make all` in the `execution-worker` workspace. Agent-side
+runs `mise exec -- mix --version` in the `execution-worker` workspace. Publish formatting is a
+non-blocking diagnostic; the blocking `quality` workflow owns remediation. Agent-side
 implementation validation is limited to static source/config tests and local source gates; it
 must not reproduce these image-level checks with a container engine.
 
