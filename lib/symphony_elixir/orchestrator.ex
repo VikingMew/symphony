@@ -1404,8 +1404,8 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp listening_mode(%State{} = state), do: state.listening_mode || "not_listening"
-  defp workflow_name(workflow), do: get_in(workflow, [:config, :name]) || Map.get(workflow, :name, "unknown")
+  defp listening_mode(%State{} = state), do: listening_mode_string(state)
+  defp workflow_name(%{project_id: project_id}), do: project_id
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     DispatchPolicy.terminal_issue_state?(state_name, terminal_states)

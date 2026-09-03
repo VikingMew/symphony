@@ -90,13 +90,13 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
   def skip_reasons(%Issue{} = issue, %State{running: running, claimed: claimed} = state, settings, worker_settings) do
     terminal = Map.get(settings, :terminal_states, MapSet.new())
     reasons = []
-    reasons = if !candidate_issue?(issue, settings), do: ["not_candidate" | reasons], else: reasons
+    reasons = if candidate_issue?(issue, settings), do: reasons, else: ["not_candidate" | reasons]
     reasons = if ready_issue_blocked_by_non_terminal?(issue, terminal), do: ["blocked_ready" | reasons], else: reasons
     reasons = if MapSet.member?(claimed, issue.id), do: ["claimed" | reasons], else: reasons
     reasons = if Map.has_key?(running, issue.id), do: ["already_running" | reasons], else: reasons
     reasons = if available_slots(state, settings) <= 0, do: ["global_capacity" | reasons], else: reasons
-    reasons = if !state_slots_available?(issue, running, settings), do: ["state_capacity" | reasons], else: reasons
-    reasons = if !worker_slots_available?(state, worker_settings), do: ["worker_capacity" | reasons], else: reasons
+    reasons = if state_slots_available?(issue, running, settings), do: reasons, else: ["state_capacity" | reasons]
+    reasons = if worker_slots_available?(state, worker_settings), do: reasons, else: ["worker_capacity" | reasons]
     Enum.reverse(reasons) |> Enum.uniq()
   end
 
