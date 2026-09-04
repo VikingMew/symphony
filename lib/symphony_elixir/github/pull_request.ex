@@ -20,6 +20,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
           repository: String.t(),
           base: String.t(),
           head: String.t(),
+          head_oid: String.t(),
           source: :gh | :rest
         }
 
@@ -67,6 +68,30 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       }
 
       ensure_with_available_client(request, opts)
+    end
+  end
+
+  @doc "Loads immutable PR metadata and diff for a review job."
+  @spec review_context(map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def review_context(job, opts \\ []) do
+    with executable when is_binary(executable) <- gh_executable(opts),
+         {:ok, _auth} <- gh_auth_status(executable, opts),
+         {:ok, metadata_json} <-
+           run_gh(executable, ["pr", "view", job.pr_url, "--repo", job.repository, "--json", "state,url,title,body,baseRefOid,headRefOid"], opts),
+         {:ok, metadata} when is_map(metadata) <- Jason.decode(metadata_json),
+         {:ok, diff} <- run_gh(executable, ["pr", "diff", job.pr_url, "--repo", job.repository], opts) do
+      {:ok,
+       %{
+         "pull_request" => metadata,
+         "base_oid" => Map.fetch!(metadata, "baseRefOid"),
+         "head_oid" => Map.fetch!(metadata, "headRefOid"),
+         "diff" => diff
+       }}
+    else
+      nil -> {:error, :gh_not_found}
+      {:ok, other} -> {:error, {:github_cli_invalid_review_context, safe_output(inspect(other))}}
+      {:error, %Jason.DecodeError{} = reason} -> {:error, {:github_cli_invalid_json, Exception.message(reason)}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -299,7 +324,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       "--limit",
       "100",
       "--json",
-      "state,url,headRefName,baseRefName,headRepository,headRepositoryOwner"
+      "state,url,headRefName,headRefOid,baseRefName,headRepository,headRepositoryOwner"
     ]
 
     with {:ok, output} <- run_gh(executable, args, opts),
@@ -324,6 +349,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       state: pull_request |> Map.get("state", "") |> String.downcase(),
       url: Map.get(pull_request, "url"),
       head: Map.get(pull_request, "headRefName"),
+      head_oid: Map.get(pull_request, "headRefOid"),
       base: Map.get(pull_request, "baseRefName"),
       head_repository: head_repository,
       source: :gh,
@@ -377,7 +403,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
         end
 
       pull_request ->
-        {:ok, pull_request_result(pull_request, request)}
+        validated_pull_request_result(pull_request, request)
     end
   end
 
@@ -386,7 +412,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       {:ok, pull_requests} ->
         case matching_open_pull_request(pull_requests, request) do
           nil -> {:error, :github_pull_request_missing_after_create}
-          pull_request -> {:ok, pull_request_result(pull_request, request)}
+          pull_request -> validated_pull_request_result(pull_request, request)
         end
 
       {:error, reason} ->
@@ -408,13 +434,27 @@ defmodule SymphonyElixir.GitHub.PullRequest do
   end
 
   defp pull_request_result(pull_request, request) do
-    %{
-      url: pull_request.url,
-      repository: request.repository,
-      base: request.base,
-      head: request.head,
-      source: pull_request.source
-    }
+    head_oid = Map.get(pull_request, :head_oid)
+
+    if is_binary(head_oid) and Regex.match?(~r/\A[0-9a-f]{40}\z/i, head_oid) do
+      %{
+        url: pull_request.url,
+        repository: request.repository,
+        base: request.base,
+        head: request.head,
+        head_oid: String.downcase(head_oid),
+        source: pull_request.source
+      }
+    else
+      {:invalid_head_oid, head_oid}
+    end
+  end
+
+  defp validated_pull_request_result(pull_request, request) do
+    case pull_request_result(pull_request, request) do
+      {:invalid_head_oid, value} -> {:error, {:github_pull_request_head_oid_missing, value}}
+      result -> {:ok, result}
+    end
   end
 
   defp ensure_with_rest(request, token, opts) do
@@ -483,6 +523,7 @@ defmodule SymphonyElixir.GitHub.PullRequest do
       state: state,
       url: map_value(pull_request, "html_url"),
       head: get_in_any(pull_request, ["head", "ref"]),
+      head_oid: get_in_any(pull_request, ["head", "sha"]),
       base: get_in_any(pull_request, ["base", "ref"]),
       head_repository: get_in_any(pull_request, ["head", "repo", "full_name"]),
       source: :rest,

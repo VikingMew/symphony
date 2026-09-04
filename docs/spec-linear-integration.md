@@ -88,7 +88,15 @@ Orchestrator behavior on tracker errors:
   The Linear state update is last.
 - PR failure leaves the issue in `In Progress`. Linear write failure after PR creation is typed and
   visible so a retry can reuse the already-open PR.
-- `Ready to Merge` is a waiting state. Symphony performs no `Ready to Merge -> Done` write; Linear's
+- `Ready to Merge` is a waiting state for ordinary issue dispatch. Symphony may deliver one
+  post-handoff review conclusion for the exact immutable PR head, but performs no
+  `Ready to Merge -> Done` write; Linear's
   GitHub merged-PR automation owns successful completion.
+- Approve delivery adds one concise Linear comment containing the reviewed head and leaves the
+  issue in `Ready to Merge`. Findings first persist a typed review blocking decision, then
+  idempotently comment and request `Ready to Merge -> Blocked`. Existing blocker evidence is never
+  overwritten; the review job records the delivery conflict for operator resolution.
 - Human change requests move `Ready to Merge -> In Progress`; Codex updates the same branch/PR and
   explicitly requests `Ready to Merge` again after validation.
+- Human recovery may move a review-blocked issue `Blocked -> In Progress` so the same PR receives a
+  new review only after a new backend-resolved head OID is handed off.

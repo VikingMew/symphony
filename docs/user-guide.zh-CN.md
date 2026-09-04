@@ -380,7 +380,8 @@ Backlog
 
 其中只有 `Todo`、`Ready`、`In Progress` 是可调度状态，会放进 `tracker.active_states` 并通过
 `workflow.states.<state>.profile` 路由。`Needs Refinement Review` 和 `Ready to Merge` 是人工等待
-状态，不进入 active states，也没有 executable route。`Done` 是唯一成功终态；`Canceled`、
+状态，不进入 active states，也没有普通 executable route；成功 handoff 后仅允许独立、持久化且
+只读的 PR review job。`Done` 是唯一成功终态；`Canceled`、
 `Cancelled` 和 `Duplicate` 是取消终态。
 
 实现完成不是普通 Codex turn exit。Codex 完成 validation、commit、push 精确 Linear

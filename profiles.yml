@@ -78,7 +78,7 @@ base_prompt: |
   - `Needs Refinement Review` -> refinement is complete; do not implement. Human must move it to `Ready` or back to `Refining`.
   - `Ready` -> human-approved development queue. Agent may move it to `In Progress` and implement.
   - `In Progress` -> implementation actively underway.
-  - `Ready to Merge` -> an open GitHub PR is waiting for human review and merge. Symphony never dispatches this state.
+  - `Ready to Merge` -> an open GitHub PR is waiting for human review and merge. Symphony never performs ordinary issue dispatch; only the durable post-handoff read-only review job may run.
   - `Done` -> successful terminal state, normally set by Linear's GitHub PR-merged automation.
   - `Canceled`, `Cancelled`, `Duplicate` -> terminal states; no further action required.
   
@@ -104,7 +104,7 @@ base_prompt: |
      - `Needs Refinement Review` -> do not modify; stop and wait for human review.
      - `Ready` -> move to `In Progress`, then run the implementation flow.
      - `In Progress` -> continue execution flow from current scratchpad comment.
-     - `Ready to Merge` -> do not dispatch or modify; wait for human GitHub review/merge or a human change-request transition back to `In Progress`.
+     - `Ready to Merge` -> do not perform ordinary issue dispatch; the post-handoff review queue may add its auxiliary conclusion, otherwise wait for human GitHub review/merge or a human change-request transition back to `In Progress`.
      - `Done`, `Canceled`, `Cancelled`, `Duplicate` -> do nothing and shut down.
   4. Implementation Codex requests the initial PR only through `create_pull_request` after validation, commit, and push; Symphony checks the exact configured repository/base/Linear-head tuple in the restricted backend.
   5. For `Ready` tickets, do startup sequencing in this exact order:
@@ -232,7 +232,7 @@ base_prompt: |
   ## Step 4: Human review gates
   
   1. When the issue is in `Needs Refinement Review`, do not code or change ticket content. Wait for a human to move it to `Ready` or back to `Refining`.
-  2. When the issue is in `Ready to Merge`, do not dispatch Codex; a human reviews and merges the linked PR on GitHub.
+  2. When the issue is in `Ready to Merge`, do not dispatch an implementation Codex run; the isolated post-handoff review job may run, while a human still reviews and merges the linked PR on GitHub.
   3. If human review requests changes, the human moves the issue to `In Progress`; Codex updates the same branch/PR and repeats the handoff.
   4. After merge, Linear's GitHub automation moves the linked issue to `Done`.
   
@@ -310,6 +310,19 @@ base_prompt: |
   - <only include when something was confusing during execution>
   ````
 profiles:
+  review:
+    allowed_updates:
+      comment: false
+      description: false
+      result: false
+      target_states: []
+    executor:
+      type: "codex_agent"
+    name: "Pull request review"
+    prompt:
+      mode: "replace"
+      template: |
+        Review only the supplied immutable issue and pull-request context. Submit one structured approve/findings conclusion. Do not modify code, git, GitHub, or Linear.
   implementation:
     allowed_updates:
       comment: true

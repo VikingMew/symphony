@@ -741,6 +741,20 @@ defmodule SymphonyElixir.Config.Schema do
           "target_states" => ["In Progress", "Ready to Merge"]
         }
       },
+      "review" => %{
+        "name" => "Pull request review",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "replace",
+          "template" => "Review only the supplied immutable issue and pull-request context. Submit one structured approve/findings conclusion. Do not modify code, git, GitHub, or Linear."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => false,
+          "result" => false,
+          "target_states" => []
+        }
+      },
       "nap" => %{
         "name" => "Nap audit",
         "executor" => %{"type" => "codex_agent"},

@@ -6,12 +6,14 @@ defmodule SymphonyElixir.Persistence do
   import Ecto.Query
 
   alias SymphonyElixir.{PersistenceProvider, Repo, RunLifecycle, Workflow}
+  alias SymphonyElixir.PRReview.Store, as: ReviewStore
   alias SymphonyElixir.WorkflowStore, as: RuntimeWorkflowStore
 
   alias SymphonyElixir.Persistence.{
     EventRecord,
     IssueRecord,
     Project,
+    ReviewJob,
     RunRecord,
     TaskRecord,
     User,
@@ -175,6 +177,17 @@ defmodule SymphonyElixir.Persistence do
   def get_issue_by_identifier(identifier) when is_binary(identifier) do
     read(fn -> Repo.get_by(IssueRecord, identifier: identifier) end)
   end
+
+  @spec get_issue(String.t(), String.t()) :: IssueRecord.t() | nil
+  def get_issue(project_id, identifier) when is_binary(project_id) and is_binary(identifier) do
+    if repo_available?(), do: Repo.get_by(IssueRecord, project_id: project_id, identifier: identifier)
+  end
+
+  @spec put_review_intent(map()) :: {:ok, ReviewJob.t()} | {:error, term()}
+  def put_review_intent(attrs), do: ReviewStore.put_intent(attrs)
+
+  @spec arm_review_job(ReviewJob.t()) :: {:ok, ReviewJob.t()} | {:error, term()}
+  def arm_review_job(job), do: ReviewStore.arm(job)
 
   @spec list_blocked_issues() :: [IssueRecord.t()] | {:error, read_error()}
   def list_blocked_issues do

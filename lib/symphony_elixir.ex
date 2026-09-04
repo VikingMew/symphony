@@ -44,6 +44,7 @@ defmodule SymphonyElixir.Application do
         SymphonyElixir.WorkflowStore,
         worker_reconciler_child(),
         SymphonyElixir.Orchestrator,
+        review_queue_child(),
         http_server_child(),
         SymphonyElixir.StatusDashboard
       ]
@@ -71,6 +72,12 @@ defmodule SymphonyElixir.Application do
   defp worker_reconciler_child do
     if Application.get_env(:symphony_elixir, :start_repo, true) do
       SymphonyElixir.Persistence.WorkerReconciler
+    end
+  end
+
+  defp review_queue_child do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.PRReview.Queue
     end
   end
 

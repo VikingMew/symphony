@@ -460,6 +460,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
       "state" => state,
       "url" => "https://github.com/acme/app/pull/12",
       "headRefName" => "feature/sym-1",
+      "headRefOid" => String.duplicate("a", 40),
       "baseRefName" => "main",
       "headRepository" => %{"nameWithOwner" => "acme/app"},
       "headRepositoryOwner" => %{"login" => "acme"}
@@ -476,7 +477,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
       "number" => 12,
       "state" => "open",
       "html_url" => "https://github.com/acme/app/pull/12",
-      "head" => %{"ref" => "feature/sym-1", "repo" => %{"full_name" => "acme/app"}},
+      "head" => %{"ref" => "feature/sym-1", "sha" => String.duplicate("a", 40), "repo" => %{"full_name" => "acme/app"}},
       "base" => %{"ref" => "main", "repo" => %{"full_name" => "acme/app"}},
       "merged_at" => nil
     }

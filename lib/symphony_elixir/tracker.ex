@@ -8,6 +8,7 @@ defmodule SymphonyElixir.Tracker do
   @callback fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   @callback fetch_issues_by_states([String.t()]) :: {:ok, [term()]} | {:error, term()}
   @callback fetch_issue_states_by_ids([String.t()]) :: {:ok, [term()]} | {:error, term()}
+  @callback fetch_review_context(String.t()) :: {:ok, map()} | {:error, term()}
   @callback create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   @callback update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
 
@@ -31,6 +32,9 @@ defmodule SymphonyElixir.Tracker do
   def fetch_issue_states_by_ids(issue_ids) do
     adapter().fetch_issue_states_by_ids(issue_ids)
   end
+
+  @spec fetch_review_context(String.t()) :: {:ok, map()} | {:error, term()}
+  def fetch_review_context(issue_id) when is_binary(issue_id), do: adapter().fetch_review_context(issue_id)
 
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) do
