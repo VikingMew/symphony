@@ -431,8 +431,8 @@ Common extension areas:
 ├── README.md
 ├── Dockerfile
 ├── compose.yaml
-├── workflow.yml
-├── profiles.yml
+├── docs/examples/workflow.yml
+├── docs/examples/profiles.yml
 ├── Makefile
 ├── mise.toml
 ├── mix.exs

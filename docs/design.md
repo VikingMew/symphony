@@ -42,8 +42,8 @@ operator runbooks by [deployment.md](deployment.md) and [user-guide.zh-CN.md](us
 ├── Makefile
 ├── mise.toml
 ├── mix.exs
-├── workflow.yml
-├── profiles.yml
+├── docs/examples/workflow.yml
+├── docs/examples/profiles.yml
 ├── LICENSE
 ├── NOTICE
 ├── .codex/
@@ -74,8 +74,8 @@ implementation lives under the repository root.
 
 ```text
 ├── README.md
-├── workflow.yml
-├── profiles.yml
+├── docs/examples/workflow.yml
+├── docs/examples/profiles.yml
 ├── AGENTS.md
 ├── Makefile
 ├── mise.toml
@@ -93,8 +93,8 @@ implementation lives under the repository root.
 | Path | Purpose |
 | --- | --- |
 | `README.md` | Setup, run, configuration, testing, and FAQ for the Elixir implementation. |
-| `workflow.yml` | Example/import package for shared workflow routing and runtime settings. |
-| `profiles.yml` | Example/import package for shared base prompt and agent profiles. |
+| `docs/examples/workflow.yml` | Repository source package for shared workflow routing and runtime settings. |
+| `docs/examples/profiles.yml` | Repository source package for the shared base prompt and agent profiles. |
 | `AGENTS.md` | Agent-facing repository guidance. |
 | `Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
 | `mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |

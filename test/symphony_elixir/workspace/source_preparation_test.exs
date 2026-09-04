@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
   alias SymphonyElixir.TestSupport.FakePersistence
 
   test "bundled split workflow package parses and validates against runtime schema" do
-    workflow_path = Path.expand("../../../workflow.yml", __DIR__)
+    workflow_path = Path.expand("../../../docs/examples/workflow.yml", __DIR__)
 
     assert {:ok, loaded} = SymphonyElixir.Workflow.load(workflow_path)
     assert {:ok, _settings} = Schema.parse(loaded.config)
