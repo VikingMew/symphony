@@ -45,7 +45,7 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     %{
       "version" => 1,
       "repository" => "https://example.test/repo.git",
-      "revision" => "main",
+      "default_branch" => "main",
       "branch" => "work",
       "hooks" => [],
       "codex" => %{
