@@ -56,7 +56,16 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
     def record_worker_task_event(_worker_id, _session_id, task_id, event_type, payload) do
       Agent.update(__MODULE__, &update_in(&1.events, fn events -> [{task_id, event_type, payload} | events] end))
-      {:ok, %{id: "event-#{length(events())}"}}
+
+      {:ok,
+       %{
+         id: "event-#{length(events())}",
+         payload: %{
+           "correlation" => %{
+             "issue_id" => Agent.get(__MODULE__, & &1.claim.correlation["issue_id"])
+           }
+         }
+       }}
     end
 
     def events, do: Agent.get(__MODULE__, &Enum.reverse(&1.events))

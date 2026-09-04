@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixir.Worker.ExecutionPayload
 
@@ -77,6 +78,8 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, event} <-
            persistence().record_worker_task_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
+      notify_terminal_task(event_type, event)
+
       conn
       |> put_status(202)
       |> json(%{event_id: event.id, accepted: true})
@@ -88,6 +91,15 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def task_event(conn, _params) do
     error_response(conn, 422, "invalid_worker_event", "event_type is required")
   end
+
+  defp notify_terminal_task(event_type, event)
+       when event_type in ["task.completed", "task.failed", "task.cancelled"] do
+    event.payload
+    |> get_in(["correlation", "issue_id"])
+    |> Orchestrator.worker_task_finished()
+  end
+
+  defp notify_terminal_task(_event_type, _event), do: :ok
 
   defp verify_registration_token(conn) do
     token =

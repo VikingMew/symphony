@@ -155,6 +155,11 @@ defmodule SymphonyElixir.Orchestrator do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @spec worker_task_finished(String.t(), GenServer.server()) :: :ok
+  def worker_task_finished(issue_id, server \\ __MODULE__) when is_binary(issue_id) do
+    GenServer.cast(server, {:worker_task_finished, issue_id})
+  end
+
   @impl true
   def init(_opts) do
     now_ms = System.monotonic_time(:millisecond)
@@ -201,8 +206,12 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def handle_info({:tick, tick_token}, %{tick_token: tick_token} = state)
-      when is_reference(tick_token) do
+  def handle_cast({:worker_task_finished, issue_id}, state) when is_binary(issue_id) do
+    {:noreply, complete_issue(state, issue_id)}
+  end
+
+  @impl true
+  def handle_info({:tick, tick_token}, %{tick_token: tick_token} = state) when is_reference(tick_token) do
     state = refresh_runtime_config(state)
 
     state = %{
