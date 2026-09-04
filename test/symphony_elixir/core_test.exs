@@ -1086,6 +1086,51 @@ defmodule SymphonyElixir.CoreTest do
     refute Process.alive?(agent_pid)
   end
 
+  test "worker blocker completion releases the claim for the next Ready poll" do
+    issue_id = "issue-worker-blocker"
+    issue_identifier = "MT-WORKER-BLOCKER"
+    orchestrator_name = Module.concat(__MODULE__, :WorkerBlockerCompletionOrchestrator)
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: issue_identifier,
+      state: "Ready",
+      title: "Retry blocked worker completion",
+      description: "Dispatch after the blocker is resolved",
+      labels: []
+    }
+
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | claimed: MapSet.put(state.claimed, issue_id), max_concurrent_agents: 1}
+    end)
+
+    # The worker's terminal summary carried blocker evidence, but task completion
+    # must still release the orchestration claim.
+    Orchestrator.worker_task_finished(issue_id, orchestrator_name)
+    state = :sys.get_state(pid)
+    claimed = state.claimed
+    refute MapSet.member?(claimed, issue_id)
+
+    dispatch_settings = %{
+      active_states: MapSet.new(["ready"]),
+      terminal_states: MapSet.new(["done"]),
+      refinement_states: MapSet.new(),
+      listening_mode: :listening_all,
+      max_concurrent_agents: 1,
+      max_concurrent_agents_for_state: fn _state -> 1 end,
+      workflow_executor_for_state: fn _state -> "codex_agent" end,
+      human_review_state?: fn _state -> false end
+    }
+
+    assert DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_settings)
+  end
+
   test "normal worker exit schedules active-state continuation retry" do
     issue_id = "issue-resume"
     ref = make_ref()
