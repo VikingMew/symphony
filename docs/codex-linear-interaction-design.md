@@ -26,11 +26,11 @@ GitHub PR 已打开，最后才把 Linear issue 移到人工等待状态。
 ## 当前默认状态流
 
 ```text
-Refining -> Needs Refinement Review -> Ready -> In Progress
+Todo -> Refining -> Needs Refinement Review -> Ready -> In Progress
   -> Ready to Merge -> Done
 ```
 
-- 可调度状态：`Refining`、`Ready`、`In Progress`。
+- 可调度状态：`Todo`、`Ready`、`In Progress`。
 - 人工等待状态：`Needs Refinement Review`、`Ready to Merge`。
 - `Ready to Merge` 没有 executable route，Orchestrator 不领取它。
 - 人工提出实现修改时使用 `Ready to Merge -> In Progress`。Codex 更新同一 Linear
@@ -44,8 +44,11 @@ Codex 只看到两个 task-scoped tools：
 - `linear_task_read`：读取当前 issue detail 和可选的 recent activity。
 - `linear_task_update`：请求更新当前 issue 的允许字段。
 
-不暴露 raw GraphQL，不把 `LINEAR_API_KEY` 注入 Codex 环境，不允许操作其它 issue。profile 的
-`allowed_updates` 和 `workflow.allowed_transitions` 同时约束请求。
+不暴露 raw GraphQL；执行 worker 使用现有的 `LINEAR_API_KEY` 为这些请求认证，Codex 仍只能通过
+task-scoped tools 操作当前 issue，不能操作其它 issue。中心化 `AgentRunner` 和 Panel writeback
+边界使用 profile 的 `allowed_updates` 与 `workflow.allowed_transitions` 约束请求；execution
+worker 的 task read/update handlers 只消费 task payload 中已解析的 policy 数据，不读取数据库中的
+workflow settings。
 
 实现交付的所有权如下：
 
@@ -60,7 +63,7 @@ Codex 只看到两个 task-scoped tools：
 
 ```yaml
 tracker:
-  active_states: ["Refining", "Ready", "In Progress"]
+  active_states: ["Todo", "Ready", "In Progress"]
   terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
 
 workflow:
@@ -113,7 +116,7 @@ profiles:
     "completed": "...",
     "validation": "...",
     "deviations": "None",
-    "blockers": "None"
+    "blockers": ""
   },
   "references": {
     "branch": "exact-linear-branch",
@@ -122,8 +125,14 @@ profiles:
 }
 ```
 
-缺少 comment/result/references（含 `pr_url`）、target 不允许、或没有 `AgentRunner` 注入的 PR backend
-时，请求失败。
+成功 handoff 的 `result.blockers` 规范值是空字符串；字段缺失时的 `nil` 也表示没有 blocker。
+经过 trim 后为空的字符串会规范化为 `nil`。精确且大小写不敏感的 `none` 仅作为旧 payload
+兼容值保留；`None for handoff` 等其它非空自由文本始终是 blocker evidence，避免隐藏真实阻塞。
+
+在中心化 `AgentRunner` 路径中，缺少 comment/result/references（含 `pr_url`）、target 不允许、
+或没有注入的 PR backend 时，请求失败。execution worker 的 `DynamicTool` 只做参数规范化、
+当前 session 的 PR proof 校验和 Linear 写入；完成 handoff 的结构化字段由 `handoff` tool 校验，
+executor 在 required gates 通过后固定写入 `Ready to Merge`，Panel writeback 仍是 policy gate。
 
 ## 原子实现 handoff
 

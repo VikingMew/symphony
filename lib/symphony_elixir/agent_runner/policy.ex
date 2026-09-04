@@ -8,6 +8,9 @@ defmodule SymphonyElixir.AgentRunner.Policy do
   @implementation_profile "implementation"
   @implementation_start_state "Ready"
   @implementation_started_state "In Progress"
+  @refinement_profile "refinement"
+  @refinement_start_state "Todo"
+  @refinement_started_state "Refining"
 
   @spec implementation_start_transition_required?(Issue.t() | term(), String.t() | nil) :: boolean()
   def implementation_start_transition_required?(%Issue{state: state}, @implementation_profile) do
@@ -15,6 +18,13 @@ defmodule SymphonyElixir.AgentRunner.Policy do
   end
 
   def implementation_start_transition_required?(_issue, _profile), do: false
+
+  @spec refinement_start_transition_required?(Issue.t() | term(), String.t() | nil) :: boolean()
+  def refinement_start_transition_required?(%Issue{state: state}, @refinement_profile) do
+    normalize_issue_state(state) == normalize_issue_state(@refinement_start_state)
+  end
+
+  def refinement_start_transition_required?(_issue, _profile), do: false
 
   @spec workflow_transition_allowed?([map()], String.t(), String.t(), String.t() | nil) :: boolean()
   def workflow_transition_allowed?(transitions, from_state, to_state, profile) when is_list(transitions) do
@@ -29,6 +39,20 @@ defmodule SymphonyElixir.AgentRunner.Policy do
       :ok
     else
       {:error, {:transition_not_allowed, from_state, @implementation_started_state, profile}}
+    end
+  end
+
+  @spec validate_refinement_start_transition([map()], String.t(), String.t() | nil) :: :ok | {:error, term()}
+  def validate_refinement_start_transition(transitions, from_state, profile) do
+    if workflow_transition_allowed?(
+         transitions,
+         from_state,
+         @refinement_started_state,
+         profile
+       ) do
+      :ok
+    else
+      {:error, {:transition_not_allowed, from_state, @refinement_started_state, profile}}
     end
   end
 

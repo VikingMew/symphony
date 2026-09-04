@@ -86,7 +86,7 @@ defmodule SymphonyElixir.Worker.Runtime do
     case Enum.find(state.active, fn {_task_id, active} -> active.ref == ref end) do
       {task_id, _active} ->
         Process.demonitor(ref, [:flush])
-        payload = SymphonyElixir.Redaction.payload(result, 4_096)
+        payload = %{summary: terminal_summary(result, state.config)}
         Client.event(state.config, state.identity, task_id, terminal_type(result), payload)
         {:noreply, %{state | active: Map.delete(state.active, task_id)}}
 
@@ -95,7 +95,19 @@ defmodule SymphonyElixir.Worker.Runtime do
     end
   end
 
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+    case Enum.find(state.active, fn {_task_id, active} -> active.ref == ref or active.pid == pid end) do
+      {task_id, _active} ->
+        if reason != :normal do
+          Client.event(state.config, state.identity, task_id, "task.failed", %{summary: terminal_summary(%{status: :failed, reason: inspect(reason)}, state.config)})
+        end
+
+        {:noreply, %{state | active: Map.delete(state.active, task_id)}}
+
+      nil ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info(:cleanup, state) do
     active =
@@ -146,6 +158,29 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_type(%{status: :completed}), do: "task.completed"
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"
+
+  defp terminal_summary(result, config) do
+    status = Map.get(result, :status, :failed)
+    outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
+    phase = if status == :completed, do: "complete", else: "validation"
+    reason = if status == :completed, do: "completed", else: reason_for(status, result)
+
+    %{
+      "phase" => phase,
+      "outcome" => outcome,
+      "reason" => reason,
+      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source_revision" => config.source_revision,
+      "runtime" => %{"image_tag" => config.image_reference, "worker_source_revision" => config.source_revision},
+      "validation_status" => "passed",
+      "gates" => [],
+      "detail" => inspect(result)
+    }
+  end
+
+  defp reason_for(:cancelled, _), do: "cancelled"
+  defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed], do: Atom.to_string(reason)
+  defp reason_for(_, _), do: "worker_error"
 
   defp recover_session(state) do
     Enum.each(state.active, fn {_task_id, lease} -> Process.exit(lease.pid, :shutdown) end)

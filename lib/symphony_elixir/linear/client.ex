@@ -119,20 +119,9 @@ defmodule SymphonyElixir.Linear.Client do
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
-    tracker = Config.settings!().tracker
-    project_slug = tracker.project_slug
-
-    cond do
-      is_nil(tracker.api_key) ->
-        {:error, :missing_linear_api_token}
-
-      is_nil(project_slug) ->
-        {:error, :missing_linear_project_slug}
-
-      true ->
-        with {:ok, assignee_filter} <- routing_assignee_filter() do
-          do_fetch_by_states(project_slug, tracker.active_states, assignee_filter)
-        end
+    with {:ok, tracker} <- runtime_tracker(),
+         {:ok, assignee_filter} <- routing_assignee_filter() do
+      do_fetch_by_states(tracker.project_slug, tracker.active_states, assignee_filter)
     end
   end
 
@@ -143,18 +132,18 @@ defmodule SymphonyElixir.Linear.Client do
     if normalized_states == [] do
       {:ok, []}
     else
-      tracker = Config.settings!().tracker
-      project_slug = tracker.project_slug
+      with {:ok, tracker} <- runtime_tracker() do
+        do_fetch_by_states(tracker.project_slug, normalized_states, nil)
+      end
+    end
+  end
 
+  defp runtime_tracker do
+    with {:ok, settings} <- Config.settings() do
       cond do
-        is_nil(tracker.api_key) ->
-          {:error, :missing_linear_api_token}
-
-        is_nil(project_slug) ->
-          {:error, :missing_linear_project_slug}
-
-        true ->
-          do_fetch_by_states(project_slug, normalized_states, nil)
+        is_nil(settings.tracker.api_key) -> {:error, :missing_linear_api_token}
+        is_nil(settings.tracker.project_slug) -> {:error, :missing_linear_project_slug}
+        true -> {:ok, settings.tracker}
       end
     end
   end

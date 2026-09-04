@@ -48,6 +48,21 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert prompt =~ "Ticket S-2"
   end
 
+  test "implementation profile directs Codex to the handoff skill contract" do
+    profiles = File.read!(Path.expand("../../profiles.yml", __DIR__))
+    skill = File.read!(Path.expand("../../.codex/skills/handoff/SKILL.md", __DIR__))
+
+    assert profiles =~ "## Related skills"
+    assert profiles =~ "`handoff`:"
+    assert skill =~ "target_state: \"Ready to Merge\""
+    assert skill =~ "`comment`"
+    assert skill =~ "`result`"
+    assert skill =~ "`references`"
+    assert skill =~ "pr_url"
+    assert skill =~ "pull_request_completion_proof"
+    assert skill =~ "\"blockers\": \"\""
+  end
+
   test "default nap and day dreaming profiles are issue-only prompts" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
 

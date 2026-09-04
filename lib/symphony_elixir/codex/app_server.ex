@@ -22,15 +22,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   @thread_start_id 2
   @turn_start_id 3
   @port_line_bytes 1_048_576
-  @sensitive_codex_env_names ~w(
-    LINEAR_API_KEY
-    LINEAR_TOKEN
-    GITHUB_TOKEN
-    GH_TOKEN
-    SLACK_BOT_TOKEN
-    ANTHROPIC_API_KEY
-    OPENAI_API_KEY
-  )
 
   @type session :: %{
           port: port(),
@@ -111,6 +102,8 @@ defmodule SymphonyElixir.Codex.AppServer do
       {:ok, turn_id} ->
         session_id = "#{thread_id}-#{turn_id}"
         dynamic_tool_opts = Keyword.get(opts, :dynamic_tool_opts, [])
+        handoff_key = {:codex_handoff, make_ref()}
+        pull_request_key = {:codex_pull_request, make_ref()}
 
         tool_executor =
           Keyword.get(opts, :tool_executor, fn tool, arguments ->
@@ -122,7 +115,13 @@ defmodule SymphonyElixir.Codex.AppServer do
               operator_kind: Keyword.get(opts, :operator_kind),
               session_id: session_id,
               thread_id: thread_id,
-              turn_id: turn_id
+              turn_id: turn_id,
+              handoff_submitter: fn payload ->
+                Process.put(handoff_key, payload)
+                :ok
+              end,
+              pull_request_observer: &Process.put(pull_request_key, &1),
+              pull_request_result: fn -> Process.get(pull_request_key) end
             ]
 
             DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
@@ -145,13 +144,14 @@ defmodule SymphonyElixir.Codex.AppServer do
           {:ok, result} ->
             Logger.info("Codex session completed for #{issue_context(issue)} session_id=#{session_id}")
 
-            {:ok,
-             %{
-               result: result,
-               session_id: session_id,
-               thread_id: thread_id,
-               turn_id: turn_id
-             }}
+            completion = %{
+              result: result,
+              session_id: session_id,
+              thread_id: thread_id,
+              turn_id: turn_id
+            }
+
+            {:ok, Map.put(completion, :handoff, Process.delete(handoff_key))}
 
           {:error, reason} ->
             Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")
@@ -285,7 +285,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp remote_launch_command(workspace) when is_binary(workspace) do
     [
       RuntimeProxy.remote_exports(),
-      unset_sensitive_env_command(),
       "cd #{SymphonyElixir.Shell.escape(workspace)}",
       codex_launch_command()
     ]
@@ -311,14 +310,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp codex_port_env do
-    RuntimeProxy.port_env() ++
-      Enum.map(@sensitive_codex_env_names, fn name ->
-        {String.to_charlist(name), false}
-      end)
-  end
-
-  defp unset_sensitive_env_command do
-    "unset " <> Enum.join(@sensitive_codex_env_names, " ")
+    RuntimeProxy.port_env()
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do

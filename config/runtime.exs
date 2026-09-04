@@ -88,3 +88,7 @@ case System.get_env("SYMPHONY_LOGS_ROOT") do
   _ ->
     :ok
 end
+
+if config_env() == :test do
+  config :symphony_elixir, :start_http_server, false
+end

@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.ConfigMultiProjectTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.{Config, WorkflowStore}
+  alias SymphonyElixir.{Config, TestSupport.FakePersistence, Workflow, WorkflowStore}
 
   defp loaded_workflow_with_prompt(prompt) do
     raw =
@@ -53,8 +53,26 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     refute Config.workflow_prompt() == "Project A agent for this repository."
   end
 
-  test "current_workflow returns workflow store default outside a context" do
-    assert {:ok, _workflow} = Config.current_workflow()
-    assert {:ok, _} = WorkflowStore.current()
+  test "current_workflow requires explicit context when real projects exist" do
+    {:ok, project} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        enabled: true
+      })
+
+    {:ok, loaded} = Workflow.load()
+    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    assert {:error, :missing_project_context} = Config.current_workflow()
+    assert {:error, :missing_project_context} = Config.settings()
+
+    assert_raise ArgumentError, ~r/explicit project context is required/, fn ->
+      Config.settings!()
+    end
+
+    assert {:ok, _settings} = Config.with_workflow_context(loaded, fn -> Config.settings() end)
   end
 end

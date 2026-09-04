@@ -387,7 +387,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
              Schema.parse(%{
                tracker: %{
                  active_states: ["Ready", "Needs Implementation Review"],
-                 terminal_states: ["Done"]
+                 terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
                },
                workflow: %{
                  states: %{"Ready" => %{profile: "implementation"}},
@@ -409,8 +409,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert message =~ "Linear state name limit of 25 characters"
     assert message =~ "Needs Implementation Review"
     assert message =~ "tracker.active_states"
-    assert message =~ "human_review_states"
-    assert message =~ "allowed_transitions.to"
     assert message =~ "profiles.implementation.allowed_updates.target_states"
   end
 

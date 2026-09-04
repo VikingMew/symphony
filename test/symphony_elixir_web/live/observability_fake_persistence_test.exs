@@ -364,6 +364,17 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
         event_type: "linear.state_transition",
         payload: %{"from_state" => "In Progress", "to_state" => "Review"},
         occurred_at: now
+      },
+      %{
+        id: "event-task-failed",
+        run_id: "run-events",
+        issue_identifier: "SYM-62",
+        event_type: "task.failed",
+        payload: %{
+          "summary" => %{"detail" => "worker failed", "reason" => "timeout"},
+          "correlation" => %{"issue_identifier" => "SYM-62"}
+        },
+        occurred_at: now
       }
     ])
 
@@ -373,6 +384,9 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert html =~ "2 empty Codex notification rows are hidden"
     assert html =~ "run.failed"
     assert html =~ "workspace timeout"
+    assert html =~ "task.failed"
+    assert html =~ "worker failed"
+    assert html =~ "timeout"
     assert html =~ ~s(href="/issues/MT-EVT")
     assert html =~ ~s(href="/runs/run-events")
     assert html =~ "Raw payload"
