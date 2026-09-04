@@ -41,7 +41,8 @@ design_status: landed
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: true}`,
    并触发 first-run 默认 workflow 导入(恢复原有首启体验)。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
-   不创建、不参与解析。
+   不创建、不参与解析。无显式 project context 的 runtime settings、候选查询和诊断返回
+   `:missing_project_context`,不得回落到 Default 或 enabled projects 中的第一条记录。
 3. **手动移除 project**:Settings/Projects 每个 project 卡片加「移除」按钮;
    `Persistence.delete_project/1` 删除 project 及其 CASCADE 的 workflow,
    关联的 runs/issues/tasks 的 project_id 置 NULL(历史记录保留,失去 project 归属),
@@ -53,6 +54,9 @@ design_status: landed
 
 - **条件创建而非永久禁用**:守卫是「零 project」而不是「永远不」。这是与前一实现的唯一
   语义差异;解析链 / worker_queue / operator task 的显式化全部保留。
+- **runtime 不猜测 project**:仅有 bootstrap Default 时保留首启运行体验;存在其他 project
+  后,无上下文 runtime 读取显式失败。per-project polling 继续通过 workflow context 解析各自的
+  Linear slug。
 - **显式删除而非自动清理**:不做启动时检测删除 default 的魔法。用户要删 default,点按钮。
 - **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。

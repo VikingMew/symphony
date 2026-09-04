@@ -25,6 +25,7 @@ defmodule SymphonyElixir.Orchestrator do
     WorkspaceDiskGuard
   }
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.Orchestrator.Events
@@ -1305,22 +1306,21 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_stalled_running_issues(%State{} = state) do
-    timeout_ms = Config.settings!().codex.stall_timeout_ms
-
-    cond do
-      timeout_ms <= 0 ->
-        state
-
-      map_size(state.running) == 0 ->
-        state
-
-      true ->
-        now = DateTime.utc_now()
-
-        Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
-          restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
-        end)
+    if map_size(state.running) == 0 do
+      state
+    else
+      reconcile_stalled_running_issues(state, Config.settings!().codex.stall_timeout_ms)
     end
+  end
+
+  defp reconcile_stalled_running_issues(state, timeout_ms) when timeout_ms <= 0, do: state
+
+  defp reconcile_stalled_running_issues(state, timeout_ms) do
+    now = DateTime.utc_now()
+
+    Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+      restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
+    end)
   end
 
   defp restart_stalled_issue(state, _run_id, %RunningOperator{}, _now, _timeout_ms), do: state
@@ -2446,8 +2446,13 @@ defmodule SymphonyElixir.Orchestrator do
     task = new_operator_task(kind, Map.fetch!(project, :id))
 
     case load_operator_workflow(project) do
-      {:ok, _workflow} -> queue_or_start_operator_task(state, kind, task)
-      {:error, reason} -> put_failed_operator_task(state, kind, task, reason)
+      {:ok, workflow} ->
+        Config.with_workflow_context(workflow, fn ->
+          queue_or_start_operator_task(state, kind, task)
+        end)
+
+      {:error, reason} ->
+        put_failed_operator_task(state, kind, task, reason)
     end
   end
 
@@ -3181,7 +3186,36 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp listening_mode_atom(%State{listening_mode: mode}), do: mode
 
-  defp runtime_config, do: Config.settings()
+  defp runtime_config do
+    case Config.settings() do
+      {:error, :missing_project_context} -> aggregate_runtime_limits(WorkflowStore.list_enabled())
+      result -> result
+    end
+  end
+
+  defp aggregate_runtime_limits(workflows) do
+    with true <- workflows != [] || {:error, :setup_required},
+         {:ok, settings} <- parse_runtime_settings(workflows) do
+      {:ok,
+       %{
+         polling: %{interval_ms: settings |> Enum.map(& &1.polling.interval_ms) |> Enum.min()},
+         agent: %{max_concurrent_agents: Enum.sum(Enum.map(settings, & &1.agent.max_concurrent_agents))}
+       }}
+    end
+  end
+
+  defp parse_runtime_settings(workflows) do
+    Enum.reduce_while(workflows, {:ok, []}, &parse_runtime_setting/2)
+  end
+
+  defp parse_runtime_setting(%{config: config}, {:ok, settings}) do
+    with {:ok, parsed} <- Schema.parse(config),
+         :ok <- Config.validate_settings(parsed) do
+      {:cont, {:ok, [parsed | settings]}}
+    else
+      {:error, reason} -> {:halt, {:error, reason}}
+    end
+  end
 
   defp agent_runner do
     Application.get_env(:symphony_elixir, :agent_runner_module, AgentRunner)

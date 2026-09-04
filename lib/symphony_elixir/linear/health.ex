@@ -5,8 +5,7 @@ defmodule SymphonyElixir.Linear.Health do
 
   use Agent
 
-  alias SymphonyElixir.PersistenceProvider
-  alias SymphonyElixir.Redaction
+  alias SymphonyElixir.{Config, Redaction}
 
   @default_ttl_ms :timer.minutes(15)
 
@@ -52,7 +51,7 @@ defmodule SymphonyElixir.Linear.Health do
       status: :unknown,
       source: nil,
       observed_at: nil,
-      project_slug: default_project_slug(),
+      project_slug: runtime_project_slug(),
       candidate_count: nil,
       detail: nil,
       primary: nil,
@@ -90,7 +89,7 @@ defmodule SymphonyElixir.Linear.Health do
       status: :ok,
       source: source,
       observed_at: observed_at,
-      project_slug: default_project_slug(),
+      project_slug: runtime_project_slug(),
       candidate_count: length(items),
       detail: "Linear #{human_source(source)} succeeded.",
       primary: nil
@@ -136,7 +135,7 @@ defmodule SymphonyElixir.Linear.Health do
       status: status,
       source: :diagnostics,
       observed_at: Map.get(diagnostics, :ran_at) || DateTime.utc_now(),
-      project_slug: get_in(diagnostics, [:config, :project_slug]) || default_project_slug(),
+      project_slug: get_in(diagnostics, [:config, :project_slug]) || runtime_project_slug(),
       candidate_count: diagnostics |> Map.get(:issues, []) |> length(),
       detail: primary |> primary_detail(status) |> sanitize_detail(),
       primary: primary_key(primary),
@@ -175,7 +174,7 @@ defmodule SymphonyElixir.Linear.Health do
       status: :error,
       source: source,
       observed_at: observed_at,
-      project_slug: default_project_slug(),
+      project_slug: runtime_project_slug(),
       candidate_count: nil,
       detail: detail,
       primary: source
@@ -232,9 +231,9 @@ defmodule SymphonyElixir.Linear.Health do
   defp human_probe(:candidates), do: "Candidate issues"
   defp human_probe(:teams), do: "Teams"
 
-  defp default_project_slug do
-    case PersistenceProvider.module().default_project() do
-      {:ok, project} -> Map.get(project, :linear_project_slug) || Map.get(project, "linear_project_slug") || "n/a"
+  defp runtime_project_slug do
+    case Config.settings() do
+      {:ok, settings} -> settings.tracker.project_slug || "n/a"
       _error -> "n/a"
     end
   rescue

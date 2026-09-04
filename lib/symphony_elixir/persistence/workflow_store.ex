@@ -94,7 +94,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  @spec current_workflow() :: WorkflowRecord.t() | nil
+  @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, :missing_project_context}
   def current_workflow, do: current_workflow(nil)
 
   @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
@@ -102,7 +102,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     query(:current_workflow, fn ->
       case default_project() do
         {:ok, project} -> current_workflow(project)
-        {:error, :not_found} -> current_workflow_for(first_enabled_project())
+        {:error, :not_found} -> {:error, :missing_project_context}
         {:error, :repo_unavailable} -> nil
         {:error, reason} -> raise_query_error(:current_workflow, reason)
       end
@@ -167,20 +167,12 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     query(:project_for_runtime, fn ->
       case default_project() do
         {:ok, project} -> project
+        {:error, :not_found} -> {:error, :missing_project_context}
         {:error, :repo_unavailable} -> nil
         {:error, reason} -> raise_query_error(:project_for_runtime, reason)
       end
     end)
   end
-
-  defp first_enabled_project do
-    if repo_available?() do
-      Repo.one(from(p in Project, where: p.enabled == true, order_by: [asc: p.name], limit: 1))
-    end
-  end
-
-  defp current_workflow_for(nil), do: nil
-  defp current_workflow_for(project), do: current_workflow(project)
 
   defp repo_available?, do: Process.whereis(Repo) != nil
 

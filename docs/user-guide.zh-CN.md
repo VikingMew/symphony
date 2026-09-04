@@ -456,6 +456,7 @@ mise exec -- ./bin/symphony \
 此时规则是：
 
 - 每个项目的 PostgreSQL current workflow 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
+- `Default` 项目只在 projects 表为空时作为首启占位自动创建。存在其他项目后，候选查询、runtime settings 和 Linear diagnostics 必须带明确 project context；缺少上下文会返回 `:missing_project_context`，不会选择 Default 或任意第一条项目。
 - 如果 PostgreSQL 中还没有 current workflow，系统进入 setup-required。
 - setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
 - 不带 `--port` 时也使用同一个 PostgreSQL workflow source，只是不启动 Web dashboard。
