@@ -785,7 +785,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
             printf '%s\n' '{"id":103,"method":"item/tool/call","params":{"tool":"create_pull_request","callId":"call-pr","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"title":"SYM-1: Ship PR handoff","body":"#### Summary\\n\\n- handoff\\n\\n#### Test Plan\\n\\n- [x] green\\n\\nFixes SYM-1"}}}'
             ;;
           5)
-            printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":"None"},"references":{"branch":"feature/sym-1","pr_url":"https://github.com/acme/app/pull/12","pr_proof":"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U"}}}}'
+            printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":""},"references":{"branch":"feature/sym-1","pr_url":"https://github.com/acme/app/pull/12","pr_proof":"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U"}}}}'
             ;;
           6)
             printf '%s\n' '{"method":"turn/completed"}'

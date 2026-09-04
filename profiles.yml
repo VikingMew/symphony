@@ -219,7 +219,7 @@ base_prompt: |
   10. Update the workpad comment with final checklist status and validation notes.
       - Mark completed plan/acceptance/validation checklist items as checked.
       - Add final handoff notes (commit + validation summary) in the same workpad comment.
-      - Post exactly one final handoff comment via `linear_task_update` before moving to review. It must include `Completed`, `Validation`, `Deviations`, and `Blockers`. Use `None` for empty `Deviations` or `Blockers`.
+      - Post exactly one final handoff comment before moving to review. It must include `Completed`, `Validation`, `Deviations`, and `Blockers`; use `None` for empty human-readable summary sections. In the structured result, use exactly `blockers: ""` when there are no blockers.
       - Do not invent a PR URL; the backend adds the ensured PR reference to the update result and issue links.
       - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
       - Do not post any additional duplicate completion summary comment.

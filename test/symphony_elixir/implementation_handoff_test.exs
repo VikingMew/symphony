@@ -198,7 +198,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         "completed" => "handoff",
         "validation" => "green",
         "deviations" => "None",
-        "blockers" => "None"
+        "blockers" => ""
       },
       "references" => %{
         "branch_url" => "https://github.com/acme/app/tree/feature/sym-1",

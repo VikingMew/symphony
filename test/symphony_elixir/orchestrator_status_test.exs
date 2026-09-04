@@ -94,6 +94,58 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert initial_state.__struct__ == state.__struct__
   end
 
+  test "SYM-48-shaped handoff with empty blockers persists no reported-blocker decision" do
+    issue_id = "issue-sym-48"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "SYM-48",
+      title: "Successful handoff",
+      state: "In Progress"
+    }
+
+    FakePersistence.put_issues([
+      %{
+        identifier: issue.identifier,
+        tracker_issue_id: issue_id,
+        blocking_decision: nil,
+        no_progress_streak: 0
+      }
+    ])
+
+    orchestrator_name = Module.concat(__MODULE__, :EmptyBlockerHandoffOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    running_entry = %Orchestrator.RunningIssue{
+      pid: self(),
+      ref: make_ref(),
+      run_id: "8d2a2878",
+      identifier: issue.identifier,
+      issue: issue,
+      started_at: DateTime.utc_now()
+    }
+
+    :sys.replace_state(pid, fn state ->
+      %{state | running: %{issue_id => running_entry}}
+    end)
+
+    tool_result = %{"result" => %{"blockers" => ""}}
+
+    message =
+      {:linear_task_update_result, issue_id, {:ok, %{"handoff" => %{}}}, tool_result, %{"branch" => "vikingmew-sym-48"}, "Ready to Merge"}
+
+    send(pid, message)
+
+    state = :sys.get_state(pid)
+    assert state.running[issue_id].implementation_handoff_completed
+    assert FakePersistence.get_issue_by_identifier("SYM-48").blocking_decision == nil
+    assert FakePersistence.list_blocked_issues() == []
+  end
+
   test "orchestrator snapshot reflects last codex update and session id" do
     issue_id = "issue-snapshot"
 
