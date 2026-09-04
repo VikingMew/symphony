@@ -116,7 +116,7 @@ profiles:
     "completed": "...",
     "validation": "...",
     "deviations": "None",
-    "blockers": "None"
+    "blockers": ""
   },
   "references": {
     "branch": "exact-linear-branch",
@@ -124,6 +124,10 @@ profiles:
   }
 }
 ```
+
+成功 handoff 的 `result.blockers` 规范值是空字符串；字段缺失时的 `nil` 也表示没有 blocker。
+经过 trim 后为空的字符串会规范化为 `nil`。精确且大小写不敏感的 `none` 仅作为旧 payload
+兼容值保留；`None for handoff` 等其它非空自由文本始终是 blocker evidence，避免隐藏真实阻塞。
 
 在中心化 `AgentRunner` 路径中，缺少 comment/result/references（含 `pr_url`）、target 不允许、
 或没有注入的 PR backend 时，请求失败。execution worker 的 `DynamicTool` 只做参数规范化、

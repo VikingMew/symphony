@@ -28,10 +28,12 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     :ok
   end
 
-  test "normalizes absent blocker evidence centrally" do
+  test "normalizes only canonical empty values and the legacy none token" do
     assert BlockingDecision.normalize_blocker(nil) == nil
     assert BlockingDecision.normalize_blocker("") == nil
+    assert BlockingDecision.normalize_blocker("   ") == nil
     assert BlockingDecision.normalize_blocker("  NoNe  ") == nil
+    assert BlockingDecision.normalize_blocker("None for handoff") == "None for handoff"
 
     assert BlockingDecision.normalize_blocker("missing deploy permission") ==
              "missing deploy permission"

@@ -12,6 +12,13 @@ defmodule SymphonyElixir.BlockingDecision do
           | :merge_conflict
           | :no_progress
 
+  @doc """
+  Normalizes blocker evidence for orchestration decisions.
+
+  Missing values and strings that are empty after trimming mean no blocker.
+  The exact case-insensitive token `none` is also accepted as legacy
+  compatibility. Any other non-empty string remains blocker evidence.
+  """
   @spec normalize_blocker(term()) :: String.t() | nil
   def normalize_blocker(nil), do: nil
 
