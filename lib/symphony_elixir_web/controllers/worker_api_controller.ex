@@ -92,12 +92,17 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     error_response(conn, 422, "invalid_worker_event", "event_type is required")
   end
 
-  defp notify_terminal_task(event_type, event)
-       when event_type in ["task.completed", "task.failed", "task.cancelled"] do
-    event.payload
-    |> get_in(["correlation", "issue_id"])
-    |> Orchestrator.worker_task_finished()
+  defp notify_terminal_task(
+         event_type,
+         %{payload: %{"correlation" => %{"issue_id" => issue_id}}}
+       )
+       when event_type in ["task.completed", "task.failed", "task.cancelled"] and is_binary(issue_id) do
+    Orchestrator.worker_task_finished(issue_id)
   end
+
+  defp notify_terminal_task(event_type, _event)
+       when event_type in ["task.completed", "task.failed", "task.cancelled"],
+       do: :ok
 
   defp notify_terminal_task(_event_type, _event), do: :ok
 

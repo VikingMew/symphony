@@ -9,6 +9,18 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
 
+  defmodule EventWithoutCorrelationPersistence do
+    @moduledoc false
+
+    defdelegate worker_protocol_version(), to: FakePersistence
+
+    @spec record_worker_task_event(String.t(), String.t(), String.t(), String.t(), map()) ::
+            {:ok, map()}
+    def record_worker_task_event(_worker_id, _session_id, _task_id, _event_type, _payload) do
+      {:ok, %{id: "event-without-correlation", payload: %{}}}
+    end
+  end
+
   defmodule FakeLinearClient do
     @moduledoc false
 
@@ -190,6 +202,25 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> put_req_header("x-symphony-worker-session", "session")
              |> post("/api/worker/v1/tasks/task-1/events", %{})
              |> json_response(422)
+  end
+
+  test "terminal worker event without payload correlation is accepted" do
+    Application.put_env(
+      :symphony_elixir,
+      :persistence_module,
+      EventWithoutCorrelationPersistence
+    )
+
+    start_test_endpoint()
+
+    assert %{"accepted" => true} =
+             build_conn()
+             |> worker_headers("worker", "session")
+             |> post("/api/worker/v1/tasks/task-1/events", %{
+               "event_type" => "task.completed",
+               "payload" => %{}
+             })
+             |> json_response(202)
   end
 
   defp start_test_endpoint do
