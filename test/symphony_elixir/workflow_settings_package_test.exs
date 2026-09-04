@@ -50,6 +50,19 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
     assert WorkflowSettingsPackage.changed?(raw, changed_raw) == true
   end
 
+  test "settings serialization replaces workflow policy edits with the code contract" do
+    draft =
+      WorkflowForm.empty()
+      |> Map.put("workflow_states", %{"Legacy" => %{"profile" => "implementation"}})
+      |> Map.put("human_review_states", "Legacy Review")
+      |> Map.put("allowed_transitions", [
+        %{"from" => "Legacy", "to" => "Legacy Review", "actor" => "human"}
+      ])
+
+    assert {:ok, config} = WorkflowForm.to_config(draft)
+    assert config["workflow"] == Schema.default_workflow_policy()
+  end
+
   test "profiles package round trip preserves the default operator profiles" do
     profiles_yaml = File.read!("profiles.yml")
 

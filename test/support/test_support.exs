@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
   @moduledoc false
 
+  alias SymphonyElixir.Config.Schema
+
   def workflow_package_yaml(config) when is_map(config), do: yaml_document(config)
 
   def profiles_package_yaml(profiles, prompt) do
@@ -13,8 +15,8 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
         "kind" => "linear",
         "endpoint" => "https://api.linear.app/graphql",
         "project_slug" => "project",
-        "active_states" => ["Ready", "In Progress"],
-        "terminal_states" => ["Done"]
+        "active_states" => ["Todo", "Ready", "In Progress"],
+        "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
       },
       "polling" => %{"interval_ms" => 30_000},
       "project" => %{
@@ -32,23 +34,24 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
         "thread_sandbox" => "workspace-write"
       },
       "server" => %{"host" => "127.0.0.1", "port" => 4000},
-      "workflow" => %{
-        "states" => %{
-          "Ready" => %{"profile" => "implementation"},
-          "In Progress" => %{"profile" => "implementation"}
-        },
-        "human_review_states" => ["Ready to Merge"],
-        "allowed_transitions" => [
-          %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-          %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"}
-        ]
-      }
+      "workflow" => Schema.default_workflow_policy()
     })
   end
 
   def settings_profiles_yaml do
     profiles_package_yaml(
       %{
+        "refinement" => %{
+          "name" => "Refinement",
+          "executor" => %{"type" => "codex_agent"},
+          "prompt" => %{"mode" => "extend", "template" => "Imported refinement prompt."},
+          "allowed_updates" => %{
+            "description" => true,
+            "comment" => true,
+            "result" => false,
+            "target_states" => ["Needs Refinement Review"]
+          }
+        },
         "implementation" => %{
           "name" => "Implementation",
           "executor" => %{"type" => "codex_agent"},
@@ -260,7 +263,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_api_token: nil,
           tracker_project_slug: "project",
           tracker_assignee: nil,
-          tracker_active_states: ["Refining", "Ready", "In Progress"],
+          tracker_active_states: ["Todo", "Ready", "In Progress"],
           tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),

@@ -71,13 +71,15 @@ docker compose run --rm symphony ssh-keygen -t ed25519
 ```
 
 Token environment variables are an alternative to interactive `gh` authentication. For GitHub,
-`gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The image's system Git config installs a GitHub-scoped
-`gh auth git-credential` helper and rewrites `git@github.com:owner/repo.git` to the token-free
+`gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The `symphony`, SSH `worker`, and `execution-worker`
+images share system Git config that installs a GitHub-scoped `gh auth git-credential` helper and
+rewrites `git@github.com:owner/repo.git` to the token-free
 `https://github.com/owner/repo.git` form. The helper resolves credentials only when Git
 authenticates; no token is written to a repository URL, Git config, image layer, or workspace.
 Because this static configuration lives in `/etc/gitconfig`, private clones work with an otherwise
-fresh `symphony_workspaces` volume and the read-only service never seeds `/home/symphony` or
-`/data/workspaces` with Git credentials. SSH URLs for hosts other than `github.com` remain SSH.
+fresh workspace volume, and read-only services never seed home or workspace paths with Git
+credentials. Workers need a repository token with clone/push access, but do not need external Git
+config or GitHub SSH host-key injection. SSH URLs for hosts other than `github.com` remain SSH.
 
 The service process must see working `gh` credentials because PR lookup/creation and Git bootstrap
 and push happen at the Symphony boundary. Codex app-server children intentionally receive neither
@@ -141,9 +143,11 @@ when Compose mounts the root filesystem read-only. The Panel and execution worke
 with execution enabled because workspace quality gates may create native libraries or executable
 test helpers there; migration keeps the default non-executable temporary mount.
 
-External `publish-image` CI builds and checks all three targets. It verifies command discovery for
+External `publish-image` CI builds and checks all three targets and publishes the `symphony` and
+`execution-worker` targets to separate GHCR repositories in one run. It verifies command discovery for
 `mise`, `mix`, `elixir`, `erl`, and `make` as a non-root user with a read-only root filesystem, then
-runs `mise exec -- mix --version` and `make all` in the `execution-worker` workspace. Agent-side
+runs `mise exec -- mix --version` in the `execution-worker` workspace. Publish formatting is a
+non-blocking diagnostic; the blocking `quality` workflow owns remediation. Agent-side
 implementation validation is limited to static source/config tests and local source gates; it
 must not reproduce these image-level checks with a container engine.
 
@@ -170,24 +174,26 @@ docker compose run --rm migrate
 
 ## Published Multi-architecture Image
 
-Successful `main`, release-tag (`vMAJOR.MINOR.PATCH`), and manually dispatched image workflows
-publish `ghcr.io/vikingmew/symphony` for exactly `linux/amd64` and `linux/arm64`. Every run publishes
-`sha-<full commit SHA>`; `main` also updates `latest`, and a release-tag push also publishes that
-exact tag. Manual runs never manufacture a release tag and update `latest` only when dispatched
-from `main`. The migration and application containers are the same image; only their commands
-differ.
+Successful `main`, release-tag (`vMAJOR.MINOR.PATCH[-prerelease]`), and manually dispatched image
+workflows publish `ghcr.io/vikingmew/symphony` and
+`ghcr.io/vikingmew/symphony-execution-worker` for exactly `linux/amd64` and `linux/arm64` in one
+run. Both receive `sha-<full commit SHA>`; `main` updates both `latest` tags, and a release-tag push
+adds that exact tag to both. A manual run off `main` never updates `latest`.
 
-Use an immutable release, full-SHA tag, or recorded digest for deployments and rollback. The
-published override removes both Dockerfile builds, requires one shared image reference, and always
-pulls it:
+Use matching immutable full-SHA tags or recorded digests from one workflow run. Set the worker
+source revision to the full SHA that built its image. The published override removes all application
+builds, requires both references, and always pulls them; the worker profile remains opt-in:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
+export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
 docker compose -f compose.yaml -f compose.published.yaml --env-file .env config --quiet
 docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d postgres
 docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
 docker compose -f compose.yaml -f compose.published.yaml up -d symphony
+docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker up -d execution-worker
 ```
 
 Public GHCR packages allow anonymous pulls. If this package is private, authenticate with a GitHub
@@ -201,13 +207,15 @@ Inspect the immutable reference and verify its platforms without pulling either 
 
 ```bash
 docker buildx imagetools inspect "$SYMPHONY_IMAGE"
+docker buildx imagetools inspect "$SYMPHONY_EXECUTION_WORKER_IMAGE"
 docker buildx imagetools inspect --raw "$SYMPHONY_IMAGE" |
   jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort -u
 ```
 
 `latest` is available as a convenience for tracking `main`, but it is mutable and is not a
-rollback reference. The publication workflow records the digest, emitted tags, verified manifest
-platforms, duration, and cache restoration in its Actions summary, then runs the release version
+rollback reference. Roll back by changing both immutable references and the worker source revision
+to a previously recorded matching publication. The workflow summary records each image's digest,
+tags, and verified platforms, then runs the release version
 command under both platform variants through QEMU.
 
 ## Daily Operations

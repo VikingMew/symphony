@@ -52,7 +52,7 @@ defmodule SymphonyElixir.CoreTest do
 
     config = Config.settings!()
     assert config.polling.interval_ms == 30_000
-    assert config.tracker.active_states == ["Refining", "Ready", "In Progress"]
+    assert config.tracker.active_states == ["Todo", "Ready", "In Progress"]
     assert config.tracker.terminal_states == ["Canceled", "Cancelled", "Duplicate", "Done"]
     assert config.tracker.assignee == nil
     assert config.agent.max_turns == 20
@@ -175,8 +175,9 @@ defmodule SymphonyElixir.CoreTest do
     assert get_in(config.profiles, ["implementation", "name"]) == "Implementation"
   end
 
-  test "workflow policy supports state routing and validates transitions" do
+  test "persisted workflow policy is ignored while profiles remain project-specific" do
     write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       workflow_policy: %{
         states: %{QA: %{profile: "qa"}},
         human_review_states: ["Product Review"],
@@ -192,11 +193,13 @@ defmodule SymphonyElixir.CoreTest do
       }
     )
 
-    assert Config.workflow_profile_for_state("QA") == "qa"
-    assert Config.human_review_state?("Product Review")
+    assert Config.workflow_profile_for_state("QA") == nil
+    refute Config.human_review_state?("Product Review")
+    assert Config.human_review_state?("Blocked")
     assert Config.workflow_allowed_updates("qa")["target_states"] == ["Done"]
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git",
       workflow_policy: %{
         states: %{QA: %{profile: "qa"}},
         allowed_transitions: [%{from: "QA", to: "Done", actor: "robot"}]
@@ -211,70 +214,12 @@ defmodule SymphonyElixir.CoreTest do
       }
     )
 
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "workflow"
-    assert message =~ "allowed_transitions.actor"
+    assert :ok = Config.validate!()
   end
 
-  test "workflow policy rejects target states and transitions outside configured state model" do
-    write_workflow_file!(Workflow.workflow_file_path(),
-      tracker_active_states: ["Ready", "In Progress"],
-      tracker_terminal_states: ["Done"],
-      workflow_policy: %{
-        states: %{Ready: %{profile: "implementation"}, "In Progress": %{profile: "implementation"}},
-        human_review_states: ["Ready to Merge"],
-        allowed_transitions: [%{from: "In Progress", to: "Unknown Review", actor: "codex", profile: "implementation"}]
-      },
-      profiles_policy: %{
-        implementation: %{
-          name: "Implementation",
-          executor: %{type: "codex_agent"},
-          prompt: %{mode: "extend", template: "Implement {{ issue.identifier }}"},
-          allowed_updates: %{comment: true, result: true, target_states: ["Unknown Review"]}
-        }
-      }
-    )
-
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "allowed_transitions.to references unknown workflow state"
-    assert message =~ "profiles.implementation.allowed_updates.target_states references unknown workflow state"
-  end
-
-  test "workflow policy accepts the PR-first implementation review state" do
+  test "workflow ignores nested profiles but rejects profile active state routing" do
     write_workflow_file!(Workflow.workflow_file_path(),
       project_repository_url: "git@example.com:org/repo.git",
-      tracker_active_states: ["Ready", "In Progress"],
-      tracker_terminal_states: ["Done"],
-      workflow_policy: %{
-        states: %{
-          Ready: %{profile: "implementation"},
-          "In Progress": %{profile: "implementation"}
-        },
-        human_review_states: ["Ready to Merge"],
-        allowed_transitions: [
-          %{from: "Ready", to: "In Progress", actor: "codex", profile: "implementation"},
-          %{from: "In Progress", to: "Ready to Merge", actor: "codex", profile: "implementation"},
-          %{from: "Ready to Merge", to: "In Progress", actor: "human"}
-        ]
-      },
-      profiles_policy: %{
-        implementation: %{
-          name: "Implementation",
-          executor: %{type: "codex_agent"},
-          prompt: %{mode: "extend", template: "Implement {{ issue.identifier }}"},
-          allowed_updates: %{comment: true, result: true, target_states: ["In Progress", "Ready to Merge"]}
-        }
-      }
-    )
-
-    assert :ok = Config.validate!()
-    assert Config.human_review_state?("Ready to Merge")
-    refute Config.human_review_state?("Needs Review")
-    assert Config.workflow_allowed_updates("implementation")["target_states"] == ["In Progress", "Ready to Merge"]
-  end
-
-  test "workflow rejects nested profiles and profile active state routing" do
-    write_workflow_file!(Workflow.workflow_file_path(),
       workflow_policy: %{
         profiles: %{qa: %{name: "QA"}},
         states: %{QA: %{profile: "qa"}}
@@ -289,8 +234,7 @@ defmodule SymphonyElixir.CoreTest do
       }
     )
 
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "workflow.profiles is not supported"
+    assert :ok = Config.validate!()
 
     write_workflow_file!(Workflow.workflow_file_path(),
       workflow_policy: %{states: %{QA: %{profile: "qa"}}},
@@ -386,8 +330,8 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert :ok = Config.validate!()
-    assert Config.workflow_profile_for_state("Manual QA") == "qa"
-    assert Config.workflow_executor_for_state("Manual QA") == "manual"
+    assert Config.workflow_profile_for_state("Manual QA") == nil
+    assert Config.workflow_profile("qa")["executor"]["type"] == "manual"
   end
 
   test "current split workflow package is valid and complete" do
@@ -865,8 +809,8 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+        tracker_active_states: ["Todo", "In Progress"],
+        tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
       )
 
       File.mkdir_p!(test_root)
@@ -928,8 +872,8 @@ defmodule SymphonyElixir.CoreTest do
     try do
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"]
+        tracker_active_states: ["Todo", "In Progress"],
+        tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
       )
 
       File.mkdir_p!(test_root)
@@ -960,7 +904,7 @@ defmodule SymphonyElixir.CoreTest do
       issue = %Issue{
         id: issue_id,
         identifier: issue_identifier,
-        state: "Closed",
+        state: "Done",
         title: "Done",
         description: "Completed",
         labels: []
@@ -992,8 +936,8 @@ defmodule SymphonyElixir.CoreTest do
       write_workflow_file!(Workflow.workflow_file_path(),
         tracker_kind: "linear",
         workspace_root: test_root,
-        tracker_active_states: ["Todo", "In Progress", "Ready to Merge"],
-        tracker_terminal_states: ["Closed", "Cancelled", "Canceled", "Duplicate"],
+        tracker_active_states: ["Todo", "In Progress"],
+        tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
         poll_interval_ms: 30_000
       )
 
@@ -1140,6 +1084,51 @@ defmodule SymphonyElixir.CoreTest do
     refute Map.has_key?(updated_state.running, issue_id)
     refute MapSet.member?(updated_state.claimed, issue_id)
     refute Process.alive?(agent_pid)
+  end
+
+  test "worker blocker completion releases the claim for the next Ready poll" do
+    issue_id = "issue-worker-blocker"
+    issue_identifier = "MT-WORKER-BLOCKER"
+    orchestrator_name = Module.concat(__MODULE__, :WorkerBlockerCompletionOrchestrator)
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: issue_identifier,
+      state: "Ready",
+      title: "Retry blocked worker completion",
+      description: "Dispatch after the blocker is resolved",
+      labels: []
+    }
+
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | claimed: MapSet.put(state.claimed, issue_id), max_concurrent_agents: 1}
+    end)
+
+    # The worker's terminal summary carried blocker evidence, but task completion
+    # must still release the orchestration claim.
+    Orchestrator.worker_task_finished(issue_id, orchestrator_name)
+    state = :sys.get_state(pid)
+    claimed = state.claimed
+    refute MapSet.member?(claimed, issue_id)
+
+    dispatch_settings = %{
+      active_states: MapSet.new(["ready"]),
+      terminal_states: MapSet.new(["done"]),
+      refinement_states: MapSet.new(),
+      listening_mode: :listening_all,
+      max_concurrent_agents: 1,
+      max_concurrent_agents_for_state: fn _state -> 1 end,
+      workflow_executor_for_state: fn _state -> "codex_agent" end,
+      human_review_state?: fn _state -> false end
+    }
+
+    assert DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_settings)
   end
 
   test "normal worker exit schedules active-state continuation retry" do

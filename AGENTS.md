@@ -6,7 +6,8 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 - Elixir: `1.19.x` (OTP 28) via `mise`.
 - Install deps: `mix setup`.
-- Main quality gate: `make all` (format check, lint, coverage, dialyzer).
+- Main quality checks: `scripts/check.sh`, `scripts/unit.sh`, `scripts/e2e.sh`, and
+  `scripts/dialyzer.sh`; Make is reserved for build/image targets.
 
 
 ## Codebase-Specific Conventions
@@ -85,7 +86,7 @@ validation. Review Compose deployment changes against the owning contract in
 [`docs/compose.md`](docs/compose.md); use static source/config tests only.
 
 ```bash
-make all
+scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
 ```
 
 ## Required Rules

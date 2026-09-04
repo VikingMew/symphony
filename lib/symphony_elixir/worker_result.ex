@@ -37,6 +37,15 @@ defmodule SymphonyElixir.WorkerResult do
 
   def validate(_), do: invalid("summary must be an object")
 
+  @spec validate_event(String.t(), map()) :: {:ok, map() | nil} | {:error, {:invalid_worker_summary, String.t()}}
+  def validate_event(event_type, payload)
+      when event_type in ["task.completed", "task.failed", "task.cancelled"] do
+    summary = Map.get(payload, "summary")
+    validate(summary)
+  end
+
+  def validate_event(_event_type, _payload), do: {:ok, nil}
+
   @spec limits() :: map()
   def limits, do: %{max_gates: @max_gates, max_text: @max_text, max_detail: @max_detail}
 

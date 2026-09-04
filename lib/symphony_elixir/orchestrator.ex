@@ -16,6 +16,7 @@ defmodule SymphonyElixir.Orchestrator do
     Nap.Results,
     Payload,
     PersistenceProvider,
+    PromptBuilder,
     RunLifecycle,
     StatusDashboard,
     Tracker,
@@ -154,6 +155,11 @@ defmodule SymphonyElixir.Orchestrator do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @spec worker_task_finished(String.t(), GenServer.server()) :: :ok
+  def worker_task_finished(issue_id, server \\ __MODULE__) when is_binary(issue_id) do
+    GenServer.cast(server, {:worker_task_finished, issue_id})
+  end
+
   @impl true
   def init(_opts) do
     now_ms = System.monotonic_time(:millisecond)
@@ -200,8 +206,12 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def handle_info({:tick, tick_token}, %{tick_token: tick_token} = state)
-      when is_reference(tick_token) do
+  def handle_cast({:worker_task_finished, issue_id}, state) when is_binary(issue_id) do
+    {:noreply, complete_issue(state, issue_id)}
+  end
+
+  @impl true
+  def handle_info({:tick, tick_token}, %{tick_token: tick_token} = state) when is_reference(tick_token) do
     state = refresh_runtime_config(state)
 
     state = %{
@@ -424,12 +434,14 @@ defmodule SymphonyElixir.Orchestrator do
 
       match?({:error, _}, result) and
           BlockingDecision.terminal_handoff_failure?(elem(result, 1)) ->
+        {decision_reason, evidence} = handoff_blocking_decision(elem(result, 1))
+
         persist_and_block_issue(
           state,
           issue_id,
           entry,
-          :implementation_handoff_failure,
-          inspect(elem(result, 1)),
+          decision_reason,
+          evidence,
           references
         )
 
@@ -446,6 +458,12 @@ defmodule SymphonyElixir.Orchestrator do
         state
     end
   end
+
+  defp handoff_blocking_decision({:handoff_failed, {:push_permission_blocked, detail}}),
+    do: {:push_permission_blocked, "MANUAL_HANDOFF_REQUIRED: #{detail}"}
+
+  defp handoff_blocking_decision(reason),
+    do: {:implementation_handoff_failure, inspect(reason)}
 
   defp handle_worker_down_reason(
          state,
@@ -789,6 +807,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp maybe_dispatch(%State{} = state) do
+    Logger.debug("event=poll_heartbeat listening_mode=#{listening_mode(state)} tick_timestamp=#{System.system_time(:millisecond)}")
+
     state =
       state
       |> reconcile_stale_operator_entries()
@@ -817,11 +837,16 @@ defmodule SymphonyElixir.Orchestrator do
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0,
          true <- workflow_slots_available?(state, workflow) do
+      Logger.info(
+        "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success candidate_count=#{length(issues)} dispatch=attempted"
+      )
+
       state = %{state | last_config_error: nil}
       persist_polled_issues(issues)
       choose_issues(issues, state)
     else
       {:error, reason} ->
+        Logger.warning("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked")
         handle_dispatch_error(state, reason)
 
       {:block, details} ->
@@ -830,6 +855,7 @@ defmodule SymphonyElixir.Orchestrator do
         |> Map.put(:last_config_error, nil)
 
       false ->
+        Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success dispatch=skipped reason=capacity")
         %{state | last_config_error: nil}
     end
   end
@@ -1106,6 +1132,7 @@ defmodule SymphonyElixir.Orchestrator do
       !DispatchPolicy.issue_routable_to_worker?(issue) ->
         Logger.info("Blocked issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; releasing blocked claim")
 
+        _ = BlockingDecision.clear(issue.identifier)
         release_blocked_issue(state, issue.id)
 
       active_issue_state?(issue.state, active_states) ->
@@ -1379,10 +1406,15 @@ defmodule SymphonyElixir.Orchestrator do
          ) do
         dispatch_issue(state_acc, issue)
       else
+        reasons = DispatchPolicy.skip_reasons(issue, state, dispatch_settings, worker_settings)
+        Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
         state_acc
       end
     end)
   end
+
+  defp listening_mode(%State{} = state), do: listening_mode_string(state)
+  defp workflow_name(%{project_id: project_id}), do: project_id
 
   defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
     DispatchPolicy.terminal_issue_state?(state_name, terminal_states)
@@ -1675,7 +1707,8 @@ defmodule SymphonyElixir.Orchestrator do
     %{
       state
       | completed: MapSet.put(state.completed, issue_id),
-        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+        retry_attempts: Map.delete(state.retry_attempts, issue_id),
+        claimed: MapSet.delete(state.claimed, issue_id)
     }
   end
 
@@ -1819,7 +1852,8 @@ defmodule SymphonyElixir.Orchestrator do
             state.retry_attempts,
             issue_id,
             RetryPolicy.retry_entry(prepared_retry, timer_ref, retry_token, due_at_ms)
-          )
+          ),
+        claimed: MapSet.put(state.claimed, issue_id)
     }
   end
 
@@ -3476,6 +3510,16 @@ defmodule SymphonyElixir.Orchestrator do
 
     workflow_record = current_workflow_record(workflow)
 
+    profile = Config.workflow_profile_for_state(issue.state)
+
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: profile,
+        profile_policy: Config.workflow_profile(profile),
+        allowed_updates: Config.workflow_allowed_updates(profile),
+        attempt: attempt
+      )
+
     run_attrs =
       issue
       |> Events.run_attrs(workflow_record, "worker", attempt)
@@ -3490,8 +3534,8 @@ defmodule SymphonyElixir.Orchestrator do
           issue,
           run,
           workflow_record,
-          Config.workflow_prompt(),
-          Config.workflow_profile_for_state(issue.state)
+          prompt,
+          profile
         )
       )
 

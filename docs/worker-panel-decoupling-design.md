@@ -273,18 +273,37 @@ POST /api/worker/v1/tasks/claim
   "lease_attempt": 1,
   "worker_session_id": "wss_...",
   "execution": {
-    "repository": {"url": "...", "source_ref": "main", "implementation_branch": "exact-linear-branch"},
-    "required_gates": [{"name": "make-all", "command": "make all", "timeout_ms": 1800000}],
-    "hooks": {},
-    "prompt": "...",
+    "version": 1,
+    "repository": "https://github.com/example/repository.git",
+    "revision": "main",
+    "branch": "exact-linear-branch",
+    "codex": {
+      "command": "codex app-server",
+      "pre_start_commands": [],
+      "approval_policy": "never",
+      "thread_sandbox": "workspace-write",
+      "turn_sandbox_policy": null,
+      "turn_timeout_ms": 3600000,
+      "read_timeout_ms": 5000,
+      "stall_timeout_ms": 300000,
+      "prompt": "rendered prompt",
+      "profile": "implementation",
+      "issue": {"identifier": "ABC-123", "title": "Issue title"}
+    },
+    "required_gates": [{"command": "make all", "timeout_seconds": 1800}],
+    "hooks": [],
     "handoff": {"policy": "push_pr_then_restricted_linear"}
   }
 }
 ```
 
 The correlation fields are derived from persisted project/run/issue/task/lease/session records.
-The execution object is a queue-time snapshot of the current workflow and never contains a
-`workflow_version_id`.
+The task retains the queue-time Panel snapshot for display and audit. At claim time the Panel
+converts that snapshot into the versioned execution object consumed by the worker, including a
+structured rendered issue/profile prompt and app-server settings. The worker starts one app-server
+session, drives one turn over JSON-RPC stdio, and stops the session. Shell hooks, required gates,
+and handoff commands retain second-based command timeouts. The execution object never
+contains a `workflow_version_id`.
 
 无任务时返回：
 
@@ -389,12 +408,13 @@ POST /api/worker/v1/tasks/:task_id/events
 
 Panel 写入统一 events 表，并同步更新 runs、agent_turns、workspaces 或 task 状态。Dashboard 和 API 都从持久化状态读取，不依赖 worker 进程内存。
 
-`task.progress` and terminal task events carry one bounded `summary` object. It records phase,
-typed outcome/reason, timestamps/duration, source revision, image digest or exact tag, worker
-revision, overall validation, ordered gate results, and optional handoff references. The API rejects
-malformed or oversized summaries, secret-bearing detail, and worker-local paths with a typed 422.
-Accepted evidence and the task/run projections are written in the same transaction; lifecycle
-status and persisted event timestamps remain authoritative.
+`task.progress` is a lightweight intermediate event and does not require a `summary`. Terminal task
+events carry one bounded `summary` object recording phase, typed outcome/reason,
+timestamps/duration, source revision, image digest or exact tag, worker revision, overall
+validation, ordered gate results, and optional handoff references. The API rejects malformed or
+oversized terminal summaries, secret-bearing detail, and worker-local paths with a typed 422.
+Accepted evidence and the task/run projections are written in the same transaction; lifecycle status
+and persisted event timestamps remain authoritative.
 
 ## 11. 数据模型
 

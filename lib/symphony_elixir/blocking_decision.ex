@@ -5,7 +5,12 @@ defmodule SymphonyElixir.BlockingDecision do
 
   alias SymphonyElixir.{PersistenceProvider, Tracker}
 
-  @type reason :: :reported_blocker | :implementation_handoff_failure | :merge_conflict | :no_progress
+  @type reason ::
+          :reported_blocker
+          | :implementation_handoff_failure
+          | :push_permission_blocked
+          | :merge_conflict
+          | :no_progress
 
   @spec normalize_blocker(term()) :: String.t() | nil
   def normalize_blocker(nil), do: nil
@@ -21,6 +26,7 @@ defmodule SymphonyElixir.BlockingDecision do
 
   @spec terminal_handoff_failure?(term()) :: boolean()
   def terminal_handoff_failure?({:implementation_handoff_failed, _reason}), do: true
+  def terminal_handoff_failure?({:handoff_failed, {:push_permission_blocked, _}}), do: true
   def terminal_handoff_failure?({:implementation_handoff_field_required, _field}), do: true
   def terminal_handoff_failure?(:implementation_handoff_unavailable), do: true
   def terminal_handoff_failure?(_reason), do: false

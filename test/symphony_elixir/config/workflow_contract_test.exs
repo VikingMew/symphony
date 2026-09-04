@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
     workflow = Schema.default_workflow_policy()
 
     tracker = %Tracker{
-      active_states: ["Refining", "Ready", "In Progress"]
+      active_states: ["Todo", "Ready", "In Progress"]
     }
 
     assert WorkflowContract.workflow_errors(workflow, %{}, tracker) == []
@@ -42,6 +42,14 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
                "actor" => "symphony"
              }
            end)
+
+    assert %{"from" => "Todo", "to" => "Blocked", "actor" => "symphony"} in workflow[
+             "allowed_transitions"
+           ]
+
+    assert %{"from" => "Refining", "to" => "Blocked", "actor" => "symphony"} in workflow[
+             "allowed_transitions"
+           ]
   end
 
   test "validates state profile references and transition state references" do
@@ -88,16 +96,15 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
            )
   end
 
-  test "normalizes atom-keyed input without dynamic atom conversion" do
-    workflow = %{
-      states: %{Ready: %{profile: "implementation"}},
-      human_review_states: ["Ready to Merge"],
-      allowed_transitions: [
-        %{from: "Ready", to: "Ready to Merge", actor: "codex", profile: "implementation"}
-      ]
-    }
+  test "rejects duplicate transitions" do
+    workflow = Schema.default_workflow_policy()
+    duplicate = hd(workflow["allowed_transitions"])
+    workflow = update_in(workflow["allowed_transitions"], &[duplicate | &1])
 
-    assert WorkflowContract.workflow_errors(workflow, %{}, tracker()) == []
+    assert Enum.any?(
+             WorkflowContract.workflow_errors(workflow, %{}, tracker()),
+             &String.contains?(&1, "contains duplicate")
+           )
   end
 
   test "computes known workflow states from workflow and tracker settings" do
@@ -151,28 +158,12 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
     assert "workflow.allowed_transitions must include Ready to Merge -> In Progress actor=human" in errors
   end
 
-  test "accepts the PR-first implementation lifecycle" do
-    workflow = %{
-      "states" => %{"In Progress" => %{"profile" => "implementation"}},
-      "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
-      "allowed_transitions" => [
-        %{
-          "from" => "In Progress",
-          "to" => "Ready to Merge",
-          "actor" => "codex",
-          "profile" => "implementation"
-        },
-        %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human"}
-      ]
-    }
+  test "accepts only the canonical state model" do
+    assert WorkflowContract.workflow_errors(Schema.default_workflow_policy(), %{}, tracker()) == []
 
-    profiles = %{
-      "implementation" => %{
-        "allowed_updates" => %{"target_states" => ["In Progress", "Ready to Merge"]}
-      }
-    }
-
-    assert WorkflowContract.workflow_errors(workflow, profiles, tracker()) == []
+    invalid_tracker = tracker(active_states: ["Ready", "Ready to Merge"])
+    errors = WorkflowContract.workflow_errors(Schema.default_workflow_policy(), %{}, invalid_tracker)
+    assert "tracker.active_states may contain only canonical dispatch states" in errors
   end
 
   defp tracker(overrides \\ []) do
@@ -183,7 +174,7 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
           kind: "linear",
           endpoint: "https://api.linear.app/graphql",
           active_states: ["Ready", "In Progress"],
-          terminal_states: ["Done"]
+          terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
         ],
         overrides
       )
