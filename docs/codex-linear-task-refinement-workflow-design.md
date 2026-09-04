@@ -174,7 +174,8 @@ Codex 在本地 workspace 中读取当前代码和设计文档，形成细化结
 - 测试建议。
 - 风险或未决问题。
 
-如果信息不足，Codex 应在 comment 中列出需要人确认的问题，并仍然把状态转到 `Needs Refinement Review`，由人决定是否补充或退回。
+如果信息不足，Codex 应留在当前 run 内补全 description。带有未决问题或显式占位符的产物不能进入
+`Needs Refinement Review`。
 
 打回返工时，细化结果还应包含：
 
@@ -257,6 +258,32 @@ Refining -> Needs Refinement Review
 - transition 在 workflow allowlist 中。
 - update detail 和 comment 至少一个已经成功，避免空转状态。
 - 如果是打回返工，comment 必须明确回应打回原因。
+
+#### Refinement description quality gate
+
+仅当 profile 是 `refinement` 且规范化后的目标状态是 `Needs Refinement Review` 时，后端在任何
+description/state 写入前检查同一请求中的候选 description。中间 description/comment 更新及其它
+profile 不受影响。完成请求缺少非空 description 时也视为门禁失败，不读取 run 启动时的旧 description。
+
+门禁按 Markdown ATX heading 切分章节并返回稳定顺序的完整、去重 violation 集合：
+
+- `missing_required_section`：`Goal`、`Scope`、`Out of scope`、`Acceptance criteria`、
+  `Validation` 任一章节不存在或为空；缺少候选 description 也使用此代码。
+- `ambiguous_marker`：正文不区分大小写包含 `[NEEDS CLARIFICATION]`、`[TODO]`、`TODO:`、
+  `TBD` 或 `???`。
+- `unresolved_questions`：`Open questions`、`Unresolved questions` 或 `未决问题` 有非空内容，
+  且去除 Markdown 列表前缀后不全是 `None` / `无`。
+- `missing_testable_acceptance`：`Acceptance criteria` 中没有至少一个非空、且不含上述占位符的
+  Markdown 有序或无序列表项。本规则只检查结构，不判断自然语言语义。
+- `implicit_context_reference`：正文不区分大小写包含 `[CONTEXT REQUIRED]`。
+
+失败时后端只创建一条诊断 comment，每项包含规则代码和修复提示；不执行候选 description 或状态
+写入。comment 成功后 tool 返回同一 violation 集合的 typed quality-gate error，让 agent 可在当前 run
+修正并重试。comment API 失败则返回 typed Linear error，不伪装成门禁通过。
+
+如果 run 未修正并成功进入 review，Orchestrator 沿用唯一的 `no_progress_streak`：第一次完成但无状态
+进展后仍为 `Refining`，连续第二次通过既有持久 `blocking_decision` 投递 `Blocked`。后续成功状态进展
+按现有逻辑清零 streak 和 decision；门禁不拥有独立计数或阈值。
 
 `Needs Refinement Review -> Ready` 必须由人执行。Symphony 不自动确认需求。
 

@@ -229,6 +229,14 @@ sockets, or image operations. A task that requires such validation MUST report b
 and use the persistent `blocking_decision` / `Blocked` path; allowed task-authored validation
 remains mandatory. Static inspection of container source/configuration remains allowed.
 
+When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
+request MUST contain the candidate description. Before any description or state write, Symphony
+MUST apply the deterministic refinement quality gate defined by
+`docs/codex-linear-task-refinement-workflow-design.md`. A failed gate writes one diagnostic comment
+and returns its complete violation set as a typed tool error. If that comment write fails, the
+Linear error remains explicit. The failure does not introduce a retry counter: an unfinished run
+continues through the existing no-progress streak and persistent `BlockingDecision` path.
+
 Rendering requirements:
 
 - Use a strict template engine (Liquid-compatible semantics are sufficient).

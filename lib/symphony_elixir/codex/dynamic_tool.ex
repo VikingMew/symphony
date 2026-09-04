@@ -5,8 +5,10 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
   alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Codex.RefinementQualityGate
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.StateName
 
   @task_read_query """
   query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
@@ -522,6 +524,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result =
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
+           :ok <- validate_refinement_quality(payload, profile, issue_id, opts),
            :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
@@ -534,6 +537,37 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result
   catch
     {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp validate_refinement_quality(payload, "refinement", issue_id, opts) do
+    target_state = Map.get(payload, "target_state")
+
+    if is_binary(target_state) and
+         StateName.normalize(target_state) == StateName.normalize("Needs Refinement Review") do
+      payload
+      |> Map.get("description")
+      |> RefinementQualityGate.validate()
+      |> report_refinement_quality(issue_id, opts)
+    else
+      :ok
+    end
+  end
+
+  defp validate_refinement_quality(_payload, _profile, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality(:ok, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality({:error, violations}, issue_id, opts) do
+    body =
+      "Refinement quality gate failed. Fix these items and retry:\n" <>
+        Enum.map_join(violations, "\n", fn violation ->
+          "- `#{violation.code}`: #{violation.message}"
+        end)
+
+    case create_comment(issue_id, body, opts) do
+      {:ok, _comment} -> {:error, {:refinement_quality_gate_failed, violations}}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp observe_task_update(result, payload, opts) do
@@ -859,6 +893,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable), do: %{"error" => %{"message" => "handoff submission is unavailable in this session."}}
   defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}), do: %{"error" => %{"message" => "`handoff.#{field}` is required and must be non-empty."}}
   defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
+
+  defp tool_error_payload(_tool, {:refinement_quality_gate_failed, items}) do
+    %{
+      "error" => %{
+        "code" => "refinement_quality_gate_failed",
+        "message" => "Refinement quality gate failed.",
+        "missing" => items
+      }
+    }
+  end
 
   defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do
     %{
