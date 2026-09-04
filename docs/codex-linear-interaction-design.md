@@ -26,11 +26,11 @@ GitHub PR 已打开，最后才把 Linear issue 移到人工等待状态。
 ## 当前默认状态流
 
 ```text
-Refining -> Needs Refinement Review -> Ready -> In Progress
+Todo -> Refining -> Needs Refinement Review -> Ready -> In Progress
   -> Ready to Merge -> Done
 ```
 
-- 可调度状态：`Refining`、`Ready`、`In Progress`。
+- 可调度状态：`Todo`、`Ready`、`In Progress`。
 - 人工等待状态：`Needs Refinement Review`、`Ready to Merge`。
 - `Ready to Merge` 没有 executable route，Orchestrator 不领取它。
 - 人工提出实现修改时使用 `Ready to Merge -> In Progress`。Codex 更新同一 Linear
@@ -63,7 +63,7 @@ workflow settings。
 
 ```yaml
 tracker:
-  active_states: ["Refining", "Ready", "In Progress"]
+  active_states: ["Todo", "Ready", "In Progress"]
   terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
 
 workflow:

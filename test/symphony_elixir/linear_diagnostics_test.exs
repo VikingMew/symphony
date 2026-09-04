@@ -68,6 +68,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
                       "name" => "Team",
                       "states" => %{
                         "nodes" => [
+                          %{"name" => "Todo"},
                           %{"name" => "Refining"},
                           %{"name" => "Needs Refinement Review"},
                           %{"name" => "Ready"},
@@ -303,7 +304,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
       endpoint: "https://api.linear.app/graphql"
       api_key: "token"
       project_slug: "stale-workflow-project"
-      active_states: ["Refining", "Ready", "In Progress"]
+      active_states: ["Todo", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
@@ -377,7 +378,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     assert diagnostics.probes.states.status == :error
     assert diagnostics.probes.states.detail =~ "Missing Linear states:"
-    assert "Refining" in diagnostics.probes.states.data.missing_active
+    assert "Todo" in diagnostics.probes.states.data.missing_active
     assert "Done" in diagnostics.probes.states.data.missing_terminal
     assert Enum.any?(diagnostics.log, &(&1.step == "states" and &1.status == :error))
   end

@@ -52,7 +52,7 @@ defmodule SymphonyElixir.CoreTest do
 
     config = Config.settings!()
     assert config.polling.interval_ms == 30_000
-    assert config.tracker.active_states == ["Refining", "Ready", "In Progress"]
+    assert config.tracker.active_states == ["Todo", "Ready", "In Progress"]
     assert config.tracker.terminal_states == ["Canceled", "Cancelled", "Duplicate", "Done"]
     assert config.tracker.assignee == nil
     assert config.agent.max_turns == 20

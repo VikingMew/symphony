@@ -120,5 +120,5 @@ comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新�
 - phase event 证明 `PR started/completed` 发生在 Linear state transition 前，并携带 issue/session/run。
 - test 证明 local/SSH workspace path 不参与 PR resolution。
 - test 证明 open PR idempotency、REST fallback、redaction 和错误类型。
-- dispatch/config test 证明 active states 只有 `Refining`、`Ready`、`In Progress`。
+- dispatch/config test 证明 active states 只有 `Todo`、`Ready`、`In Progress`。
 - repository audit 证明 runtime 不存在 backend feature merge 或 default-branch push 路径。

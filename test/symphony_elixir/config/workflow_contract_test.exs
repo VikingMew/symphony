@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
     workflow = Schema.default_workflow_policy()
 
     tracker = %Tracker{
-      active_states: ["Refining", "Ready", "In Progress"]
+      active_states: ["Todo", "Ready", "In Progress"]
     }
 
     assert WorkflowContract.workflow_errors(workflow, %{}, tracker) == []
@@ -42,6 +42,14 @@ defmodule SymphonyElixir.Config.WorkflowContractTest do
                "actor" => "symphony"
              }
            end)
+
+    assert %{"from" => "Todo", "to" => "Blocked", "actor" => "symphony"} in workflow[
+             "allowed_transitions"
+           ]
+
+    assert %{"from" => "Refining", "to" => "Blocked", "actor" => "symphony"} in workflow[
+             "allowed_transitions"
+           ]
   end
 
   test "validates state profile references and transition state references" do

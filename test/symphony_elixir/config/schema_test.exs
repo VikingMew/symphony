@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Config.SchemaTest do
              ["In Progress", "Ready to Merge"]
 
     assert Schema.default_workflow_policy()["states"] == %{
+             "Todo" => %{"profile" => "refinement"},
              "Refining" => %{"profile" => "refinement"},
              "Ready" => %{"profile" => "implementation"},
              "In Progress" => %{"profile" => "implementation"}
