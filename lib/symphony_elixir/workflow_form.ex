@@ -133,9 +133,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["codex", "rate_limit_gate_post_reset_delay_ms"], rate_limit_gate_post_reset_delay_ms)
         |> put_path(["hooks"], hooks_config(draft, hook_timeout_ms))
         |> put_path(["profiles"], profiles_config(draft))
-        |> put_path(["workflow", "states"], workflow_states_config(draft))
-        |> put_path(["workflow", "human_review_states"], lines(Map.get(draft, "human_review_states", "")))
-        |> put_path(["workflow", "allowed_transitions"], transitions_config(draft))
+        |> put_path(["workflow"], Schema.default_workflow_policy())
 
       {:ok, config}
     end
@@ -260,53 +258,6 @@ defmodule SymphonyElixir.WorkflowForm do
       {id, profile}
     end)
   end
-
-  defp workflow_states_config(draft) do
-    draft
-    |> Map.get("workflow_states", %{})
-    |> Map.new(fn {state, attrs} ->
-      base = Map.get(attrs, "_base", %{})
-      {state, put_path(base, ["profile"], Map.get(attrs, "profile", ""))}
-    end)
-  end
-
-  defp transitions_config(draft) do
-    draft
-    |> Map.get("allowed_transitions", [])
-    |> transition_entries()
-    |> Enum.map(fn entry ->
-      %{}
-      |> put_optional_transition_value("from", Map.get(entry, "from"))
-      |> put_optional_transition_value("to", Map.get(entry, "to"))
-      |> put_optional_transition_value("actor", Map.get(entry, "actor"))
-      |> put_optional_transition_value("profile", Map.get(entry, "profile"))
-    end)
-    |> Enum.reject(&empty_transition?/1)
-  end
-
-  defp transition_entries(entries) when is_list(entries), do: entries
-
-  defp transition_entries(entries) when is_map(entries) do
-    entries
-    |> Enum.sort_by(fn {index, _entry} -> parse_index(index) end)
-    |> Enum.map(fn {_index, entry} -> entry end)
-  end
-
-  defp transition_entries(_entries), do: []
-
-  defp parse_index(index) do
-    case Integer.parse(to_string(index)) do
-      {integer, ""} -> integer
-      _ -> 0
-    end
-  end
-
-  defp put_optional_transition_value(transition, key, value) do
-    value = String.trim(to_string(value || ""))
-    if value == "", do: transition, else: Map.put(transition, key, value)
-  end
-
-  defp empty_transition?(transition), do: map_size(transition) == 0
 
   defp hooks_config(draft, timeout_ms) do
     %{"timeout_ms" => timeout_ms}

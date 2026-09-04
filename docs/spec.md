@@ -56,9 +56,9 @@ The service solves four operational problems:
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps workflow policy in an active, versioned workflow record so teams can manage the agent
-  prompt and runtime settings through the service control plane. Implementations MAY import/export a
-  split package format for portability, but the active persisted workflow is the runtime authority.
+- It keeps project settings and profiles in an active workflow record and uses an immutable,
+  code-owned workflow policy. Implementations MAY import/export a split package format for
+  portability, but its workflow-policy keys are not a runtime source.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
 
 Implementations are expected to document their trust and safety posture explicitly. This

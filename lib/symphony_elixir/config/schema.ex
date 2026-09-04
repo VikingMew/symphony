@@ -463,6 +463,7 @@ defmodule SymphonyElixir.Config.Schema do
     config
     |> normalize_keys()
     |> drop_nil_values()
+    |> Map.put("workflow", default_workflow_policy())
     |> changeset()
     |> apply_action(:validate)
     |> case do
@@ -671,7 +672,6 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    workflow = normalize_workflow_policy(settings.workflow)
     profiles = normalize_profiles(settings.profiles)
 
     %{
@@ -679,7 +679,7 @@ defmodule SymphonyElixir.Config.Schema do
       | tracker: tracker,
         workspace: workspace,
         codex: codex,
-        workflow: workflow,
+        workflow: default_workflow_policy(),
         profiles: profiles
     }
   end
@@ -806,15 +806,6 @@ defmodule SymphonyElixir.Config.Schema do
       }
     }
   end
-
-  defp normalize_workflow_policy(policy) when is_map(policy) do
-    default = default_workflow_policy()
-    policy = normalize_keys(policy)
-
-    Map.merge(default, policy)
-  end
-
-  defp normalize_workflow_policy(_policy), do: default_workflow_policy()
 
   defp normalize_profiles(profiles) when is_map(profiles) do
     configured_profiles = normalize_keys(profiles)

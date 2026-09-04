@@ -14,8 +14,9 @@ project:
   cleanup_commands: ["mise exec -- mix workspace.before_remove"]
   default_branch: "main"
 # NOTE: This file is an import/export artifact, not the live runtime source.
-# The runtime authority is the current per-project workflow in PostgreSQL;
-# hooks may be overridden per project in Settings / Projects.
+# PostgreSQL supplies project settings and profiles; the workflow policy below is
+# a documentation/import example and runtime always uses the code contract.
+# Hooks may be overridden per project in Settings / Projects.
   repository_url: "https://github.com/openai/symphony"
   required_gates:
     - name: "check"

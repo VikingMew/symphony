@@ -118,7 +118,8 @@ mise exec -- ./bin/symphony --port 4000
 Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 1. Settings / Projects: Linear project slug and repository URL.
-2. Settings / Workflow: active states, terminal states, transitions, bootstrap, hooks, polling, and routing.
+2. Settings / Workflow: active states, bootstrap, hooks, and polling. Routing and transitions are
+   an immutable code contract.
 3. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
 4. Settings / Runtime: Codex command, sandbox, approval policy, workspace paths, and worker settings.
 5. Settings / Import: optional workflow/profile package import with preview before applying.
@@ -135,7 +136,8 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-PostgreSQL is the durable runtime authority. On cold start Symphony publishes the active per-project
+PostgreSQL is the durable runtime authority for project settings and profiles; workflow routing is
+an immutable code contract. On cold start Symphony publishes the active per-project
 workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
 dispatch reads use that snapshot without querying PostgreSQL. Successful Settings mutations republish
 before reporting success, and background external-change detection retains last-known-good state
@@ -154,8 +156,8 @@ mise exec -- ./bin/symphony \
 - `--logs-root` changes the runtime log directory (default: `./log`).
 - `--no-default-yaml-prompt` disables the first-run package import prompt.
 
-The split package is organized by concern: `workflow.yml` contains tracker, project, state,
-transition, hook, polling, and execution settings; `profiles.yml` contains the base prompt and
+The split package is organized by concern: `workflow.yml` contains tracker, project, hook, polling,
+and execution settings plus a non-runtime workflow-policy example; `profiles.yml` contains the base prompt and
 agent profiles. A project repository URL is required before polling and agent work can begin.
 
 Common environment variables:

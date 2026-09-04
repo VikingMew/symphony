@@ -963,7 +963,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
-  test "settings no-op save keeps semantic check messages without creating another version" do
+  test "settings no-op save ignores workflow policy edits without creating another version" do
     refute Process.whereis(SymphonyElixir.Repo)
 
     invalid_params =
@@ -993,8 +993,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "workflow-save-toast-info"
     assert html =~ "Workflow settings already up to date"
-    assert html =~ "Configuration check failed"
-    assert html =~ "Allowed transition 1"
+    refute html =~ "Configuration check failed"
 
     refute Enum.any?(FakePersistence.calls(), fn
              {:import_workflow, _project, _raw, _source} -> true
@@ -1023,21 +1022,14 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert build_conn() |> get("/projects") |> response(404) =~ "Route not found"
   end
 
-  test "workflow page uses an explicit add button for allowed transitions" do
+  test "workflow page renders the canonical allowed transitions" do
     refute Process.whereis(SymphonyElixir.Repo)
     write_workflow_file!(Workflow.workflow_file_path(), workflow_policy: workflow_policy_without_transitions())
     start_test_endpoint()
 
-    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    {:ok, _view, html} = live(build_conn(), "/settings/workflow")
 
     assert html =~ ~s(aria-label="Add transition")
-    refute html =~ ~s(name="workflow[allowed_transitions][0][from]")
-
-    html =
-      view
-      |> element("button[phx-click='add_workflow_transition']")
-      |> render_click()
-
     assert html =~ ~s(name="workflow[allowed_transitions][0][from]")
     assert html =~ ~s(name="workflow[allowed_transitions][0][to]")
   end
@@ -1265,7 +1257,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute html =~ "1073741824"
   end
 
-  test "workflow page saves parseable drafts with semantic configuration errors" do
+  test "workflow page replaces submitted workflow policy with the code contract" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
@@ -1284,12 +1276,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "workflow-save-toast-success"
     assert html =~ "Workflow settings saved"
-    assert html =~ "Configuration check failed"
-    assert html =~ "allowed_transitions.to"
-    assert html =~ "Configuration check targets"
-    assert html =~ "Allowed transition 1"
-    assert html =~ "workflow-transition-row settings-check-invalid"
-    assert html =~ "settings-check-message"
+    refute html =~ "Configuration check failed"
 
     assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
              Enum.find(FakePersistence.calls(), fn
@@ -1297,7 +1284,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                _ -> false
              end)
 
-    assert raw =~ "\"to\": \"Unknown Review\""
+    refute raw =~ "Unknown Review"
+    assert raw =~ "Ready to Merge"
   end
 
   test "agent settings highlights profile-owned semantic check failures" do

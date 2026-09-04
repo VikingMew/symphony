@@ -6,6 +6,9 @@ defmodule SymphonyElixir.Config.WorkflowContract do
   alias SymphonyElixir.Config.Schema
 
   @linear_state_name_max_length 25
+  @dispatch_states ["Todo", "Refining", "Ready", "In Progress"]
+  @human_review_states ["Needs Refinement Review", "Ready to Merge", "Blocked"]
+  @terminal_states ["Canceled", "Cancelled", "Duplicate", "Done"]
 
   @spec workflow_errors(map(), map(), term()) :: [String.t()]
   def workflow_errors(workflow, profiles, tracker) when is_map(workflow) do
@@ -18,6 +21,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     |> Kernel.++(validate_states(Map.get(workflow, "states", %{}), profiles))
     |> Kernel.++(validate_string_list(Map.get(workflow, "human_review_states", []), "human_review_states"))
     |> Kernel.++(validate_transitions(Map.get(workflow, "allowed_transitions", [])))
+    |> Kernel.++(validate_declared_state_model(workflow, tracker))
     |> Kernel.++(validate_workflow_state_references(workflow, profiles, tracker))
     |> Kernel.++(validate_refinement_lifecycle(workflow, profiles))
     |> Kernel.++(validate_implementation_lifecycle(workflow, profiles))
@@ -186,25 +190,86 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     do: ["profiles.#{profile}.allowed_updates must be a map"]
 
   defp validate_transitions(transitions) when is_list(transitions) do
-    Enum.flat_map(transitions, fn
-      transition when is_map(transition) ->
-        from = Map.get(transition, "from")
-        to = Map.get(transition, "to")
-        actor = Map.get(transition, "actor")
+    entry_errors =
+      Enum.flat_map(transitions, fn
+        transition when is_map(transition) ->
+          from = Map.get(transition, "from")
+          to = Map.get(transition, "to")
+          actor = Map.get(transition, "actor")
 
-        []
-        |> maybe_required_string_error(from, "allowed_transitions.from")
-        |> maybe_required_string_error(to, "allowed_transitions.to")
-        |> maybe_linear_state_name_length_error(from, "allowed_transitions.from")
-        |> maybe_linear_state_name_length_error(to, "allowed_transitions.to")
-        |> maybe_actor_error(actor)
+          []
+          |> maybe_required_string_error(from, "allowed_transitions.from")
+          |> maybe_required_string_error(to, "allowed_transitions.to")
+          |> maybe_linear_state_name_length_error(from, "allowed_transitions.from")
+          |> maybe_linear_state_name_length_error(to, "allowed_transitions.to")
+          |> maybe_actor_error(actor)
 
-      _transition ->
-        ["allowed_transitions entries must be maps"]
-    end)
+        _transition ->
+          ["allowed_transitions entries must be maps"]
+      end)
+
+    entry_errors ++ duplicate_transition_errors(transitions)
   end
 
   defp validate_transitions(_transitions), do: ["allowed_transitions must be a list"]
+
+  defp validate_declared_state_model(workflow, tracker) do
+    states = Map.keys(Map.get(workflow, "states", %{}))
+    reviews = Map.get(workflow, "human_review_states", [])
+    active = tracker_states(tracker, :active_states)
+    terminals = tracker_states(tracker, :terminal_states)
+
+    exact_state_set_errors(states, @dispatch_states, "workflow.states") ++
+      exact_state_set_errors(reviews, @human_review_states, "workflow.human_review_states") ++
+      exact_state_set_errors(terminals, @terminal_states, "tracker.terminal_states") ++
+      subset_errors(active, @dispatch_states, "tracker.active_states", "canonical dispatch states")
+  end
+
+  defp exact_state_set_errors(actual, expected, field) when is_list(actual) do
+    normalized_actual = normalized_states(actual)
+    normalized_expected = normalized_states(expected)
+
+    if normalized_actual == normalized_expected and length(actual) == length(expected) do
+      []
+    else
+      ["#{field} must contain exactly #{Enum.join(expected, ", ")}"]
+    end
+  end
+
+  defp exact_state_set_errors(_actual, expected, field),
+    do: ["#{field} must contain exactly #{Enum.join(expected, ", ")}"]
+
+  defp subset_errors(actual, allowed, field, allowed_label) do
+    invalid = MapSet.difference(normalized_states(actual), normalized_states(allowed))
+
+    if MapSet.size(invalid) == 0,
+      do: [],
+      else: ["#{field} may contain only #{allowed_label}"]
+  end
+
+  defp normalized_states(states) do
+    states
+    |> Enum.filter(&is_binary/1)
+    |> MapSet.new(&Schema.normalize_issue_state/1)
+  end
+
+  defp duplicate_transition_errors(transitions) do
+    transitions
+    |> Enum.filter(&is_map/1)
+    |> Enum.group_by(&transition_identity/1)
+    |> Enum.flat_map(fn
+      {_identity, [_transition]} -> []
+      {identity, _duplicates} -> ["workflow.allowed_transitions contains duplicate #{identity}"]
+    end)
+  end
+
+  defp transition_identity(transition) do
+    from = Map.get(transition, "from")
+    to = Map.get(transition, "to")
+    actor = Map.get(transition, "actor")
+    profile = Map.get(transition, "profile")
+    "#{from} -> #{to} actor=#{actor} profile=#{profile || "none"}"
+  end
 
   defp validate_workflow_state_references(workflow, profiles, tracker) do
     used_profiles = workflow_used_profiles(workflow)
