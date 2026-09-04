@@ -249,12 +249,23 @@ For the default implementation profile, `AgentRunner` owns the backend of this o
 2. Validate the Linear identifier, exact Linear `branchName`, configured default branch,
    GitHub repository identity, and existence of the remote head branch.
 3. Ensure an open PR exists for the exact repository/base/head tuple.
-4. Return the PR URL; Codex includes it in the final Linear comment/result/references request.
-5. Update Linear from `In Progress` to `Ready to Merge` last.
+4. Resolve and return the PR URL and immutable `head_oid` through the trusted GitHub backend;
+   branch refs and agent-authored references are never reviewed-SHA evidence.
+5. Persist an idempotent review intent before external Linear writes.
+6. Update Linear from `In Progress` to `Ready to Merge` last, then arm the review job.
 
 Step 5 MUST NOT run if PR preparation fails. Failures MUST be typed, visible, redacted, and leave
 the issue in `In Progress`. Started/completed/failed `implementation_handoff` phase events MUST
 carry issue, session, and run context; completed events record the PR URL.
+
+### 10.9 Read-only post-handoff review
+
+The review runner revalidates both current Linear state and GitHub `head_oid` immediately before
+execution. A stale job becomes `superseded` and cannot comment or transition state. Its Codex
+thread uses a read-only, network-disabled sandbox and exposes only `review_context_read` and
+`submit_review`; shell/write, push, PR creation, and general Linear/GitHub mutation tools are absent.
+The supplied context includes current issue acceptance context, validated PR metadata/body,
+base/head OIDs, and diff. Exactly one typed approve/findings result is accepted for the job head.
 
 PR lookup/creation requirements:
 

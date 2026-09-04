@@ -116,8 +116,12 @@ Default workflow policy:
   `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
-- Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
+- Symphony conflict or PR-review finding delivery: `Ready to Merge -> Blocked` with
+  `actor=symphony`.
+- Human review-blocker recovery: `Blocked -> In Progress`.
 - `Ready to Merge` MUST NOT appear in `tracker.active_states`.
+- The independent `review` profile is not state-routed. It exposes only immutable context read and
+  typed conclusion submission; `agent.max_concurrent_reviews` controls its durable queue.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.
 

@@ -15,8 +15,14 @@ defmodule SymphonyElixir.PRReview do
       do: :crypto.hash(:sha256, Enum.join([issue_id, pr_url, head_sha], "\0")) |> Base.encode16(case: :lower)
 
   @spec normalize(map()) :: {:ok, result()} | {:error, term()}
-  def normalize(%{"outcome" => outcome, "head_sha" => sha, "summary" => summary} = value),
-    do: normalize(Map.merge(value, %{outcome: outcome, head_sha: sha, summary: summary}))
+  def normalize(%{"outcome" => outcome, "head_sha" => sha, "summary" => summary} = value) do
+    normalize(%{
+      outcome: outcome,
+      head_sha: sha,
+      summary: summary,
+      findings: Map.get(value, "findings", [])
+    })
+  end
 
   def normalize(%{outcome: outcome, head_sha: sha, summary: summary} = value)
       when outcome in [:approve, :findings] and is_binary(sha) and sha != "" and is_binary(summary) do

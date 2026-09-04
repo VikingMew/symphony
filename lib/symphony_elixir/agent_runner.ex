@@ -15,6 +15,7 @@ defmodule SymphonyElixir.AgentRunner do
     Linear.Issue,
     PersistenceEventWriter,
     PromptBuilder,
+    PRReview.Handoff,
     Tracker,
     Workspace
   }
@@ -259,6 +260,11 @@ defmodule SymphonyElixir.AgentRunner do
         :task_update_observer,
         task_update_observer(codex_update_recipient, issue.id)
       )
+      |> Keyword.put_new(
+        :review_intent_preparer,
+        review_intent_preparer(issue, opts)
+      )
+      |> Keyword.put_new(:review_intent_armer, &Handoff.arm/1)
 
     opts =
       opts
@@ -566,6 +572,18 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp task_update_observer(_recipient, _issue_id), do: fn _result, _payload, _tool_opts -> :ok end
+
+  defp review_intent_preparer(issue, opts) do
+    fn pull_request ->
+      persistence = SymphonyElixir.PersistenceProvider.module()
+
+      if function_exported?(persistence, :put_review_intent, 1) do
+        Handoff.prepare(issue, pull_request, Keyword.fetch!(opts, :project_id), Keyword.get(opts, :run_id))
+      else
+        {:ok, nil}
+      end
+    end
+  end
 
   defp handoff_event_opts(runner_opts, tool_opts) do
     runner_opts

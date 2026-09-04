@@ -22,7 +22,7 @@ defmodule SymphonyElixir.Config.SchemaTest do
              "Blocked"
            ]
 
-    assert length(Schema.default_workflow_policy()["allowed_transitions"]) == 15
+    assert length(Schema.default_workflow_policy()["allowed_transitions"]) == 16
   end
 
   test "persisted workflow policy cannot alter runtime routing" do

@@ -324,7 +324,9 @@ The agent owns, through the workflow prompt and tools:
 Codex requests initial PR lookup/creation through `create_pull_request`; Symphony owns its centralized
 backend and credentials. It never approves
 or merges that PR and never pushes a feature result to the configured default branch. GitHub review
-and Linear's merged-PR automation own `Ready to Merge -> Done`.
+and Linear's merged-PR automation own `Ready to Merge -> Done`. Symphony's only execution in that
+non-active state is an isolated durable review job for the backend-resolved immutable PR head; it
+cannot modify code or GitHub and does not replace human approval.
 
 This split keeps Symphony generic while allowing teams to encode shared execution policy in Settings
 and repository skills. Project-specific repository and Linear slug values live in project settings,

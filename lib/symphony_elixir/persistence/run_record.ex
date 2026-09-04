@@ -47,14 +47,14 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :finished_at
     ])
     |> validate_required([:kind, :status])
-    |> validate_inclusion(:kind, ["issue", "nap", "day_dreaming"])
+    |> validate_inclusion(:kind, ["issue", "review", "nap", "day_dreaming"])
     |> validate_issue_identifier_for_issue_run()
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
   end
 
   defp validate_issue_identifier_for_issue_run(changeset) do
     case get_field(changeset, :kind) do
-      "issue" -> validate_required(changeset, [:issue_identifier])
+      kind when kind in ["issue", "review"] -> validate_required(changeset, [:issue_identifier])
       _ -> changeset
     end
   end

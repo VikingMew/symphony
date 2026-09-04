@@ -250,6 +250,7 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:max_concurrent_agents, :integer, default: 10)
+      field(:max_concurrent_reviews, :integer, default: 2)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
@@ -262,6 +263,7 @@ defmodule SymphonyElixir.Config.Schema do
         attrs,
         [
           :max_concurrent_agents,
+          :max_concurrent_reviews,
           :max_turns,
           :max_retry_backoff_ms,
           :max_concurrent_agents_by_state
@@ -269,6 +271,7 @@ defmodule SymphonyElixir.Config.Schema do
         empty_values: []
       )
       |> validate_number(:max_concurrent_agents, greater_than: 0)
+      |> validate_number(:max_concurrent_reviews, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
       |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
@@ -773,6 +776,20 @@ defmodule SymphonyElixir.Config.Schema do
           "comment" => true,
           "result" => true,
           "target_states" => ["In Progress", "Ready to Merge"]
+        }
+      },
+      "review" => %{
+        "name" => "Pull request review",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "replace",
+          "template" => "Review only the supplied immutable issue and pull-request context. Submit one structured approve/findings conclusion. Do not modify code, git, GitHub, or Linear."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => false,
+          "result" => false,
+          "target_states" => []
         }
       },
       "nap" => %{

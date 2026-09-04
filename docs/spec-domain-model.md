@@ -185,6 +185,13 @@ function start_service():
   event_loop(state)
 ```
 
+## Post-handoff review job
+
+A review job is the durable identity `(project_id, issue_id, pr_url, head_oid)` with statuses
+`intent`, `queued`, `running`, `completed`, `failed`, or `superseded`. It owns one typed result and
+idempotent delivery progress. Its linked run has `kind=review` and `profile=review`; existing run,
+event, token, runtime, and rate-limit records remain the sole accounting source.
+
 ### 16.2 Poll-and-Dispatch Tick
 
 ```text
@@ -391,4 +398,3 @@ on_retry_timer(issue_id, state):
 
   return dispatch_issue(issue, state, attempt=retry_entry.attempt)
 ```
-

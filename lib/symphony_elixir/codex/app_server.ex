@@ -56,8 +56,8 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       startup_context = startup_context(expanded_workspace, worker_host)
 
-      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
-           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, startup_context) do
+      with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
+           {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, startup_context, opts) do
         {:ok,
          %{
            port: port,
@@ -104,6 +104,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         dynamic_tool_opts = Keyword.get(opts, :dynamic_tool_opts, [])
         handoff_key = {:codex_handoff, make_ref()}
         pull_request_key = {:codex_pull_request, make_ref()}
+        review_key = {:codex_review, make_ref()}
 
         tool_executor =
           Keyword.get(opts, :tool_executor, fn tool, arguments ->
@@ -121,7 +122,15 @@ defmodule SymphonyElixir.Codex.AppServer do
                 :ok
               end,
               pull_request_observer: &Process.put(pull_request_key, &1),
-              pull_request_result: fn -> Process.get(pull_request_key) end
+              pull_request_result: fn -> Process.get(pull_request_key) end,
+              review_submitter: fn result ->
+                if Process.get(review_key) do
+                  {:error, :review_already_submitted}
+                else
+                  Process.put(review_key, result)
+                  :ok
+                end
+              end
             ]
 
             DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
@@ -151,7 +160,10 @@ defmodule SymphonyElixir.Codex.AppServer do
               turn_id: turn_id
             }
 
-            {:ok, Map.put(completion, :handoff, Process.delete(handoff_key))}
+            {:ok,
+             completion
+             |> Map.put(:handoff, Process.delete(handoff_key))
+             |> Map.put(:review_result, Process.delete(review_key))}
 
           {:error, reason} ->
             Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")
@@ -361,34 +373,34 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp session_policies(workspace, nil) do
-    resolve_session_policies(workspace, [])
+  defp session_policies(workspace, nil, opts) do
+    resolve_session_policies(workspace, [], opts)
   end
 
-  defp session_policies(workspace, worker_host) when is_binary(worker_host) do
-    resolve_session_policies(workspace, remote: true)
+  defp session_policies(workspace, worker_host, opts) when is_binary(worker_host) do
+    resolve_session_policies(workspace, [remote: true], opts)
   end
 
-  defp resolve_session_policies(workspace, opts) do
+  defp resolve_session_policies(workspace, resolver_opts, opts) do
     with {:ok, settings} <- Config.settings(),
-         {:ok, turn_sandbox_policy} <- Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, opts) do
+         {:ok, turn_sandbox_policy} <- Schema.resolve_runtime_turn_sandbox_policy(settings, workspace, resolver_opts) do
       {:ok,
        %{
          approval_policy: settings.codex.approval_policy,
-         thread_sandbox: settings.codex.thread_sandbox,
-         turn_sandbox_policy: turn_sandbox_policy
+         thread_sandbox: Keyword.get(opts, :thread_sandbox, settings.codex.thread_sandbox),
+         turn_sandbox_policy: Keyword.get(opts, :turn_sandbox_policy, turn_sandbox_policy)
        }}
     end
   end
 
-  defp do_start_session(port, workspace, session_policies, startup_context) do
+  defp do_start_session(port, workspace, session_policies, startup_context, opts) do
     case send_initialize(port, startup_context) do
-      :ok -> start_thread(port, workspace, session_policies, startup_context)
+      :ok -> start_thread(port, workspace, session_policies, startup_context, opts)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}, startup_context) do
+  defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}, startup_context, opts) do
     send_message(port, %{
       "method" => "thread/start",
       "id" => @thread_start_id,
@@ -396,7 +408,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         "approvalPolicy" => approval_policy,
         "sandbox" => thread_sandbox,
         "cwd" => workspace,
-        "dynamicTools" => DynamicTool.tool_specs()
+        "dynamicTools" => DynamicTool.tool_specs(Keyword.get(opts, :profile))
       }
     })
 

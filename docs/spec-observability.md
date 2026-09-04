@@ -294,6 +294,12 @@ Minimum endpoints:
 
 API design notes:
 
+- Post-handoff review phases use the existing run/event stream with `kind=review`,
+  `profile=review`, PR URL, and immutable head OID. Phase status distinguishes queued, started,
+  completed, failed, and superseded; completion carries approve/findings outcome. Codex usage and
+  rate-limit updates are recorded as the same `codex.update` events used by existing aggregation,
+  so retries never introduce a second telemetry ledger.
+
 - All endpoints remain behind the existing authenticated API pipeline.
 - Persisted history uses the configured persistence provider and normal Repo path; implementations
   MUST NOT query the durable database directly.
