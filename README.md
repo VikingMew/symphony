@@ -126,9 +126,9 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
 
-On a fresh database, Symphony can also offer to import the checked-in `workflow.yml` and
-`profiles.yml` as the first current workflow. This is a one-time import prompt; the YAML
-files do not become runtime sources. To skip it and remain in setup-required mode, start with:
+On a fresh database, Symphony can also offer to import the checked-in package at
+`docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first current workflow.
+To skip it and remain in setup-required mode, start with:
 
 ```bash
 mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
@@ -136,13 +136,22 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-PostgreSQL is the durable runtime authority for project settings and profiles; workflow routing is
+The checked-in package under `docs/examples/` is the source for project settings and profiles;
+PostgreSQL is the durable runtime snapshot, while workflow routing is
 an immutable code contract. On cold start Symphony publishes the active per-project
 workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
-dispatch reads use that snapshot without querying PostgreSQL. Successful Settings mutations republish
+dispatch reads use that snapshot without querying PostgreSQL. Successful imports republish
 before reporting success, and background external-change detection retains last-known-good state
-during database stalls. `workflow.yml` and `profiles.yml` are import/export artifacts, not files
-that Symphony watches at runtime.
+during database stalls. Synchronize explicitly and detect drift with:
+
+```bash
+mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG
+mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG --check
+```
+
+Use `--all` instead of `--project PROJECT_SLUG` to operate on every enabled project. The command
+fully validates both files before opening any database write and is idempotent. Do not update the
+`workflows` table by hand.
 
 Useful startup options:
 
@@ -273,7 +282,7 @@ volume verification, restart testing, and rollback.
 - `test/`: ExUnit coverage for runtime behavior.
 - `config/` and `priv/`: application configuration, migrations, and static assets.
 - `docs/`: architecture, operations, feature designs, and governance.
-- `workflow.yml` and `profiles.yml`: example import/export workflow package.
+- `docs/examples/workflow.yml` and `docs/examples/profiles.yml`: repository workflow package and import examples.
 - `bin/symphony`: command-line launcher.
 - `.codex/`: repository-local Codex skills and setup helpers.
 

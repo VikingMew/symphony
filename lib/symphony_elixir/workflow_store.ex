@@ -2,8 +2,9 @@ defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
   Publishes the current database workflow for every enabled project.
 
-  PostgreSQL is the durable authority, but runtime reads use one atomically replaced
-  in-memory snapshot. The owner process performs initial and explicit loads and
+  PostgreSQL is the durable runtime snapshot synchronized from the repository
+  package, while runtime reads use one atomically replaced in-memory snapshot.
+  The owner process performs initial and explicit loads and
   coordinates one background refresh; callers never query persistence or wait
   for that work.
   """

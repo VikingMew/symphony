@@ -49,7 +49,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
   end
 
   test "implementation profile directs Codex to the handoff skill contract" do
-    profiles = File.read!(Path.expand("../../profiles.yml", __DIR__))
+    profiles = File.read!(Path.expand("../../docs/examples/profiles.yml", __DIR__))
     skill = File.read!(Path.expand("../../.codex/skills/handoff/SKILL.md", __DIR__))
 
     assert profiles =~ "## Related skills"
@@ -229,7 +229,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
   end
 
   test "profiles import artifact carries the same container validation priority" do
-    profiles = File.read!("profiles.yml")
+    profiles = File.read!("docs/examples/profiles.yml")
 
     assert profiles =~ "Container-engine validation policy (highest priority)"
     assert profiles =~ "policy-prohibited required validation is a true blocker"
@@ -445,7 +445,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
 
   test "in-repo split package renders correctly" do
     workflow_path = Workflow.workflow_file_path()
-    repo_workflow_path = Path.expand("workflow.yml", File.cwd!())
+    repo_workflow_path = Path.expand("docs/examples/workflow.yml", File.cwd!())
     Workflow.set_workflow_file_path(repo_workflow_path)
     {:ok, loaded} = Workflow.load(repo_workflow_path)
     raw = Workflow.to_markdown(loaded.config, loaded.prompt)

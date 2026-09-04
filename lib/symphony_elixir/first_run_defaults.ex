@@ -2,13 +2,13 @@ defmodule SymphonyElixir.FirstRunDefaults do
   @moduledoc """
   Explicit first-run import helper for checked-in workflow/profile YAML defaults.
 
-  This module never turns `workflow.yml` or `profiles.yml` into runtime sources.
-  It imports them once into the database only when the operator confirms.
+  It imports the repository package into the database only when the operator
+  confirms; runtime readers continue to consume the resulting snapshot.
   """
 
   require Logger
 
-  alias SymphonyElixir.{Persistence, Workflow}
+  alias SymphonyElixir.{Persistence, RepositoryWorkflow, Workflow}
 
   @source "first_run_default_yaml"
 
@@ -135,7 +135,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
       current_workflow: &Persistence.current_workflow/0,
       list_projects: &Persistence.list_projects/0,
       import_workflow: &Persistence.WorkflowStore.import_workflow/3,
-      package_root: &File.cwd!/0,
+      package_root: &RepositoryWorkflow.package_root/0,
       read_file: &File.read/1,
       prompt: &IO.gets/1,
       interactive?: &interactive?/0,

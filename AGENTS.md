@@ -12,9 +12,9 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 ## Codebase-Specific Conventions
 
-- Runtime config is loaded from the project's current PostgreSQL workflow and should be accessed through
-  `SymphonyElixir.Config`. `workflow.yml` and `profiles.yml` are split package import/export
-  artifacts and examples, not the live runtime source.
+- Runtime config is loaded from the project's current PostgreSQL workflow snapshot and should be accessed through
+  `SymphonyElixir.Config`. The checked-in package under `docs/examples/` is its repository source;
+  synchronize it with `mix symphony.workflow.sync`, never with a manual SQL `UPDATE`.
 - Keep the implementation aligned with [`docs/spec.md`](docs/spec.md) where practical.
   - The implementation may be a superset of the spec.
   - The implementation must not conflict with the spec.
@@ -125,7 +125,7 @@ mix pr_body.check --file /path/to/pr_body.md
 If behavior/config changes, update docs in the same PR:
 
 - `README.md` for project concepts, goals, and implementation/run instructions.
-- `workflow.yml` and `profiles.yml` when the import/export workflow package
+- `docs/examples/workflow.yml` and `docs/examples/profiles.yml` when the repository workflow package
   contract changes. The PostgreSQL current workflow is the runtime
   authority; local split package files are examples/import artifacts, not the
   live runtime source.

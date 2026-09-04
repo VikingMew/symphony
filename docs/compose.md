@@ -37,6 +37,11 @@ or socket, or build, pull, run, push, inspect, or publish images. A required tas
 conflicts with this rule is persisted as a blocker and fails closed through the existing
 `blocking_decision` / `Blocked` workflow; it is not skipped while the task proceeds to delivery.
 
+Synchronize the checked-in workflow package before starting the Panel with
+`mix symphony.workflow.sync --all`, then verify it with the read-only `--all --check` form. The
+command validates the complete package before replacing each enabled project's single PostgreSQL
+snapshot. Direct SQL updates to `workflows` are unsupported.
+
 Image building, image-level verification, and publication belong to dedicated external CI; this
 repository uses `.github/workflows/publish-image.yml`. Human operators may run the documented
 build, pull, Compose deployment, migration, and rollback commands from the host shell. Those host

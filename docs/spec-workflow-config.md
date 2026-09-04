@@ -18,15 +18,18 @@ Workflow source precedence:
 
 1. Workflow policy is the immutable contract returned by
    `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
-2. Project settings and profiles come from the current workflow stored for the project.
+2. Project settings and profiles come from the current PostgreSQL snapshot, synchronized from the
+   checked-in package under `docs/examples/`.
 3. Setup-required mode applies when no current workflow exists.
 
 Loader behavior:
 
 - If no active workflow exists, return a typed setup-required error and keep the service alive.
-- The active workflow record is expected to be versioned and operator-visible.
-- Implementations MAY support import/export package files, but package files are not startup
-  authority unless an implementation explicitly imports them into the datastore.
+- Each project has exactly one operator-visible current workflow record; synchronization updates
+  that record in place and does not add configuration version semantics.
+- `mix symphony.workflow.sync` MUST validate the complete package before replacing a snapshot,
+  MUST be idempotent, and MUST support a read-only drift check. Manual workflow-table updates are
+  outside the supported lifecycle.
 
 ### 5.2 Package Format
 
@@ -39,7 +42,8 @@ YAML:
 Design note:
 
 - A package SHOULD be self-contained enough to recreate a project's settings and profiles after import.
-- A package SHOULD NOT be edited in place as the runtime source of truth.
+- The checked-in package is the editable source of truth; runtime code MUST read its synchronized
+  PostgreSQL snapshot rather than files from the source checkout.
 - Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
   runtime dispatch, transition validation, human-review classification, or profile routing.
 
