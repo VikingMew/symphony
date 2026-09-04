@@ -109,9 +109,43 @@ defmodule SymphonyElixir.PRReviewTest do
              )
   end
 
+  test "runner supersedes jobs whose issue is absent or no longer ready" do
+    assert {:superseded, :issue_missing} =
+             Runner.run(job(), state_fetcher: fn ["linear-1"] -> {:ok, []} end)
+
+    assert {:superseded, :issue_not_ready_to_merge} =
+             Runner.run(job(),
+               state_fetcher: fn ["linear-1"] ->
+                 {:ok, [%Issue{id: "linear-1", identifier: "SYM-26", state: "In Progress"}]}
+               end
+             )
+  end
+
   test "stable comments include reviewed head and actionable findings" do
+    assert PRReview.comment(%{outcome: :approve, head_sha: @head, summary: "Ready"}) ==
+             "Symphony PR review: APPROVE (head #{@head})\nReady"
+
     result = %{outcome: :findings, head_sha: @head, summary: "Changes required", findings: ["Add retry coverage"]}
     assert PRReview.comment(result) == "Symphony PR review: FINDINGS (head #{@head})\nChanges required\n\n1. Add retry coverage"
+  end
+
+  test "review result normalization accepts wire values and rejects malformed findings" do
+    assert {:ok, %{outcome: :approve, head_sha: @head, findings: []}} =
+             PRReview.normalize(%{
+               "outcome" => :approve,
+               "head_sha" => @head,
+               "summary" => "Ready"
+             })
+
+    assert {:error, :invalid_findings} =
+             PRReview.normalize(%{
+               outcome: :findings,
+               head_sha: @head,
+               summary: "Broken",
+               findings: [:not_text]
+             })
+
+    assert {:error, :invalid_review_result} = PRReview.normalize(%{})
   end
 
   defp job do
