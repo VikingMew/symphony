@@ -10,14 +10,16 @@ updated: 2026-08-28
 
 # Workflow and Configuration Specification
 
-## 5. Workflow Specification (Persisted Runtime Contract)
+## 5. Workflow Specification
 
 ### 5.1 Active Workflow Selection
 
 Workflow source precedence:
 
-1. The current workflow stored for the project by the implementation datastore.
-2. Setup-required mode when no current workflow exists.
+1. Workflow policy is the immutable contract returned by
+   `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
+2. Project settings and profiles come from the current workflow stored for the project.
+3. Setup-required mode applies when no current workflow exists.
 
 Loader behavior:
 
@@ -31,19 +33,21 @@ Loader behavior:
 Portable workflow packages are implementation-defined. The current preferred package shape is split
 YAML:
 
-- `workflow.yml` for runtime settings, tracker policy, state routing, hooks, and Codex settings.
+- `workflow.yml` for project settings plus a documented example of the code-owned state policy.
 - `profiles.yml` for shared base prompt and profile-specific agent policy.
 
 Design note:
 
-- A package SHOULD be self-contained enough to recreate a project's current workflow after import.
+- A package SHOULD be self-contained enough to recreate a project's settings and profiles after import.
 - A package SHOULD NOT be edited in place as the runtime source of truth.
+- Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
+  runtime dispatch, transition validation, human-review classification, or profile routing.
 
 The default package contains refinement and implementation profiles only. There is no backend merge
 profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
 
-`Blocked` is a human-review state and MUST NOT appear in `tracker.active_states` or
-`workflow.states`. Each executable state MUST transition to `Blocked` with actor `symphony`;
+`Blocked` is a human-review state and MUST NOT appear in `tracker.active_states`. Each executable
+state MUST transition to `Blocked` with actor `symphony`;
 `Blocked` may transition to `Ready`, `Needs Refinement Review`, or `Canceled` only with actor
 `human`. Imports and current-workflow upgrades MUST preserve this non-dispatch contract.
 
@@ -107,13 +111,13 @@ Default workflow policy:
 
 - Executable routes: `Todo -> refinement`, `Refining -> refinement`, `Ready -> implementation`, and
   `In Progress -> implementation`.
-- Human-review states: `Needs Refinement Review` and `Ready to Merge`.
+- Human-review states: exactly `Needs Refinement Review`, `Ready to Merge`, and `Blocked`.
 - Codex transitions: `Todo -> Refining`, `Refining -> Needs Refinement Review`,
   `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
 - Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
-- `Ready to Merge` MUST NOT appear in `tracker.active_states` or `workflow.states`.
+- `Ready to Merge` MUST NOT appear in `tracker.active_states`.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.
 
