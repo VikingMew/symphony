@@ -260,7 +260,7 @@ defmodule SymphonyElixir.TestSupport do
           tracker_api_token: nil,
           tracker_project_slug: "project",
           tracker_assignee: nil,
-          tracker_active_states: ["Refining", "Ready", "In Progress"],
+          tracker_active_states: ["Todo", "Ready", "In Progress"],
           tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
           poll_interval_ms: 30_000,
           workspace_root: Path.join(System.tmp_dir!(), "symphony_workspaces"),

@@ -305,6 +305,8 @@ defmodule SymphonyElixir.Config.WorkflowContract do
   defp validate_blocked_lifecycle(workflow, tracker) do
     transitions = Map.get(workflow, "allowed_transitions", [])
     active_states = tracker_states(tracker, :active_states)
+    executable_states = Map.keys(Map.get(workflow, "states", %{}))
+    blocking_states = Enum.uniq(active_states ++ executable_states)
 
     if blocked_configured?(workflow, tracker) do
       []
@@ -319,12 +321,12 @@ defmodule SymphonyElixir.Config.WorkflowContract do
         "workflow.states"
       )
       |> reject_dispatched_review_state("Blocked", active_states, "tracker.active_states")
-      |> require_blocked_transitions(active_states, transitions)
+      |> require_blocked_transitions(blocking_states, transitions)
       |> require_transition(transitions, "Ready to Merge", "Blocked", "symphony", nil)
       |> require_transition(transitions, "Blocked", "Ready", "human", nil)
       |> require_transition(transitions, "Blocked", "Needs Refinement Review", "human", nil)
       |> require_transition(transitions, "Blocked", "Canceled", "human", nil)
-      |> Kernel.++(invalid_blocked_transition_errors(transitions, active_states))
+      |> Kernel.++(invalid_blocked_transition_errors(transitions, blocking_states))
     else
       []
     end
@@ -347,7 +349,7 @@ defmodule SymphonyElixir.Config.WorkflowContract do
     end)
   end
 
-  defp invalid_blocked_transition_errors(transitions, active_states) do
+  defp invalid_blocked_transition_errors(transitions, blocking_states) do
     Enum.flat_map(transitions, fn transition ->
       from = Map.get(transition, "from")
       to = Map.get(transition, "to")
@@ -356,9 +358,9 @@ defmodule SymphonyElixir.Config.WorkflowContract do
       cond do
         state_equal?(to, "Blocked") and
             (actor != "symphony" or
-               not (Enum.any?(active_states, &state_equal?(&1, from)) or
+               not (Enum.any?(blocking_states, &state_equal?(&1, from)) or
                         state_equal?(from, "Ready to Merge"))) ->
-          ["transitions to Blocked must use actor=symphony and originate from an active state or Ready to Merge"]
+          ["transitions to Blocked must use actor=symphony and originate from an executable state or Ready to Merge"]
 
         state_equal?(from, "Blocked") and actor != "human" ->
           ["transitions from Blocked must use actor=human"]

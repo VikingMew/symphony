@@ -43,7 +43,7 @@ The default package contains refinement and implementation profiles only. There 
 profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
 
 `Blocked` is a human-review state and MUST NOT appear in `tracker.active_states` or
-`workflow.states`. Each active state MUST transition to `Blocked` with actor `symphony`;
+`workflow.states`. Each executable state MUST transition to `Blocked` with actor `symphony`;
 `Blocked` may transition to `Ready`, `Needs Refinement Review`, or `Canceled` only with actor
 `human`. Imports and current-workflow upgrades MUST preserve this non-dispatch contract.
 
@@ -105,11 +105,11 @@ Fields:
 
 Default workflow policy:
 
-- Executable routes: `Refining -> refinement`, `Ready -> implementation`, and
+- Executable routes: `Todo -> refinement`, `Refining -> refinement`, `Ready -> implementation`, and
   `In Progress -> implementation`.
 - Human-review states: `Needs Refinement Review` and `Ready to Merge`.
-- Codex transitions: `Refining -> Needs Refinement Review`, `Ready -> In Progress`, and
-  `In Progress -> Ready to Merge`.
+- Codex transitions: `Todo -> Refining`, `Refining -> Needs Refinement Review`,
+  `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
 - Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
@@ -352,7 +352,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
   the Project settings record (each enabled project names its own Linear project slug)
-- `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress"]`
+- `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`

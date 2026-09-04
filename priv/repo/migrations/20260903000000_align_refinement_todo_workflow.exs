@@ -16,7 +16,8 @@ defmodule SymphonyElixir.Repo.Migrations.AlignRefinementTodoWorkflow do
       ),
       '{workflow,allowed_transitions}',
       COALESCE(yaml_config #> '{workflow,allowed_transitions}', '[]'::jsonb) ||
-        '[{"actor":"codex","from":"Todo","profile":"refinement","to":"Refining"}]'::jsonb
+        '[{"actor":"codex","from":"Todo","profile":"refinement","to":"Refining"},
+          {"actor":"symphony","from":"Todo","to":"Blocked"}]'::jsonb
     )
     WHERE yaml_config IS NOT NULL
     """)

@@ -222,6 +222,7 @@ workflow:
     - {from: Ready, to: In Progress, actor: codex, profile: implementation}
     - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
     - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
+    - {from: Todo, to: Blocked, actor: symphony}
     - {from: Refining, to: Blocked, actor: symphony}
     - {from: Ready, to: Blocked, actor: symphony}
     - {from: In Progress, to: Blocked, actor: symphony}
