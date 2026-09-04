@@ -4,10 +4,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   """
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
-  alias SymphonyElixir.Codex.RefinementQualityGate
   alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Codex.RefinementQualityGate
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.StateName
 
   @task_read_query """
   query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
@@ -539,34 +540,35 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp validate_refinement_quality(payload, "refinement", issue_id, opts) do
-    if Map.get(payload, "target_state") |> then(&(is_binary(&1) and SymphonyElixir.StateName.normalize(&1) == SymphonyElixir.StateName.normalize("Needs Refinement Review"))) do
-      case Map.get(payload, "description") do
-        description when is_binary(description) and byte_size(String.trim(description)) > 0 ->
-          case RefinementQualityGate.validate(description) do
-            :ok ->
-              :ok
+    target_state = Map.get(payload, "target_state")
 
-            {:error, items} ->
-              case create_comment(issue_id, "Refinement quality gate failed: " <> Enum.join(items, ", "), opts) do
-                {:ok, _} -> {:error, {:refinement_quality_gate_failed, items}}
-                {:error, reason} -> {:error, {:refinement_quality_gate_comment_failed, reason, items}}
-              end
-          end
-
-        _ ->
-          items = ["missing_required_section: description"]
-
-          case create_comment(issue_id, "Refinement quality gate failed: missing_required_section: description", opts) do
-            {:ok, _} -> {:error, {:refinement_quality_gate_failed, items}}
-            {:error, reason} -> {:error, {:refinement_quality_gate_comment_failed, reason, items}}
-          end
-      end
+    if is_binary(target_state) and
+         StateName.normalize(target_state) == StateName.normalize("Needs Refinement Review") do
+      payload
+      |> Map.get("description")
+      |> RefinementQualityGate.validate()
+      |> report_refinement_quality(issue_id, opts)
     else
       :ok
     end
   end
 
   defp validate_refinement_quality(_payload, _profile, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality(:ok, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality({:error, violations}, issue_id, opts) do
+    body =
+      "Refinement quality gate failed. Fix these items and retry:\n" <>
+        Enum.map_join(violations, "\n", fn violation ->
+          "- `#{violation.code}`: #{violation.message}"
+        end)
+
+    case create_comment(issue_id, body, opts) do
+      {:ok, _comment} -> {:error, {:refinement_quality_gate_failed, violations}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp observe_task_update(result, payload, opts) do
     case Keyword.get(opts, :task_update_observer) do
@@ -893,11 +895,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
 
   defp tool_error_payload(_tool, {:refinement_quality_gate_failed, items}) do
-    %{"error" => %{"code" => "refinement_quality_gate_failed", "message" => "Refinement quality gate failed.", "missing" => items}}
-  end
-
-  defp tool_error_payload(_tool, {:refinement_quality_gate_comment_failed, reason, items}) do
-    %{"error" => %{"code" => "refinement_quality_gate_comment_failed", "message" => "Unable to record refinement quality gate failure comment.", "missing" => items, "reason" => inspect(reason)}}
+    %{
+      "error" => %{
+        "code" => "refinement_quality_gate_failed",
+        "message" => "Refinement quality gate failed.",
+        "missing" => items
+      }
+    }
   end
 
   defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do

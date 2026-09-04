@@ -643,4 +643,164 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert error["message"] == "Restricted Linear task tool execution failed."
     assert error["reason"] =~ "linear_attachment_link_failed"
   end
+
+  test "refinement completion reports all quality violations before issue updates" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{
+          "description" => "## Goal\nTBD\n\n## Open questions\n- Who owns this?",
+          "target_state" => " needs refinement review "
+        },
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, variables ->
+          send(test_pid, {:graphql, query, variables})
+
+          if query =~ "SymphonyLinearTaskCommentCreate" do
+            {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+          else
+            flunk("quality gate must run before issue or state lookup writes")
+          end
+        end
+      )
+
+    refute response["success"]
+    error = Jason.decode!(response["output"])["error"]
+    assert error["code"] == "refinement_quality_gate_failed"
+
+    assert Enum.map(error["missing"], & &1["code"]) == [
+             "missing_required_section",
+             "missing_required_section",
+             "missing_required_section",
+             "missing_required_section",
+             "ambiguous_marker",
+             "unresolved_questions",
+             "missing_testable_acceptance"
+           ]
+
+    assert_received {:graphql, comment_query, %{"body" => body, "issueId" => "issue-1"}}
+    assert comment_query =~ "SymphonyLinearTaskCommentCreate"
+    assert body =~ "`missing_required_section`"
+    assert body =~ "`ambiguous_marker`"
+    assert body =~ "`unresolved_questions`"
+    assert body =~ "`missing_testable_acceptance`"
+    refute_received {:graphql, _, _}
+  end
+
+  test "refinement quality comment failures remain typed Linear errors" do
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"target_state" => "Needs Refinement Review"},
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, _variables ->
+          assert query =~ "SymphonyLinearTaskCommentCreate"
+          {:error, :timeout}
+        end
+      )
+
+    refute response["success"]
+    error = Jason.decode!(response["output"])["error"]
+    assert error["message"] == "Restricted Linear task tool execution failed."
+    assert error["reason"] =~ "linear_comment_create_failed"
+    assert error["reason"] =~ "timeout"
+  end
+
+  test "valid refinement completion updates description and review state" do
+    test_pid = self()
+    description = valid_refinement_description()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"description" => description, "target_state" => "Needs Refinement Review"},
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, variables ->
+          send(test_pid, {:graphql, query, variables})
+
+          cond do
+            query =~ "SymphonyLinearIssueTeamStates" ->
+              {:ok,
+               %{
+                 "data" => %{
+                   "issue" => %{
+                     "team" => %{
+                       "states" => %{
+                         "nodes" => [
+                           %{"id" => "review-state", "name" => "Needs Refinement Review"}
+                         ]
+                       }
+                     }
+                   }
+                 }
+               }}
+
+            query =~ "SymphonyLinearTaskIssueUpdate" ->
+              {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+
+            true ->
+              flunk("unexpected GraphQL operation")
+          end
+        end
+      )
+
+    assert response["success"]
+
+    assert_received {:graphql, state_query, %{"id" => "issue-1"}}
+    assert state_query =~ "SymphonyLinearIssueTeamStates"
+
+    assert_received {:graphql, update_query,
+                     %{
+                       "id" => "issue-1",
+                       "input" => %{
+                         "description" => ^description,
+                         "stateId" => "review-state"
+                       }
+                     }}
+
+    assert update_query =~ "SymphonyLinearTaskIssueUpdate"
+  end
+
+  test "quality gate does not affect intermediate refinement or implementation updates" do
+    for profile <- ["refinement", "implementation"] do
+      response =
+        DynamicTool.execute(
+          "linear_task_update",
+          %{"description" => "TBD"},
+          issue: %Issue{id: "issue-1"},
+          profile: profile,
+          graphql: fn query, variables ->
+            assert query =~ "SymphonyLinearTaskIssueUpdate"
+            assert variables["input"]["description"] == "TBD"
+            {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+          end
+        )
+
+      assert response["success"]
+    end
+  end
+
+  defp valid_refinement_description do
+    """
+    ## Goal
+    Ship the gate.
+
+    ## Scope
+    Validate refinement output.
+
+    ## Out of scope
+    Semantic review.
+
+    ## Acceptance criteria
+    - Invalid output is rejected.
+
+    ## Validation
+    Run unit tests.
+    """
+  end
 end

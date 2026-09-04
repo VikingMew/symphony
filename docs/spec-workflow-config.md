@@ -223,19 +223,19 @@ fields locally if they want stricter startup checks.
 
 The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
 For refinement and implementation profiles, Symphony appends a non-configurable, highest-priority
-
-When a refinement run requests `Needs Refinement Review`, the candidate description is checked by a
-deterministic structural quality gate before any description or state write. It requires non-empty
-Goal, Scope, Out of scope, Acceptance criteria, and Validation sections; rejects explicit TODO,
-TBD, clarification, context-required, and `???` markers; requires a Markdown acceptance list; and
-rejects non-empty Open/Unresolved questions (except `None`/`无`). Failures produce one diagnostic
-comment and a typed tool error; the existing no-progress and `BlockingDecision` path remains in
-effect.
 container-validation safety contract after profile composition. It applies to every project even
 when a profile replaces the base prompt: agents MUST NOT invoke container engines, daemons,
 sockets, or image operations. A task that requires such validation MUST report blocker evidence
 and use the persistent `blocking_decision` / `Blocked` path; allowed task-authored validation
 remains mandatory. Static inspection of container source/configuration remains allowed.
+
+When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
+request MUST contain the candidate description. Before any description or state write, Symphony
+MUST apply the deterministic refinement quality gate defined by
+`docs/codex-linear-task-refinement-workflow-design.md`. A failed gate writes one diagnostic comment
+and returns its complete violation set as a typed tool error. If that comment write fails, the
+Linear error remains explicit. The failure does not introduce a retry counter: an unfinished run
+continues through the existing no-progress streak and persistent `BlockingDecision` path.
 
 Rendering requirements:
 

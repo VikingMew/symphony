@@ -13,6 +13,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
       %{
         identifier: "SYM-15",
         tracker_issue_id: "linear-15",
+        state: "Refining",
         blocking_decision: nil,
         no_progress_streak: 0
       }
@@ -38,14 +39,30 @@ defmodule SymphonyElixir.BlockingDecisionTest do
 
   test "two completed no-progress runs persist a blocking decision without changing attempts" do
     assert {:streak, 1} = BlockingDecision.advance_no_progress("SYM-15", "run-1")
-    assert {:blocked, decision} = BlockingDecision.advance_no_progress("SYM-15", "run-2")
+
+    first_run = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert first_run.state == "Refining"
+    assert first_run.no_progress_streak == 1
+    assert first_run.blocking_decision == nil
+
+    assert {:blocked, decision} =
+             BlockingDecision.advance_no_progress("SYM-15", "run-2", %{
+               "quality_gate" => "refinement_quality_gate_failed"
+             })
+
     assert decision["reason"] == "no_progress"
     assert decision["run_id"] == "run-2"
 
+    assert decision["references"] == %{
+             "quality_gate" => "refinement_quality_gate_failed"
+           }
+
     issue = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert issue.state == "Refining"
     assert issue.no_progress_streak == 2
     assert issue.blocking_decision == decision
 
+    # A successful review transition invokes the same clear path.
     assert :ok = BlockingDecision.clear("SYM-15")
     issue = FakePersistence.get_issue_by_identifier("SYM-15")
     assert issue.no_progress_streak == 0
