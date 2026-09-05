@@ -79,18 +79,19 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  @spec max_concurrent_agents_for_state(term()) :: pos_integer()
-  def max_concurrent_agents_for_state(state_name) when is_binary(state_name) do
-    config = settings!()
-
-    Map.get(
-      config.agent.max_concurrent_agents_by_state,
-      Schema.normalize_issue_state(state_name),
-      config.agent.max_concurrent_agents
-    )
+  @spec panel_max_concurrent_agents() :: pos_integer()
+  def panel_max_concurrent_agents do
+    :symphony_elixir
+    |> Application.fetch_env!(:panel)
+    |> Keyword.fetch!(:max_concurrent_agents)
   end
 
-  def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
+  @spec panel_max_concurrent_reviews() :: pos_integer()
+  def panel_max_concurrent_reviews do
+    :symphony_elixir
+    |> Application.fetch_env!(:panel)
+    |> Keyword.fetch!(:max_concurrent_reviews)
+  end
 
   @spec workflow_policy() :: map()
   def workflow_policy do

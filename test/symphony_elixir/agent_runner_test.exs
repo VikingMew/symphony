@@ -373,6 +373,154 @@ defmodule SymphonyElixir.AgentRunnerTest do
     end
   end
 
+  test "agent runner refreshes a Todo issue in Refining before the first turn" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-refinement-transition-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace = Path.join(test_root, "workspace")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-transition.trace}"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+        case "$count" in
+          1) printf '%s\\n' '{"id":1,"result":{}}' ;;
+          3) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-refinement"}}}' ;;
+          4)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-refinement"}}}'
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
+      on_exit(fn -> restore_env("SYMP_TEST_CODEX_TRACE", previous_trace) end)
+      System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: test_root,
+        codex_command: "#{codex_binary} app-server",
+        prompt: "Current status: {{ issue.state }}"
+      )
+
+      issue = %Issue{
+        id: "issue-refinement-transition",
+        identifier: "MT-REFINE",
+        title: "Start refinement",
+        description: "Refresh before Codex",
+        state: "Todo",
+        labels: []
+      }
+
+      test_pid = self()
+
+      transitioner = fn transition_issue, target_state ->
+        assert transition_issue.state == "Todo"
+        assert target_state == "Refining"
+        send(test_pid, :refinement_started)
+        :ok
+      end
+
+      state_fetcher = fn ["issue-refinement-transition"] ->
+        fetch_count = Process.get(:refinement_fetch_count, 0) + 1
+        Process.put(:refinement_fetch_count, fetch_count)
+
+        state = if fetch_count == 1, do: "Refining", else: "Needs Refinement Review"
+        {:ok, [%{issue | state: state}]}
+      end
+
+      assert :ok =
+               AgentRunner.run(issue, nil,
+                 workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
+                 refinement_start_transitioner: transitioner,
+                 issue_state_fetcher: state_fetcher
+               )
+
+      assert_receive :refinement_started
+      trace = File.read!(trace_file)
+      assert trace =~ "Current status: Refining"
+      refute trace =~ "Current status: Todo"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "agent runner stops before the first turn when refinement kickoff is rejected" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-agent-runner-refinement-rejected-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace = Path.join(test_root, "workspace")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex.trace")
+
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-rejected.trace}"
+      count=0
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+        case "$count" in
+          1) printf '%s\\n' '{"id":1,"result":{}}' ;;
+          3) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-refinement-rejected"}}}' ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+      previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
+      on_exit(fn -> restore_env("SYMP_TEST_CODEX_TRACE", previous_trace) end)
+      System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: test_root,
+        codex_command: "#{codex_binary} app-server",
+        prompt: "Current status: {{ issue.state }}"
+      )
+
+      issue = %Issue{
+        id: "issue-refinement-rejected",
+        identifier: "MT-REFINE-REJECTED",
+        title: "Reject refinement kickoff",
+        description: "Do not start the turn",
+        state: "Todo",
+        labels: []
+      }
+
+      assert {:error, {:refinement_start_transition_failed, :linear_rejected}} =
+               AgentRunner.run(issue, nil,
+                 workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
+                 refinement_start_transitioner: fn ^issue, "Refining" -> {:error, :linear_rejected} end
+               )
+
+      trace = File.read!(trace_file)
+      assert trace =~ "thread/start"
+      refute trace =~ "Current status:"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "agent runner stops before first turn when ready to in progress transition fails" do
     test_root =
       Path.join(

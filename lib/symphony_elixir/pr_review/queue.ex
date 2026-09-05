@@ -140,8 +140,10 @@ defmodule SymphonyElixir.PRReview.Queue do
   end
 
   defp max_concurrency(opts) do
-    agent = Config.settings!().agent
-    min(Keyword.get(opts, :max_concurrency, agent.max_concurrent_reviews), agent.max_concurrent_agents)
+    min(
+      Keyword.get(opts, :max_concurrency, Config.panel_max_concurrent_reviews()),
+      Config.panel_max_concurrent_agents()
+    )
   end
 
   defp stringify_result(result) do

@@ -48,7 +48,8 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   @spec register_worker(map()) :: {:ok, %{worker: Worker.t(), session: WorkerSession.t()}} | {:error, term()}
   def register_worker(attrs) do
     with true <- repo_available?() || {:error, :repo_unavailable},
-         :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)) do
+         :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)),
+         :ok <- validate_total_slots(map_get(attrs, "total_slots", :total_slots)) do
       Repo.transaction(fn -> register_worker!(attrs) end)
     end
   end
@@ -72,6 +73,35 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
       Repo.all(from(s in WorkerSession, order_by: [desc: s.inserted_at], limit: ^limit))
     else
       []
+    end
+  end
+
+  @spec available_worker_slots(keyword()) :: non_neg_integer()
+  def available_worker_slots(opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    timeout = Keyword.get(opts, :heartbeat_timeout_seconds, worker_heartbeat_interval_seconds() * 3)
+    cutoff = DateTime.add(now, -timeout, :second)
+
+    if repo_available?() do
+      capacity =
+        Repo.one(
+          from(s in WorkerSession,
+            where: s.status == "online" and s.last_heartbeat_at >= ^cutoff,
+            select: coalesce(sum(s.total_slots), 0)
+          )
+        )
+
+      occupied =
+        Repo.aggregate(
+          from(t in TaskRecord,
+            where: t.execution_mode == "worker" and t.status in ["queued", "leased", "running"]
+          ),
+          :count
+        )
+
+      max(capacity - occupied, 0)
+    else
+      0
     end
   end
 
@@ -261,6 +291,9 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
   defp validate_worker_protocol(@worker_protocol_version), do: :ok
   defp validate_worker_protocol(_), do: {:error, :unsupported_protocol_version}
 
+  defp validate_total_slots(total_slots) when is_integer(total_slots) and total_slots > 0, do: :ok
+  defp validate_total_slots(_total_slots), do: {:error, :invalid_total_slots}
+
   defp register_worker!(attrs) do
     now = DateTime.utc_now()
     name = map_get(attrs, "worker_name", :worker_name) || map_get(attrs, "name", :name)
@@ -292,6 +325,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueue do
       protocol_version: @worker_protocol_version,
       worker_version: map_get(attrs, "worker_version", :worker_version),
       instance_id: map_get(attrs, "instance_id", :instance_id),
+      total_slots: map_get(attrs, "total_slots", :total_slots),
       connected_at: now,
       last_heartbeat_at: now,
       status: "online"

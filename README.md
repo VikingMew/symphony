@@ -73,6 +73,12 @@ Symphony maintains multiple projects concurrently: one Linear project + one repo
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
+Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
+bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
+only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`, while queued, leased,
+and running worker tasks consume that shared capacity. Post-handoff reviews use the separate
+deployment-level `SYMPHONY_PANEL_REVIEW_SLOTS` limit (default `2`), capped by panel capacity.
+
 ### Execution worker image
 
 The separately deployable execution worker is built without changing the Panel image:
@@ -214,6 +220,9 @@ Centralized execution is the default and does not require registered workers.
 | Issue status + recent outcome | `/api/v1/:issue_identifier` |
 | Bounded persisted run/event history | `/api/v1/runs?issue_identifier=SYM-3` |
 | Health probes | `/health/live`, `/health/ready` |
+
+Historical analytics includes range-filtered refinement-description sample counts, character and
+line averages and p95 values, plus over-limit counts and rates from persisted completion events.
 
 Logs are structured application logs. There is no TUI status surface.
 

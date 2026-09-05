@@ -10,6 +10,18 @@ updated: 2026-08-28
 
 # Workflow and Configuration Specification
 
+## Refinement description limits
+
+`profiles.refinement.description_limits` configures the non-blocking description-size signal.
+When omitted, the character limit is `12000`, the logical-line limit is `400`, and
+`label_overrides` is empty. Limits supplied at either level must be positive integers; invalid
+values produce the standard typed `invalid_workflow_config` error.
+
+Override keys are Linear label names. Matching trims and lowercases configured and issue labels.
+When several overrides match, the effective character and line limits are independently the
+largest matching values, including the defaults, so map iteration order cannot affect the result.
+An override may supply one dimension; the other inherits the default.
+
 ## 5. Workflow Specification
 
 ### 5.1 Active Workflow Selection
@@ -103,14 +115,15 @@ Fields:
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
 - `active_states` (list of strings)
-  - Default: `Refining`, `Ready`, `In Progress`
+  - Default: `Todo`, `Ready`, `In Progress`
 - `terminal_states` (list of strings)
   - Default: `Canceled`, `Cancelled`, `Duplicate`, `Done`
 
 Default workflow policy:
 
 - Executable routes: `Todo -> refinement`, `Refining -> refinement`, `Ready -> implementation`, and
-  `In Progress -> implementation`.
+  `In Progress -> implementation`. Only `Todo`, `Ready`, and `In Progress` are dispatch candidates;
+  `Refining` is the started state used after refinement kickoff and on an explicit human return.
 - Human-review states: exactly `Needs Refinement Review`, `Ready to Merge`, and `Blocked`.
 - Codex transitions: `Todo -> Refining`, `Refining -> Needs Refinement Review`,
   `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
@@ -119,9 +132,9 @@ Default workflow policy:
 - Symphony conflict or PR-review finding delivery: `Ready to Merge -> Blocked` with
   `actor=symphony`.
 - Human review-blocker recovery: `Blocked -> In Progress`.
-- `Ready to Merge` MUST NOT appear in `tracker.active_states`.
+- `Refining` and `Ready to Merge` MUST NOT appear in `tracker.active_states`.
 - The independent `review` profile is not state-routed. It exposes only immutable context read and
-  typed conclusion submission; `agent.max_concurrent_reviews` controls its durable queue.
+  typed conclusion submission; deployment-level review slots control its durable queue.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.
 
@@ -178,9 +191,6 @@ Fields:
 
 Fields:
 
-- `max_concurrent_agents` (integer)
-  - Default: `10`
-  - Changes SHOULD be re-applied at runtime and affect subsequent dispatch decisions.
 - `max_turns` (positive integer)
   - Default: `20`
   - Limits the number of coding-agent turns within one worker session.
@@ -188,10 +198,6 @@ Fields:
 - `max_retry_backoff_ms` (integer)
   - Default: `300000` (5 minutes)
   - Changes SHOULD be re-applied at runtime and affect future retry scheduling.
-- `max_concurrent_agents_by_state` (map `state_name -> positive integer`)
-  - Default: empty map.
-  - State keys are normalized (`lowercase`) for lookup.
-  - Invalid entries (non-positive or non-numeric) are ignored.
 
 #### 5.3.6 `codex` (object)
 
@@ -226,6 +232,8 @@ fields locally if they want stricter startup checks.
 ### 5.4 Prompt Template Contract
 
 The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
+In a multi-project runtime, prompt rendering MUST use the workflow selected for the issue's project;
+it MUST NOT perform an unscoped current-workflow lookup or fall back to another project's prompt.
 For refinement and implementation profiles, Symphony appends a non-configurable, highest-priority
 container-validation safety contract after profile composition. It applies to every project even
 when a profile replaces the base prompt: agents MUST NOT invoke container engines, daemons,
@@ -377,10 +385,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `hooks.after_run`: shell script or null; overridable per project
 - `hooks.before_remove`: shell script or null; overridable per project
 - `hooks.timeout_ms`: integer, default `60000`
-- `agent.max_concurrent_agents`: integer, default `10`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
-- `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined

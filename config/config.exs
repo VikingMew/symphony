@@ -9,6 +9,7 @@ config :symphony_elixir, :start_repo, config_env() != :test
 config :symphony_elixir, SymphonyElixir.Repo, pool_size: 5
 
 config :symphony_elixir, :auth, enabled: false
+config :symphony_elixir, :panel, max_concurrent_agents: 10, max_concurrent_reviews: 2
 
 config :symphony_elixir, SymphonyElixirWeb.Endpoint,
   adapter: Bandit.PhoenixAdapter,

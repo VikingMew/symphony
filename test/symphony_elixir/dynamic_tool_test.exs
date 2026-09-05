@@ -720,6 +720,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         %{"description" => description, "target_state" => "Needs Refinement Review"},
         issue: %Issue{id: "issue-1"},
         profile: "refinement",
+        refinement_description_limits: default_description_limits(),
         graphql: fn query, variables ->
           send(test_pid, {:graphql, query, variables})
 
@@ -766,6 +767,59 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert update_query =~ "SymphonyLinearTaskIssueUpdate"
   end
 
+  test "refinement completion measures the current description and appends one advisory" do
+    test_pid = self()
+    description = valid_refinement_description() <> String.duplicate("猫", 12_000)
+    issue = %Issue{id: "issue-1", identifier: "SYM-1", description: description, labels: []}
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"comment" => "Ready for review.", "target_state" => "Needs Refinement Review"},
+        issue: issue,
+        profile: "refinement",
+        refinement_description_limits: default_description_limits(),
+        graphql: fn query, variables ->
+          send(test_pid, {:graphql, query, variables})
+
+          cond do
+            query =~ "SymphonyLinearIssueTeamStates" ->
+              {:ok,
+               %{
+                 "data" => %{
+                   "issue" => %{
+                     "team" => %{
+                       "states" => %{
+                         "nodes" => [
+                           %{"id" => "review-state", "name" => "Needs Refinement Review"}
+                         ]
+                       }
+                     }
+                   }
+                 }
+               }}
+
+            query =~ "SymphonyLinearTaskIssueUpdate" ->
+              {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+
+            query =~ "SymphonyLinearTaskCommentCreate" ->
+              {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+          end
+        end
+      )
+
+    assert response["success"]
+    assert_received {:graphql, _, %{"body" => body, "issueId" => "issue-1"}}
+    assert body =~ "Ready for review."
+    assert body =~ "this advisory does not block refinement"
+    assert length(Regex.scan(~r/Description size:/, body)) == 1
+
+    assert [event] = FakePersistence.list_events(event_type: "refinement.description_measurement")
+    assert event.payload.characters == String.length(description)
+    assert event.payload.over_limit
+    assert event.payload.character_limit == 12_000
+  end
+
   test "quality gate does not affect intermediate refinement or implementation updates" do
     for profile <- ["refinement", "implementation"] do
       response =
@@ -802,5 +856,9 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     ## Validation
     Run unit tests.
     """
+  end
+
+  defp default_description_limits do
+    %{"characters" => 12_000, "lines" => 400, "label_overrides" => %{}}
   end
 end

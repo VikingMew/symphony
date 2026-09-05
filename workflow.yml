@@ -1,6 +1,4 @@
 agent:
-  max_concurrent_agents: 10
-  max_concurrent_reviews: 2
   max_turns: 20
 codex:
   approval_policy: "never"

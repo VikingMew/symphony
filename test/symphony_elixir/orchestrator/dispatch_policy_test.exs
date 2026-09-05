@@ -5,16 +5,16 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.Orchestrator.DispatchPolicy
 
-  test "candidate dispatch honors active states, terminal states, executors, and state limits" do
+  test "candidate dispatch honors deployment capacity, states, and executors" do
     state = %Orchestrator.State{
-      max_concurrent_agents: 2,
+      max_concurrent_agents: 1,
       running: %{
         "running-ready" => %Orchestrator.RunningIssue{issue: issue("running-ready", "Ready")}
       },
       claimed: MapSet.new()
     }
 
-    settings = dispatch_settings(max_for_state: fn "Ready" -> 1 end)
+    settings = dispatch_settings([])
 
     refute DispatchPolicy.should_dispatch_issue?(issue("next-ready", "Ready"), state, settings)
 
@@ -48,12 +48,14 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
 
     settings =
       dispatch_settings(
-        active_states: ["Refining", "Ready", "In Progress"],
+        active_states: ["Todo", "Ready", "In Progress"],
         listening_mode: :listening_refine_only,
-        refinement_states: ["Refining"]
+        refinement_states: ["Todo", "Refining"]
       )
 
-    assert DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings)
+    assert DispatchPolicy.should_dispatch_issue?(issue("todo", "Todo"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings)
+    refute DispatchPolicy.should_dispatch_issue?(issue("review", "Needs Refinement Review"), state, settings)
     refute DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings)
     refute DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings)
     refute DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings)
@@ -80,9 +82,8 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
       active_states: DispatchPolicy.normalized_state_set(Keyword.get(opts, :active_states, ["Ready", "Needs Review"])),
       terminal_states: DispatchPolicy.normalized_state_set(["Done"]),
       listening_mode: Keyword.get(opts, :listening_mode, :listening_all),
-      refinement_states: DispatchPolicy.normalized_state_set(Keyword.get(opts, :refinement_states, ["Refining"])),
+      refinement_states: DispatchPolicy.normalized_state_set(Keyword.get(opts, :refinement_states, ["Todo"])),
       max_concurrent_agents: 2,
-      max_concurrent_agents_for_state: Keyword.get(opts, :max_for_state, fn _state -> 2 end),
       workflow_executor_for_state: Keyword.get(opts, :executor, fn _state -> "codex_agent" end),
       human_review_state?: Keyword.get(opts, :human_review?, fn _state -> false end)
     }

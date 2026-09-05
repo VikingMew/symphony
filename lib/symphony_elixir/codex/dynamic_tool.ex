@@ -5,10 +5,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
   alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Codex.RefinementDescriptionMeasurement
   alias SymphonyElixir.Codex.RefinementQualityGate
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.PRReview
+  alias SymphonyElixir.PersistenceEventWriter
   alias SymphonyElixir.StateName
 
   @task_read_query """
@@ -612,7 +615,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if is_binary(target_state) and
          StateName.normalize(target_state) == StateName.normalize("Needs Refinement Review") do
       payload
-      |> Map.get("description")
+      |> final_description(opts)
       |> RefinementQualityGate.validate()
       |> report_refinement_quality(issue_id, opts)
     else
@@ -645,9 +648,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp perform_regular_task_update(issue_id, payload, opts) do
+    measurement = refinement_measurement(payload, opts)
+    payload = maybe_append_measurement_advisory(payload, measurement)
+
     with {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
          {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
          {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts) do
+      record_refinement_measurement(measurement, opts)
+
       {:ok,
        %{
          "issue_update" => issue_update,
@@ -656,6 +664,52 @@ defmodule SymphonyElixir.Codex.DynamicTool do
          "requested_state" => Map.get(payload, "target_state")
        }}
     end
+  end
+
+  defp refinement_measurement(%{"target_state" => target} = payload, opts) do
+    if StateName.normalize(target) == StateName.normalize("Needs Refinement Review") do
+      issue = Keyword.fetch!(opts, :issue)
+
+      RefinementDescriptionMeasurement.measure(
+        final_description(payload, opts),
+        Issue.label_names(issue),
+        Keyword.get_lazy(opts, :refinement_description_limits, fn ->
+          Config.workflow_profile("refinement")["description_limits"]
+        end)
+      )
+    end
+  end
+
+  defp refinement_measurement(_payload, _opts), do: nil
+
+  defp final_description(payload, opts) do
+    Map.get(payload, "description") || Keyword.fetch!(opts, :issue).description || ""
+  end
+
+  defp maybe_append_measurement_advisory(payload, %{over_limit: true} = measurement) do
+    advisory = RefinementDescriptionMeasurement.advisory(measurement)
+
+    Map.update(payload, "comment", advisory, fn comment ->
+      if is_binary(comment) and comment != "", do: comment <> "\n\n" <> advisory, else: advisory
+    end)
+  end
+
+  defp maybe_append_measurement_advisory(payload, _measurement), do: payload
+
+  defp record_refinement_measurement(nil, _opts), do: :ok
+
+  defp record_refinement_measurement(measurement, opts) do
+    issue = Keyword.fetch!(opts, :issue)
+
+    PersistenceEventWriter.record(
+      %{
+        event_type: "refinement.description_measurement",
+        issue_identifier: issue.identifier,
+        payload: measurement,
+        occurred_at: DateTime.utc_now()
+      },
+      %{issue_id: issue.id, issue_identifier: issue.identifier}
+    )
   end
 
   defp complete_implementation_handoff(issue_id, payload, opts) do

@@ -74,6 +74,12 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
         </article>
 
         <article class="metric-card">
+          <p class="metric-label">Refinement description</p>
+          <p class="metric-value numeric"><%= int(@summary.refinement_description.samples) %> samples</p>
+          <p class="metric-detail">Avg <%= Float.round(@summary.refinement_description.average_characters, 1) %> chars / <%= Float.round(@summary.refinement_description.average_lines, 1) %> lines; p95 <%= @summary.refinement_description.p95_characters %> / <%= @summary.refinement_description.p95_lines %>; over limit <%= @summary.refinement_description.over_limit %> (<%= Float.round(@summary.refinement_description.over_rate * 100, 1) %>%)</p>
+        </article>
+
+        <article class="metric-card">
           <p class="metric-label">Retries</p>
           <p class="metric-value numeric"><%= int(@summary.retry_count) %></p>
           <p class="metric-detail">Retry events in range</p>

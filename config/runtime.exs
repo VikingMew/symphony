@@ -3,6 +3,17 @@ import Config
 worker_role = System.get_env("SYMPHONY_ROLE") == "worker"
 config :symphony_elixir, :runtime_role, if(worker_role, do: :worker, else: :panel)
 
+positive_panel_integer = fn name, default ->
+  case Integer.parse(System.get_env(name) || default) do
+    {value, ""} when value > 0 -> value
+    _ -> raise "#{name} must be a positive integer"
+  end
+end
+
+config :symphony_elixir, :panel,
+  max_concurrent_agents: positive_panel_integer.("SYMPHONY_PANEL_SLOTS", "10"),
+  max_concurrent_reviews: positive_panel_integer.("SYMPHONY_PANEL_REVIEW_SLOTS", "2")
+
 if worker_role do
   required = fn name ->
     case System.get_env(name) do

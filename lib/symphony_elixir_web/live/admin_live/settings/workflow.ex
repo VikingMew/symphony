@@ -145,11 +145,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
               <.workflow_field_error field="polling_interval_ms" errors={@workflow_field_errors} />
             </label>
             <label>
-              <span class="metric-label">Max agents</span>
-              <input id={workflow_field_id("agent_max_concurrent_agents")} class={workflow_field_class(@workflow_field_errors, "agent_max_concurrent_agents")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_concurrent_agents")} type="number" min="1" name="workflow[agent_max_concurrent_agents]" value={@workflow_form["agent_max_concurrent_agents"]} />
-              <.workflow_field_error field="agent_max_concurrent_agents" errors={@workflow_field_errors} />
-            </label>
-            <label>
               <span class="metric-label">Max turns</span>
               <input id={workflow_field_id("agent_max_turns")} class={workflow_field_class(@workflow_field_errors, "agent_max_turns")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_turns")} type="number" min="1" name="workflow[agent_max_turns]" value={@workflow_form["agent_max_turns"]} />
               <.workflow_field_error field="agent_max_turns" errors={@workflow_field_errors} />
@@ -314,7 +309,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
   defp workflow_field_class(errors, field), do: if(workflow_field_invalid?(errors, field), do: "field-invalid")
   defp workflow_field_invalid?(errors, field), do: Map.has_key?(errors, field)
   defp workflow_field_label("polling_interval_ms"), do: "Polling interval ms"
-  defp workflow_field_label("agent_max_concurrent_agents"), do: "Max agents"
   defp workflow_field_label("agent_max_turns"), do: "Max turns"
   defp workflow_field_label("hook_timeout_ms"), do: "Hook timeout ms"
   defp workflow_field_label("initialize_timeout_ms"), do: "Initialize timeout ms"

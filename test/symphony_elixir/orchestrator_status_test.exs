@@ -843,6 +843,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: process_ref,
+      project_id: "fake-project-id",
       identifier: issue.identifier,
       issue: issue,
       session_id: nil,
