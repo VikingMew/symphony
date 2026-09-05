@@ -155,9 +155,12 @@ An issue is dispatch-eligible only if all are true:
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
 
-The default active states are `Refining`, `Ready`, and `In Progress`. The human-review states
-`Needs Refinement Review` and `Ready to Merge` are deliberately absent from `active_states` and
-MUST NOT have executable routes. The control plane MAY transition `Ready to Merge -> Blocked`
+The default active states are `Todo`, `Ready`, and `In Progress`. `Todo` is the refinement
+candidate; the runner transitions it to `Refining` and refreshes the issue before starting Codex.
+The started state `Refining` and the human-review states `Needs Refinement Review` and
+`Ready to Merge` are deliberately absent from `active_states`. Human review may explicitly return
+`Needs Refinement Review -> Refining` for another pass. The control plane MAY transition
+`Ready to Merge -> Blocked`
 without dispatch when the exact handed-off open GitHub PR reports a definitive merge conflict.
 Unknown mergeability, CI, review, behind, or API failure states MUST NOT block. In particular, no
 orchestrator path transitions `Ready to Merge`
