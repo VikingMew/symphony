@@ -213,6 +213,9 @@ Centralized execution is the default and does not require registered workers.
 | Bounded persisted run/event history | `/api/v1/runs?issue_identifier=SYM-3` |
 | Health probes | `/health/live`, `/health/ready` |
 
+Historical analytics includes range-filtered refinement-description sample counts, character and
+line averages and p95 values, plus over-limit counts and rates from persisted completion events.
+
 Logs are structured application logs. There is no TUI status surface.
 
 ## Deployment

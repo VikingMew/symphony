@@ -10,6 +10,18 @@ updated: 2026-08-28
 
 # Workflow and Configuration Specification
 
+## Refinement description limits
+
+`profiles.refinement.description_limits` configures the non-blocking description-size signal.
+When omitted, the character limit is `12000`, the logical-line limit is `400`, and
+`label_overrides` is empty. Limits supplied at either level must be positive integers; invalid
+values produce the standard typed `invalid_workflow_config` error.
+
+Override keys are Linear label names. Matching trims and lowercases configured and issue labels.
+When several overrides match, the effective character and line limits are independently the
+largest matching values, including the defaults, so map iteration order cannot affect the result.
+An override may supply one dimension; the other inherits the default.
+
 ## 5. Workflow Specification
 
 ### 5.1 Active Workflow Selection
