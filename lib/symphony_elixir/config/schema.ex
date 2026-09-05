@@ -828,12 +828,48 @@ defmodule SymphonyElixir.Config.Schema do
       WorkflowContract.workflow_errors(workflow, profiles, tracker)
 
     profile_errors =
-      WorkflowContract.profile_errors(profiles)
+      WorkflowContract.profile_errors(profiles) ++ description_limit_errors(profiles)
 
     Enum.reduce(workflow_errors, changeset, &add_error(&2, :workflow, &1))
     |> then(fn changeset ->
       Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1))
     end)
+  end
+
+  defp description_limit_errors(profiles) do
+    case get_in(profiles, ["refinement", "description_limits"]) do
+      nil -> []
+      limits when is_map(limits) -> limit_map_errors(limits, "profiles.refinement.description_limits")
+      _ -> ["profiles.refinement.description_limits must be a map"]
+    end
+  end
+
+  defp limit_map_errors(limits, path) do
+    scalar_errors =
+      Enum.flat_map(["characters", "lines"], fn key ->
+        case Map.get(limits, key) do
+          nil -> []
+          value when is_integer(value) and value > 0 -> []
+          _ -> ["#{path}.#{key} must be a positive integer"]
+        end
+      end)
+
+    override_errors =
+      case Map.get(limits, "label_overrides", %{}) do
+        overrides when is_map(overrides) ->
+          Enum.flat_map(overrides, fn
+            {label, override} when is_map(override) ->
+              limit_map_errors(Map.delete(override, "label_overrides"), "#{path}.label_overrides.#{label}")
+
+            {label, _override} ->
+              ["#{path}.label_overrides.#{label} must be a map"]
+          end)
+
+        _ ->
+          ["#{path}.label_overrides must be a map"]
+      end
+
+    scalar_errors ++ override_errors
   end
 
   defp normalize_keys(value) when is_map(value) do

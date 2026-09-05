@@ -69,6 +69,12 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
             }
           }
         }
+      },
+      %{
+        event_type: "refinement.description_measurement",
+        issue_identifier: "CCR-5",
+        occurred_at: now,
+        payload: %{characters: 800, lines: 40, over_limit: true}
       }
     ])
 
@@ -80,6 +86,9 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
     assert html =~ "completed"
     assert html =~ "Total tokens"
     assert html =~ "12"
+    assert html =~ "Refinement description"
+    assert html =~ "1 samples"
+    assert html =~ "over limit 1 (100.0%)"
     assert html =~ ~s(href="/issues/CCR-5")
 
     document = Floki.parse_document!(html)

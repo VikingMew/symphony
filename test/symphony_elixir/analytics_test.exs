@@ -77,6 +77,37 @@ defmodule SymphonyElixir.AnalyticsTest do
     assert summary.status_rows == []
     assert summary.duration.average_seconds == 0
     assert summary.tokens.total_tokens == 0
+
+    assert summary.refinement_description == %{
+             samples: 0,
+             average_characters: 0.0,
+             average_lines: 0.0,
+             p95_characters: 0,
+             p95_lines: 0,
+             over_limit: 0,
+             over_rate: 0.0
+           }
+  end
+
+  test "aggregates refinement description measurements within the selected range" do
+    now = ~U[2026-05-21 00:00:00Z]
+
+    FakePersistence.put_events([
+      measurement_event(now, 10, 2, false),
+      measurement_event(now, 20, 4, true),
+      measurement_event(now, 30, 6, true),
+      measurement_event(DateTime.add(now, -8, :day), 1_000, 1_000, true)
+    ])
+
+    summary = Analytics.summary(range: "7d", now: now).refinement_description
+
+    assert summary.samples == 3
+    assert summary.average_characters == 20.0
+    assert summary.average_lines == 4.0
+    assert summary.p95_characters == 30
+    assert summary.p95_lines == 6
+    assert summary.over_limit == 2
+    assert_in_delta summary.over_rate, 2 / 3, 0.0001
   end
 
   test "extracts realistic codex token payload shapes without double-counting run cumulative snapshots" do
@@ -151,6 +182,14 @@ defmodule SymphonyElixir.AnalyticsTest do
   end
 
   defp row(rows, key), do: Enum.find(rows, &(&1.key == key))
+
+  defp measurement_event(occurred_at, characters, lines, over_limit) do
+    %{
+      event_type: "refinement.description_measurement",
+      occurred_at: occurred_at,
+      payload: %{characters: characters, lines: lines, over_limit: over_limit}
+    }
+  end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)

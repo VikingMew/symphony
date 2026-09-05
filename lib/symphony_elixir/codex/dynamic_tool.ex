@@ -5,7 +5,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
   alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Codex.RefinementDescriptionMeasurement
   alias SymphonyElixir.Codex.RefinementQualityGate
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.PersistenceEventWriter
@@ -546,7 +548,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if is_binary(target_state) and
          StateName.normalize(target_state) == StateName.normalize("Needs Refinement Review") do
       payload
-      |> Map.get("description")
+      |> final_description(opts)
       |> RefinementQualityGate.validate()
       |> report_refinement_quality(issue_id, opts)
     else
@@ -579,10 +581,14 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp perform_regular_task_update(issue_id, payload, opts) do
-    payload = maybe_measure_refinement(payload, opts)
+    measurement = refinement_measurement(payload, opts)
+    payload = maybe_append_measurement_advisory(payload, measurement)
+
     with {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
          {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
          {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts) do
+      record_refinement_measurement(measurement, opts)
+
       {:ok,
        %{
          "issue_update" => issue_update,
@@ -593,36 +599,50 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     end
   end
 
-  defp maybe_measure_refinement(%{"target_state" => target} = payload, opts)
-       when target == "Needs Refinement Review" do
-    issue = Keyword.get(opts, :issue)
-    description = Map.get(payload, "description") || (if match?(%Issue{}, issue), do: issue.description, else: "") || ""
-    normalized = String.replace(description, "\r\n", "\n") |> String.replace("\r", "\n")
-    chars = String.length(description)
-    lines = if normalized == "", do: 0, else: length(String.split(normalized, "\n"))
-    limits = refinement_limits()
-    labels = if match?(%Issue{}, issue), do: Issue.label_names(issue), else: []
-    {char_limit, line_limit, overrides} = effective_limits(limits, labels)
-    over = chars > char_limit or lines > line_limit
-    comment = Map.get(payload, "comment")
-    hint = "Description is #{chars} characters / #{lines} lines (limits #{char_limit} / #{line_limit}); please consider trimming for clarity. This is advisory and will not block refinement."
-    payload = if over, do: Map.put(payload, "comment", (if is_binary(comment) and comment != "", do: comment <> "\n\n" <> hint, else: hint)), else: payload
-    _ = PersistenceEventWriter.record(%{event_type: "refinement.description_measurement", issue_identifier: issue_identifier(issue), payload: %{characters: chars, lines: lines, character_limit: char_limit, line_limit: line_limit, over_limit: over, label_overrides: overrides}, occurred_at: DateTime.utc_now()}, %{issue_id: issue_id(issue), issue_identifier: issue_identifier(issue)})
-    payload
+  defp refinement_measurement(%{"target_state" => target} = payload, opts) do
+    if StateName.normalize(target) == StateName.normalize("Needs Refinement Review") do
+      issue = Keyword.fetch!(opts, :issue)
+
+      RefinementDescriptionMeasurement.measure(
+        final_description(payload, opts),
+        Issue.label_names(issue),
+        Keyword.get_lazy(opts, :refinement_description_limits, fn ->
+          Config.workflow_profile("refinement")["description_limits"]
+        end)
+      )
+    end
   end
-  defp maybe_measure_refinement(payload, _opts), do: payload
-  defp issue_id(%Issue{id: id}), do: id
-  defp issue_id(_), do: nil
-  defp issue_identifier(%Issue{identifier: id}), do: id
-  defp issue_identifier(_), do: nil
-  defp refinement_limits do
-    profile = Config.workflow_profile("refinement")
-    Map.get(profile, "description_limits", %{"characters" => 12_000, "lines" => 400, "label_overrides" => %{}})
+
+  defp refinement_measurement(_payload, _opts), do: nil
+
+  defp final_description(payload, opts) do
+    Map.get(payload, "description") || Keyword.fetch!(opts, :issue).description || ""
   end
-  defp effective_limits(limits, labels) do
-    base = {Map.get(limits, "characters", 12_000), Map.get(limits, "lines", 400)}
-    matches = Enum.filter(Map.get(limits, "label_overrides", %{}), fn {label, _} -> String.downcase(to_string(label)) in Enum.map(labels, &String.downcase/1) end) |> Enum.map(fn {_l, v} -> {Map.get(v, "characters", elem(base,0)), Map.get(v, "lines", elem(base,1))} end)
-    {max([elem(base,0)|Enum.map(matches, &elem(&1,0))]), max([elem(base,1)|Enum.map(matches, &elem(&1,1))]), Enum.map(matches, fn {c,l} -> %{characters: c, lines: l} end)}
+
+  defp maybe_append_measurement_advisory(payload, %{over_limit: true} = measurement) do
+    advisory = RefinementDescriptionMeasurement.advisory(measurement)
+
+    Map.update(payload, "comment", advisory, fn comment ->
+      if is_binary(comment) and comment != "", do: comment <> "\n\n" <> advisory, else: advisory
+    end)
+  end
+
+  defp maybe_append_measurement_advisory(payload, _measurement), do: payload
+
+  defp record_refinement_measurement(nil, _opts), do: :ok
+
+  defp record_refinement_measurement(measurement, opts) do
+    issue = Keyword.fetch!(opts, :issue)
+
+    PersistenceEventWriter.record(
+      %{
+        event_type: "refinement.description_measurement",
+        issue_identifier: issue.identifier,
+        payload: measurement,
+        occurred_at: DateTime.utc_now()
+      },
+      %{issue_id: issue.id, issue_identifier: issue.identifier}
+    )
   end
 
   defp complete_implementation_handoff(issue_id, payload, opts) do

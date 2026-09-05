@@ -10,6 +10,19 @@ design_status: landed
 
 # Codex / Linear 任务细化工作流
 
+## 描述体积测量
+
+成功请求进入 `Needs Refinement Review` 时，受限更新边界测量最终描述：本次提交了新描述
+则使用新值，否则使用 issue 当前描述。字符数按 Unicode codepoint 计数；逻辑行数先把 CRLF
+和裸 CR 规范化为 LF，空描述为零行。实际值等于有效阈值时不超限，任一维度严格超过阈值
+时，仅在已有里程碑评论中追加一次简短的非阻断精简提示。
+
+描述、状态和里程碑评论全部成功后，系统写入一条
+`refinement.description_measurement` event。payload 包含 `characters`、`lines`、
+`character_limit`、`line_limit`、`over_limit` 和规范化后的命中 `label_overrides`。
+持久化失败沿用 event writer 的显式结构化日志与返回语义，但不回滚或阻断已经成功的 Linear
+更新。
+
 本文维护 `pull -> read -> update task detail -> comment -> transit` 这条工作流。它覆盖从 Linear 拉取候选 task，到 Codex 读取任务、细化需求、更新任务详情、评论说明并请求状态流转的行为契约。
 
 ## 目标
