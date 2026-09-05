@@ -48,6 +48,23 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :issues, issues))
   end
 
+  def upsert_issue(attrs) when is_map(attrs) do
+    ensure_started()
+    issue = Map.put_new(attrs, :id, "fake-issue-#{System.unique_integer([:positive])}")
+
+    Agent.get_and_update(@name, fn state ->
+      issues =
+        state.issues
+        |> Enum.reject(
+          &(Map.get(&1, :project_id) == issue.project_id and
+              Map.get(&1, :tracker_issue_id) == issue.tracker_issue_id)
+        )
+        |> List.insert_at(0, issue)
+
+      {{:ok, issue}, state |> record_call({:upsert_issue, attrs}) |> Map.put(:issues, issues)}
+    end)
+  end
+
   def get_issue_by_identifier(identifier) do
     ensure_started()
 
@@ -363,6 +380,20 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, fn state ->
       state.tasks
       |> filter_eq(:project_id, Keyword.get(opts, :project_id))
+    end)
+  end
+
+  def enqueue_task(attrs) when is_map(attrs) do
+    ensure_started()
+
+    task =
+      attrs
+      |> Map.put_new(:id, "fake-task-#{System.unique_integer([:positive])}")
+      |> Map.put_new(:status, "queued")
+      |> Map.put_new(:queued_at, DateTime.utc_now())
+
+    Agent.get_and_update(@name, fn state ->
+      {{:ok, task}, state |> record_call({:enqueue_task, attrs}) |> update_in([:tasks], &[task | &1])}
     end)
   end
 

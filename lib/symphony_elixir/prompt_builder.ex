@@ -3,7 +3,7 @@ defmodule SymphonyElixir.PromptBuilder do
   Builds agent prompts from Linear issue data.
   """
 
-  alias SymphonyElixir.{Config, WorkflowStore}
+  alias SymphonyElixir.Config
 
   @render_opts [strict_variables: true, strict_filters: true]
 
@@ -21,7 +21,7 @@ defmodule SymphonyElixir.PromptBuilder do
     assigns = prompt_assigns(issue, opts)
 
     template =
-      WorkflowStore.current()
+      Config.current_workflow()
       |> prompt_template!()
       |> parse_template!()
 

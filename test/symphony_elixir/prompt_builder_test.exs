@@ -23,6 +23,35 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert prompt =~ "attempt=3"
   end
 
+  test "prompt builder uses the active persisted project workflow" do
+    {:ok, base} = Workflow.load()
+    {:ok, project_a} = FakePersistence.default_project()
+    {:ok, _} = FakePersistence.import_workflow(project_a, Workflow.to_markdown(base.config, "Prompt A"), "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        repository_url: "git@example.test:b.git",
+        enabled: true
+      })
+
+    {:ok, _} =
+      FakePersistence.import_workflow(
+        project_b,
+        Workflow.to_markdown(base.config, "Prompt B {{ issue.identifier }}"),
+        "test"
+      )
+
+    assert :ok = WorkflowStore.force_reload()
+    {:ok, workflow_b} = WorkflowStore.for_project(project_b.id)
+    issue = %Issue{identifier: "B-1", title: "Project B", state: "Ready", labels: []}
+
+    prompt = Config.with_workflow_context(workflow_b, fn -> PromptBuilder.build_prompt(issue) end)
+
+    assert prompt == "Prompt B B-1"
+  end
+
   test "prompt builder prepends profile-specific tool contract when profile is provided" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Ticket {{ issue.identifier }}")
 
