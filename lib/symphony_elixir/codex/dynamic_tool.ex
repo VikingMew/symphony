@@ -10,8 +10,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
-  alias SymphonyElixir.PRReview
   alias SymphonyElixir.PersistenceEventWriter
+  alias SymphonyElixir.PRReview
   alias SymphonyElixir.StateName
 
   @task_read_query """
