@@ -661,7 +661,7 @@ defmodule SymphonyElixir.CoreTest do
     assert log =~ "Run-start persistence failed action=skip_dispatch"
   end
 
-  test "workflow file path defaults to workflow.yml in the current working directory when app env is unset" do
+  test "workflow file path defaults to the checked-in example when app env is unset" do
     original_workflow_path = Workflow.workflow_file_path()
 
     on_exit(fn ->
@@ -670,7 +670,8 @@ defmodule SymphonyElixir.CoreTest do
 
     Workflow.clear_workflow_file_path()
 
-    assert Workflow.workflow_file_path() == Path.join(File.cwd!(), "workflow.yml")
+    assert Workflow.workflow_file_path() ==
+             Path.join([File.cwd!(), "docs", "examples", "workflow.yml"])
   end
 
   test "workflow file path resolves from app env when set" do
