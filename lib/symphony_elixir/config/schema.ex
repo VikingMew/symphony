@@ -686,6 +686,7 @@ defmodule SymphonyElixir.Config.Schema do
         %{"from" => "In Progress", "to" => "Blocked", "actor" => "symphony"},
         %{"from" => "Ready to Merge", "to" => "Blocked", "actor" => "symphony"},
         %{"from" => "Blocked", "to" => "Ready", "actor" => "human"},
+        %{"from" => "Blocked", "to" => "In Progress", "actor" => "human"},
         %{"from" => "Blocked", "to" => "Needs Refinement Review", "actor" => "human"},
         %{"from" => "Blocked", "to" => "Canceled", "actor" => "human"}
       ],
@@ -735,6 +736,20 @@ defmodule SymphonyElixir.Config.Schema do
           "comment" => true,
           "result" => true,
           "target_states" => ["In Progress", "Ready to Merge"]
+        }
+      },
+      "review" => %{
+        "name" => "Pull request review",
+        "executor" => %{"type" => "codex_agent"},
+        "prompt" => %{
+          "mode" => "replace",
+          "template" => "Review only the supplied immutable issue and pull-request context. Submit one structured approve/findings conclusion. Do not modify code, git, GitHub, or Linear."
+        },
+        "allowed_updates" => %{
+          "description" => false,
+          "comment" => false,
+          "result" => false,
+          "target_states" => []
         }
       },
       "nap" => %{

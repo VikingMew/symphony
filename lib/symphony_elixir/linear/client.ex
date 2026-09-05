@@ -104,6 +104,32 @@ defmodule SymphonyElixir.Linear.Client do
   }
   """
 
+  @review_context_query """
+  query SymphonyReviewContext($id: String!) {
+    issue(id: $id) {
+      id
+      identifier
+      title
+      description
+      state { name }
+      comments(first: 50) {
+        nodes { id body createdAt updatedAt user { name } }
+      }
+    }
+  }
+  """
+
+  @spec fetch_review_context(String.t()) :: {:ok, map()} | {:error, term()}
+  def fetch_review_context(issue_id) when is_binary(issue_id) do
+    with {:ok, response} <- graphql(@review_context_query, %{id: issue_id}),
+         %{} = issue <- get_in(response, ["data", "issue"]) do
+      {:ok, issue}
+    else
+      nil -> {:error, :issue_not_found}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @workflow_state_create_mutation """
   mutation SymphonyLinearWorkflowStateCreate($input: WorkflowStateCreateInput!) {
     workflowStateCreate(input: $input) {

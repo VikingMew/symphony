@@ -163,9 +163,16 @@ The started state `Refining` and the human-review states `Needs Refinement Revie
 `Needs Refinement Review -> Refining` for another pass. The control plane MAY transition
 `Ready to Merge -> Blocked`
 without dispatch when the exact handed-off open GitHub PR reports a definitive merge conflict.
-Unknown mergeability, CI, review, behind, or API failure states MUST NOT block. In particular, no
+Unknown mergeability, CI, behind, or API failure states MUST NOT block. A post-handoff review
+finding MAY block through its own typed decision without replacing merge-conflict evidence. In particular, no
 orchestrator path transitions `Ready to Merge`
 to `Done`; GitHub review plus Linear automation owns that transition.
+
+`Ready to Merge` has no ordinary issue route. The only allowed execution there is a durable
+post-handoff review job, keyed by project, issue, PR URL, and backend-resolved immutable head OID.
+Review jobs use the positive deployment-level `SYMPHONY_PANEL_REVIEW_SLOTS` concurrency limit,
+remain queued across restarts, and are capped by the process-wide panel ceiling. Reconciliation examines a bounded number of
+pre-transition intents per poll to close the successful-Linear-write/enqueue crash gap.
 
 Sorting order (stable intent):
 

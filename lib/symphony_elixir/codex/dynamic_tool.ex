@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.PersistenceEventWriter
+  alias SymphonyElixir.PRReview
   alias SymphonyElixir.StateName
 
   @task_read_query """
@@ -106,6 +107,8 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @issue_create_tool "linear_issue_create"
   @pull_request_tool "create_pull_request"
   @handoff_tool "handoff"
+  @review_context_tool "review_context_read"
+  @review_submit_tool "submit_review"
 
   @read_schema %{
     "type" => "object",
@@ -245,6 +248,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       @handoff_tool ->
         execute_with_audit(@handoff_tool, arguments, opts, fn -> execute_handoff(arguments, opts) end)
 
+      @review_context_tool ->
+        execute_review_context(arguments, opts)
+
+      @review_submit_tool ->
+        execute_review_submit(arguments, opts)
+
       other ->
         failure_response(%{
           "error" => %{
@@ -301,8 +310,66 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   @spec tool_specs(String.t() | nil) :: [map()]
+  def tool_specs("review") do
+    [
+      %{
+        "name" => @review_context_tool,
+        "description" => "Read the immutable issue and pull-request review context.",
+        "inputSchema" => %{"type" => "object", "additionalProperties" => false}
+      },
+      %{
+        "name" => @review_submit_tool,
+        "description" => "Submit the single structured review conclusion.",
+        "inputSchema" => %{
+          "type" => "object",
+          "additionalProperties" => false,
+          "required" => ["outcome", "head_sha", "summary", "findings"],
+          "properties" => %{
+            "outcome" => %{"type" => "string", "enum" => ["approve", "findings"]},
+            "head_sha" => %{"type" => "string"},
+            "summary" => %{"type" => "string"},
+            "findings" => %{"type" => "array", "items" => %{"type" => "string"}}
+          }
+        }
+      }
+    ]
+  end
+
   def tool_specs("implementation"), do: tool_specs()
   def tool_specs(_profile), do: tool_specs()
+
+  defp execute_review_context(arguments, opts) do
+    with "review" <- Keyword.get(opts, :profile),
+         true <- arguments in [nil, %{}],
+         context when is_map(context) <- Keyword.get(opts, :review_context) do
+      success_response(context)
+    else
+      _ -> failure_response(%{"error" => %{"message" => "Review context is unavailable."}})
+    end
+  end
+
+  defp execute_review_submit(arguments, opts) do
+    with "review" <- Keyword.get(opts, :profile),
+         {:ok, result} <- normalize_review_result(arguments),
+         true <- result.head_sha == Keyword.fetch!(opts, :review_head_oid),
+         submitter when is_function(submitter, 1) <- Keyword.get(opts, :review_submitter),
+         :ok <- submitter.(result) do
+      success_response(%{"accepted" => true})
+    else
+      false -> failure_response(%{"error" => %{"message" => "Reviewed head SHA does not match the immutable job head."}})
+      _ -> failure_response(%{"error" => %{"message" => "Invalid review conclusion."}})
+    end
+  end
+
+  defp normalize_review_result(arguments) when is_map(arguments) do
+    outcome = Map.get(arguments, "outcome")
+    PRReview.normalize(Map.put(arguments, "outcome", review_outcome(outcome)))
+  end
+
+  defp normalize_review_result(_arguments), do: {:error, :invalid_review_result}
+  defp review_outcome("approve"), do: :approve
+  defp review_outcome("findings"), do: :findings
+  defp review_outcome(other), do: other
 
   defp handoff_tool_spec do
     %{
@@ -646,9 +713,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp complete_implementation_handoff(issue_id, payload, opts) do
-    with {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
+    with {:ok, review_intent} <- prepare_review_intent(opts),
+         {:ok, reference_links} <- maybe_link_references(issue_id, payload, opts),
          {:ok, comment_update} <- maybe_create_comment(issue_id, payload, opts),
-         {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts) do
+         {:ok, issue_update} <- maybe_update_issue(issue_id, payload, opts),
+         :ok <- arm_review_intent(review_intent, opts) do
       {:ok,
        %{
          "issue_update" => issue_update,
@@ -656,6 +725,26 @@ defmodule SymphonyElixir.Codex.DynamicTool do
          "reference_links" => reference_links,
          "requested_state" => Map.get(payload, "target_state")
        }}
+    end
+  end
+
+  defp prepare_review_intent(opts) do
+    case Keyword.get(opts, :review_intent_preparer) do
+      preparer when is_function(preparer, 1) ->
+        getter = Keyword.fetch!(opts, :pull_request_result)
+        preparer.(getter.())
+
+      _missing ->
+        {:ok, nil}
+    end
+  end
+
+  defp arm_review_intent(nil, _opts), do: :ok
+
+  defp arm_review_intent(intent, opts) do
+    case Keyword.get(opts, :review_intent_armer) do
+      armer when is_function(armer, 1) -> armer.(intent)
+      _missing -> {:error, :review_intent_armer_unavailable}
     end
   end
 

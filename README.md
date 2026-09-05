@@ -46,7 +46,9 @@ Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
 ```
 
 `Refining`, `Ready`, and `In Progress` are agent-work states. `Needs Refinement Review` and
-`Ready to Merge` and `Blocked` are human-review states and are never dispatched. During normal
+`Ready to Merge` and `Blocked` are human-review states and are never ordinarily dispatched. A
+successful implementation handoff enqueues one separate durable, read-only review job for the
+backend-resolved immutable PR head. During normal
 control-plane reconciliation, Symphony checks the exact open PR handed off for `Ready to Merge`
 issues. A definitive GitHub merge conflict moves the issue to persistent `Blocked`; unknown,
 behind, CI, review, and transient API states leave it waiting. Symphony persists
@@ -74,7 +76,8 @@ observability pages (Runs, Events, Workers) are project-aware.
 Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
 bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
 only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`, while queued, leased,
-and running worker tasks consume that shared capacity.
+and running worker tasks consume that shared capacity. Post-handoff reviews use the separate
+deployment-level `SYMPHONY_PANEL_REVIEW_SLOTS` limit (default `2`), capped by panel capacity.
 
 ### Execution worker image
 

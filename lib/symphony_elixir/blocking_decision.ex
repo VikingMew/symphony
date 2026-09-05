@@ -10,6 +10,7 @@ defmodule SymphonyElixir.BlockingDecision do
           | :implementation_handoff_failure
           | :push_permission_blocked
           | :merge_conflict
+          | :pr_review
           | :no_progress
 
   @doc """
