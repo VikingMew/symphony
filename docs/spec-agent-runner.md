@@ -227,12 +227,16 @@ The `Agent Runner` wraps workspace + prompt + app-server client.
 
 Behavior:
 
-1. Create/reuse workspace for issue.
-2. Build prompt from workflow template.
-3. Start app-server session.
-4. Forward app-server events to orchestrator.
-5. Treat only an explicit allowed `Ready to Merge` request as implementation completion.
-6. On any error, fail the worker attempt (the orchestrator will retry).
+1. Recreate the lease workspace, explicitly fetch the configured default branch from `origin`,
+   and resolve its remote-tracking ref to an immutable `base_sha`.
+2. Create a missing Linear task branch at `base_sha`, or fetch and checkout an existing remote
+   task branch without resetting its commits. Record the default branch, `base_sha`, prepared
+   branch, and prepared HEAD in the worker result.
+3. Build prompt from workflow template.
+4. Start app-server session.
+5. Forward app-server events to orchestrator.
+6. Treat only an explicit allowed `Ready to Merge` request as implementation completion.
+7. On any error, fail the worker attempt (the orchestrator will retry).
 
 Note:
 

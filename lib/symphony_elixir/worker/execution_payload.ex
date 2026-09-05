@@ -13,7 +13,6 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "repository" => Map.fetch!(repository, "url"),
       "repository_url" => Map.fetch!(repository, "url"),
       "default_branch" => Map.fetch!(repository, "source_ref"),
-      "revision" => Map.fetch!(repository, "source_ref"),
       "branch" => Map.fetch!(repository, "implementation_branch"),
       "codex" => codex(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
