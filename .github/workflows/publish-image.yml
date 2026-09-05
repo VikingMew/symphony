@@ -81,16 +81,7 @@ jobs:
             .services.migrate.image == "symphony:local" and
             .services.symphony.image == "symphony:local" and
             .services.migrate.build.target == "symphony" and
-            .services.symphony.build.target == "symphony" and
-            .services.migrate.build.args.SYMPHONY_EMBED_CODEX == "true" and
-            .services.symphony.build.args.SYMPHONY_EMBED_CODEX == "true"
-          '
-          docker compose -f compose.yaml -f compose.worker.yaml --profile execution-worker config --format json | jq -e '
-            .services.migrate.build.args.SYMPHONY_EMBED_CODEX == "false" and
-            .services.symphony.build.args.SYMPHONY_EMBED_CODEX == "false" and
-            .services.symphony.environment.SYMPHONY_EXECUTION_MODE == "worker" and
-            (.services.symphony.volumes | all(.target != "/home/symphony/.codex")) and
-            (.services["execution-worker"].volumes | any(.target == "/home/symphony/.codex"))
+            .services.symphony.build.target == "symphony"
           '
           export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
           export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567

@@ -208,25 +208,6 @@ VOLUME ["/home/symphony/.codex"]
 
 FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony
 
-FROM symphony-base AS symphony-false
-
-FROM symphony-base AS symphony-true
-
-ENV CODEX_HOME=/home/symphony/.codex
-
-USER root
-RUN install -d -o symphony -g symphony /home/symphony/.codex
-COPY --from=codex /usr/local/bin/node /usr/local/bin/node
-COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
-RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
-  && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-  && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-USER symphony
-
-VOLUME ["/home/symphony/.codex"]
-
-FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony
-
 FROM toolchain AS execution-worker
 
 ARG APT_DEBIAN_MIRROR

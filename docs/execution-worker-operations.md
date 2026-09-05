@@ -50,9 +50,9 @@ Validate without printing substituted secrets:
 
 ```bash
 grep -Eq '^SYMPHONY_WORKER_REGISTRATION_TOKEN=.+$' .env
-docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker config --quiet
-docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker build
-docker compose -f compose.yaml -f compose.worker.yaml --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
+docker compose --env-file .env --profile execution-worker config --quiet
+docker compose --env-file .env --profile execution-worker build execution-worker
+docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
   test -z "$DATABASE_URL" && test -n "$LINEAR_API_KEY" &&
@@ -103,13 +103,6 @@ available slots. A healthy idle worker has no claim until new work is routed to 
 rotate a credential, stop the worker, replace only that value in `.env`, revoke the old token at
 its issuer, and recreate the service. Rotating the shared registration token also requires
 recreating the Panel.
-
-To route locally through the worker, recreate the stack with the worker-mode override so the Panel
-image and credential mounts change together:
-
-```bash
-docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker up -d
-```
 
 ## End-to-end verification record
 
