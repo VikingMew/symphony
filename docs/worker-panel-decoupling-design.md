@@ -416,6 +416,11 @@ oversized terminal summaries, secret-bearing detail, and worker-local paths with
 Accepted evidence and the task/run projections are written in the same transaction; lifecycle status
 and persisted event timestamps remain authoritative.
 
+A claim only grants a lease. The worker emits `task.accepted` after its supervised executor process
+has started, then reports executor and Codex-session progress as separate facts. It retains the lease
+in heartbeats until Panel acknowledges a terminal event; transient delivery failures are retried, and
+exhausted delivery stops renewal so periodic Panel reconciliation can expire and requeue the task.
+
 ## 11. 数据模型
 
 建议新增或扩展以下表：
