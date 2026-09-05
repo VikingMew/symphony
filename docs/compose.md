@@ -62,7 +62,24 @@ worker registration, SSH, reverse-proxy settings, release `SECRET_KEY_BASE`, and
 proxy variables. Prefer a password hash over a plaintext dashboard password. Use either `GH_TOKEN`
 or `GITHUB_TOKEN`, not both, unless their precedence is intentional.
 
-Codex, GitHub CLI, and SSH state use named volumes:
+The image and credential boundary follows execution ownership:
+
+- The default local `symphony` build is the centralized Panel: it contains Codex and Node, sets
+  `CODEX_HOME`, and mounts `codex_home` because the Panel may execute turns locally.
+- The published worker-mode Panel is built with `SYMPHONY_EMBED_CODEX=false`: it is control-only,
+  contains no Codex or Node installation, does not set `CODEX_HOME`, and does not mount
+  `codex_home`.
+- The `execution-worker` image always contains Codex, sets `CODEX_HOME`, and owns the separate
+  `execution_worker_codex` OAuth-state volume.
+
+For a local worker-mode deployment, apply `compose.worker.yaml`; this selects the same control-only
+Panel boundary while leaving the execution-worker image and credential volume unchanged:
+
+```bash
+docker compose -f compose.yaml -f compose.worker.yaml --profile execution-worker up -d
+```
+
+Centralized Codex, GitHub CLI, and SSH state use named volumes:
 
 ```bash
 docker compose run --rm symphony codex login
@@ -127,9 +144,11 @@ printed. Never use `git credential fill` as a display command because its output
 resolved credential.
 
 The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact supported Codex
-CLI release, `0.150.1`. The `symphony`, SSH `worker`, and `execution-worker` targets all copy the
-same installation from that stage. Override the argument only as an explicit, validated image
-change; builds never follow npm's mutable `latest` tag.
+CLI release, `0.150.1`. The centralized `symphony`, SSH `worker`, and `execution-worker` targets
+copy the same installation from that stage. `SYMPHONY_EMBED_CODEX` defaults to `true` so local
+centralized builds retain execution support; publication selects `false` for the control-only
+worker-mode Panel. Override either argument only as an explicit, validated image change; builds
+never follow npm's mutable `latest` tag.
 
 Those three Codex-capable targets also inherit one build-time toolchain stage. It pins mise to
 `2025.8.16` and the base image to Elixir `1.19.5-otp-28`; `mise.toml` remains the project contract
@@ -143,7 +162,8 @@ when Compose mounts the root filesystem read-only. The Panel and execution worke
 with execution enabled because workspace quality gates may create native libraries or executable
 test helpers there; migration keeps the default non-executable temporary mount.
 
-External `publish-image` CI builds and checks all three targets and publishes the `symphony` and
+External `publish-image` CI builds and checks the centralized and control-only Panel variants plus
+the worker targets, then publishes the control-only `symphony` and Codex-capable
 `execution-worker` targets to separate GHCR repositories in one run. It verifies command discovery for
 `mise`, `mix`, `elixir`, `erl`, and `make` as a non-root user with a read-only root filesystem, then
 runs `mise exec -- mix --version` in the `execution-worker` workspace. Publish formatting is a
@@ -239,7 +259,8 @@ The container paths are stable:
 | PostgreSQL cluster | `/var/lib/postgresql/data` | `postgres_data` |
 | Logs | `/data/logs` | `symphony_logs` |
 | Workspaces | `/data/workspaces` | `symphony_workspaces` |
-| Codex state | `/home/symphony/.codex` | `codex_home` |
+| Centralized Panel Codex state (local build only) | `/home/symphony/.codex` | `codex_home` |
+| Execution-worker Codex state | `/home/symphony/.codex` | `execution_worker_codex` |
 | GitHub CLI state | `/home/symphony/.config/gh` | `gh_config` |
 | SSH state | `/home/symphony/.ssh` | `ssh_home` |
 

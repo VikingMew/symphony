@@ -6,6 +6,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
   @published_compose Path.expand("../../compose.published.yaml", __DIR__)
+  @worker_compose Path.expand("../../compose.worker.yaml", __DIR__)
   @quality_workflow Path.expand("../../.github/workflows/make-all.yml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
@@ -14,7 +15,8 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert dockerfile =~ "ARG CODEX_VERSION=0.150.1"
     assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
     assert dockerfile =~ "FROM toolchain AS worker"
-    assert dockerfile =~ "FROM toolchain AS symphony"
+    assert dockerfile =~ "FROM toolchain AS symphony-base"
+    assert dockerfile =~ "FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony"
     assert length(Regex.scan(~r/COPY --from=codex \/usr\/local\/lib\/node_modules/, dockerfile)) == 3
     refute dockerfile =~ "npm install --global @openai/codex\n"
   end
@@ -38,7 +40,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert mise =~ ~s(erlang = "28")
     assert mise =~ ~s(elixir = "1.19.5-otp-28")
 
-    for stage <- ["worker", "symphony", "execution-worker"] do
+    for stage <- ["worker", "symphony-base", "execution-worker"] do
       assert dockerfile =~ "FROM toolchain AS #{stage}"
       body = stage_body(dockerfile, stage)
       assert body =~ "MIX_HOME="
@@ -104,7 +106,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     dockerfile = File.read!(@dockerfile)
     compose = File.read!(@compose)
 
-    for stage <- ["worker", "symphony", "execution-worker"] do
+    for stage <- ["worker", "symphony-base", "execution-worker"] do
       body = stage_body(dockerfile, stage)
 
       assert body =~ ~r/^\s*gh \\?$/m, "#{stage} must install gh"
@@ -138,11 +140,84 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "execution_worker_workspaces:/worker/workspaces"
     assert worker =~ "execution_worker_cache:/worker/cache"
     assert worker =~ "execution_worker_logs:/worker/logs"
+    assert worker =~ "execution_worker_codex:/home/symphony/.codex"
     assert worker =~ "- worker_control\n      - worker_egress"
     refute worker =~ "DATABASE_URL"
     refute worker =~ "POSTGRES_"
     assert worker =~ "LINEAR_API_KEY"
     refute worker =~ "- database"
+  end
+
+  test "Panel image branches Codex ownership at build time" do
+    dockerfile = File.read!(@dockerfile)
+    compose = File.read!(@compose)
+    workflow = File.read!(@publish_workflow)
+
+    assert dockerfile =~ "ARG SYMPHONY_EMBED_CODEX=true"
+    assert dockerfile =~ "FROM symphony-base AS symphony-false"
+    assert dockerfile =~ "FROM symphony-base AS symphony-true"
+    assert dockerfile =~ "FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony"
+
+    codex_panel = stage_body(dockerfile, "symphony-true")
+    control_panel = stage_body(dockerfile, "symphony-false")
+    assert codex_panel =~ "ENV CODEX_HOME=/home/symphony/.codex"
+    assert codex_panel =~ "COPY --from=codex /usr/local/bin/node"
+    assert codex_panel =~ "COPY --from=codex /usr/local/lib/node_modules"
+    assert codex_panel =~ ~s(VOLUME ["/home/symphony/.codex"])
+    refute control_panel =~ "CODEX_HOME"
+    refute control_panel =~ "--from=codex"
+    refute control_panel =~ "/home/symphony/.codex"
+
+    for service <- ["migrate", "symphony"] do
+      assert service_body(compose, service) =~ ~s(SYMPHONY_EMBED_CODEX: "true")
+    end
+
+    assert workflow =~ "docker build --build-arg SYMPHONY_EMBED_CODEX=false --target symphony"
+    assert workflow =~ "SYMPHONY_EMBED_CODEX=false"
+    assert workflow =~ "! command -v codex"
+    assert workflow =~ ~s(test -z "${CODEX_HOME:-}")
+  end
+
+  test "published worker-mode Panel has no Codex credential mount" do
+    compose = File.read!(@published_compose)
+    panel = service_body(compose, "symphony")
+
+    assert panel =~ "SYMPHONY_EXECUTION_MODE: worker"
+    assert panel =~ "volumes: !override"
+    refute panel =~ "codex_home"
+    assert panel =~ "gh_config:/home/symphony/.config/gh"
+
+    worker = service_body(File.read!(@compose), "execution-worker")
+    assert worker =~ "execution_worker_codex:/home/symphony/.codex"
+  end
+
+  test "local worker-mode Compose selects the control-only Panel" do
+    compose = File.read!(@worker_compose)
+
+    for service <- ["migrate", "symphony"] do
+      assert service_body(compose, service) =~ ~s(SYMPHONY_EMBED_CODEX: "false")
+    end
+
+    panel = service_body(compose, "symphony")
+    assert panel =~ "SYMPHONY_EXECUTION_MODE: worker"
+    assert panel =~ "volumes: !override"
+    refute panel =~ "codex_home"
+  end
+
+  test "deployment docs state Codex binary and credential ownership" do
+    compose_doc = File.read!(Path.expand("../../docs/compose.md", __DIR__))
+    operations = File.read!(Path.expand("../../docs/execution-worker-operations.md", __DIR__))
+    alignment = File.read!(Path.expand("../../docs/documentation-alignment.md", __DIR__))
+
+    for doc <- [compose_doc, operations, alignment] do
+      assert doc =~ "SYMPHONY_EMBED_CODEX=false"
+      assert doc =~ "execution_worker_codex"
+      assert doc =~ "control-only"
+    end
+
+    assert compose_doc =~ "default local `symphony` build is the centralized Panel"
+    assert operations =~ "default local centralized Panel remains"
+    assert alignment =~ "contains neither Codex/Node nor `CODEX_HOME`"
   end
 
   test "Compose application services have no container control plane" do

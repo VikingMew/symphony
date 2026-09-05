@@ -17,6 +17,13 @@ only when `SYMPHONY_EXECUTION_MODE=worker` is applied to a newly started Panel.
 For each claim, the worker launches `codex app-server`, drives one JSON-RPC turn over stdio, and
 stops the session before running required gates and handoff commands.
 
+The published `symphony` image is a control-only Panel built with
+`SYMPHONY_EMBED_CODEX=false`. Published Compose fixes that Panel to worker mode and omits the
+`codex_home` mount, so it has neither the Codex/Node runtime nor Panel-local OAuth state. The
+separate `execution-worker` image remains Codex-capable and owns only its
+`execution_worker_codex` credential volume. The default local centralized Panel remains
+Codex-capable for Panel-local execution.
+
 ## Preflight and credentials
 
 Copy `.env.example` to the ignored `.env`. Base Compose defaults to the checked-in exact local image
@@ -44,9 +51,9 @@ Validate without printing substituted secrets:
 
 ```bash
 grep -Eq '^SYMPHONY_WORKER_REGISTRATION_TOKEN=.+$' .env
-docker compose --env-file .env --profile execution-worker config --quiet
-docker compose --env-file .env --profile execution-worker build execution-worker
-docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
+docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker config --quiet
+docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker build
+docker compose -f compose.yaml -f compose.worker.yaml --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
   test -z "$DATABASE_URL" && test -n "$LINEAR_API_KEY" &&
@@ -96,6 +103,13 @@ available slots. A healthy idle worker has no claim until new work is routed to 
 rotate a credential, stop the worker, replace only that value in `.env`, revoke the old token at
 its issuer, and recreate the service. Rotating the shared registration token also requires
 recreating the Panel.
+
+To route locally through the worker, recreate the stack with the worker-mode override so the Panel
+image and credential mounts change together:
+
+```bash
+docker compose -f compose.yaml -f compose.worker.yaml --env-file .env --profile execution-worker up -d
+```
 
 ## End-to-end verification record
 

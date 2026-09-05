@@ -81,7 +81,16 @@ jobs:
             .services.migrate.image == "symphony:local" and
             .services.symphony.image == "symphony:local" and
             .services.migrate.build.target == "symphony" and
-            .services.symphony.build.target == "symphony"
+            .services.symphony.build.target == "symphony" and
+            .services.migrate.build.args.SYMPHONY_EMBED_CODEX == "true" and
+            .services.symphony.build.args.SYMPHONY_EMBED_CODEX == "true"
+          '
+          docker compose -f compose.yaml -f compose.worker.yaml --profile execution-worker config --format json | jq -e '
+            .services.migrate.build.args.SYMPHONY_EMBED_CODEX == "false" and
+            .services.symphony.build.args.SYMPHONY_EMBED_CODEX == "false" and
+            .services.symphony.environment.SYMPHONY_EXECUTION_MODE == "worker" and
+            (.services.symphony.volumes | all(.target != "/home/symphony/.codex")) and
+            (.services["execution-worker"].volumes | any(.target == "/home/symphony/.codex"))
           '
           export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
           export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
@@ -92,6 +101,8 @@ jobs:
             (.services.symphony | has("build") | not) and
             .services.migrate.pull_policy == "always" and
             .services.symphony.pull_policy == "always" and
+            .services.symphony.environment.SYMPHONY_EXECUTION_MODE == "worker" and
+            (.services.symphony.volumes | all(.target != "/home/symphony/.codex")) and
             .services["execution-worker"].image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
             (.services["execution-worker"] | has("build") | not) and
             .services["execution-worker"].pull_policy == "always" and
@@ -136,6 +147,7 @@ jobs:
         run: |
           set -euo pipefail
           docker build --target symphony --tag symphony-toolchain:symphony .
+          docker build --build-arg SYMPHONY_EMBED_CODEX=false --target symphony --tag symphony-toolchain:panel .
           docker build --target worker --tag symphony-toolchain:worker .
           docker build --target execution-worker --tag symphony-toolchain:execution-worker .
 
@@ -146,6 +158,12 @@ jobs:
               test "$(git config --system --get-all credential.https://github.com.helper)" = "!gh auth git-credential" &&
               test "$(git config --system --get-all url.https://github.com/.insteadOf)" = "git@github.com:" &&
               mise --version && mix --version
+            '
+          docker run --rm --read-only --user 10001:10001 \
+            --tmpfs /tmp:rw,mode=1777 --tmpfs /data/workspaces:rw,mode=1777 \
+            symphony-toolchain:panel sh -lc '
+              ! command -v codex && ! command -v node &&
+              test -z "${CODEX_HOME:-}" && test ! -d /usr/local/lib/node_modules
             '
           docker run --rm --read-only --user 1000:1000 \
             --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 \
@@ -226,6 +244,8 @@ jobs:
         with:
           context: .
           target: symphony
+          build-args: |
+            SYMPHONY_EMBED_CODEX=false
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}

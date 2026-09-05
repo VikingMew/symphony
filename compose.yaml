@@ -52,6 +52,8 @@ services:
     build:
       context: .
       target: symphony
+      args:
+        SYMPHONY_EMBED_CODEX: "true"
     image: ${SYMPHONY_IMAGE:-symphony:local}
     environment: *symphony-environment
     command: ["/app/bin/symphony", "eval", "SymphonyElixir.Release.migrate!()"]
@@ -73,6 +75,8 @@ services:
     build:
       context: .
       target: symphony
+      args:
+        SYMPHONY_EMBED_CODEX: "true"
     image: ${SYMPHONY_IMAGE:-symphony:local}
     environment: *symphony-environment
     depends_on:
