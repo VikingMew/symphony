@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Worker.Config do
                 request_options: [],
                 client_module: SymphonyElixir.Worker.Client,
                 executor_module: SymphonyElixir.Worker.Executor,
+                task_supervisor: SymphonyElixir.Worker.TaskSupervisor,
                 lifecycle_retry_seconds: 2,
                 lifecycle_max_attempts: 5,
                 executor_start_timeout_seconds: 30
@@ -32,6 +33,7 @@ defmodule SymphonyElixir.Worker.Config do
           request_options: keyword(),
           client_module: module(),
           executor_module: module(),
+          task_supervisor: GenServer.server(),
           lifecycle_retry_seconds: pos_integer(),
           lifecycle_max_attempts: pos_integer(),
           executor_start_timeout_seconds: pos_integer()
