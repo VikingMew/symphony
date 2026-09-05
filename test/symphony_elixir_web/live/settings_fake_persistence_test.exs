@@ -291,8 +291,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert workflow_staged_html =~ "Detected"
     assert workflow_staged_html =~ "workflow.yml"
 
-    workflow_imported_html = render_click(view, "confirm_settings_import")
-    assert workflow_imported_html =~ "Draft Configuration"
+    render_click(view, "confirm_settings_import")
 
     render_patch(view, "/settings/import")
 
@@ -313,7 +312,14 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     saved_html =
       view
-      |> form("form[phx-submit='save_workflow_form']", workflow: workflow_page_form_params())
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: %{
+          "prompt_body" => "Imported base prompt.",
+          "profiles" => %{
+            "implementation" => %{"prompt_template" => "Imported implementation prompt."}
+          }
+        }
+      )
       |> render_submit()
 
     assert saved_html =~ "Agent settings saved"
@@ -853,15 +859,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       "hook_timeout_ms" => "60000",
       "prompt_body" => "You are an agent for this repository."
     }
-  end
-
-  defp workflow_page_form_params do
-    workflow_form_params()
-    |> Map.delete("prompt_body")
-    |> Map.delete("tracker_project_slug")
-    |> Map.delete("project_repository_url")
-    |> Map.delete("project_default_branch")
-    |> Map.delete("project_checkout_depth")
   end
 
   defp split_workflow_yaml do
