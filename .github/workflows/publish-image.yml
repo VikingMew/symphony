@@ -92,6 +92,8 @@ jobs:
             (.services.symphony | has("build") | not) and
             .services.migrate.pull_policy == "always" and
             .services.symphony.pull_policy == "always" and
+            .services.symphony.environment.SYMPHONY_EXECUTION_MODE == "worker" and
+            ([.services.symphony.volumes[].source] | index("codex_home") | not) and
             .services["execution-worker"].image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
             (.services["execution-worker"] | has("build") | not) and
             .services["execution-worker"].pull_policy == "always" and
@@ -131,21 +133,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and smoke all Codex toolchain targets
+      - name: Build and smoke runtime toolchain targets
         shell: bash
         run: |
           set -euo pipefail
-          docker build --target symphony --tag symphony-toolchain:symphony .
+          docker build --target symphony --tag symphony-toolchain:symphony-centralized .
+          docker build --target symphony --build-arg SYMPHONY_EMBED_CODEX=false --tag symphony-toolchain:symphony .
           docker build --target worker --tag symphony-toolchain:worker .
           docker build --target execution-worker --tag symphony-toolchain:execution-worker .
 
           docker run --rm --read-only --user 10001:10001 \
             --tmpfs /tmp:rw,mode=1777 --tmpfs /data/workspaces:rw,mode=1777 \
-            symphony-toolchain:symphony sh -lc '
+            symphony-toolchain:symphony-centralized sh -lc '
               command -v mise && command -v mix && command -v elixir && command -v erl && command -v make && command -v gh &&
+              command -v node && command -v codex && test "$CODEX_HOME" = /home/symphony/.codex &&
               test "$(git config --system --get-all credential.https://github.com.helper)" = "!gh auth git-credential" &&
               test "$(git config --system --get-all url.https://github.com/.insteadOf)" = "git@github.com:" &&
               mise --version && mix --version
+            '
+          docker run --rm --read-only --user 10001:10001 \
+            --tmpfs /tmp:rw,mode=1777 --tmpfs /data/workspaces:rw,mode=1777 \
+            symphony-toolchain:symphony sh -lc '
+              command -v mise && command -v mix && command -v elixir && command -v erl && command -v make && command -v gh &&
+              ! command -v node && ! command -v codex && test -z "${CODEX_HOME:-}"
             '
           docker run --rm --read-only --user 1000:1000 \
             --tmpfs /tmp:rw,mode=1777 --tmpfs /workspace:rw,mode=1777 \
@@ -226,6 +236,7 @@ jobs:
         with:
           context: .
           target: symphony
+          build-args: SYMPHONY_EMBED_CODEX=false
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
@@ -358,9 +369,9 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm --platform linux/amd64 "${IMAGE}@${AMD64_DIGEST}" \
-            sh -lc '/app/bin/symphony version && node --version && codex --version'
+            sh -lc '/app/bin/symphony version && ! command -v node && ! command -v codex && test -z "${CODEX_HOME:-}"'
           docker run --rm --platform linux/arm64 "${IMAGE}@${ARM64_DIGEST}" \
-            sh -lc '/app/bin/symphony version && node --version && codex --version'
+            sh -lc '/app/bin/symphony version && ! command -v node && ! command -v codex && test -z "${CODEX_HOME:-}"'
 
       - name: Inspect worker manifest platforms
         id: worker-manifest

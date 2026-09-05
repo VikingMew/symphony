@@ -8,6 +8,13 @@ services:
     build: !reset null
     image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
     pull_policy: always
+    environment:
+      SYMPHONY_EXECUTION_MODE: worker
+    volumes: !override
+      - symphony_logs:/data/logs
+      - symphony_workspaces:/data/workspaces
+      - gh_config:/home/symphony/.config/gh
+      - ssh_home:/home/symphony/.ssh
 
   execution-worker:
     build: !reset null
