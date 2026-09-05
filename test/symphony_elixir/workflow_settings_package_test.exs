@@ -79,6 +79,24 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
              Map.take(defaults, ["nap", "day_dreaming"])
   end
 
+  test "workflow package round trip preserves analytics thresholds" do
+    workflow_yaml = File.read!("workflow.yml")
+
+    assert {:ok, "workflow.yml", draft} =
+             WorkflowSettingsPackage.import_draft(workflow_yaml, WorkflowForm.empty())
+
+    assert {:ok, config} = WorkflowForm.to_config(draft)
+
+    assert config["analytics"] == %{
+             "refinement_rounds_average_max" => 2.0,
+             "first_handoff_observed_return_rate_max" => 0.5,
+             "blocked_rate_max" => 0.25,
+             "latest_description_length_min" => 200,
+             "rework_rate_max" => 0.5,
+             "per_issue_total_tokens_max" => 1_000_000
+           }
+  end
+
   defp workflow_raw!(draft) do
     case WorkflowForm.to_raw(draft) do
       {:ok, raw} -> raw

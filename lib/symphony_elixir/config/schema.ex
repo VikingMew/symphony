@@ -643,6 +643,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:codex, with: &Codex.changeset/2)
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
+    |> cast_embed(:analytics, with: &Analytics.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
     |> validate_workflow_contract()
   end

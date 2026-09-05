@@ -86,7 +86,7 @@ defmodule SymphonyElixir.Analytics do
     den = MapSet.size(ids)
     refinements = Map.new(ids, fn id -> {id, Enum.count(runs, &(identifier(&1) == id and Map.get(&1, :profile) == "refinement"))} end)
     avg = average(Map.values(refinements))
-    handoffs = transitions(events, nil, "Ready to Merge")
+    handoffs = implementation_handoffs(events, runs)
     first = first_by_issue(handoffs)
     returns = transitions(all_events, "Ready to Merge", "In Progress")
 
@@ -143,6 +143,17 @@ defmodule SymphonyElixir.Analytics do
 
   defp transitions(events, from, to), do: Enum.filter(events, &(event_type(&1) == "linear.state_transition" and (is_nil(from) or payload(&1, "from_state") == from) and payload(&1, "to_state") == to))
 
+  defp implementation_handoffs(events, runs) do
+    implementation_run_ids =
+      runs
+      |> Enum.filter(&(Map.get(&1, :kind, "issue") == "issue" and Map.get(&1, :profile) == "implementation"))
+      |> MapSet.new(&Map.get(&1, :id))
+
+    events
+    |> transitions(nil, "Ready to Merge")
+    |> Enum.filter(&MapSet.member?(implementation_run_ids, Map.get(&1, :run_id)))
+  end
+
   defp first_by_issue(events),
     do:
       events
@@ -157,7 +168,10 @@ defmodule SymphonyElixir.Analytics do
       |> MapSet.new(&nested(Map.get(&1, :payload, %{}), ["result", "identifier"]))
 
   defp token_rows(events, runs, threshold) do
-    by_id = Map.new(runs, &{Map.get(&1, :id), &1})
+    by_id =
+      runs
+      |> Enum.filter(&(Map.get(&1, :kind, "issue") == "issue"))
+      |> Map.new(&{Map.get(&1, :id), &1})
 
     events
     |> Enum.filter(&(event_type(&1) == "codex.update" and Map.has_key?(by_id, Map.get(&1, :run_id))))
