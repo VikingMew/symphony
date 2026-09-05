@@ -57,7 +57,6 @@ defmodule SymphonyElixirWeb.Router do
     live("/diagnostics/linear", LinearDiagnosticsLive, :index)
     live("/settings", AdminLive, :settings)
     live("/settings/projects", AdminLive, :settings_projects)
-    live("/settings/workflow", AdminLive, :settings_workflow)
     live("/settings/agents", AdminLive, :settings_agents)
     live("/settings/runtime", AdminLive, :settings_runtime)
     live("/settings/import", AdminLive, :settings_import)

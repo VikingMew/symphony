@@ -966,7 +966,7 @@ defmodule SymphonyElixir.Orchestrator do
     do: "Tracker kind missing in runtime tracker settings"
 
   defp config_validation_error_message(:setup_required),
-    do: "No workflow is configured. Open /settings/workflow to create one."
+    do: "No workflow is configured. Import a workflow package in /settings/import."
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
     "Failed to parse workflow config: front matter must decode to a map"

@@ -15,7 +15,6 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 
 | Design | Subject | Status |
 | --- | --- | --- |
-| [workflow-page-design.md](workflow-page-design.md) | Workflow settings page goals | landed |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary | landed |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior | landed |
@@ -285,7 +284,7 @@ GET  /events                   Event history
 GET  /workers                  Worker, task, and lease state
 GET  /settings                 Settings, defaulting to Projects
 GET  /settings/projects        Project settings
-GET  /settings/workflow        Workflow routing/runtime settings
+GET  /settings/import          Workflow package import
 GET  /settings/agents          Agent profile and prompt settings
 GET  /settings/runtime         Runtime summary
 GET  /diagnostics/linear       Linear diagnostics

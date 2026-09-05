@@ -92,22 +92,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     end
   end
 
-  @spec add_transition(Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
-  def add_transition(socket) do
-    draft =
-      socket.assigns
-      |> Map.get(:workflow_form, %{})
-      |> append_empty_transition()
-
-    {:noreply,
-     socket
-     |> assign(:workflow_save_notice, nil)
-     |> assign(:workflow_validation_visible?, true)
-     |> assign(:workflow_form, draft)
-     |> assign(:workflow_form_dirty?, true)
-     |> assign_validation(draft)}
-  end
-
   @spec assign_validation(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()
   def assign_validation(socket, draft) do
     field_errors = WorkflowForm.field_errors(draft)
@@ -165,31 +149,6 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     |> deep_merge(params)
     |> Map.put("_base_config", base_config)
   end
-
-  defp append_empty_transition(draft) do
-    transitions =
-      draft
-      |> Map.get("allowed_transitions", [])
-      |> normalize_transition_entries()
-      |> Kernel.++([%{"from" => "", "to" => "", "actor" => "", "profile" => ""}])
-
-    Map.put(draft, "allowed_transitions", transitions)
-  end
-
-  defp normalize_transition_entries(entries) when is_list(entries), do: entries
-
-  defp normalize_transition_entries(entries) when is_map(entries) do
-    entries
-    |> Enum.sort_by(fn {index, _entry} ->
-      case Integer.parse(to_string(index)) do
-        {integer, ""} -> integer
-        _ -> 0
-      end
-    end)
-    |> Enum.map(fn {_index, entry} -> entry end)
-  end
-
-  defp normalize_transition_entries(_entries), do: []
 
   defp deep_merge(left, right) when is_map(left) and is_map(right) do
     Map.merge(left, right, fn _key, left_value, right_value ->
