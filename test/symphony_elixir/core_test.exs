@@ -592,8 +592,7 @@ defmodule SymphonyElixir.CoreTest do
       end)
 
     assert snapshot.running == []
-    assert snapshot.rate_limit_gate.status == :blocked
-    assert snapshot.rate_limit_gate.reason == :low_rate_limit_headroom
+    assert snapshot.rate_limit_gate == %{status: :project_scoped, reason: :project_scoped}
     assert :sys.get_state(pid).rate_limit_gate.reason == :low_rate_limit_headroom
   end
 

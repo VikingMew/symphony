@@ -417,7 +417,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     snapshot = GenServer.call(pid, :snapshot)
     assert snapshot.running == []
-    assert snapshot.rate_limit_gate.status == :blocked
+    assert snapshot.rate_limit_gate == %{status: :project_scoped, reason: :project_scoped}
     assert snapshot.operator_tasks.nap.status == "queued"
     assert snapshot.operator_tasks.nap.project_id == "fake-project-id"
   end

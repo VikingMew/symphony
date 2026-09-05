@@ -60,7 +60,7 @@ defmodule SymphonyElixir.OrchestratorRateLimitGateTest do
 
     snapshot = GenServer.call(pid, :snapshot)
     assert snapshot.running == []
-    assert snapshot.rate_limit_gate.status == :blocked
+    assert snapshot.rate_limit_gate == %{status: :project_scoped, reason: :project_scoped}
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

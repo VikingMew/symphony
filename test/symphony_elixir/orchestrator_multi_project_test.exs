@@ -180,6 +180,47 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert_receive {:candidate_fetch, "linear-b"}, 2_000
   end
 
+  test "repeated snapshots do not evaluate a project-scoped rate-limit gate" do
+    {:ok, base} = Workflow.load()
+    {:ok, project_a} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project-a.git",
+      linear_project_slug: "linear-a"
+    })
+
+    {:ok, _} = FakePersistence.import_workflow(project_a, workflow_markdown(base, "Project A", 5.0), "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@github.com:VikingMew/project-b.git",
+        enabled: true
+      })
+
+    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_markdown(base, "Project B", 3.0), "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    orchestrator_name = Module.concat(__MODULE__, :SnapshotOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    :sys.replace_state(pid, fn state ->
+      %{state | codex_rate_limits: %{"primary" => %{"window_duration_mins" => 300, "used_percent" => 99}}}
+    end)
+
+    {snapshots, log} =
+      ExUnit.CaptureLog.with_log(fn ->
+        for _ <- 1..3, do: GenServer.call(pid, :snapshot)
+      end)
+
+    assert Enum.all?(snapshots, &(&1.rate_limit_gate == %{status: :project_scoped, reason: :project_scoped}))
+    refute log =~ "Rate-limit gate evaluation failed"
+    refute log =~ "missing_project_context"
+  end
+
   test "worker kickoff renders the candidate project's persisted prompt" do
     previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
     Application.put_env(:symphony_elixir, :execution_mode, :worker)
@@ -199,7 +240,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_markdown(base, "Prompt B {{ issue.identifier }}", 5.0), "test")
+    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_markdown(base, "Prompt B {{ issue.identifier }}", 3.0), "test")
     {:ok, _worker} = FakePersistence.register_worker(%{"worker_name" => "worker-1", "total_slots" => 1})
 
     issue = %Issue{id: "issue-b", identifier: "B-1", title: "Run B", state: "Ready", labels: [], blocked_by: []}
@@ -210,7 +251,20 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert is_pid(pid)
     assert %{listening?: true} = Orchestrator.start_listening()
     on_exit(fn -> Orchestrator.stop_listening() end)
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | codex_rate_limits: %{
+            "primary" => %{"window_duration_mins" => 300, "used_percent" => 96}
+          }
+      }
+    end)
+
     send(pid, :run_poll_cycle)
+
+    refute_receive {:candidate_fetch, "linear-a"}, 200
+    assert_receive {:candidate_fetch, "linear-b"}, 2_000
 
     assert_eventually(fn ->
       case FakePersistence.list_tasks(project_id: project_b.id) do
