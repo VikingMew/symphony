@@ -104,6 +104,9 @@ Runtime accounting:
 Rate-limit tracking:
 
 - Track the latest rate-limit payload seen in any agent update.
+- The orchestrator snapshot MUST NOT re-evaluate the rate-limit gate because gate settings are
+  project-scoped while the snapshot has no single project context. Its `rate_limit_gate` field
+  reports `project_scoped`; dispatch decisions remain observable through project-scoped events.
 - Any human-readable presentation of rate-limit data is implementation-defined.
 
 ### 13.6 Humanized Agent Event Summaries (OPTIONAL)
