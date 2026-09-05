@@ -71,6 +71,11 @@ Symphony maintains multiple projects concurrently: one Linear project + one repo
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
+Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
+bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
+only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`, while queued, leased,
+and running worker tasks consume that shared capacity.
+
 ### Execution worker image
 
 The separately deployable execution worker is built without changing the Panel image:

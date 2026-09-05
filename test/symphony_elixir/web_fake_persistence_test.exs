@@ -238,6 +238,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       "worker_name" => "fake-worker",
       "worker_version" => "0.1.0",
       "protocol_version" => "worker-api-v1",
+      "total_slots" => 1,
       "instance_id" => "test-instance"
     }
   end

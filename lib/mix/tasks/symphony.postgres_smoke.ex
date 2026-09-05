@@ -237,7 +237,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     CREATE TABLE events (id TEXT, project_id TEXT, run_id TEXT, issue_identifier TEXT, event_type TEXT, payload TEXT, occurred_at TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE app_settings (key TEXT, value TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE workers (id TEXT, name TEXT, status TEXT, labels TEXT, capabilities TEXT, credential_ref TEXT, last_seen_at TEXT, inserted_at TEXT, updated_at TEXT);
-    CREATE TABLE worker_sessions (id TEXT, worker_id TEXT, protocol_version TEXT, worker_version TEXT, instance_id TEXT, connected_at TEXT, last_heartbeat_at TEXT, disconnected_at TEXT, status TEXT, inserted_at TEXT, updated_at TEXT);
+    CREATE TABLE worker_sessions (id TEXT, worker_id TEXT, protocol_version TEXT, worker_version TEXT, instance_id TEXT, total_slots INTEGER, connected_at TEXT, last_heartbeat_at TEXT, disconnected_at TEXT, status TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE tasks (id TEXT, project_id TEXT, run_id TEXT, workflow_version_id TEXT, issue_identifier TEXT, status TEXT, priority INTEGER, execution_mode TEXT, required_capabilities TEXT, payload TEXT, queued_at TEXT, started_at TEXT, finished_at TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE task_leases (id TEXT, task_id TEXT, worker_id TEXT, worker_session_id TEXT, status TEXT, attempt INTEGER, expires_at TEXT, acquired_at TEXT, released_at TEXT, inserted_at TEXT, updated_at TEXT);
 
@@ -252,7 +252,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     INSERT INTO events VALUES ('14000000-0000-0000-0000-000000000001', '#{@project_id}', '#{@run_id}', 'SYM-2', 'run.completed', '{"result":"ok"}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO app_settings VALUES ('default_project_id', '{"id":"#{@project_id}"}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workers VALUES ('#{@worker_id}', 'smoke-worker', 'online', '{"values":["linux"]}', '{"sandbox":["workspace-write"]}', 'worker:smoke', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO worker_sessions VALUES ('#{@session_id}', '#{@worker_id}', 'worker-api-v1', '1.0', 'smoke-instance', '#{@timestamp}', '#{@timestamp}', NULL, 'online', '#{@timestamp}', '#{@timestamp}');
+    INSERT INTO worker_sessions VALUES ('#{@session_id}', '#{@worker_id}', 'worker-api-v1', '1.0', 'smoke-instance', 1, '#{@timestamp}', '#{@timestamp}', NULL, 'online', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO tasks VALUES ('#{@task_id}', '#{@project_id}', '#{@run_id}', '#{@workflow_id}', 'SYM-2', 'running', 1, 'worker', '{"labels":["linux"]}', '{"command":"smoke"}', '#{@timestamp}', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO task_leases VALUES ('#{@lease_id}', '#{@task_id}', '#{@worker_id}', '#{@session_id}', 'active', 1, '2026-08-28T10:00:00.000000Z', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
     """

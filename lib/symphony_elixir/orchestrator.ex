@@ -173,7 +173,7 @@ defmodule SymphonyElixir.Orchestrator do
 
           %State{
             poll_interval_ms: config.polling.interval_ms,
-            max_concurrent_agents: config.agent.max_concurrent_agents,
+            max_concurrent_agents: Config.panel_max_concurrent_agents(),
             next_poll_due_at_ms: now_ms,
             poll_check_in_progress: false,
             tick_timer_ref: nil,
@@ -815,6 +815,7 @@ defmodule SymphonyElixir.Orchestrator do
       |> reconcile_stale_operator_entries()
       |> reconcile_running_issues()
       |> reconcile_blocked_issues()
+      |> refresh_deployment_capacity()
 
     workflows = WorkflowStore.list_enabled()
 
@@ -904,19 +905,6 @@ defmodule SymphonyElixir.Orchestrator do
       _result ->
         state
     end
-  end
-
-  # Per-project concurrency: a project dispatches only while its own running
-  # count stays below its workflow's agent concurrency budget.
-  defp workflow_slots_available?(%State{running: running}, %{project_id: project_id}) do
-    max_for_project = Config.settings!().agent.max_concurrent_agents
-
-    running_for_project =
-      running
-      |> Map.values()
-      |> Enum.count(&(Map.get(&1, :project_id) == project_id))
-
-    running_for_project < max_for_project
   end
 
   defp workflow_slots_available?(%State{} = state, _workflow), do: available_slots(state) > 0
@@ -1406,7 +1394,7 @@ defmodule SymphonyElixir.Orchestrator do
          ) do
         dispatch_issue(state_acc, issue)
       else
-        reasons = DispatchPolicy.skip_reasons(issue, state, dispatch_settings, worker_settings)
+        reasons = DispatchPolicy.skip_reasons(issue, state_acc, dispatch_settings, worker_settings)
         Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
         state_acc
       end
@@ -1448,8 +1436,7 @@ defmodule SymphonyElixir.Orchestrator do
       terminal_states: config.tracker.terminal_states,
       refinement_states: refinement_states(config),
       listening_mode: listening_mode_atom(state),
-      max_concurrent_agents: config.agent.max_concurrent_agents,
-      max_concurrent_agents_for_state: &Config.max_concurrent_agents_for_state/1,
+      max_concurrent_agents: state.max_concurrent_agents,
       workflow_executor_for_state: &Config.workflow_executor_for_state/1,
       human_review_state?: &Config.human_review_state?/1
     })
@@ -1535,6 +1522,7 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           state
           | claimed: MapSet.put(state.claimed, issue.id),
+            max_concurrent_agents: max(state.max_concurrent_agents - 1, 0),
             retry_attempts: Map.delete(state.retry_attempts, issue.id)
         }
 
@@ -1945,6 +1933,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata) do
+    state = refresh_deployment_capacity(state)
     dispatch_settings = dispatch_policy_settings(state)
     worker_settings = worker_policy_settings()
 
@@ -2009,11 +1998,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp available_slots(%State{} = state) do
-    max(
-      (state.max_concurrent_agents || Config.settings!().agent.max_concurrent_agents) -
-        map_size(state.running),
-      0
-    )
+    max(state.max_concurrent_agents - map_size(state.running), 0)
+  end
+
+  defp refresh_deployment_capacity(%State{} = state) do
+    capacity =
+      case Config.execution_mode() do
+        :worker -> persistence().available_worker_slots()
+        :centralized -> Config.panel_max_concurrent_agents()
+      end
+
+    %{state | max_concurrent_agents: capacity}
   end
 
   @spec request_refresh() :: map() | :unavailable
@@ -3163,7 +3158,7 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           state
           | poll_interval_ms: config.polling.interval_ms,
-            max_concurrent_agents: config.agent.max_concurrent_agents,
+            max_concurrent_agents: Config.panel_max_concurrent_agents(),
             last_config_error: nil
         }
 
@@ -3199,7 +3194,7 @@ defmodule SymphonyElixir.Orchestrator do
       {:ok,
        %{
          polling: %{interval_ms: settings |> Enum.map(& &1.polling.interval_ms) |> Enum.min()},
-         agent: %{max_concurrent_agents: Enum.sum(Enum.map(settings, & &1.agent.max_concurrent_agents))}
+         agent: %{}
        }}
     end
   end

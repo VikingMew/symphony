@@ -150,8 +150,7 @@ An issue is dispatch-eligible only if all are true:
 - Its state is in `active_states` and not in `terminal_states`.
 - It is not already in `running`.
 - It is not already in `claimed`.
-- Global concurrency slots are available.
-- Per-state concurrency slots are available.
+- Deployment concurrency slots are available.
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
 
@@ -171,16 +170,16 @@ Sorting order (stable intent):
 
 ### 8.3 Concurrency Control
 
-Global limit:
+Capacity is deployment topology and is shared by every enabled project. In centralized mode,
+`SYMPHONY_PANEL_SLOTS` is the bounded deployment limit and available capacity subtracts the
+orchestrator `running` count. In worker mode, capacity is the sum of `total_slots` advertised by
+online worker sessions with a fresh heartbeat, less worker tasks in `queued`, `leased`, or
+`running`. No online fresh worker therefore means zero capacity. Each successful enqueue is
+visible to the next candidate in the same reduce. Worker claims additionally require the
+worker's current `available_slots` to be positive.
 
-- `available_slots = max(max_concurrent_agents - running_count, 0)`
-
-Per-state limit:
-
-- `max_concurrent_agents_by_state[state]` if present (state key normalized)
-- otherwise fallback to global limit
-
-The runtime counts issues by their current tracked state in the `running` map.
+Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
+rejection emits `global_capacity` skip evidence and never falls back to a workflow field.
 
 ### 8.4 Retry and Backoff
 

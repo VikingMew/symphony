@@ -85,8 +85,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       when is_binary(raw_workflow_md) do
     with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
          {:ok, _settings} <- Schema.parse(loaded.config) do
+      canonical_raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+
       upsert_workflow(project, %{
-        raw_workflow_md: raw_workflow_md,
+        raw_workflow_md: canonical_raw,
         yaml_config: loaded.config,
         prompt_body: loaded.prompt,
         source: source
@@ -138,10 +140,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   @spec export_workflow(WorkflowRecord.t()) :: String.t()
-  def export_workflow(%WorkflowRecord{raw_workflow_md: raw})
-      when is_binary(raw) and raw != "",
-      do: raw
-
   def export_workflow(%WorkflowRecord{} = workflow),
     do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
 
