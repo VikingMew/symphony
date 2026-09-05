@@ -22,7 +22,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Per-issue workspaces and Git worktrees.
 - PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
 - Settings pages for Projects, Workflow, Agents, Runtime, and package import.
-- Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages.
+- Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages, including persisted issue-flow quality proxies and non-blocking warnings.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
 
 ## How It Works

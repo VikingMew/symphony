@@ -83,6 +83,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def list_analytics_issues do
+    ensure_started()
+    Agent.get(@name, & &1.issues)
+  end
+
   def put_workflow(workflow) do
     ensure_started()
 
@@ -254,6 +259,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def list_analytics_runs do
+    ensure_started()
+    Agent.get(@name, & &1.runs)
+  end
+
   def list_runs_page(opts \\ []) do
     ensure_started()
     page_size = opts |> Keyword.get(:page_size, 25) |> max(1)
@@ -309,6 +319,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       |> sort_events(Keyword.get(opts, :order))
       |> Enum.take(Keyword.get(opts, :limit, length(state.events)))
     end)
+  end
+
+  def list_analytics_events do
+    ensure_started()
+    Agent.get(@name, & &1.events)
   end
 
   def record_event(attrs) when is_map(attrs) do

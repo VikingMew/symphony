@@ -397,6 +397,42 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule Analytics do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    @type t :: %__MODULE__{}
+    embedded_schema do
+      field(:refinement_rounds_average_max, :float)
+      field(:first_handoff_observed_return_rate_max, :float)
+      field(:blocked_rate_max, :float)
+      field(:latest_description_length_min, :integer)
+      field(:rework_rate_max, :float)
+      field(:per_issue_total_tokens_max, :integer)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [
+        :refinement_rounds_average_max,
+        :first_handoff_observed_return_rate_max,
+        :blocked_rate_max,
+        :latest_description_length_min,
+        :rework_rate_max,
+        :per_issue_total_tokens_max
+      ])
+      |> validate_number(:refinement_rounds_average_max, greater_than_or_equal_to: 0)
+      |> validate_number(:first_handoff_observed_return_rate_max, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
+      |> validate_number(:blocked_rate_max, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
+      |> validate_number(:latest_description_length_min, greater_than_or_equal_to: 0)
+      |> validate_number(:rework_rate_max, greater_than_or_equal_to: 0, less_than_or_equal_to: 1)
+      |> validate_number(:per_issue_total_tokens_max, greater_than_or_equal_to: 0)
+    end
+  end
+
   defmodule Server do
     @moduledoc false
     use Ecto.Schema
@@ -426,6 +462,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:analytics, Analytics, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
     field(:workflow, :map, default: %{})
     field(:profiles, :map, default: %{})
