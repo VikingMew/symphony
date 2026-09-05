@@ -2196,7 +2196,7 @@ defmodule SymphonyElixir.Orchestrator do
        codex_totals: state.codex_totals,
        rate_limits: Map.get(state, :codex_rate_limits),
        rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
-       rate_limit_gate: rate_limit_gate_snapshot(state),
+       rate_limit_gate: rate_limit_gate_snapshot(),
        config_error: config_error_payload(state.last_config_error),
        operator_tasks: operator_tasks_payload(state),
        polling: %{
@@ -3232,7 +3232,7 @@ defmodule SymphonyElixir.Orchestrator do
       :allow ->
         %{
           state
-          | rate_limit_gate: rate_limit_gate_allow_snapshot(state),
+          | rate_limit_gate: rate_limit_gate_allow_snapshot(),
             rate_limit_gate_event_fingerprint: nil
         }
 
@@ -3262,14 +3262,8 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp rate_limit_gate_snapshot(%State{} = state) do
-    case check_rate_limit_gate(state) do
-      :allow ->
-        rate_limit_gate_allow_snapshot(state)
-
-      {:block, details} ->
-        details
-    end
+  defp rate_limit_gate_snapshot do
+    %{status: :project_scoped, reason: :project_scoped}
   end
 
   defp check_rate_limit_gate(%State{} = state) do
@@ -3283,10 +3277,10 @@ defmodule SymphonyElixir.Orchestrator do
       {:block, %{status: :blocked, reason: :evaluation_error, error: reason}}
   end
 
-  defp rate_limit_gate_allow_snapshot(%State{} = state) do
+  defp rate_limit_gate_allow_snapshot do
     %{
       status: :allow,
-      reason: if(is_map(state.codex_rate_limits), do: :available, else: :missing_snapshot)
+      reason: :available
     }
   end
 
