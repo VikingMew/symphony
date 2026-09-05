@@ -176,3 +176,7 @@ recorded the credentialed success, cancellation, lease-expiry recovery, duplicat
 rollback drills described above. Switching the default before those gates pass would risk stalled
 work or divergent handoff. A later decision may route only new work to `worker` after one redacted
 record demonstrates every gate; centralized rollback remains required.
+The Panel periodically expires stale worker sessions and leases. A worker keeps a completed lease in
+its heartbeat while retrying terminal delivery; if its bounded delivery attempts are exhausted, lease
+renewal stops and the Panel requeues the task after expiry. Late events from the old lease remain
+fenced by the active-lease check.

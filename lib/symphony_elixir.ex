@@ -42,6 +42,7 @@ defmodule SymphonyElixir.Application do
         {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
         SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
+        worker_reconciler_child(),
         SymphonyElixir.Orchestrator,
         review_queue_child(),
         http_server_child(),
@@ -71,6 +72,12 @@ defmodule SymphonyElixir.Application do
   defp review_queue_child do
     if Application.get_env(:symphony_elixir, :start_repo, true) do
       SymphonyElixir.PRReview.Queue
+    end
+  end
+
+  defp worker_reconciler_child do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.Persistence.WorkerReconciler
     end
   end
 

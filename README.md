@@ -94,7 +94,9 @@ credential helper, so it needs no external Git config or GitHub SSH host-key inj
 opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
 required gates, and handoff commands. Its Codex section carries app-server settings and the
 rendered prompt as structured data; the worker drives one JSON-RPC turn over stdio. The worker
-never derives a missing required gate.
+never derives a missing required gate. A claim is only a lease: accepted/executor/Codex progress
+is emitted when each fact occurs, terminal delivery retains heartbeat ownership through bounded
+retries, and Panel reconciliation expires and requeues leases that stop renewing.
 
 ## Quick Start
 

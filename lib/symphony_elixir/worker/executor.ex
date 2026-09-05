@@ -11,7 +11,10 @@ defmodule SymphonyElixir.Worker.Executor do
   @linear_endpoint "https://api.linear.app/graphql"
 
   @spec execute(Config.t(), map()) :: map()
-  def execute(config, claim) do
+  def execute(config, claim), do: execute(config, claim, fn _phase, _payload -> :ok end)
+
+  @spec execute(Config.t(), map(), (String.t(), map() -> term())) :: map()
+  def execute(config, claim, progress) do
     Process.flag(:trap_exit, true)
 
     with {:ok, payload} <- Payload.parse(claim["execution"]),
@@ -22,7 +25,7 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, revision} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
-         %{status: :passed} = codex <- run_codex(config, claim, payload, workspace),
+         %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
          :ok <- require_handoff(payload, codex),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
@@ -54,7 +57,7 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp run_codex(config, claim, payload, workspace) do
+  defp run_codex(config, claim, payload, workspace, progress) do
     codex = payload.codex
     started = System.monotonic_time(:millisecond)
     proof_secret = :crypto.strong_rand_bytes(32)
@@ -69,9 +72,12 @@ defmodule SymphonyElixir.Worker.Executor do
           url: Map.get(payload.handoff, "issue_url")
         }
 
+        progress.("codex_starting", %{})
+
         AppServer.run(workspace, codex.prompt, issue,
           profile: codex.profile,
           run_id: Map.fetch!(claim, "run_id"),
+          on_message: &forward_codex_progress(&1, progress),
           dynamic_tool_opts: [
             allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
             graphql: &worker_graphql/2,
@@ -112,6 +118,12 @@ defmodule SymphonyElixir.Worker.Executor do
         end
     end
   end
+
+  defp forward_codex_progress(%{event: :session_started, session_id: session_id}, progress) do
+    progress.("codex_session_started", %{session_id: session_id})
+  end
+
+  defp forward_codex_progress(_message, _progress), do: :ok
 
   @doc false
   @spec codex_workflow(Config.t(), map(), Payload.t()) :: map()

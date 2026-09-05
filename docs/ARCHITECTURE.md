@@ -274,7 +274,10 @@ on a control network shared with the Panel and a worker-only egress network. It 
 workspace, cache, log, and Codex volumes and no database-network membership or PostgreSQL secret.
 Claimed tasks carry the rendered prompt and app-server settings as structured data. The worker
 uses the same `Codex.AppServer` JSON-RPC stdio client as centralized execution for one session and
-turn, while hooks, required gates, and handoff remain shell-command phases.
+turn, while hooks, required gates, and handoff remain shell-command phases. Executor startup and
+Codex session progress are distinct persisted facts. The worker retains a lease until Panel
+acknowledges its terminal event; periodic Panel reconciliation expires and requeues leases that
+stop renewing.
 This is distinct from the SSH `worker` image target. Centralized execution remains the default.
 
 The observability boundary deliberately separates memory/current from persistence/history:
