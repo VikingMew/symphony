@@ -14,9 +14,28 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert dockerfile =~ "ARG CODEX_VERSION=0.150.1"
     assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
     assert dockerfile =~ "FROM toolchain AS worker"
-    assert dockerfile =~ "FROM toolchain AS symphony"
+    assert dockerfile =~ "ARG SYMPHONY_EMBED_CODEX=true"
+    assert dockerfile =~ "FROM toolchain AS symphony-base"
+    assert dockerfile =~ "FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony"
     assert length(Regex.scan(~r/COPY --from=codex \/usr\/local\/lib\/node_modules/, dockerfile)) == 3
     refute dockerfile =~ "npm install --global @openai/codex\n"
+  end
+
+  test "Panel target selects Codex ownership at build time" do
+    dockerfile = File.read!(@dockerfile)
+    base = stage_body(dockerfile, "symphony-base")
+    without_codex = stage_body(dockerfile, "symphony-false")
+    with_codex = stage_body(dockerfile, "symphony-true")
+
+    refute base =~ "CODEX_HOME"
+    refute base =~ "/home/symphony/.codex"
+    refute base =~ "COPY --from=codex"
+    refute without_codex =~ "CODEX_HOME"
+    refute without_codex =~ "COPY --from=codex"
+    assert with_codex =~ "ENV CODEX_HOME=/home/symphony/.codex"
+    assert with_codex =~ "COPY --from=codex /usr/local/bin/node"
+    assert with_codex =~ "COPY --from=codex /usr/local/lib/node_modules"
+    assert with_codex =~ ~s(VOLUME ["/home/symphony/.codex"])
   end
 
   test "all Codex targets inherit one pinned mise-managed Elixir toolchain" do
@@ -38,7 +57,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert mise =~ ~s(erlang = "28")
     assert mise =~ ~s(elixir = "1.19.5-otp-28")
 
-    for stage <- ["worker", "symphony", "execution-worker"] do
+    for stage <- ["worker", "symphony-base", "execution-worker"] do
       assert dockerfile =~ "FROM toolchain AS #{stage}"
       body = stage_body(dockerfile, stage)
       assert body =~ "MIX_HOME="
@@ -64,7 +83,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "command -v elixir"
     assert workflow =~ "command -v erl"
     assert workflow =~ "command -v make"
-    assert length(Regex.scan(~r/command -v gh/, workflow)) == 3
+    assert length(Regex.scan(~r/command -v gh/, workflow)) == 4
 
     assert length(
              Regex.scan(
@@ -104,7 +123,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     dockerfile = File.read!(@dockerfile)
     compose = File.read!(@compose)
 
-    for stage <- ["worker", "symphony", "execution-worker"] do
+    for stage <- ["worker", "symphony-base", "execution-worker"] do
       body = stage_body(dockerfile, stage)
 
       assert body =~ ~r/^\s*gh \\?$/m, "#{stage} must install gh"
@@ -215,6 +234,34 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "build: !reset null"
     assert worker =~ "SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE"
     assert worker =~ "pull_policy: always"
+  end
+
+  test "published worker Panel excludes Codex from its image and volumes" do
+    workflow = File.read!(@publish_workflow)
+    compose = File.read!(@published_compose)
+    panel = service_body(compose, "symphony")
+
+    assert workflow =~ "target: symphony\n          build-args: SYMPHONY_EMBED_CODEX=false"
+
+    assert workflow =~
+             "docker build --target symphony --build-arg SYMPHONY_EMBED_CODEX=false"
+
+    assert workflow =~ "! command -v node && ! command -v codex"
+    assert panel =~ "SYMPHONY_EXECUTION_MODE: worker"
+    assert panel =~ "volumes: !override"
+    refute panel =~ "codex_home"
+    assert panel =~ "gh_config:/home/symphony/.config/gh"
+  end
+
+  test "execution worker keeps its Codex runtime and credential volume" do
+    dockerfile = File.read!(@dockerfile)
+    compose = File.read!(@compose)
+    worker_image = stage_body(dockerfile, "execution-worker")
+    worker_service = service_body(compose, "execution-worker")
+
+    assert worker_image =~ "CODEX_HOME=/home/symphony/.codex"
+    assert worker_image =~ "COPY --from=codex /usr/local/lib/node_modules"
+    assert worker_service =~ "execution_worker_codex:/home/symphony/.codex"
   end
 
   defp service_body(compose, service) do

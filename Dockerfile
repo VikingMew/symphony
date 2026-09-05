@@ -4,6 +4,7 @@ ARG ELIXIR_IMAGE=elixir:1.19.5-otp-28-slim
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG CODEX_VERSION=0.150.1
 ARG MISE_VERSION=2025.8.16
+ARG SYMPHONY_EMBED_CODEX=true
 
 FROM ${ELIXIR_IMAGE} AS toolchain
 
@@ -124,13 +125,12 @@ COPY priv ./priv
 RUN mix compile --warnings-as-errors \
   && mix release symphony --path /release
 
-FROM toolchain AS symphony
+FROM toolchain AS symphony-base
 
 ARG APT_DEBIAN_MIRROR
 ARG APT_SECURITY_MIRROR
 
 ENV HOME=/home/symphony \
-    CODEX_HOME=/home/symphony/.codex \
     GH_CONFIG_DIR=/home/symphony/.config/gh \
     MIX_HOME=/data/workspaces/.cache/mix \
     HEX_HOME=/data/workspaces/.cache/hex \
@@ -168,11 +168,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     /data/logs \
     /data/workspaces \
     /data/workspaces/.cache \
-    /home/symphony/.codex \
     /home/symphony/.config/gh \
     /home/symphony/.ssh
 
 ENV LANG=C.UTF-8
+
+COPY --from=build --chown=symphony:symphony /release /app
+
+USER symphony
+
+VOLUME ["/data/logs", "/data/workspaces", "/home/symphony/.config/gh"]
+EXPOSE 4000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
+  CMD curl --fail --silent http://127.0.0.1:4000/health/ready >/dev/null || exit 1
+
+CMD ["/app/bin/symphony", "start"]
+
+FROM symphony-base AS symphony-false
+
+FROM symphony-base AS symphony-true
+
+USER root
+
+ENV CODEX_HOME=/home/symphony/.codex
+
+RUN install -d -o symphony -g symphony /home/symphony/.codex
 
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node
 COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
@@ -180,17 +201,12 @@ COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex \
   && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
   && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-COPY --from=build --chown=symphony:symphony /release /app
 
 USER symphony
 
-VOLUME ["/data/logs", "/data/workspaces", "/home/symphony/.codex", "/home/symphony/.config/gh"]
-EXPOSE 4000
+VOLUME ["/home/symphony/.codex"]
 
-HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
-  CMD curl --fail --silent http://127.0.0.1:4000/health/ready >/dev/null || exit 1
-
-CMD ["/app/bin/symphony", "start"]
+FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony
 
 FROM toolchain AS execution-worker
 
