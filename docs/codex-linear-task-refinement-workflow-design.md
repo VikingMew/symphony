@@ -27,12 +27,13 @@ design_status: landed
 主要适用于需求细化阶段：
 
 ```text
-Backlog -> Todo -> Needs Refinement Review -> Ready
+Backlog -> Todo -> Refining -> Needs Refinement Review -> Ready
 ```
 
 其中：
 
 - `Backlog`：想法或粗略任务，通常是一句话。
+- `Todo`：等待 Symphony 调度的细化候选任务。
 - `Refining`：Codex 正在细化任务。
 - `Needs Refinement Review`：等待人确认细化结果。
 - `Ready`：人已确认，任务可进入实现阶段。
@@ -55,11 +56,14 @@ Ready -> Refining
 
 ## 状态入口
 
-默认只有 `Refining` 是该流程的 agent-work 状态。
+默认只有 `Todo` 是该流程的调度候选状态。Runner 在 Codex turn 开始前执行
+`Todo -> Refining`，重新读取 Linear issue，并仅使用确认处于 `Refining` 的刷新结果继续执行。
+`Refining` 是执行中状态，也是人工从 review 明确打回后再次细化时使用的状态，不属于默认
+`tracker.active_states`。
 
 进入条件：
 
-- Linear task 状态是 `Refining`。
+- 新候选 task 的 Linear 状态是 `Todo`；人工打回任务的状态是 `Refining`。
 - task 属于配置的 Linear project。
 - task 没有被 terminal blocker 阻塞。
 - 当前 worker/run 有权限处理该 task。
@@ -84,7 +88,7 @@ Symphony 从 Linear 拉取候选 task。
 查询边界：
 
 - 只查询配置 project。
-- 只查询 active states 中适用于细化的状态，例如 `Refining`。
+- 只查询 active states 中适用于细化候选的 `Todo`，不把 `Needs Refinement Review` 当作候选。
 - 只返回调度需要的字段，例如 id、identifier、title、state、priority、assignee、blocked_by、updated_at。
 
 调度约束：
@@ -92,6 +96,10 @@ Symphony 从 Linear 拉取候选 task。
 - 如果 task 已有 active run，不重复启动。
 - 如果 task 状态不再 active，停止或跳过。
 - 如果 task 移动到 human review 状态，不继续派发 Codex。
+
+选中 `Todo` 后，Runner 必须先验证 workflow 允许 actor=`codex`、profile=`refinement` 的
+`Todo -> Refining`，请求 Linear 更新状态，再重新读取 issue。转换被拒绝、未配置，或刷新结果不是
+`Refining` 时，本次 run 显式失败且不得启动 Codex。
 
 ### 2. Read Detail And Comments
 
@@ -332,6 +340,7 @@ profile 不受影响。完成请求缺少非空 description 时也视为门禁�
 ## 验收标准
 
 - Codex 可读取当前 `Refining` task。
+- `Todo` task 被选中后必须先转换并刷新为 `Refining`，Codex 不读取陈旧的 `Todo` 数据。
 - Codex 可读取当前 task 的最近评论和状态变更。
 - 人工打回后，Codex 根据最新人工评论调整 task detail。
 - Codex 可更新当前 task detail。

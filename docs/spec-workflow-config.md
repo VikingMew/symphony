@@ -103,21 +103,22 @@ Fields:
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
 - `active_states` (list of strings)
-  - Default: `Refining`, `Ready`, `In Progress`
+  - Default: `Todo`, `Ready`, `In Progress`
 - `terminal_states` (list of strings)
   - Default: `Canceled`, `Cancelled`, `Duplicate`, `Done`
 
 Default workflow policy:
 
 - Executable routes: `Todo -> refinement`, `Refining -> refinement`, `Ready -> implementation`, and
-  `In Progress -> implementation`.
+  `In Progress -> implementation`. Only `Todo`, `Ready`, and `In Progress` are dispatch candidates;
+  `Refining` is the started state used after refinement kickoff and on an explicit human return.
 - Human-review states: exactly `Needs Refinement Review`, `Ready to Merge`, and `Blocked`.
 - Codex transitions: `Todo -> Refining`, `Refining -> Needs Refinement Review`,
   `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
 - Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
-- `Ready to Merge` MUST NOT appear in `tracker.active_states`.
+- `Refining` and `Ready to Merge` MUST NOT appear in `tracker.active_states`.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.
 
