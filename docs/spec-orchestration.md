@@ -101,6 +101,8 @@ Distinct terminal reasons are important because retry logic and logs differ.
 
 - `Codex Update Event`
   - Update live session fields, token counters, and rate limits.
+  - Evaluate rate-limit policy with the originating run's project workflow context; one project's
+    threshold or configuration error MUST NOT globally block another project's dispatch.
 
 - `Retry Timer Fired`
   - Re-fetch active candidates and attempt re-dispatch, or release claim if no longer eligible.

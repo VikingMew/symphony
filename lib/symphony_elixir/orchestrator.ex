@@ -353,7 +353,7 @@ defmodule SymphonyElixir.Orchestrator do
         state =
           state
           |> apply_codex_token_delta(token_delta)
-          |> apply_codex_rate_limits(update)
+          |> apply_codex_rate_limits(update, running_entry.project_id)
 
         notify_dashboard()
         {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
@@ -2386,7 +2386,6 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp request_operator_task(%State{} = state, kind, project_id) do
     state = reconcile_stale_operator_entries(state)
-    state = refresh_rate_limit_gate(state)
     current = operator_task(state, kind)
 
     case current.status do
@@ -2468,9 +2467,8 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp maybe_start_queued_operator_tasks(%State{} = state) do
     state = reconcile_stale_operator_entries(state)
-    state = refresh_rate_limit_gate(state)
 
-    if runtime_busy?(state) or rate_limit_gate_blocked?(state) do
+    if runtime_busy?(state) do
       state
     else
       Enum.reduce([:nap, :day_dreaming], state, &maybe_start_queued_operator_task/2)
@@ -2515,11 +2513,17 @@ defmodule SymphonyElixir.Orchestrator do
     with {:ok, project} <- resolve_operator_project(task.project_id),
          {:ok, workflow} <- load_operator_workflow(project) do
       Config.with_workflow_context(workflow, fn ->
-        do_start_operator_task(state, task, workflow)
+        maybe_start_operator_task_for_workflow(state, task, workflow)
       end)
     else
       {:error, reason} -> {state, fail_operator_task_resolution(task, reason)}
     end
+  end
+
+  defp maybe_start_operator_task_for_workflow(state, task, workflow) do
+    if rate_limit_gate_blocked?(state),
+      do: {state, task},
+      else: do_start_operator_task(state, task, workflow)
   end
 
   defp do_start_operator_task(%State{} = state, task, workflow) do
@@ -3332,15 +3336,16 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp apply_codex_token_delta(state, _token_delta), do: state
 
-  defp apply_codex_rate_limits(%State{} = state, update) when is_map(update) do
+  defp apply_codex_rate_limits(%State{} = state, update, project_id) when is_map(update) do
     case Update.rate_limits(update) do
       %{} = rate_limits ->
-        %{
+        state = %{
           state
           | codex_rate_limits: rate_limits,
             codex_rate_limit_observation: %{status: :parsed, at: DateTime.utc_now()}
         }
-        |> refresh_rate_limit_gate()
+
+        refresh_project_rate_limit_gate(state, project_id)
 
       _ ->
         if Update.rate_limit_update_event?(update) do
@@ -3359,7 +3364,12 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp apply_codex_rate_limits(state, _update), do: state
+  defp apply_codex_rate_limits(state, _update, _project_id), do: state
+
+  defp refresh_project_rate_limit_gate(state, project_id) do
+    {:ok, workflow} = WorkflowStore.for_project(project_id)
+    Config.with_workflow_context(workflow, fn -> refresh_rate_limit_gate(state) end)
+  end
 
   defp apply_token_delta(codex_totals, token_delta) do
     input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens

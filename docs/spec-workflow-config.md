@@ -228,6 +228,8 @@ fields locally if they want stricter startup checks.
 ### 5.4 Prompt Template Contract
 
 The active workflow base prompt plus the selected profile prompt is the per-issue prompt template.
+In a multi-project runtime, prompt rendering MUST use the workflow selected for the issue's project;
+it MUST NOT perform an unscoped current-workflow lookup or fall back to another project's prompt.
 For refinement and implementation profiles, Symphony appends a non-configurable, highest-priority
 container-validation safety contract after profile composition. It applies to every project even
 when a profile replaces the base prompt: agents MUST NOT invoke container engines, daemons,
