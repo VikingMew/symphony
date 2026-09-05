@@ -26,11 +26,11 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 页面保存 Workflow 或 Agents 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
+Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 导入 package 或保存 Agents 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
 
 关键路径：
 
-- `/settings/workflow` 保存 workflow/routing/runtime 共享配置。
+- `/settings/import` 导入 workflow/routing/runtime 共享配置。
 - `/settings/agents` 保存 base prompt、profiles、allowed updates 和 executor policy。
 - 保存成功后，持久化边界在返回成功前发布完整的内存 snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用

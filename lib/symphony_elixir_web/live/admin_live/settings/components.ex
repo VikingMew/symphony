@@ -5,17 +5,15 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Components do
 
   alias SymphonyElixirWeb.Admin.SettingsCheck
 
-  @spec tab(atom()) :: :agents | :import | :projects | :runtime | :workflow
+  @spec tab(atom()) :: :agents | :import | :projects | :runtime
   def tab(:settings), do: :projects
   def tab(:settings_projects), do: :projects
-  def tab(:settings_workflow), do: :workflow
   def tab(:settings_agents), do: :agents
   def tab(:settings_runtime), do: :runtime
   def tab(:settings_import), do: :import
 
   @spec label(atom()) :: String.t()
   def label(:projects), do: "Projects"
-  def label(:workflow), do: "Workflow"
   def label(:agents), do: "Agents"
   def label(:runtime), do: "Runtime"
   def label(:import), do: "Import"
@@ -23,7 +21,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Components do
 
   @spec path(atom()) :: String.t()
   def path(:projects), do: "/settings/projects"
-  def path(:workflow), do: "/settings/workflow"
   def path(:agents), do: "/settings/agents"
   def path(:runtime), do: "/settings/runtime"
   def path(:import), do: "/settings/import"
@@ -37,7 +34,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Components do
     assigns =
       assign(assigns, :tabs, [
         {:projects, "Projects", "/settings/projects"},
-        {:workflow, "Workflow", "/settings/workflow"},
         {:agents, "Agents", "/settings/agents"},
         {:runtime, "Runtime", "/settings/runtime"},
         {:import, "Import", "/settings/import"}

@@ -339,7 +339,7 @@ Symphony is designed for long-running operation and transient failure recovery:
 
 - Missing startup workflow configuration enters setup-required mode instead of polling Linear.
 - Dashboard-first `--port` mode can boot without an active workflow, so the first workflow can be
-  created through `/settings/workflow`.
+  loaded through `/settings/import`.
 - Invalid workflow reloads are logged, while the last known good database workflow remains active.
 - Failed agent turns can be retried according to orchestrator policy.
 - Active runs are stopped when issue states become terminal or ineligible.

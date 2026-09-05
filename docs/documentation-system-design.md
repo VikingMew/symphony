@@ -39,7 +39,7 @@ design_status: landed
 | L0 | `AGENTS.md`(根)、`docs/README.md`、`docs/decisions.md`、`docs/documentation-alignment.md`、`docs/documentation-system-design.md` | 治理:贡献规则、决策日志(ADR)、一致性矩阵、本设计 |
 | L1 | `docs/ARCHITECTURE.md`、`docs/long_term_direction.zh-CN.md` | 拓扑/边界/不变量/方向;收敛为系统级,不含包级细节 |
 | L2 | `docs/design.md` | 包布局与约定 + **Feature Design Index**;原 CODE_STRUCTURE 已并入 |
-| L3 | `docs/*-design.md`(8 篇,已规范化命名) | workflow-page-design、worker-panel-decoupling-design、workspace-source-layout-design、codex-linear-interaction-design、codex-linear-implementation-workflow-design、codex-linear-task-refinement-workflow-design、dashboard-color-system-design、hot-update-design;每篇标 `design_status: landed/partial/proposed` |
+| L3 | `docs/*-design.md` | worker-panel-decoupling-design、execution-runtime-design、workspace-source-layout-design、codex-linear-interaction-design、codex-linear-implementation-workflow-design、codex-linear-task-refinement-workflow-design、dashboard-color-system-design、hot-update-design 等；每篇标 `design_status: landed/partial/proposed` |
 | L4 | `docs/spec.md`(总纲)+ `docs/spec-*.md`(8 个域契约)、`docs/logging.md`、`docs/token_accounting.md`、`docs/persistence_and_auth.md`、`docs/test_database_isolation.md` | SPEC 已按域拆分(§4 域模型、§5-6 工作流/配置、§7-9 编排、§10/12 Agent Runner、§11 Linear、§13 观测、§14-15 可靠性/安全、§16 参考算法、§17-18 一致性) |
 | L5 | `docs/user-guide.zh-CN.md`、`docs/deployment.md` | 操作指南 |
 

@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.WorkflowForm do
   @moduledoc """
-  Converts workflow packages to and from the structured `/settings/workflow` draft form.
+  Converts workflow packages to and from the structured Settings draft.
   """
 
   alias SymphonyElixir.Config.Schema

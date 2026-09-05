@@ -170,8 +170,8 @@ setup-required。setup-required 只表示数据库可用但项目尚无 current 
 ## 7. 配置 workflow
 
 运行时配置来源是项目唯一的 PostgreSQL current workflow。空数据库会进入 setup-required 状态，不会开始
-监听 Linear 或调度 agent；先在 `/settings/workflow` 和 `/settings/agents` 创建第一版 active
-workflow。
+监听 Linear 或调度 agent；先在 `/settings/import` 导入 workflow package，再按需在
+`/settings/agents` 调整 agent 配置并保存第一版 active workflow。
 
 `workflow.yml` 和 `profiles.yml` 是 split workflow package 的导入/导出格式，不是启动参数，也不
 是运行时 fallback。这个 package 由两个文件组成：
@@ -181,8 +181,8 @@ workflow.yml
 profiles.yml
 ```
 
-空数据库第一次配置时，在 Settings 的 Workflow 页面使用 `Import Settings Package`
-入口，逐个粘贴 `workflow.yml` 或 `profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
+空数据库第一次配置时，在 Settings 的 Import 页面逐个粘贴 `workflow.yml` 或
+`profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
 顶层字段自动识别 package 类型：包含 `profiles` 或 `base_prompt` 的文档按 `profiles.yml` 导入，其余
 有效 workflow mapping 按 `workflow.yml` 导入。导入只填充页面上的 draft，不会立即激活运行时；确认校验提示后，
 再点 Save 创建项目的 current database workflow。
@@ -349,22 +349,23 @@ source strategy 会先完成 source preparation，`project.setup_commands` 再�
 `hooks.after_create` 作为附加自定义命令执行。
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
-Web UI 的 `/settings/workflow` tab 管理 workflow/routing，`/settings/agents` tab 管理 base
-prompt 和 profiles。Settings 顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时
+Web UI 不提供独立的 workflow/routing 编辑 tab；这些配置通过 split workflow package 导入，
+PostgreSQL current workflow 仍是运行时权威。`/settings/agents` tab 管理 base prompt 和
+profiles。Settings 顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时
 保持默认 project 行为）；`/settings/projects` tab 始终列出全部 project 用于 enable/disable
 编辑。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
 prompt 来源。
 
 `codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
 `reject` map。当前支持值是 `untrusted`、`on-failure`、`on-request`、`granular` 和
-`never`，默认值为 `never`。这个字段在 `/settings/workflow` 的 Codex 区域可见；如果
+`never`，默认值为 `never`。这个字段通过 `workflow.yml` 导入；如果
 Codex 在启动握手阶段拒绝 `approvalPolicy`，错误会指向该设置项。
 
 `codex.thread_sandbox` 和 `codex.turn_sandbox_policy` 是两个不同设置。前者用于 Codex
 thread 启动，后者会作为每次 `turn/start` 的 `sandboxPolicy` 发送，实际影响 agent turn
 是否能做网络操作，例如 `git push` 或 fetch。需要让 agent turn 访问网络时，在
-`/settings/workflow` 的 Codex 区域把 Turn sandbox 设为 workspace write with network 或
-danger full access；保留未来 Codex sandbox 形状时使用 custom JSON。
+在 `workflow.yml` 中把 Turn sandbox 设为 workspace write with network 或 danger full
+access；保留未来 Codex sandbox 形状时使用 custom JSON。
 
 当前默认 Linear 状态流是：
 
@@ -458,7 +459,7 @@ mise exec -- ./bin/symphony \
 - 每个项目的 PostgreSQL current workflow 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
 - `Default` 项目只在 projects 表为空时作为首启占位自动创建。存在其他项目后，候选查询、runtime settings 和 Linear diagnostics 必须带明确 project context；缺少上下文会返回 `:missing_project_context`，不会选择 Default 或任意第一条项目。
 - 如果 PostgreSQL 中还没有 current workflow，系统进入 setup-required。
-- setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/workflow`，用结构化表单创建第一个 workflow。
+- setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/import`，导入并保存第一个 workflow。
 - 不带 `--port` 时也使用同一个 PostgreSQL workflow source，只是不启动 Web dashboard。
 
 ## 9. 常用页面
@@ -471,7 +472,7 @@ mise exec -- ./bin/symphony \
 /workers      worker、task、lease 状态；集中式部署下可为空
 /settings     Settings 入口，默认打开 Projects tab
 /settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
-/settings/workflow workflow/routing/runtime 结构化配置和版本历史（顶部 project 选择器限定到指定 project；版本历史只显示该 project 的版本）
+/settings/import workflow package 导入（顶部 project 选择器限定到指定 project）
 /settings/agents agent profile、base prompt、profile prompt、allowed updates 配置（project 选择器限定）
 /settings/runtime tracker/config 摘要（project 选择器限定）
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
@@ -606,6 +607,6 @@ mise exec -- ./bin/symphony \
 - Linear token 是否有权限读取对应 project
 
 如果不确定 Linear project slug 或 workflow state 名称，先打开 Settings，点击
-`Fetch Linear configuration` 获取共享的只读 Linear discovery 结果；Projects 和 Workflow tab 会展示同一份
-读取结果的不同视图，方便复制候选值。保存 Settings 后，再打开 `/diagnostics/linear` 查看 token、project slug、
+`Fetch Linear configuration` 获取只读 Linear discovery 结果；Projects tab 会展示结果，方便复制
+候选值。保存 Settings 后，再打开 `/diagnostics/linear` 查看 token、project slug、
 workflow source、configured states 和候选 issue 查询结果。
