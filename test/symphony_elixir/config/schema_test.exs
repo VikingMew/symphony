@@ -77,4 +77,23 @@ defmodule SymphonyElixir.Config.SchemaTest do
     assert Schema.human_review_state?(settings, "Blocked")
     refute Schema.human_review_state?(settings, "Legacy Review")
   end
+
+  test "validates and preserves analytics warning thresholds" do
+    analytics = %{
+      "refinement_rounds_average_max" => 2.0,
+      "first_handoff_observed_return_rate_max" => 0.5,
+      "blocked_rate_max" => 0.25,
+      "latest_description_length_min" => 200,
+      "rework_rate_max" => 0.4,
+      "per_issue_total_tokens_max" => 100_000
+    }
+
+    assert {:ok, settings} = Schema.parse(%{"analytics" => analytics})
+    assert Schema.to_external_config(settings)["analytics"] == analytics
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{"analytics" => Map.put(analytics, "blocked_rate_max", 1.1)})
+
+    assert message =~ "blocked_rate_max"
+  end
 end
