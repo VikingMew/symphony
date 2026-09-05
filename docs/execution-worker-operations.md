@@ -17,6 +17,12 @@ only when `SYMPHONY_EXECUTION_MODE=worker` is applied to a newly started Panel.
 For each claim, the worker launches `codex app-server`, drives one JSON-RPC turn over stdio, and
 stops the session before running required gates and handoff commands.
 
+Execution ownership is deliberately exclusive. The default centralized Panel combines control
+with local execution, so its image contains Codex and its service mounts `codex_home`. The
+published worker-mode Panel is pure control: it is built with `SYMPHONY_EMBED_CODEX=false`, has no
+Node/Codex runtime or `CODEX_HOME`, and does not mount Codex credentials. The `execution-worker`
+image always contains Codex and stores its OAuth state only in `execution_worker_codex`.
+
 ## Preflight and credentials
 
 Copy `.env.example` to the ignored `.env`. Base Compose defaults to the checked-in exact local image
@@ -75,7 +81,8 @@ environment or rendered Compose output.
 ## Deploy, rotate, and inspect
 
 For a published deployment, include both Compose files and matching immutable Panel and worker
-references. The worker remains opt-in:
+references. The override selects worker execution for the Codex-free Panel; the execution-worker
+profile remains opt-in and must be started with it:
 
 ```bash
 docker compose -f compose.yaml -f compose.published.yaml --env-file .env up -d postgres migrate symphony
