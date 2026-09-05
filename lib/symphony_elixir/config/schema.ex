@@ -245,14 +245,10 @@ defmodule SymphonyElixir.Config.Schema do
     use Ecto.Schema
     import Ecto.Changeset
 
-    alias SymphonyElixir.Config.Schema
-
     @primary_key false
     embedded_schema do
-      field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
-      field(:max_concurrent_agents_by_state, :map, default: %{})
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -261,18 +257,13 @@ defmodule SymphonyElixir.Config.Schema do
       |> cast(
         attrs,
         [
-          :max_concurrent_agents,
           :max_turns,
-          :max_retry_backoff_ms,
-          :max_concurrent_agents_by_state
+          :max_retry_backoff_ms
         ],
         empty_values: []
       )
-      |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
-      |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
-      |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
     end
   end
 
@@ -603,35 +594,6 @@ defmodule SymphonyElixir.Config.Schema do
 
   def generated_before_remove_hook(_settings), do: nil
 
-  @doc false
-  @spec normalize_state_limits(nil | map()) :: map()
-  def normalize_state_limits(nil), do: %{}
-
-  def normalize_state_limits(limits) when is_map(limits) do
-    Enum.reduce(limits, %{}, fn {state_name, limit}, acc ->
-      Map.put(acc, normalize_issue_state(to_string(state_name)), limit)
-    end)
-  end
-
-  @doc false
-  @spec validate_state_limits(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
-  def validate_state_limits(changeset, field) do
-    validate_change(changeset, field, fn ^field, limits ->
-      Enum.flat_map(limits, fn {state_name, limit} ->
-        cond do
-          to_string(state_name) == "" ->
-            [{field, "state names must not be blank"}]
-
-          not is_integer(limit) or limit <= 0 ->
-            [{field, "limits must be positive integers"}]
-
-          true ->
-            []
-        end
-      end)
-    end)
-  end
-
   defp changeset(attrs) do
     %__MODULE__{}
     |> cast(attrs, [:workflow, :profiles])
@@ -757,7 +719,8 @@ defmodule SymphonyElixir.Config.Schema do
           "comment" => true,
           "result" => false,
           "target_states" => ["Needs Refinement Review"]
-        }
+        },
+        "description_limits" => %{"characters" => 12_000, "lines" => 400, "label_overrides" => %{}}
       },
       "implementation" => %{
         "name" => "Implementation",
@@ -827,12 +790,48 @@ defmodule SymphonyElixir.Config.Schema do
       WorkflowContract.workflow_errors(workflow, profiles, tracker)
 
     profile_errors =
-      WorkflowContract.profile_errors(profiles)
+      WorkflowContract.profile_errors(profiles) ++ description_limit_errors(profiles)
 
     Enum.reduce(workflow_errors, changeset, &add_error(&2, :workflow, &1))
     |> then(fn changeset ->
       Enum.reduce(profile_errors, changeset, &add_error(&2, :profiles, &1))
     end)
+  end
+
+  defp description_limit_errors(profiles) do
+    case get_in(profiles, ["refinement", "description_limits"]) do
+      nil -> []
+      limits when is_map(limits) -> limit_map_errors(limits, "profiles.refinement.description_limits")
+      _ -> ["profiles.refinement.description_limits must be a map"]
+    end
+  end
+
+  defp limit_map_errors(limits, path) do
+    scalar_errors =
+      Enum.flat_map(["characters", "lines"], fn key ->
+        case Map.get(limits, key) do
+          nil -> []
+          value when is_integer(value) and value > 0 -> []
+          _ -> ["#{path}.#{key} must be a positive integer"]
+        end
+      end)
+
+    override_errors =
+      case Map.get(limits, "label_overrides", %{}) do
+        overrides when is_map(overrides) ->
+          Enum.flat_map(overrides, fn
+            {label, override} when is_map(override) ->
+              limit_map_errors(Map.delete(override, "label_overrides"), "#{path}.label_overrides.#{label}")
+
+            {label, _override} ->
+              ["#{path}.label_overrides.#{label} must be a map"]
+          end)
+
+        _ ->
+          ["#{path}.label_overrides must be a map"]
+      end
+
+    scalar_errors ++ override_errors
   end
 
   defp normalize_keys(value) when is_map(value) do

@@ -1,6 +1,5 @@
 defmodule SymphonyElixir.Config.SchemaDomainTest do
   use SymphonyElixir.TestSupport
-  alias Ecto.Changeset
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Config.Schema.StringOrMap
 
@@ -10,7 +9,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert get_in(defaults, ["workspace", "root"]) ==
              Path.join(System.tmp_dir!(), "symphony_workspaces")
 
-    assert get_in(defaults, ["agent", "max_concurrent_agents"]) == 10
+    refute Map.has_key?(defaults["agent"], "max_concurrent_agents")
     refute Map.has_key?(defaults["tracker"], "api_key")
   end
 
@@ -21,7 +20,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
 
     write_workflow_file!(Workflow.workflow_file_path(),
       workspace_root: nil,
-      max_concurrent_agents: nil,
       codex_approval_policy: nil,
       codex_thread_sandbox: nil,
       turn_sandbox_policy: nil,
@@ -39,7 +37,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.workspace.initialize_timeout_ms == 60_000
     assert config.worker.max_concurrent_agents_per_host == nil
-    assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
     assert config.codex.pre_start_commands == []
     assert config.codex.approval_policy == "never"
@@ -97,10 +94,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "tracker.active_states"
 
-    write_workflow_file!(Workflow.workflow_file_path(), max_concurrent_agents: "bad")
-    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
-    assert message =~ "agent.max_concurrent_agents"
-
     write_workflow_file!(Workflow.workflow_file_path(), worker_max_concurrent_agents_per_host: 0)
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "worker.max_concurrent_agents_per_host"
@@ -127,7 +120,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       poll_interval_ms: %{bad: true},
       workspace_root: 123,
       max_retry_backoff_ms: 0,
-      max_concurrent_agents_by_state: %{"Todo" => "1", "Review" => 0, "Done" => "bad"},
       hook_timeout_ms: 0,
       observability_enabled: "maybe",
       observability_refresh_ms: %{bad: true},
@@ -265,7 +257,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert config.workspace.root == "env:#{workspace_env_var}"
   end
 
-  test "config supports per-state max concurrent agent overrides" do
+  test "legacy workflow capacity keys do not affect runtime settings" do
     write_workflow_file!(Workflow.workflow_file_path(),
       max_concurrent_agents: 10,
       max_concurrent_agents_by_state: %{
@@ -275,12 +267,9 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       }
     )
 
-    assert Config.settings!().agent.max_concurrent_agents == 10
-    assert Config.max_concurrent_agents_for_state("Todo") == 1
-    assert Config.max_concurrent_agents_for_state("In Progress") == 4
-    assert Config.max_concurrent_agents_for_state("Ready to Merge") == 2
-    assert Config.max_concurrent_agents_for_state("Closed") == 10
-    assert Config.max_concurrent_agents_for_state(:not_a_string) == 10
+    settings = Config.settings!()
+    refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents)
+    refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents_by_state)
 
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_max_concurrent_agents_per_host: 2,
@@ -306,23 +295,6 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
 
     assert {:ok, %{"a" => 1}} = StringOrMap.dump(%{"a" => 1})
     assert :error = StringOrMap.dump(123)
-
-    assert Schema.normalize_state_limits(nil) == %{}
-
-    assert Schema.normalize_state_limits(%{"In Progress" => 2, todo: 1}) == %{
-             "todo" => 1,
-             "in progress" => 2
-           }
-
-    changeset =
-      {%{}, %{limits: :map}}
-      |> Changeset.cast(%{limits: %{"" => 1, "todo" => 0}}, [:limits])
-      |> Schema.validate_state_limits(:limits)
-
-    assert changeset.errors == [
-             limits: {"state names must not be blank", []},
-             limits: {"limits must be positive integers", []}
-           ]
   end
 
   test "schema parse reads token only from LINEAR_API_KEY" do

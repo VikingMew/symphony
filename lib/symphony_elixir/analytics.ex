@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Analytics do
   """
 
   alias SymphonyElixir.Codex.TokenUsage
-  alias SymphonyElixir.{Persistence, PersistenceProvider}
+  alias SymphonyElixir.{Payload, Persistence, PersistenceProvider}
 
   @default_limit 2_000
   @range_presets %{
@@ -31,7 +31,8 @@ defmodule SymphonyElixir.Analytics do
           retry_count: non_neg_integer(),
           blocked_count: non_neg_integer(),
           duration: map(),
-          tokens: map()
+          tokens: map(),
+          refinement_description: map()
         }
 
   @type unavailable_summary :: %{
@@ -76,9 +77,42 @@ defmodule SymphonyElixir.Analytics do
       retry_count: count_events(events, "retry"),
       blocked_count: count_events(events, "blocked") + count_status(runs, "blocked"),
       duration: duration_summary(runs),
-      tokens: token_summary(events)
+      tokens: token_summary(events),
+      refinement_description: refinement_description_summary(events)
     }
   end
+
+  defp refinement_description_summary(events) do
+    samples = Enum.filter(events, &(event_type(&1) == "refinement.description_measurement"))
+    chars = samples |> Enum.map(&payload_value(&1, "characters")) |> Enum.sort()
+    lines = samples |> Enum.map(&payload_value(&1, "lines")) |> Enum.sort()
+    over = Enum.count(samples, &(payload_value(&1, "over_limit") == true))
+
+    %{
+      samples: length(samples),
+      average_characters: average(chars),
+      average_lines: average(lines),
+      p95_characters: percentile(chars, 0.95),
+      p95_lines: percentile(lines, 0.95),
+      over_limit: over,
+      over_rate: if(samples == [], do: 0.0, else: over / length(samples))
+    }
+  end
+
+  defp payload_value(event, key) do
+    payload = Map.get(event, :payload, %{})
+
+    atoms = %{
+      "characters" => :characters,
+      "lines" => :lines,
+      "over_limit" => :over_limit
+    }
+
+    Payload.get_any(payload, [key, Map.fetch!(atoms, key)])
+  end
+
+  defp average([]), do: 0.0
+  defp average(values), do: Enum.sum(values) / length(values)
 
   @spec range(String.t() | nil, DateTime.t()) :: map()
   def range(preset, %DateTime{} = now) do

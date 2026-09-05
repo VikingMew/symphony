@@ -101,6 +101,8 @@ Distinct terminal reasons are important because retry logic and logs differ.
 
 - `Codex Update Event`
   - Update live session fields, token counters, and rate limits.
+  - Evaluate rate-limit policy with the originating run's project workflow context; one project's
+    threshold or configuration error MUST NOT globally block another project's dispatch.
 
 - `Retry Timer Fired`
   - Re-fetch active candidates and attempt re-dispatch, or release claim if no longer eligible.
@@ -150,14 +152,16 @@ An issue is dispatch-eligible only if all are true:
 - Its state is in `active_states` and not in `terminal_states`.
 - It is not already in `running`.
 - It is not already in `claimed`.
-- Global concurrency slots are available.
-- Per-state concurrency slots are available.
+- Deployment concurrency slots are available.
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
 
-The default active states are `Refining`, `Ready`, and `In Progress`. The human-review states
-`Needs Refinement Review` and `Ready to Merge` are deliberately absent from `active_states` and
-MUST NOT have executable routes. The control plane MAY transition `Ready to Merge -> Blocked`
+The default active states are `Todo`, `Ready`, and `In Progress`. `Todo` is the refinement
+candidate; the runner transitions it to `Refining` and refreshes the issue before starting Codex.
+The started state `Refining` and the human-review states `Needs Refinement Review` and
+`Ready to Merge` are deliberately absent from `active_states`. Human review may explicitly return
+`Needs Refinement Review -> Refining` for another pass. The control plane MAY transition
+`Ready to Merge -> Blocked`
 without dispatch when the exact handed-off open GitHub PR reports a definitive merge conflict.
 Unknown mergeability, CI, review, behind, or API failure states MUST NOT block. In particular, no
 orchestrator path transitions `Ready to Merge`
@@ -171,16 +175,16 @@ Sorting order (stable intent):
 
 ### 8.3 Concurrency Control
 
-Global limit:
+Capacity is deployment topology and is shared by every enabled project. In centralized mode,
+`SYMPHONY_PANEL_SLOTS` is the bounded deployment limit and available capacity subtracts the
+orchestrator `running` count. In worker mode, capacity is the sum of `total_slots` advertised by
+online worker sessions with a fresh heartbeat, less worker tasks in `queued`, `leased`, or
+`running`. No online fresh worker therefore means zero capacity. Each successful enqueue is
+visible to the next candidate in the same reduce. Worker claims additionally require the
+worker's current `available_slots` to be positive.
 
-- `available_slots = max(max_concurrent_agents - running_count, 0)`
-
-Per-state limit:
-
-- `max_concurrent_agents_by_state[state]` if present (state key normalized)
-- otherwise fallback to global limit
-
-The runtime counts issues by their current tracked state in the `running` map.
+Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
+rejection emits `global_capacity` skip evidence and never falls back to a workflow field.
 
 ### 8.4 Retry and Backoff
 

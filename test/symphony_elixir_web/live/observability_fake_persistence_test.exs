@@ -724,7 +724,6 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     workspace:
       root: "/tmp/imported-workspaces"
     agent:
-      max_concurrent_agents: 1
       max_turns: 20
     codex:
       command: "codex app-server"

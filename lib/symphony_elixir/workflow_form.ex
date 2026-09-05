@@ -39,7 +39,6 @@ defmodule SymphonyElixir.WorkflowForm do
       "workspace_worktree_base_root" => get_string(display_config, ["workspace", "worktree_base_root"]),
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"]),
       "workspace_min_free_gib" => min_free_gib_string(get_in(display_config, ["workspace", "min_free_bytes"])),
-      "agent_max_concurrent_agents" => get_integer_string(display_config, ["agent", "max_concurrent_agents"]),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"]),
       "codex_command" => get_string(display_config, ["codex", "command"]),
       "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
@@ -97,7 +96,6 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, checkout_depth} <- parse_positive_integer(draft, "project_checkout_depth", "Checkout depth"),
          {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
          {:ok, workspace_min_free_bytes} <- parse_min_free_bytes(draft),
-         {:ok, max_agents} <- parse_positive_integer(draft, "agent_max_concurrent_agents", "Max agents"),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
          {:ok, rate_limit_gate_5h_threshold} <- parse_percent(draft, "codex_rate_limit_gate_5h_threshold_percent", "5-hour rate-limit threshold"),
          {:ok, rate_limit_gate_7d_threshold} <- parse_percent(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold"),
@@ -120,7 +118,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_optional_path(["workspace", "worktree_base_root"], Map.get(draft, "workspace_worktree_base_root", ""))
         |> put_path(["workspace", "initialize_timeout_ms"], initialize_timeout_ms)
         |> put_path(["workspace", "min_free_bytes"], workspace_min_free_bytes)
-        |> put_path(["agent", "max_concurrent_agents"], max_agents)
+        |> drop_legacy_capacity_keys()
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
         |> put_path(["codex", "pre_start_commands"], lines(Map.get(draft, "codex_pre_start_commands", "")))
@@ -144,11 +142,14 @@ defmodule SymphonyElixir.WorkflowForm do
       {"polling_interval_ms", "Polling interval"},
       {"initialize_timeout_ms", "Initialize timeout"},
       {"workspace_min_free_gib", "Minimum free GiB"},
-      {"agent_max_concurrent_agents", "Max agents"},
       {"agent_max_turns", "Max turns"},
       {"codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"},
       {"hook_timeout_ms", "Hook timeout"}
     ]
+  end
+
+  defp drop_legacy_capacity_keys(config) do
+    update_in(config, [Access.key("agent", %{})], &Map.drop(&1, ["max_concurrent_agents", "max_concurrent_agents_by_state"]))
   end
 
   defp get_codex_approval_policy(config) do

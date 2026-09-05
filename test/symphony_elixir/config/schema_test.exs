@@ -3,6 +3,38 @@ defmodule SymphonyElixir.Config.SchemaTest do
 
   alias SymphonyElixir.Config.Schema
 
+  test "description limits use defaults and reject non-positive or non-integer values" do
+    assert {:ok, settings} = Schema.parse(%{})
+    assert settings.profiles["refinement"]["description_limits"]["characters"] == 12_000
+    assert settings.profiles["refinement"]["description_limits"]["lines"] == 400
+
+    for invalid <- [0, -1, "12"] do
+      config = %{
+        "profiles" => %{
+          "refinement" => %{"description_limits" => %{"characters" => invalid}}
+        }
+      }
+
+      assert {:error, {:invalid_workflow_config, message}} = Schema.parse(config)
+      assert message =~ "profiles.refinement.description_limits.characters must be a positive integer"
+    end
+  end
+
+  test "description label overrides require positive integer limits" do
+    config = %{
+      "profiles" => %{
+        "refinement" => %{
+          "description_limits" => %{
+            "label_overrides" => %{"complex" => %{"lines" => 0}}
+          }
+        }
+      }
+    }
+
+    assert {:error, {:invalid_workflow_config, message}} = Schema.parse(config)
+    assert message =~ "profiles.refinement.description_limits.label_overrides.complex.lines"
+  end
+
   test "default policy uses the trimmed PR-first workflow" do
     refute Map.has_key?(Schema.default_profiles(), "merge")
 

@@ -172,12 +172,12 @@ POST /api/worker/v1/register
   "worker_version": "0.1.0",
   "protocol_version": "worker-api-v1",
   "instance_id": "generated-boot-id",
+  "total_slots": 2,
   "labels": ["local", "macos", "trusted"],
   "capabilities": {
     "os": "darwin",
     "arch": "arm64",
     "sandbox": ["local"],
-    "max_concurrency": 2,
     "supports_streaming_logs": true,
     "supports_workspace_cleanup": true
   }
@@ -443,6 +443,7 @@ worker_sessions
 ├── protocol_version
 ├── worker_version
 ├── instance_id
+├── total_slots
 ├── connected_at
 ├── last_heartbeat_at
 ├── disconnected_at

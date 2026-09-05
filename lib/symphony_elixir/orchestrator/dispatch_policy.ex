@@ -13,7 +13,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
             optional(:active_states) => MapSet.t(),
             optional(:terminal_states) => MapSet.t(),
             optional(:max_concurrent_agents) => pos_integer(),
-            optional(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
             optional(:workflow_executor_for_state) => (term() -> String.t() | nil),
             optional(:human_review_state?) => (term() -> boolean()),
             optional(:listening_mode) => :not_listening | :listening_all | :listening_refine_only,
@@ -25,7 +24,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
            required(:terminal_states) => [term()],
            required(:refinement_states) => [term()],
            required(:max_concurrent_agents) => pos_integer(),
-           required(:max_concurrent_agents_for_state) => (term() -> pos_integer()),
            required(:workflow_executor_for_state) => (term() -> String.t() | nil),
            required(:human_review_state?) => (term() -> boolean()),
            required(:listening_mode) => :not_listening | :listening_all | :listening_refine_only
@@ -44,7 +42,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
       refinement_states: normalized_state_set(settings.refinement_states),
       listening_mode: settings.listening_mode,
       max_concurrent_agents: settings.max_concurrent_agents,
-      max_concurrent_agents_for_state: settings.max_concurrent_agents_for_state,
       workflow_executor_for_state: settings.workflow_executor_for_state,
       human_review_state?: settings.human_review_state?
     }
@@ -79,7 +76,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
       !MapSet.member?(claimed, issue.id) and
       !Map.has_key?(running, issue.id) and
       available_slots(state, dispatch_settings) > 0 and
-      state_slots_available?(issue, running, dispatch_settings) and
       worker_slots_available?(state, worker_settings) and
       active_issue_state?(issue.state, active_states)
   end
@@ -95,7 +91,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
     reasons = if MapSet.member?(claimed, issue.id), do: ["claimed" | reasons], else: reasons
     reasons = if Map.has_key?(running, issue.id), do: ["already_running" | reasons], else: reasons
     reasons = if available_slots(state, settings) <= 0, do: ["global_capacity" | reasons], else: reasons
-    reasons = if state_slots_available?(issue, running, settings), do: reasons, else: ["state_capacity" | reasons]
     reasons = if worker_slots_available?(state, worker_settings), do: reasons, else: ["worker_capacity" | reasons]
     Enum.reverse(reasons) |> Enum.uniq()
   end
@@ -125,21 +120,10 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
   def revalidate_issue_for_dispatch(issue, _issue_fetcher, _dispatch_settings), do: {:ok, issue}
 
   @spec dispatch_slots_available?(Issue.t(), State.t(), dispatch_settings()) :: boolean()
-  def dispatch_slots_available?(%Issue{} = issue, %State{} = state, dispatch_settings)
+  def dispatch_slots_available?(%Issue{}, %State{} = state, dispatch_settings)
       when is_map(dispatch_settings) do
-    available_slots(state, dispatch_settings) > 0 and
-      state_slots_available?(issue, state.running, dispatch_settings)
+    available_slots(state, dispatch_settings) > 0
   end
-
-  @spec state_slots_available?(term(), term(), dispatch_settings()) :: boolean()
-  def state_slots_available?(%Issue{state: issue_state}, running, dispatch_settings)
-      when is_map(running) and is_map(dispatch_settings) do
-    limit = state_limit(issue_state, dispatch_settings)
-    used = running_issue_count_for_state(running, issue_state)
-    limit > used
-  end
-
-  def state_slots_available?(_issue, _running, _dispatch_settings), do: false
 
   @spec select_worker_host(State.t(), String.t() | nil, worker_settings()) ::
           String.t() | nil | :no_worker_capacity
@@ -277,25 +261,6 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
         Map.get(dispatch_settings, :max_concurrent_agents, 0)
 
     max(max_agents - map_size(state.running), 0)
-  end
-
-  defp running_issue_count_for_state(running, issue_state) when is_map(running) do
-    normalized_state = normalize_issue_state(issue_state)
-
-    Enum.count(running, fn
-      {_id, %{issue: %Issue{state: state_name}}} ->
-        normalize_issue_state(state_name) == normalized_state
-
-      _ ->
-        false
-    end)
-  end
-
-  defp state_limit(issue_state, dispatch_settings) do
-    case Map.get(dispatch_settings, :max_concurrent_agents_for_state) do
-      fun when is_function(fun, 1) -> fun.(issue_state)
-      _ -> Map.get(dispatch_settings, :max_concurrent_agents, 1)
-    end
   end
 
   defp executable_state?(state_name, dispatch_settings) when is_binary(state_name) do

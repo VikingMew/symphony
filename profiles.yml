@@ -339,6 +339,10 @@ profiles:
 
         After summary, validation, commit, and push are complete, call `create_pull_request` with a title/body conforming to `docs/pull-request-body.md`. Include the returned PR URL and completion proof in the final `linear_task_update` references and only then explicitly request `Ready to Merge`. Symphony owns the tool's lookup/create backend and credentials. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
   refinement:
+    description_limits:
+      characters: 12000
+      lines: 400
+      label_overrides: {}
     allowed_updates:
       comment: true
       description: true
