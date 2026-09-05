@@ -76,6 +76,7 @@ other documents link instead of restating.
 
 | Document | Purpose |
 | --- | --- |
+| [analytics.md](analytics.md) | Historical analytics definitions, evidence coverage, and warning thresholds. |
 | [user-guide.zh-CN.md](user-guide.zh-CN.md) | Operator guide (zh-CN). |
 | [compose.md](compose.md) | Compose, PostgreSQL operations, backup/restore, and SQLite cutover guide. |
 | [deployment.md](deployment.md) | Reverse-proxy and Kubernetes deployment guide. |
