@@ -1516,7 +1516,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       "project_cleanup_commands" => "",
       "workspace_root" => "/tmp/symphony-workspaces",
       "initialize_timeout_ms" => "60000",
-      "agent_max_concurrent_agents" => "1",
       "agent_max_turns" => "20",
       "codex_command" => "codex app-server",
       "codex_pre_start_commands" => "",
@@ -1602,7 +1601,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     workspace:
       root: "/tmp/imported-workspaces"
     agent:
-      max_concurrent_agents: 1
       max_turns: 20
     codex:
       command: "codex app-server"

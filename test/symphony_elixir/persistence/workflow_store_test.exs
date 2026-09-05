@@ -58,8 +58,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
            }
   end
 
-  test "export_workflow prefers raw markdown and can render stored YAML plus prompt" do
-    assert WorkflowStore.export_workflow(%WorkflowRecord{raw_workflow_md: "raw workflow"}) == "raw workflow"
+  test "export_workflow renders canonical stored YAML plus prompt" do
+    refute WorkflowStore.export_workflow(%WorkflowRecord{raw_workflow_md: "raw workflow"}) =~ "raw workflow"
 
     rendered =
       WorkflowStore.export_workflow(%WorkflowRecord{

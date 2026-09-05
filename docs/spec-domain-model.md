@@ -131,7 +131,7 @@ Single authoritative in-memory state owned by the orchestrator.
 Fields:
 
 - `poll_interval_ms` (current effective poll interval)
-- `max_concurrent_agents` (current effective global concurrency limit)
+- `max_concurrent_agents` (current effective deployment-wide concurrency limit)
 - `running` (map `issue_id -> running entry`)
 - `claimed` (set of issue IDs reserved/running/retrying)
 - `retry_attempts` (map `issue_id -> RetryEntry`)
@@ -165,7 +165,7 @@ function start_service():
 
   state = {
     poll_interval_ms: get_config_poll_interval_ms(),
-    max_concurrent_agents: get_config_max_concurrent_agents(),
+    max_concurrent_agents: get_deployment_max_concurrent_agents(),
     running: {},
     claimed: set(),
     retry_attempts: {},
@@ -391,4 +391,3 @@ on_retry_timer(issue_id, state):
 
   return dispatch_issue(issue, state, attempt=retry_entry.attempt)
 ```
-

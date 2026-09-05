@@ -13,6 +13,7 @@ defmodule SymphonyElixir.Worker.Client do
         protocol_version: @protocol,
         worker_version: config.source_revision,
         instance_id: config.worker_name,
+        total_slots: config.slots,
         capabilities: %{"execution" => ["v1"]}
       },
       headers: [{"authorization", "Bearer #{config.registration_token}"}]

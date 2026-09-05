@@ -338,6 +338,25 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, & &1.worker_sessions)
   end
 
+  def available_worker_slots(_opts \\ []) do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      capacity =
+        state.worker_sessions
+        |> Enum.filter(&(Map.get(&1, :status) == "online"))
+        |> Enum.sum_by(&Map.fetch!(&1, :total_slots))
+
+      occupied =
+        Enum.count(state.tasks, fn task ->
+          Map.get(task, :execution_mode, "worker") == "worker" and
+            Map.get(task, :status) in ["queued", "leased", "running"]
+        end)
+
+      max(capacity - occupied, 0)
+    end)
+  end
+
   def list_tasks(opts \\ []) do
     ensure_started()
 
@@ -603,6 +622,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       id: session_id,
       worker_id: worker_id,
       status: "online",
+      total_slots: Map.fetch!(attrs, "total_slots"),
       last_heartbeat_at: now
     }
 

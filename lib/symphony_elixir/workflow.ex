@@ -73,7 +73,7 @@ defmodule SymphonyElixir.Workflow do
         "polling" => defaults["polling"],
         "server" => Map.put(defaults["server"], "port", port),
         "workspace" => defaults["workspace"],
-        "agent" => Map.take(defaults["agent"], ["max_concurrent_agents", "max_turns"]),
+        "agent" => Map.take(defaults["agent"], ["max_turns"]),
         "codex" => Map.take(defaults["codex"], ["command", "pre_start_commands", "approval_policy", "thread_sandbox"]),
         "workflow" => defaults["workflow"],
         "profiles" => defaults["profiles"]
@@ -95,6 +95,7 @@ defmodule SymphonyElixir.Workflow do
         workflow_config
         |> Map.delete("profiles")
         |> Map.put("profiles", profile_package.profiles)
+        |> canonical_config()
 
       {:ok,
        %{
@@ -132,7 +133,7 @@ defmodule SymphonyElixir.Workflow do
 
         {:ok,
          %{
-           config: front_matter,
+           config: canonical_config(front_matter),
            prompt: prompt,
            prompt_template: prompt
          }}
@@ -147,8 +148,13 @@ defmodule SymphonyElixir.Workflow do
 
   @spec to_markdown(map(), String.t()) :: String.t()
   def to_markdown(config, prompt) when is_map(config) and is_binary(prompt) do
-    yaml = yaml_document(config)
+    yaml = config |> canonical_config() |> yaml_document()
     "---\n" <> String.trim_trailing(yaml) <> "\n---\n\n" <> String.trim(prompt) <> "\n"
+  end
+
+  @spec canonical_config(map()) :: map()
+  def canonical_config(config) when is_map(config) do
+    update_in(config, [Access.key("agent", %{})], &Map.drop(&1, ["max_concurrent_agents", "max_concurrent_agents_by_state"]))
   end
 
   defp yaml_document(map) when is_map(map) do

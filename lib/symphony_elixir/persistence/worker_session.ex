@@ -14,6 +14,7 @@ defmodule SymphonyElixir.Persistence.WorkerSession do
     field(:protocol_version, :string)
     field(:worker_version, :string)
     field(:instance_id, :string)
+    field(:total_slots, :integer)
     field(:connected_at, :utc_datetime_usec)
     field(:last_heartbeat_at, :utc_datetime_usec)
     field(:disconnected_at, :utc_datetime_usec)
@@ -29,12 +30,14 @@ defmodule SymphonyElixir.Persistence.WorkerSession do
       :protocol_version,
       :worker_version,
       :instance_id,
+      :total_slots,
       :connected_at,
       :last_heartbeat_at,
       :disconnected_at,
       :status
     ])
-    |> validate_required([:worker_id, :protocol_version, :connected_at, :status])
+    |> validate_required([:worker_id, :protocol_version, :total_slots, :connected_at, :status])
+    |> validate_number(:total_slots, greater_than: 0)
     |> validate_inclusion(:status, ["online", "offline", "closed"])
   end
 end

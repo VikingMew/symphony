@@ -12,15 +12,13 @@ defmodule SymphonyElixir.WorkflowFormDiskGuardTest do
     assert get_in(setup_config, ["workspace", "root"]) ==
              get_in(defaults, ["workspace", "root"])
 
-    assert get_in(setup_config, ["agent", "max_concurrent_agents"]) == 10
+    refute Map.has_key?(setup_config["agent"], "max_concurrent_agents")
     assert draft["workspace_root"] == get_in(defaults, ["workspace", "root"])
-
-    assert draft["agent_max_concurrent_agents"] ==
-             defaults |> get_in(["agent", "max_concurrent_agents"]) |> Integer.to_string()
+    refute Map.has_key?(draft, "agent_max_concurrent_agents")
 
     assert {:ok, config} = WorkflowForm.to_config(draft)
     assert get_in(config, ["workspace", "root"]) == get_in(defaults, ["workspace", "root"])
-    assert get_in(config, ["agent", "max_concurrent_agents"]) == 10
+    refute Map.has_key?(config["agent"], "max_concurrent_agents")
   end
 
   test "displays existing byte threshold as GiB" do

@@ -2,7 +2,7 @@ defmodule SymphonyElixir.Persistence.WorkerQueueTest do
   use ExUnit.Case, async: false
 
   alias SymphonyElixir.Persistence
-  alias SymphonyElixir.Persistence.WorkerQueue
+  alias SymphonyElixir.Persistence.{WorkerQueue, WorkerSession}
 
   setup do
     previous_worker_api = Application.get_env(:symphony_elixir, :worker_api)
@@ -51,6 +51,20 @@ defmodule SymphonyElixir.Persistence.WorkerQueueTest do
     assert WorkerQueue.requeue_task("task") == {:error, :repo_unavailable}
     assert WorkerQueue.record_worker_task_event("worker", "session", "task", "task.completed", %{}) == {:error, :repo_unavailable}
     assert WorkerQueue.expire_stale_worker_state() == {0, 0}
+    assert WorkerQueue.available_worker_slots() == 0
+  end
+
+  test "worker sessions require a positive advertised total slot count" do
+    attrs = %{
+      worker_id: Ecto.UUID.generate(),
+      protocol_version: "worker-api-v1",
+      connected_at: DateTime.utc_now(),
+      status: "online"
+    }
+
+    refute WorkerSession.changeset(%WorkerSession{}, attrs).valid?
+    refute WorkerSession.changeset(%WorkerSession{}, Map.put(attrs, :total_slots, 0)).valid?
+    assert WorkerSession.changeset(%WorkerSession{}, Map.put(attrs, :total_slots, 2)).valid?
   end
 
   test "enqueue_task validates project ownership before touching Repo" do

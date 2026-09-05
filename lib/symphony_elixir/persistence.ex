@@ -431,6 +431,9 @@ defmodule SymphonyElixir.Persistence do
   @spec list_worker_sessions(keyword()) :: list()
   defdelegate list_worker_sessions(opts \\ []), to: WorkerQueue
 
+  @spec available_worker_slots(keyword()) :: non_neg_integer()
+  defdelegate available_worker_slots(opts \\ []), to: WorkerQueue
+
   @spec enqueue_task(map()) :: {:ok, term()} | {:error, term()}
   defdelegate enqueue_task(attrs), to: WorkerQueue
 
