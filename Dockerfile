@@ -55,12 +55,15 @@ RUN if [ -n "$APT_DEBIAN_MIRROR" ]; then \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
+    gh \
     git \
     openssh-server \
     python3 \
     ripgrep \
   && rm -rf /var/lib/apt/lists/* \
   && useradd --create-home --shell /bin/bash symphony \
+  && git config --system credential.https://github.com.helper '!gh auth git-credential' \
+  && git config --system url.https://github.com/.insteadOf 'git@github.com:' \
   && install -d -m 755 /run/sshd /workspace \
   && install -d -o symphony -g symphony -m 700 /home/symphony/.ssh /home/symphony/.codex \
   && install -d -o symphony -g symphony /workspace/.cache \
@@ -215,7 +218,12 @@ RUN if [ -n "$APT_DEBIAN_MIRROR" ]; then \
   && if [ -n "$APT_SECURITY_MIRROR" ]; then \
       find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" {} +; \
     fi \
+  && apt-get update && apt-get install -y --no-install-recommends \
+    gh \
+  && rm -rf /var/lib/apt/lists/* \
   && useradd --uid 10002 --create-home --shell /bin/bash symphony \
+  && git config --system credential.https://github.com.helper '!gh auth git-credential' \
+  && git config --system url.https://github.com/.insteadOf 'git@github.com:' \
   && install -d -o symphony -g symphony /worker/workspaces /worker/cache /worker/logs /home/symphony/.codex
 
 COPY --from=codex /usr/local/bin/node /usr/local/bin/node

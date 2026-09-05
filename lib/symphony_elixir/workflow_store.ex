@@ -16,7 +16,8 @@ defmodule SymphonyElixir.WorkflowStore do
   @poll_interval_ms 1_000
   @snapshot_key {__MODULE__, :published_snapshot}
 
-  @type current_error :: :no_active_workflow | :repo_unavailable | {:query_failed, term()}
+  @type current_error ::
+          :missing_project_context | :no_active_workflow | :repo_unavailable | {:query_failed, term()}
   @type refresh_error :: {:refresh_failed, current_error() | :cache_unavailable}
 
   defmodule State do
@@ -226,11 +227,11 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp load_database_workflows do
     with {:ok, default_project} <- load_default_project(),
-         {:ok, workflows} <- load_project_workflows() do
+         {:ok, projects, workflows} <- load_project_workflows() do
       if map_size(workflows) == 0 do
         :setup_required
       else
-        {:ok, workflows, default_project_id(workflows, default_project)}
+        {:ok, workflows, default_project_id(workflows, projects, default_project)}
       end
     end
   end
@@ -247,9 +248,12 @@ defmodule SymphonyElixir.WorkflowStore do
   defp load_project_workflows do
     case persistence().list_projects() do
       projects when is_list(projects) ->
-        projects
-        |> Enum.filter(&Map.get(&1, :enabled, true))
-        |> Enum.reduce_while({:ok, %{}}, &load_project_workflow/2)
+        case projects
+             |> Enum.filter(&Map.get(&1, :enabled, true))
+             |> Enum.reduce_while({:ok, %{}}, &load_project_workflow/2) do
+          {:ok, workflows} -> {:ok, projects, workflows}
+          error -> error
+        end
 
       {:error, reason} ->
         {:error, reason}
@@ -276,10 +280,10 @@ defmodule SymphonyElixir.WorkflowStore do
     end
   end
 
-  defp default_project_id(workflows, default_project) do
-    case default_project do
-      %{id: id} when is_map_key(workflows, id) -> id
-      _ -> workflows |> Map.keys() |> List.first()
+  defp default_project_id(workflows, projects, default_project) do
+    case {projects, default_project} do
+      {[_project], %{id: id}} when is_map_key(workflows, id) -> id
+      _ -> nil
     end
   end
 
@@ -354,12 +358,14 @@ defmodule SymphonyElixir.WorkflowStore do
          source: source
        }) do
     case Map.get(workflows, default_id) do
+      nil when is_nil(default_id) -> {:error, :missing_project_context}
       nil -> {:error, :no_active_workflow}
       workflow -> {:ok, %{workflow: workflow, source: source}}
     end
   end
 
   defp normalize_current_error(:repo_unavailable), do: :repo_unavailable
+  defp normalize_current_error(:missing_project_context), do: :missing_project_context
   defp normalize_current_error({:query_failed, _reason} = error), do: error
   defp normalize_current_error(reason), do: {:query_failed, reason}
 end

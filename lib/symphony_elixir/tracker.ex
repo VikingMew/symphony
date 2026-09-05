@@ -13,14 +13,18 @@ defmodule SymphonyElixir.Tracker do
 
   @spec fetch_candidate_issues() :: {:ok, [term()]} | {:error, term()}
   def fetch_candidate_issues do
-    adapter().fetch_candidate_issues()
-    |> tap(&Health.observe_runtime_request(:candidate_fetch, &1))
+    with {:ok, _settings} <- Config.settings() do
+      adapter().fetch_candidate_issues()
+      |> tap(&Health.observe_runtime_request(:candidate_fetch, &1))
+    end
   end
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [term()]} | {:error, term()}
   def fetch_issues_by_states(states) do
-    adapter().fetch_issues_by_states(states)
-    |> tap(&Health.observe_runtime_request(:states_fetch, &1))
+    with {:ok, _settings} <- Config.settings() do
+      adapter().fetch_issues_by_states(states)
+      |> tap(&Health.observe_runtime_request(:states_fetch, &1))
+    end
   end
 
   @spec fetch_issue_states_by_ids([String.t()]) :: {:ok, [term()]} | {:error, term()}

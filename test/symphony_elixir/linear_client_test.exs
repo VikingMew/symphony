@@ -1,6 +1,28 @@
 defmodule SymphonyElixir.LinearClientTest do
   use SymphonyElixir.TestSupport
+
   alias SymphonyElixir.Linear.{Client, IssueNormalizer, Pagination}
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.{Tracker, Workflow, WorkflowStore}
+
+  test "candidate fetch requires explicit project context when real projects exist" do
+    {:ok, project} =
+      FakePersistence.create_project(%{
+        name: "Symphony",
+        slug: "symphony",
+        linear_project_slug: "symphony-linear",
+        repository_url: "git@github.com:VikingMew/symphony.git",
+        enabled: true
+      })
+
+    {:ok, loaded} = Workflow.load()
+    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    assert {:error, :missing_project_context} = Client.fetch_candidate_issues()
+    assert {:error, :missing_project_context} = Tracker.fetch_candidate_issues()
+  end
 
   test "linear issue helpers" do
     issue = %Issue{

@@ -5,10 +5,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
 
   alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
   alias SymphonyElixir.Codex.LinearToolAudit
-  alias SymphonyElixir.Config
+  alias SymphonyElixir.Codex.RefinementQualityGate
   alias SymphonyElixir.Linear.Client
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.PersistenceEventWriter
+  alias SymphonyElixir.StateName
 
   @task_read_query """
   query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
@@ -102,6 +103,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   @update_tool "linear_task_update"
   @issue_create_tool "linear_issue_create"
   @pull_request_tool "create_pull_request"
+  @handoff_tool "handoff"
 
   @read_schema %{
     "type" => "object",
@@ -200,6 +202,21 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @handoff_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["comment", "result", "references"],
+    "properties" => %{
+      "comment" => %{"type" => "string"},
+      "result" => %{"type" => "object", "additionalProperties" => true},
+      "references" => %{
+        "type" => "object",
+        "additionalProperties" => true,
+        "required" => ["branch", "commit", "pr_url", "pr_proof"]
+      }
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
@@ -222,6 +239,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         execute_with_audit(@pull_request_tool, arguments, opts, fn ->
           execute_pull_request(arguments, opts)
         end)
+
+      @handoff_tool ->
+        execute_with_audit(@handoff_tool, arguments, opts, fn -> execute_handoff(arguments, opts) end)
 
       other ->
         failure_response(%{
@@ -273,8 +293,21 @@ defmodule SymphonyElixir.Codex.DynamicTool do
         "name" => @pull_request_tool,
         "description" => "Create or find the implementation pull request after commit, validation, and push. Only the implementation profile may call it.",
         "inputSchema" => @pull_request_schema
-      }
+      },
+      handoff_tool_spec()
     ]
+  end
+
+  @spec tool_specs(String.t() | nil) :: [map()]
+  def tool_specs("implementation"), do: tool_specs()
+  def tool_specs(_profile), do: tool_specs()
+
+  defp handoff_tool_spec do
+    %{
+      "name" => @handoff_tool,
+      "description" => "Submit the completed implementation payload after create_pull_request. Acceptance does not update Linear; the worker writes it back only after required gates pass.",
+      "inputSchema" => @handoff_schema
+    }
   end
 
   defp execute_task_read(arguments, opts) do
@@ -326,9 +359,68 @@ defmodule SymphonyElixir.Codex.DynamicTool do
          {:ok, rendered} <- normalize_pull_request_arguments(arguments),
          {:ok, issue} <- issue_from_opts(opts),
          {:ok, pull_request} <- create_pull_request(issue, rendered, opts) do
-      success_response(put_pull_request_proof(pull_request, opts))
+      result = put_pull_request_proof(pull_request, opts)
+      observe_pull_request(result, opts)
+      success_response(result)
     else
       {:error, reason} -> failure_response(tool_error_payload(@pull_request_tool, reason))
+    end
+  end
+
+  defp execute_handoff(arguments, opts) do
+    with :ok <- validate_handoff_profile(opts),
+         {:ok, payload} <- normalize_handoff_arguments(arguments),
+         :ok <- validate_submitted_pull_request(payload, opts),
+         submitter when is_function(submitter, 1) <- Keyword.get(opts, :handoff_submitter),
+         :ok <- submitter.(payload) do
+      success_response(%{"accepted" => true, "linear_updated" => false})
+    else
+      nil -> failure_response(tool_error_payload(@handoff_tool, :handoff_submitter_unavailable))
+      {:error, reason} -> failure_response(tool_error_payload(@handoff_tool, reason))
+    end
+  end
+
+  defp validate_handoff_profile(opts) do
+    if Keyword.get(opts, :profile) == "implementation",
+      do: :ok,
+      else: {:error, {:handoff_not_allowed, Keyword.get(opts, :profile)}}
+  end
+
+  defp normalize_handoff_arguments(arguments) when is_map(arguments) do
+    with {:ok, comment} <- required_handoff_text(arguments, "comment"),
+         {:ok, result} <- required_handoff_map(arguments, "result"),
+         {:ok, references} <- required_handoff_map(arguments, "references"),
+         {:ok, branch} <- required_handoff_text(references, "branch", "references.branch"),
+         {:ok, commit} <- required_handoff_text(references, "commit", "references.commit"),
+         {:ok, _url} <- required_handoff_text(references, "pr_url", "references.pr_url"),
+         {:ok, _proof} <- required_handoff_text(references, "pr_proof", "references.pr_proof") do
+      {:ok, %{"comment" => comment, "result" => result, "references" => Map.merge(references, %{"branch" => branch, "commit" => commit})}}
+    end
+  end
+
+  defp normalize_handoff_arguments(_), do: {:error, {:invalid_handoff_field, "handoff"}}
+
+  defp required_handoff_text(map, key, path \\ nil) do
+    case Map.get(map, key) do
+      value when is_binary(value) -> if String.trim(value) == "", do: {:error, {:invalid_handoff_field, path || key}}, else: {:ok, String.trim(value)}
+      _ -> {:error, {:invalid_handoff_field, path || key}}
+    end
+  end
+
+  defp required_handoff_map(map, key) do
+    case Map.get(map, key) do
+      value when is_map(value) and map_size(value) > 0 -> {:ok, value}
+      _ -> {:error, {:invalid_handoff_field, key}}
+    end
+  end
+
+  defp validate_submitted_pull_request(payload, opts) do
+    with getter when is_function(getter, 0) <- Keyword.get(opts, :pull_request_result),
+         %{url: url, completion_proof: proof} <- getter.(),
+         {:ok, ^url, ^proof} <- Policy.pull_request_reference(payload) do
+      :ok
+    else
+      _ -> {:error, :pull_request_not_created}
     end
   end
 
@@ -372,6 +464,13 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     Map.put(pull_request, :completion_proof, pull_request_proof(Map.fetch!(pull_request, :url), opts))
   end
 
+  defp observe_pull_request(result, opts) do
+    case Keyword.get(opts, :pull_request_observer) do
+      observer when is_function(observer, 1) -> observer.(result)
+      _ -> :ok
+    end
+  end
+
   defp normalize_read_arguments(nil),
     do: {:ok, %{"include_activity" => true, "activity_limit" => 50}}
 
@@ -408,11 +507,17 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     with {:ok, issue_id} <- issue_id_from_opts(opts),
          {:ok, profile} <- profile_from_opts(opts),
          {:ok, response} <-
-           Client.graphql(@task_read_query, %{
+           graphql(opts, @task_read_query, %{
              "id" => issue_id,
              "commentFirst" => Map.get(payload, "activity_limit", 50)
            }) do
-      {:ok, normalize_task_read_response(response, Map.get(payload, "include_activity", true), profile)}
+      {:ok,
+       normalize_task_read_response(
+         response,
+         Map.get(payload, "include_activity", true),
+         profile,
+         Keyword.get(opts, :allowed_updates, %{})
+       )}
     end
   end
 
@@ -420,7 +525,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result =
       with {:ok, issue_id} <- issue_id_from_opts(opts),
            {:ok, profile} <- profile_from_opts(opts),
-           :ok <- validate_update_policy(payload, profile),
+           :ok <- validate_refinement_quality(payload, profile, issue_id, opts),
            :ok <- validate_pull_request_created(payload, profile, opts) do
         if implementation_completion_request?(payload, profile) do
           complete_implementation_handoff(issue_id, payload, opts)
@@ -433,6 +538,37 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     result
   catch
     {:linear_state_lookup_failed, reason} -> {:error, {:linear_state_lookup_failed, reason}}
+  end
+
+  defp validate_refinement_quality(payload, "refinement", issue_id, opts) do
+    target_state = Map.get(payload, "target_state")
+
+    if is_binary(target_state) and
+         StateName.normalize(target_state) == StateName.normalize("Needs Refinement Review") do
+      payload
+      |> Map.get("description")
+      |> RefinementQualityGate.validate()
+      |> report_refinement_quality(issue_id, opts)
+    else
+      :ok
+    end
+  end
+
+  defp validate_refinement_quality(_payload, _profile, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality(:ok, _issue_id, _opts), do: :ok
+
+  defp report_refinement_quality({:error, violations}, issue_id, opts) do
+    body =
+      "Refinement quality gate failed. Fix these items and retry:\n" <>
+        Enum.map_join(violations, "\n", fn violation ->
+          "- `#{violation.code}`: #{violation.message}"
+        end)
+
+    case create_comment(issue_id, body, opts) do
+      {:ok, _comment} -> {:error, {:refinement_quality_gate_failed, violations}}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp observe_task_update(result, payload, opts) do
@@ -517,12 +653,6 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       profile when is_binary(profile) and profile != "" -> {:ok, profile}
       _ -> {:error, :workflow_profile_unavailable}
     end
-  end
-
-  defp validate_update_policy(payload, profile) do
-    policy = Config.workflow_allowed_updates(profile)
-
-    Policy.validate_update_policy(payload, policy, profile)
   end
 
   defp implementation_completion_request?(%{"target_state" => target_state}, "implementation") do
@@ -704,12 +834,12 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     if base == "", do: section, else: base <> "\n\n" <> section
   end
 
-  defp normalize_task_read_response(response, include_activity, profile) do
+  defp normalize_task_read_response(response, include_activity, profile, allowed_updates) do
     response
     |> maybe_drop_activity(include_activity)
     |> Map.put("workflow", %{
       "profile" => profile,
-      "allowed_updates" => Config.workflow_allowed_updates(profile)
+      "allowed_updates" => allowed_updates
     })
   end
 
@@ -793,20 +923,17 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   end
 
-  defp tool_error_payload(_tool, {:update_not_allowed, field, profile}) do
-    %{
-      "error" => %{
-        "message" => "`linear_task_update.#{field}` is not allowed in workflow profile `#{profile}`."
-      }
-    }
-  end
+  defp tool_error_payload(@handoff_tool, {:handoff_not_allowed, profile}), do: %{"error" => %{"message" => "`handoff` is only available to implementation (got #{inspect(profile)})."}}
+  defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable), do: %{"error" => %{"message" => "handoff submission is unavailable in this session."}}
+  defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}), do: %{"error" => %{"message" => "`handoff.#{field}` is required and must be non-empty."}}
+  defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
 
-  defp tool_error_payload(_tool, {:target_state_not_allowed, state, profile, allowed}) do
+  defp tool_error_payload(_tool, {:refinement_quality_gate_failed, items}) do
     %{
       "error" => %{
-        "message" => "`linear_task_update.target_state` is not allowed in workflow profile `#{profile}`.",
-        "requestedState" => state,
-        "allowedStates" => allowed
+        "code" => "refinement_quality_gate_failed",
+        "message" => "Refinement quality gate failed.",
+        "missing" => items
       }
     }
   end

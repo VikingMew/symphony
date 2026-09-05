@@ -47,7 +47,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert b_workflow.project_id == project_b.id
   end
 
-  test "current returns the default project workflow" do
+  test "current requires project context when multiple projects exist" do
     raw = sample_workflow_markdown()
     {:ok, default} = FakePersistence.default_project()
     {:ok, _} = FakePersistence.import_workflow(default, raw, "test")
@@ -64,8 +64,9 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     {:ok, _} = FakePersistence.import_workflow(project_b, raw, "test")
 
     assert :ok = WorkflowStore.force_reload()
-    assert {:ok, workflow} = WorkflowStore.current()
-    assert workflow.project_id == default.id
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:ok, %{project_id: default_id}} = WorkflowStore.for_project(default.id)
+    assert default_id == default.id
   end
 
   test "for_project returns not_found for unknown project" do
@@ -177,21 +178,22 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
              FakePersistence.update_project(default.id, %{enabled: false})
              |> PersistenceProvider.publish_runtime_mutation()
 
-    assert {:ok, %{project_id: project_b_id}} = WorkflowStore.current()
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:ok, %{project_id: project_b_id}} = WorkflowStore.for_project(project_b.id)
     assert project_b_id == project_b.id
 
     assert {:ok, _enabled_default} =
              FakePersistence.update_project(default.id, %{enabled: true})
              |> PersistenceProvider.publish_runtime_mutation()
 
-    assert {:ok, %{project_id: default_id}} = WorkflowStore.current()
-    assert default_id == default.id
+    assert {:error, :missing_project_context} = WorkflowStore.current()
 
     assert {:ok, _disabled_b} =
              FakePersistence.update_project(project_b.id, %{enabled: false})
              |> PersistenceProvider.publish_runtime_mutation()
 
     assert Enum.map(WorkflowStore.list_enabled(), & &1.project_id) == [default.id]
+    assert {:error, :missing_project_context} = WorkflowStore.current()
 
     assert {:ok, _enabled_b} =
              FakePersistence.update_project(project_b.id, %{enabled: true})

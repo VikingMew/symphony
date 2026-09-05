@@ -33,7 +33,8 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                  "linear_task_read",
                  "linear_task_update",
                  "linear_issue_create",
-                 "create_pull_request"
+                 "create_pull_request",
+                 "handoff"
                ]
              }
            }
@@ -76,6 +77,78 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     refute rejected["success"]
     assert rejected["output"] =~ "not allowed"
+  end
+
+  test "handoff accepts only the pull request created by the current session" do
+    created = %{url: "https://github.com/acme/app/pull/1", completion_proof: "session-proof"}
+
+    payload = %{
+      "comment" => "  Shipped and verified.  ",
+      "result" => %{"outcome" => "shipped", "validation" => "make all"},
+      "references" => %{
+        "branch" => " feature/sym-1 ",
+        "commit" => " abc123 ",
+        "pr_url" => created.url,
+        "pr_proof" => created.completion_proof
+      }
+    }
+
+    response =
+      DynamicTool.execute("handoff", payload,
+        profile: "implementation",
+        pull_request_result: fn -> created end,
+        handoff_submitter: fn submitted ->
+          send(self(), {:handoff, submitted})
+          :ok
+        end
+      )
+
+    assert response["success"]
+    assert Jason.decode!(response["output"]) == %{"accepted" => true, "linear_updated" => false}
+    assert_receive {:handoff, submitted}
+    assert submitted["comment"] == "Shipped and verified."
+    assert submitted["references"]["branch"] == "feature/sym-1"
+    assert submitted["references"]["commit"] == "abc123"
+
+    mismatched = put_in(payload, ["references", "pr_proof"], "other-proof")
+    rejected = DynamicTool.execute("handoff", mismatched, profile: "implementation", pull_request_result: fn -> created end)
+    refute rejected["success"]
+    assert rejected["output"] =~ "create_pull_request"
+  end
+
+  test "handoff reports stable field paths for missing and empty values" do
+    valid = %{
+      "comment" => "done",
+      "result" => %{"validation" => "green"},
+      "references" => %{
+        "branch" => "feature/sym-1",
+        "commit" => "abc123",
+        "pr_url" => "https://github.com/acme/app/pull/1",
+        "pr_proof" => "proof"
+      }
+    }
+
+    cases = [
+      {Map.delete(valid, "comment"), "handoff.comment"},
+      {Map.put(valid, "comment", "  "), "handoff.comment"},
+      {Map.delete(valid, "result"), "handoff.result"},
+      {Map.put(valid, "result", %{}), "handoff.result"},
+      {Map.delete(valid, "references"), "handoff.references"},
+      {put_in(valid, ["references", "branch"], ""), "handoff.references.branch"},
+      {put_in(valid, ["references", "commit"], ""), "handoff.references.commit"},
+      {Map.put(valid, "references", Map.delete(valid["references"], "pr_url")), "handoff.references.pr_url"},
+      {Map.put(valid, "references", Map.delete(valid["references"], "pr_proof")), "handoff.references.pr_proof"}
+    ]
+
+    for {payload, field} <- cases do
+      response = DynamicTool.execute("handoff", payload, profile: "implementation")
+      refute response["success"]
+      assert response["output"] =~ field
+    end
+
+    rejected = DynamicTool.execute("handoff", valid, profile: "refinement")
+    refute rejected["success"]
+    assert rejected["output"] =~ "only available to implementation"
   end
 
   test "linear_issue_create is restricted to nap and day dreaming profiles" do
@@ -288,6 +361,25 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{"issue" => %{"id" => "issue-1"}}
   end
 
+  test "linear_task_read uses worker-provided allowed updates" do
+    allowed_updates = %{"comment" => true, "target_states" => ["Ready to Merge"]}
+
+    response =
+      DynamicTool.execute(
+        "linear_task_read",
+        %{},
+        issue: %Issue{id: "issue-1"},
+        profile: "implementation",
+        allowed_updates: allowed_updates,
+        graphql: fn _query, _variables ->
+          {:ok, %{"data" => %{"issue" => %{"id" => "issue-1"}}}}
+        end
+      )
+
+    assert response["success"]
+    assert Jason.decode!(response["output"])["workflow"]["allowed_updates"] == allowed_updates
+  end
+
   test "linear_task_read validates activity arguments" do
     response =
       DynamicTool.execute("linear_task_read", %{"include_activity" => "yes"}, task_reader: fn _payload -> flunk("reader should not be called") end)
@@ -328,6 +420,83 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert response["success"] == true
     assert Jason.decode!(response["output"]) == %{"ok" => true}
+  end
+
+  test "worker-style completion update succeeds without workflow configuration" do
+    snapshot_key = {WorkflowStore, :published_snapshot}
+    previous_snapshot = :persistent_term.get(snapshot_key, :missing)
+
+    :persistent_term.put(snapshot_key, %{
+      workflows: %{},
+      default_project_id: nil,
+      source: %{type: :error, reason: :repo_unavailable},
+      generation: 0
+    })
+
+    on_exit(fn ->
+      case previous_snapshot do
+        :missing -> :persistent_term.erase(snapshot_key)
+        snapshot -> :persistent_term.put(snapshot_key, snapshot)
+      end
+    end)
+
+    issue = %Issue{id: "worker-issue-1", identifier: "SYM-69"}
+    session_id = "worker-thread-turn"
+    proof_secret = "worker-proof-secret"
+    pr_url = "https://github.com/acme/app/pull/69"
+
+    proof =
+      :crypto.mac(:hmac, :sha256, proof_secret, session_id <> <<0>> <> pr_url)
+      |> Base.url_encode64(padding: false)
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{
+          "target_state" => "Ready to Merge",
+          "comment" => "Completed: worker regression test",
+          "result" => %{"validation" => "green"},
+          "references" => %{
+            "branch" => "feature/sym-69",
+            "commit" => "abc123",
+            "pr_url" => pr_url,
+            "pr_proof" => proof
+          }
+        },
+        issue: issue,
+        profile: "implementation",
+        session_id: session_id,
+        pull_request_proof_secret: proof_secret,
+        graphql: fn query, _variables ->
+          cond do
+            query =~ "SymphonyLinearIssueTeamStates" ->
+              {:ok,
+               %{
+                 "data" => %{
+                   "issue" => %{
+                     "team" => %{
+                       "states" => %{
+                         "nodes" => [%{"id" => "state-ready", "name" => "Ready to Merge"}]
+                       }
+                     }
+                   }
+                 }
+               }}
+
+            query =~ "SymphonyLinearTaskIssueUpdate" ->
+              {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+
+            query =~ "SymphonyLinearTaskCommentCreate" ->
+              {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+
+            query =~ "SymphonyLinearTaskAttachmentCreate" ->
+              {:ok, %{"data" => %{"attachmentCreate" => %{"success" => true}}}}
+          end
+        end
+      )
+
+    assert response["success"]
+    assert Jason.decode!(response["output"])["requested_state"] == "Ready to Merge"
   end
 
   test "linear_task_update rejects empty and invalid update payloads" do
@@ -473,5 +642,165 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     error = Jason.decode!(response["output"])["error"]
     assert error["message"] == "Restricted Linear task tool execution failed."
     assert error["reason"] =~ "linear_attachment_link_failed"
+  end
+
+  test "refinement completion reports all quality violations before issue updates" do
+    test_pid = self()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{
+          "description" => "## Goal\nTBD\n\n## Open questions\n- Who owns this?",
+          "target_state" => " needs refinement review "
+        },
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, variables ->
+          send(test_pid, {:graphql, query, variables})
+
+          if query =~ "SymphonyLinearTaskCommentCreate" do
+            {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+          else
+            flunk("quality gate must run before issue or state lookup writes")
+          end
+        end
+      )
+
+    refute response["success"]
+    error = Jason.decode!(response["output"])["error"]
+    assert error["code"] == "refinement_quality_gate_failed"
+
+    assert Enum.map(error["missing"], & &1["code"]) == [
+             "missing_required_section",
+             "missing_required_section",
+             "missing_required_section",
+             "missing_required_section",
+             "ambiguous_marker",
+             "unresolved_questions",
+             "missing_testable_acceptance"
+           ]
+
+    assert_received {:graphql, comment_query, %{"body" => body, "issueId" => "issue-1"}}
+    assert comment_query =~ "SymphonyLinearTaskCommentCreate"
+    assert body =~ "`missing_required_section`"
+    assert body =~ "`ambiguous_marker`"
+    assert body =~ "`unresolved_questions`"
+    assert body =~ "`missing_testable_acceptance`"
+    refute_received {:graphql, _, _}
+  end
+
+  test "refinement quality comment failures remain typed Linear errors" do
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"target_state" => "Needs Refinement Review"},
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, _variables ->
+          assert query =~ "SymphonyLinearTaskCommentCreate"
+          {:error, :timeout}
+        end
+      )
+
+    refute response["success"]
+    error = Jason.decode!(response["output"])["error"]
+    assert error["message"] == "Restricted Linear task tool execution failed."
+    assert error["reason"] =~ "linear_comment_create_failed"
+    assert error["reason"] =~ "timeout"
+  end
+
+  test "valid refinement completion updates description and review state" do
+    test_pid = self()
+    description = valid_refinement_description()
+
+    response =
+      DynamicTool.execute(
+        "linear_task_update",
+        %{"description" => description, "target_state" => "Needs Refinement Review"},
+        issue: %Issue{id: "issue-1"},
+        profile: "refinement",
+        graphql: fn query, variables ->
+          send(test_pid, {:graphql, query, variables})
+
+          cond do
+            query =~ "SymphonyLinearIssueTeamStates" ->
+              {:ok,
+               %{
+                 "data" => %{
+                   "issue" => %{
+                     "team" => %{
+                       "states" => %{
+                         "nodes" => [
+                           %{"id" => "review-state", "name" => "Needs Refinement Review"}
+                         ]
+                       }
+                     }
+                   }
+                 }
+               }}
+
+            query =~ "SymphonyLinearTaskIssueUpdate" ->
+              {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+
+            true ->
+              flunk("unexpected GraphQL operation")
+          end
+        end
+      )
+
+    assert response["success"]
+
+    assert_received {:graphql, state_query, %{"id" => "issue-1"}}
+    assert state_query =~ "SymphonyLinearIssueTeamStates"
+
+    assert_received {:graphql, update_query,
+                     %{
+                       "id" => "issue-1",
+                       "input" => %{
+                         "description" => ^description,
+                         "stateId" => "review-state"
+                       }
+                     }}
+
+    assert update_query =~ "SymphonyLinearTaskIssueUpdate"
+  end
+
+  test "quality gate does not affect intermediate refinement or implementation updates" do
+    for profile <- ["refinement", "implementation"] do
+      response =
+        DynamicTool.execute(
+          "linear_task_update",
+          %{"description" => "TBD"},
+          issue: %Issue{id: "issue-1"},
+          profile: profile,
+          graphql: fn query, variables ->
+            assert query =~ "SymphonyLinearTaskIssueUpdate"
+            assert variables["input"]["description"] == "TBD"
+            {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+          end
+        )
+
+      assert response["success"]
+    end
+  end
+
+  defp valid_refinement_description do
+    """
+    ## Goal
+    Ship the gate.
+
+    ## Scope
+    Validate refinement output.
+
+    ## Out of scope
+    Semantic review.
+
+    ## Acceptance criteria
+    - Invalid output is rejected.
+
+    ## Validation
+    Run unit tests.
+    """
   end
 end

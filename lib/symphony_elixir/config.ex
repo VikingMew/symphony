@@ -67,7 +67,11 @@ defmodule SymphonyElixir.Config do
 
   @spec current_workflow() ::
           {:ok, Workflow.loaded_workflow()}
-          | {:error, :no_active_workflow | :repo_unavailable | {:query_failed, term()}}
+          | {:error,
+             :missing_project_context
+             | :no_active_workflow
+             | :repo_unavailable
+             | {:query_failed, term()}}
   def current_workflow do
     case Process.get(@workflow_context_key) do
       %{config: _config} = workflow -> {:ok, workflow}
@@ -217,6 +221,9 @@ defmodule SymphonyElixir.Config do
 
       :repo_unavailable ->
         "Runtime configuration unavailable: database repository is unavailable."
+
+      :missing_project_context ->
+        "Runtime configuration unavailable: explicit project context is required."
 
       {:query_failed, query_reason} ->
         "Runtime configuration unavailable: database query failed: #{inspect(query_reason)}"

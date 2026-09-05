@@ -9,7 +9,12 @@ defmodule SymphonyElixir.Worker.Config do
                 cache_max_bytes: 10_737_418_240,
                 image_reference: "unknown",
                 source_revision: "unknown",
-                request_options: []
+                request_options: [],
+                client_module: SymphonyElixir.Worker.Client,
+                executor_module: SymphonyElixir.Worker.Executor,
+                lifecycle_retry_seconds: 2,
+                lifecycle_max_attempts: 5,
+                executor_start_timeout_seconds: 30
               ]
 
   @type t :: %__MODULE__{
@@ -24,7 +29,12 @@ defmodule SymphonyElixir.Worker.Config do
           cache_max_bytes: pos_integer(),
           image_reference: String.t(),
           source_revision: String.t(),
-          request_options: keyword()
+          request_options: keyword(),
+          client_module: module(),
+          executor_module: module(),
+          lifecycle_retry_seconds: pos_integer(),
+          lifecycle_max_attempts: pos_integer(),
+          executor_start_timeout_seconds: pos_integer()
         }
 
   @spec load!() :: t()

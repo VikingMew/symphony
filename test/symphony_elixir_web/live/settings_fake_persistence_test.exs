@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.WorkflowForm
@@ -962,7 +963,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
-  test "settings no-op save keeps semantic check messages without creating another version" do
+  test "settings no-op save ignores workflow policy edits without creating another version" do
     refute Process.whereis(SymphonyElixir.Repo)
 
     invalid_params =
@@ -992,8 +993,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "workflow-save-toast-info"
     assert html =~ "Workflow settings already up to date"
-    assert html =~ "Configuration check failed"
-    assert html =~ "Allowed transition 1"
+    refute html =~ "Configuration check failed"
 
     refute Enum.any?(FakePersistence.calls(), fn
              {:import_workflow, _project, _raw, _source} -> true
@@ -1022,21 +1022,14 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert build_conn() |> get("/projects") |> response(404) =~ "Route not found"
   end
 
-  test "workflow page uses an explicit add button for allowed transitions" do
+  test "workflow page renders the canonical allowed transitions" do
     refute Process.whereis(SymphonyElixir.Repo)
     write_workflow_file!(Workflow.workflow_file_path(), workflow_policy: workflow_policy_without_transitions())
     start_test_endpoint()
 
-    {:ok, view, html} = live(build_conn(), "/settings/workflow")
+    {:ok, _view, html} = live(build_conn(), "/settings/workflow")
 
     assert html =~ ~s(aria-label="Add transition")
-    refute html =~ ~s(name="workflow[allowed_transitions][0][from]")
-
-    html =
-      view
-      |> element("button[phx-click='add_workflow_transition']")
-      |> render_click()
-
     assert html =~ ~s(name="workflow[allowed_transitions][0][from]")
     assert html =~ ~s(name="workflow[allowed_transitions][0][to]")
   end
@@ -1091,6 +1084,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "workflow form saves editable allowed transitions" do
+    workflow_policy = Schema.default_workflow_policy()
+
     draft =
       SymphonyElixir.WorkflowForm.from_loaded(%{
         config: %{
@@ -1099,21 +1094,18 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
             "endpoint" => "https://api.linear.app/graphql",
             "api_key" => "$LINEAR_API_KEY",
             "project_slug" => "project",
-            "active_states" => ["Ready", "In Progress"],
-            "terminal_states" => ["Done"]
+            "active_states" => ["Todo", "Ready", "In Progress"],
+            "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
           },
           "project" => %{"repository_url" => "git@github.com:org/repo.git"},
-          "workflow" => %{
-            "states" => %{
-              "Ready" => %{"profile" => "implementation"},
-              "In Progress" => %{"profile" => "implementation"}
-            },
-            "human_review_states" => ["Needs Refinement Review", "Ready to Merge"],
-            "allowed_transitions" => [
-              %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"}
-            ]
-          },
+          "workflow" => workflow_policy,
           "profiles" => %{
+            "refinement" => %{
+              "name" => "Refinement",
+              "executor" => %{"type" => "codex_agent"},
+              "prompt" => %{"mode" => "extend", "template" => "Refine it"},
+              "allowed_updates" => %{"comment" => true, "target_states" => ["Needs Refinement Review"]}
+            },
             "implementation" => %{
               "name" => "Implementation",
               "executor" => %{"type" => "codex_agent"},
@@ -1127,20 +1119,21 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     edited =
       put_in(draft, ["allowed_transitions"], %{
-        "0" => %{"from" => "Ready", "to" => "In Progress", "actor" => "codex", "profile" => "implementation"},
-        "1" => %{"from" => "In Progress", "to" => "Ready to Merge", "actor" => "codex", "profile" => "implementation"},
-        "2" => %{"from" => "Ready to Merge", "to" => "In Progress", "actor" => "human", "profile" => ""},
-        "3" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
+        "0" => %{"from" => "", "to" => "", "actor" => "", "profile" => ""}
       })
+
+    edited =
+      workflow_policy["allowed_transitions"]
+      |> Enum.with_index(1)
+      |> Enum.reduce(edited, fn {transition, index}, form ->
+        put_in(form, ["allowed_transitions", Integer.to_string(index)], transition)
+      end)
 
     assert {:ok, raw} = SymphonyElixir.WorkflowForm.to_raw(edited)
     assert {:ok, loaded_workflow} = SymphonyElixir.Workflow.parse_content(raw)
 
-    assert get_in(loaded_workflow.config, ["workflow", "allowed_transitions"]) == [
-             %{"actor" => "codex", "from" => "Ready", "profile" => "implementation", "to" => "In Progress"},
-             %{"actor" => "codex", "from" => "In Progress", "profile" => "implementation", "to" => "Ready to Merge"},
-             %{"actor" => "human", "from" => "Ready to Merge", "to" => "In Progress"}
-           ]
+    assert get_in(loaded_workflow.config, ["workflow", "allowed_transitions"]) ==
+             workflow_policy["allowed_transitions"]
 
     assert {:ok, _validation} = SymphonyElixir.WorkflowValidator.validate_raw(raw)
   end
@@ -1264,7 +1257,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     refute html =~ "1073741824"
   end
 
-  test "workflow page saves parseable drafts with semantic configuration errors" do
+  test "workflow page replaces submitted workflow policy with the code contract" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
 
@@ -1283,12 +1276,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "workflow-save-toast-success"
     assert html =~ "Workflow settings saved"
-    assert html =~ "Configuration check failed"
-    assert html =~ "allowed_transitions.to"
-    assert html =~ "Configuration check targets"
-    assert html =~ "Allowed transition 1"
-    assert html =~ "workflow-transition-row settings-check-invalid"
-    assert html =~ "settings-check-message"
+    refute html =~ "Configuration check failed"
 
     assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
              Enum.find(FakePersistence.calls(), fn
@@ -1296,7 +1284,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                _ -> false
              end)
 
-    assert raw =~ "\"to\": \"Unknown Review\""
+    refute raw =~ "Unknown Review"
+    assert raw =~ "Ready to Merge"
   end
 
   test "agent settings highlights profile-owned semantic check failures" do
@@ -1517,7 +1506,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     %{
       "tracker_project_slug" => "project",
       "tracker_assignee" => "",
-      "active_states" => "Refining\nReady\nIn Progress",
+      "active_states" => "Todo\nReady\nIn Progress",
       "terminal_states" => "Canceled\nCancelled\nDuplicate\nDone",
       "polling_interval_ms" => "30000",
       "project_repository_url" => "git@github.com:org/repo.git",
@@ -1600,7 +1589,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       kind: linear
       endpoint: "https://api.linear.app/graphql"
       project_slug: "project"
-      active_states: ["Refining", "Ready", "In Progress"]
+      active_states: ["Todo", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
     polling:
       interval_ms: 30000
@@ -1623,6 +1612,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       port: 4000
     workflow:
       states:
+        Todo:
+          profile: refinement
         Refining:
           profile: refinement
         Ready:
@@ -1631,9 +1622,15 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
           profile: implementation
       human_review_states: ["Needs Refinement Review", "Ready to Merge"]
       allowed_transitions:
+        - {from: Todo, to: Refining, actor: codex, profile: refinement}
+        - {from: Refining, to: Needs Refinement Review, actor: codex, profile: refinement}
+        - {from: Needs Refinement Review, to: Refining, actor: human, profile: refinement}
         - {from: Ready, to: In Progress, actor: codex, profile: implementation}
         - {from: In Progress, to: Ready to Merge, actor: codex, profile: implementation}
         - {from: Ready to Merge, to: In Progress, actor: human, profile: implementation}
+        - {from: Todo, to: Blocked, actor: symphony}
+        - {from: Ready, to: Blocked, actor: symphony}
+        - {from: In Progress, to: Blocked, actor: symphony}
       tool_policy:
         linear:
           exposed_tools: ["linear_task_read", "linear_task_update"]

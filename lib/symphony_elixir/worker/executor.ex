@@ -1,10 +1,20 @@
 defmodule SymphonyElixir.Worker.Executor do
   @moduledoc "Lease-owned preparation, execution, validation, and handoff pipeline."
 
+  alias SymphonyElixir.Codex.{AppServer, DynamicTool}
+  alias SymphonyElixir.Config, as: RuntimeConfig
+  alias SymphonyElixir.Config.RuntimeResolver
+  alias SymphonyElixir.GitHub.PullRequest
+  alias SymphonyElixir.Linear.{Client, Issue}
   alias SymphonyElixir.Worker.{Command, Config, Paths, Payload, Validation}
 
+  @linear_endpoint "https://api.linear.app/graphql"
+
   @spec execute(Config.t(), map()) :: map()
-  def execute(config, claim) do
+  def execute(config, claim), do: execute(config, claim, fn _phase, _payload -> :ok end)
+
+  @spec execute(Config.t(), map(), (String.t(), map() -> term())) :: map()
+  def execute(config, claim, progress) do
     Process.flag(:trap_exit, true)
 
     with {:ok, payload} <- Payload.parse(claim["execution"]),
@@ -15,13 +25,14 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, revision} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
-         %{status: :passed} = codex <- Command.run(payload.codex, workspace),
+         %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
+         :ok <- require_handoff(payload, codex),
          {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
-         {:ok, handoff} <- handoff(payload, workspace) do
+         {:ok, handoff} <- handoff(claim, payload, codex) do
       summary = summary(config, claim, revision, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
-      Map.merge(summary, %{status: :completed, phase: :handoff, handoff: Map.get(handoff, :references, %{})})
+      Map.merge(summary, %{status: :completed, phase: :handoff, handoff: handoff})
     else
       :cancelled ->
         cancelled_result()
@@ -44,6 +55,88 @@ defmodule SymphonyElixir.Worker.Executor do
       status when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable] ->
         %{status: :failed, reason: status}
     end
+  end
+
+  defp run_codex(config, claim, payload, workspace, progress) do
+    codex = payload.codex
+    started = System.monotonic_time(:millisecond)
+    proof_secret = :crypto.strong_rand_bytes(32)
+
+    result =
+      RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
+        issue = %Issue{
+          id: Map.fetch!(claim, "issue_id"),
+          identifier: codex.issue.identifier,
+          title: codex.issue.title,
+          branch_name: payload.branch,
+          url: Map.get(payload.handoff, "issue_url")
+        }
+
+        progress.("codex_starting", %{})
+
+        AppServer.run(workspace, codex.prompt, issue,
+          profile: codex.profile,
+          run_id: Map.fetch!(claim, "run_id"),
+          on_message: &forward_codex_progress(&1, progress),
+          dynamic_tool_opts: [
+            allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+            graphql: &worker_graphql/2,
+            pull_request_proof_secret: proof_secret,
+            pull_request_creator: fn issue, rendered, _opts ->
+              PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
+            end
+          ]
+        )
+      end)
+
+    duration_ms = System.monotonic_time(:millisecond) - started
+
+    case result do
+      {:ok, app_server_result} ->
+        %{
+          status: :passed,
+          session_id: Map.fetch!(app_server_result, :session_id),
+          handoff: Map.get(app_server_result, :handoff),
+          proof_secret: proof_secret,
+          duration_ms: duration_ms
+        }
+
+      {:error, reason} ->
+        detail = inspect(reason)
+
+        if push_permission_failure?(detail) do
+          %{
+            status: :passed,
+            session_id: nil,
+            handoff: nil,
+            proof_secret: proof_secret,
+            duration_ms: duration_ms,
+            detail: detail
+          }
+        else
+          %{status: :failed, duration_ms: duration_ms, detail: detail}
+        end
+    end
+  end
+
+  defp forward_codex_progress(%{event: :session_started, session_id: session_id}, progress) do
+    progress.("codex_session_started", %{session_id: session_id})
+  end
+
+  defp forward_codex_progress(_message, _progress), do: :ok
+
+  @doc false
+  @spec codex_workflow(Config.t(), map(), Payload.t()) :: map()
+  def codex_workflow(config, codex, payload) do
+    %{
+      config: %{
+        "workspace" => %{"root" => config.workspace_root},
+        "codex" => codex.config,
+        "project" => %{"repository_url" => payload.repository_url, "default_branch" => payload.default_branch}
+      },
+      prompt: "",
+      prompt_template: ""
+    }
   end
 
   defp prepare(payload, workspace) do
@@ -92,14 +185,63 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp handoff(%{handoff: %{"command" => command, "timeout_seconds" => timeout}}, workspace) do
-    case Command.run(%{command: command, timeout_seconds: timeout}, workspace) do
-      %{status: :passed} = result -> {:ok, result}
-      result -> {:error, {:handoff_failed, result}}
+  defp require_handoff(
+         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
+         %{handoff: nil, detail: detail}
+       ) do
+    if push_permission_failure?(detail),
+      do: {:error, {:handoff_failed, {:push_permission_blocked, detail}}},
+      else: {:error, {:handoff_failed, :missing_handoff}}
+  end
+
+  defp require_handoff(
+         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
+         %{handoff: nil}
+       ),
+       do: {:error, {:handoff_failed, :missing_handoff}}
+
+  defp require_handoff(_payload, _codex), do: :ok
+
+  defp push_permission_failure?(detail) when is_binary(detail) do
+    normalized = String.downcase(detail)
+
+    Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
+  end
+
+  defp handoff(claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
+       when is_map(handoff) do
+    update = Map.put(codex.handoff, "target_state", "Ready to Merge")
+
+    response =
+      DynamicTool.execute("linear_task_update", update,
+        issue: %Issue{id: Map.fetch!(claim, "issue_id")},
+        profile: payload.codex.profile,
+        session_id: codex.session_id,
+        pull_request_proof_secret: codex.proof_secret,
+        allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+        graphql: &worker_graphql/2
+      )
+
+    case response do
+      %{"success" => true} ->
+        references = Map.fetch!(codex.handoff, "references")
+        {:ok, references |> Map.take(["branch", "commit", "pr_url", "pr_proof"]) |> Map.put("linear_state", "Ready to Merge")}
+
+      %{"success" => false, "output" => output} ->
+        {:error, {:handoff_failed, output}}
+
+      response ->
+        {:error, {:handoff_failed, response}}
     end
   end
 
-  defp handoff(_payload, _workspace), do: {:error, :missing_handoff}
+  defp handoff(_claim, _payload, _codex), do: {:ok, %{}}
+
+  # Worker payloads do not include database-backed tracker settings. Linear
+  # access uses the worker's existing runtime token and the standard endpoint.
+  defp worker_graphql(query, variables) do
+    Client.graphql_with_auth(query, variables, RuntimeResolver.env_secret("LINEAR_API_KEY"), @linear_endpoint, [])
+  end
 
   defp summary(config, claim, revision, codex, validation) do
     %{

@@ -1060,7 +1060,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert is_integer(wait_for_bound_port())
   end
 
-  test "application support processes tolerate invalid workflow policy during boot" do
+  test "application support processes ignore persisted workflow policy during boot" do
     write_workflow_file!(Workflow.workflow_file_path(),
       server_host: "127.0.0.1",
       observability_enabled: true,
@@ -1086,10 +1086,9 @@ defmodule SymphonyElixir.ExtensionsTest do
       if Process.alive?(dashboard_pid), do: Process.exit(dashboard_pid, :normal)
     end)
 
-    assert %{polling: %{listening?: false}, config_error: %{message: message}} =
+    assert %{polling: %{listening?: false}, config_error: nil} =
              GenServer.call(orchestrator_pid, :snapshot)
 
-    assert message =~ "Needs Implementation Review"
     assert Process.alive?(dashboard_pid)
   end
 

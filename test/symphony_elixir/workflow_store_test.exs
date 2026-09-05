@@ -266,7 +266,8 @@ defmodule SymphonyElixir.WorkflowStoreTest do
 
     put_edge(default_project: {:error, :not_found}, projects: [project], current_workflow: version)
     assert :ok = WorkflowStore.force_reload()
-    assert {:ok, ^loaded} = WorkflowStore.current()
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:ok, ^loaded} = WorkflowStore.for_project(project.id)
 
     put_edge(default_project: {:error, :invalid_default}, projects: [], current_workflow: nil)
 

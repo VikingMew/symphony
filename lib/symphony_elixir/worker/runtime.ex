@@ -2,7 +2,9 @@ defmodule SymphonyElixir.Worker.Runtime do
   @moduledoc false
   use GenServer
 
-  alias SymphonyElixir.Worker.{Cleanup, Client, Config, Executor, Paths}
+  require Logger
+
+  alias SymphonyElixir.Worker.{Cleanup, Config, Paths}
 
   @spec start_link(Config.t()) :: GenServer.on_start()
   def start_link(config), do: GenServer.start_link(__MODULE__, config, name: __MODULE__)
@@ -16,12 +18,12 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   @impl true
   def handle_info(:register, state) do
-    case Client.register(state.config) do
+    case client(state).register(state.config) do
       {:ok, response} ->
         identity = %{
           "worker_id" => response["worker_id"],
           "session_id" => response["session_id"],
-          "protocol_version" => Client.protocol_version()
+          "protocol_version" => client(state).protocol_version()
         }
 
         schedule(:poll, 0)
@@ -36,14 +38,14 @@ defmodule SymphonyElixir.Worker.Runtime do
   end
 
   def handle_info(:poll, %{identity: identity} = state) when not is_nil(identity) do
-    claim_request =
+    request =
       Map.merge(identity, %{
         "available_slots" => max(state.config.slots - map_size(state.active), 0),
         "capabilities" => %{"execution" => ["v1"]}
       })
 
     next =
-      case Client.claim(state.config, claim_request) do
+      case client(state).claim(state.config, request) do
         {:ok, %{"task" => nil}} -> state
         {:ok, %{"task_id" => task_id} = claim} -> start_claim(state, task_id, claim)
         {:error, {:http_error, 401, _body}} -> recover_session(state)
@@ -57,10 +59,10 @@ defmodule SymphonyElixir.Worker.Runtime do
   def handle_info(:poll, state), do: {:noreply, state}
 
   def handle_info(:heartbeat, %{identity: identity} = state) when not is_nil(identity) do
-    leases = Enum.map(state.active, fn {_task_id, %{claim: claim}} -> claim["lease_id"] end)
+    leases = Enum.map(state.active, fn {_task_id, active} -> active.claim["lease_id"] end)
 
     next =
-      case Client.heartbeat(state.config, identity, %{
+      case client(state).heartbeat(state.config, identity, %{
              active_leases: leases,
              available_slots: max(state.config.slots - map_size(state.active), 0)
            }) do
@@ -83,19 +85,79 @@ defmodule SymphonyElixir.Worker.Runtime do
   def handle_info(:heartbeat, state), do: {:noreply, state}
 
   def handle_info({ref, result}, state) when is_reference(ref) do
-    case Enum.find(state.active, fn {_task_id, active} -> active.ref == ref end) do
+    case find_active(state, ref, nil) do
       {task_id, _active} ->
         Process.demonitor(ref, [:flush])
-        payload = SymphonyElixir.Redaction.payload(result, 4_096)
-        Client.event(state.config, state.identity, task_id, terminal_type(result), payload)
-        {:noreply, %{state | active: Map.delete(state.active, task_id)}}
+        {:noreply, begin_terminal_delivery(state, task_id, terminal_type(result), result)}
 
       nil ->
         {:noreply, state}
     end
   end
 
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, state), do: {:noreply, state}
+  def handle_info({:DOWN, ref, :process, pid, reason}, state) do
+    case find_active(state, ref, pid) do
+      {task_id, %{phase: phase} = active} when reason != :normal and phase != :delivering_terminal ->
+        status = if Map.get(active, :cancelling, false), do: :cancelled, else: :failed
+        type = if status == :cancelled, do: "task.cancelled", else: "task.failed"
+        result = %{status: status, reason: inspect(reason)}
+        {:noreply, begin_terminal_delivery(state, task_id, type, result)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:executor_started, task_id, pid}, state) do
+    case Map.get(state.active, task_id) do
+      %{pid: ^pid, phase: :starting} = active ->
+        Process.cancel_timer(active.watchdog)
+
+        with {:ok, _} <- event(state, task_id, "task.accepted", %{phase: "accepted"}),
+             {:ok, _} <- event(state, task_id, "task.progress", %{phase: "execution_started"}) do
+          send(pid, :execute)
+          {:noreply, put_active(state, task_id, %{active | phase: :executing, watchdog: nil})}
+        else
+          {:error, reason} ->
+            Process.exit(pid, :shutdown)
+            result = %{status: :failed, reason: inspect(reason)}
+            {:noreply, begin_terminal_delivery(state, task_id, "task.failed", result)}
+        end
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:executor_progress, task_id, phase, payload}, state) do
+    if Map.has_key?(state.active, task_id) do
+      case event(state, task_id, "task.progress", Map.put(payload, :phase, phase)) do
+        {:ok, _} -> :ok
+        {:error, reason} -> log_delivery_failure(state.active[task_id].claim, "task.progress", reason, 1)
+      end
+    end
+
+    {:noreply, state}
+  end
+
+  def handle_info({:executor_start_timeout, task_id, pid}, state) do
+    case Map.get(state.active, task_id) do
+      %{pid: ^pid, phase: :starting} ->
+        Process.exit(pid, :kill)
+        result = %{status: :failed, reason: :executor_start_timeout}
+        {:noreply, begin_terminal_delivery(state, task_id, "task.failed", result)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
+  def handle_info({:retry_terminal, task_id}, state) do
+    case Map.get(state.active, task_id) do
+      %{phase: :delivering_terminal} -> {:noreply, deliver_terminal(state, task_id)}
+      _ -> {:noreply, state}
+    end
+  end
 
   def handle_info(:cleanup, state) do
     active =
@@ -122,12 +184,75 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp start_claim(state, task_id, claim) do
     if map_size(state.active) < state.config.slots and not Map.has_key?(state.active, task_id) do
-      Client.event(state.config, state.identity, task_id, "task.accepted", %{phase: "accepted"})
-      Client.event(state.config, state.identity, task_id, "task.progress", %{phase: "execution_started"})
-      task = Task.Supervisor.async_nolink(SymphonyElixir.Worker.TaskSupervisor, fn -> Executor.execute(state.config, claim) end)
-      %{state | active: Map.put(state.active, task_id, %{ref: task.ref, pid: task.pid, claim: claim})}
+      runtime = self()
+
+      task =
+        Task.Supervisor.async_nolink(SymphonyElixir.Worker.TaskSupervisor, fn ->
+          execute_claim(runtime, state.config, claim)
+        end)
+
+      watchdog =
+        Process.send_after(
+          self(),
+          {:executor_start_timeout, task_id, task.pid},
+          state.config.executor_start_timeout_seconds * 1_000
+        )
+
+      active = %{ref: task.ref, pid: task.pid, claim: claim, phase: :starting, watchdog: watchdog, attempts: 0}
+      put_active(state, task_id, active)
     else
       state
+    end
+  end
+
+  defp execute_claim(runtime, config, claim) do
+    task_id = claim["task_id"]
+    send(runtime, {:executor_started, task_id, self()})
+
+    receive do
+      :execute ->
+        progress = fn phase, payload -> send(runtime, {:executor_progress, task_id, phase, payload}) end
+        config.executor_module.execute(config, claim, progress)
+    end
+  end
+
+  defp begin_terminal_delivery(state, task_id, event_type, result) do
+    case Map.get(state.active, task_id) do
+      nil ->
+        state
+
+      active ->
+        if active.watchdog, do: Process.cancel_timer(active.watchdog)
+
+        active =
+          Map.merge(active, %{
+            phase: :delivering_terminal,
+            watchdog: nil,
+            terminal_type: event_type,
+            terminal_payload: %{summary: terminal_summary(result, state.config)},
+            attempts: 0
+          })
+
+        state |> put_active(task_id, active) |> deliver_terminal(task_id)
+    end
+  end
+
+  defp deliver_terminal(state, task_id) do
+    active = Map.fetch!(state.active, task_id)
+    attempt = active.attempts + 1
+
+    case event(state, task_id, active.terminal_type, active.terminal_payload) do
+      {:ok, _} ->
+        %{state | active: Map.delete(state.active, task_id)}
+
+      {:error, reason} when attempt < state.config.lifecycle_max_attempts ->
+        log_delivery_failure(active.claim, active.terminal_type, reason, attempt)
+        schedule({:retry_terminal, task_id}, state.config.lifecycle_retry_seconds)
+        put_active(state, task_id, %{active | attempts: attempt})
+
+      {:error, reason} ->
+        log_delivery_failure(active.claim, active.terminal_type, reason, attempt)
+        %{state | active: Map.delete(state.active, task_id)}
     end
   end
 
@@ -138,7 +263,7 @@ defmodule SymphonyElixir.Worker.Runtime do
 
       %{pid: pid} = lease ->
         Process.exit(pid, :shutdown)
-        %{state | active: Map.put(state.active, task_id, Map.put(lease, :cancelling, true))}
+        put_active(state, task_id, Map.put(lease, :cancelling, true))
     end
   end
 
@@ -147,10 +272,54 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"
 
+  defp terminal_summary(result, config) do
+    status = Map.get(result, :status, :failed)
+    outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
+    phase = if status == :completed, do: "complete", else: "validation"
+    reason = if status == :completed, do: "completed", else: reason_for(status, result)
+
+    %{
+      "phase" => phase,
+      "outcome" => outcome,
+      "reason" => reason,
+      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source_revision" => config.source_revision,
+      "runtime" => %{"image_tag" => config.image_reference, "worker_source_revision" => config.source_revision},
+      "validation_status" => "passed",
+      "gates" => [],
+      "detail" => inspect(result)
+    }
+  end
+
+  defp reason_for(:cancelled, _), do: "cancelled"
+  defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed], do: Atom.to_string(reason)
+  defp reason_for(_, _), do: "worker_error"
+
   defp recover_session(state) do
     Enum.each(state.active, fn {_task_id, lease} -> Process.exit(lease.pid, :shutdown) end)
     schedule(:register, 0)
     %{state | identity: nil, active: %{}}
+  end
+
+  defp find_active(state, ref, pid) do
+    Enum.find(state.active, fn {_task_id, active} -> active.ref == ref or active.pid == pid end)
+  end
+
+  defp event(state, task_id, type, payload), do: client(state).event(state.config, state.identity, task_id, type, payload)
+  defp client(state), do: state.config.client_module
+  defp put_active(state, task_id, active), do: %{state | active: Map.put(state.active, task_id, active)}
+
+  defp log_delivery_failure(claim, type, reason, attempt) do
+    Logger.warning(
+      "Worker lifecycle delivery retrying" <>
+        " issue_id=#{claim["issue_id"]}" <>
+        " issue_identifier=#{get_in(claim, ["execution", "issue", "identifier"])}" <>
+        " task_id=#{claim["task_id"]}" <>
+        " lease_id=#{claim["lease_id"]}" <>
+        " event_type=#{type}" <>
+        " attempt=#{attempt}" <>
+        " reason=#{inspect(reason)}"
+    )
   end
 
   defp schedule(message, seconds), do: Process.send_after(self(), message, seconds * 1_000)

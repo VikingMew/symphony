@@ -10,14 +10,16 @@ updated: 2026-08-28
 
 # Workflow and Configuration Specification
 
-## 5. Workflow Specification (Persisted Runtime Contract)
+## 5. Workflow Specification
 
 ### 5.1 Active Workflow Selection
 
 Workflow source precedence:
 
-1. The current workflow stored for the project by the implementation datastore.
-2. Setup-required mode when no current workflow exists.
+1. Workflow policy is the immutable contract returned by
+   `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
+2. Project settings and profiles come from the current workflow stored for the project.
+3. Setup-required mode applies when no current workflow exists.
 
 Loader behavior:
 
@@ -31,19 +33,21 @@ Loader behavior:
 Portable workflow packages are implementation-defined. The current preferred package shape is split
 YAML:
 
-- `workflow.yml` for runtime settings, tracker policy, state routing, hooks, and Codex settings.
+- `workflow.yml` for project settings plus a documented example of the code-owned state policy.
 - `profiles.yml` for shared base prompt and profile-specific agent policy.
 
 Design note:
 
-- A package SHOULD be self-contained enough to recreate a project's current workflow after import.
+- A package SHOULD be self-contained enough to recreate a project's settings and profiles after import.
 - A package SHOULD NOT be edited in place as the runtime source of truth.
+- Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
+  runtime dispatch, transition validation, human-review classification, or profile routing.
 
 The default package contains refinement and implementation profiles only. There is no backend merge
 profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
 
-`Blocked` is a human-review state and MUST NOT appear in `tracker.active_states` or
-`workflow.states`. Each active state MUST transition to `Blocked` with actor `symphony`;
+`Blocked` is a human-review state and MUST NOT appear in `tracker.active_states`. Each executable
+state MUST transition to `Blocked` with actor `symphony`;
 `Blocked` may transition to `Ready`, `Needs Refinement Review`, or `Canceled` only with actor
 `human`. Imports and current-workflow upgrades MUST preserve this non-dispatch contract.
 
@@ -105,15 +109,15 @@ Fields:
 
 Default workflow policy:
 
-- Executable routes: `Refining -> refinement`, `Ready -> implementation`, and
+- Executable routes: `Todo -> refinement`, `Refining -> refinement`, `Ready -> implementation`, and
   `In Progress -> implementation`.
-- Human-review states: `Needs Refinement Review` and `Ready to Merge`.
-- Codex transitions: `Refining -> Needs Refinement Review`, `Ready -> In Progress`, and
-  `In Progress -> Ready to Merge`.
+- Human-review states: exactly `Needs Refinement Review`, `Ready to Merge`, and `Blocked`.
+- Codex transitions: `Todo -> Refining`, `Refining -> Needs Refinement Review`,
+  `Ready -> In Progress`, and `In Progress -> Ready to Merge`.
 - Human change requests: `Needs Refinement Review -> Refining` and
   `Ready to Merge -> In Progress`.
 - Symphony conflict reconciliation: `Ready to Merge -> Blocked` with `actor=symphony`.
-- `Ready to Merge` MUST NOT appear in `tracker.active_states` or `workflow.states`.
+- `Ready to Merge` MUST NOT appear in `tracker.active_states`.
 - `Done` is the sole successful terminal state; `Canceled`, `Cancelled`, and `Duplicate` remain
   cancellation terminal states.
 
@@ -130,7 +134,7 @@ Fields:
 Worker execution snapshots resolve `project.required_gates` from the current PostgreSQL workflow
 when a task is queued. Each entry requires a stable non-blank `name`, non-blank `command`, and
 positive `timeout_ms`. Declaration order is execution and result order. The repository package
-declares one required gate: `make-all` running `make all` with a 1,800,000 ms timeout.
+declares independent `check`, `unit`, and `dialyzer` script gates; live E2E is orchestrated by its separate workflow.
 
 #### 5.3.3 `workspace` (object)
 
@@ -224,6 +228,14 @@ when a profile replaces the base prompt: agents MUST NOT invoke container engine
 sockets, or image operations. A task that requires such validation MUST report blocker evidence
 and use the persistent `blocking_decision` / `Blocked` path; allowed task-authored validation
 remains mandatory. Static inspection of container source/configuration remains allowed.
+
+When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
+request MUST contain the candidate description. Before any description or state write, Symphony
+MUST apply the deterministic refinement quality gate defined by
+`docs/codex-linear-task-refinement-workflow-design.md`. A failed gate writes one diagnostic comment
+and returns its complete violation set as a typed tool error. If that comment write fails, the
+Linear error remains explicit. The failure does not introduce a retry counter: an unfinished run
+continues through the existing no-progress streak and persistent `BlockingDecision` path.
 
 Rendering requirements:
 
@@ -352,7 +364,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
   the Project settings record (each enabled project names its own Linear project slug)
-- `tracker.active_states`: list of strings, default `["Refining", "Ready", "In Progress"]`
+- `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`

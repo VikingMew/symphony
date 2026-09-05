@@ -114,6 +114,8 @@ sequenceDiagram
         else worker execution
             Orch->>Orch: Persist run/task in PostgreSQL
             Orch->>Orch: External worker claims task through HTTP API
+            Orch->>Codex: Worker launches app-server and sends one JSON-RPC turn
+            Codex-->>Orch: Worker reports session, validation, and handoff evidence
         end
         Orch->>Orch: Continue, retry, release, stop, or clean up
     end
@@ -270,6 +272,12 @@ Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
 The supported Compose deployment optionally runs the trusted HTTP runtime as `execution-worker`,
 on a control network shared with the Panel and a worker-only egress network. It has separate
 workspace, cache, log, and Codex volumes and no database-network membership or PostgreSQL secret.
+Claimed tasks carry the rendered prompt and app-server settings as structured data. The worker
+uses the same `Codex.AppServer` JSON-RPC stdio client as centralized execution for one session and
+turn, while hooks, required gates, and handoff remain shell-command phases. Executor startup and
+Codex session progress are distinct persisted facts. The worker retains a lease until Panel
+acknowledges its terminal event; periodic Panel reconciliation expires and requeues leases that
+stop renewing.
 This is distinct from the SSH `worker` image target. Centralized execution remains the default.
 
 The observability boundary deliberately separates memory/current from persistence/history:

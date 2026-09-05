@@ -63,6 +63,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     end
   end
 
+  defp settings_from_workflow_context({:error, reason}), do: {:error, reason}
   defp settings_from_workflow_context(_context), do: {:error, :workflow_config_unavailable}
 
   defp run_with_settings(settings, client, runtime_source) do
@@ -351,6 +352,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   end
 
   defp runtime_source({:ok, %{source: source}}), do: format_runtime_source(source)
+  defp runtime_source({:error, reason}), do: %{type: "error", detail: format_reason(reason)}
 
   defp format_runtime_source(%{type: type} = source) do
     %{

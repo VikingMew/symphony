@@ -65,7 +65,7 @@ flowchart LR
   O <-->|authenticated worker-v1 HTTPS| C
   W --> Git[Git host]
   X --> Codex[Codex service]
-  H --> Services[Git host and restricted Linear gateway]
+  H --> Services[Git host and Linear API]
 ```
 
 The worker owns repository checkout/worktree creation and cleanup below a configured workspace
@@ -83,8 +83,8 @@ Operations](compose.md#container-control-plane-boundary).
 | --- | --- |
 | Trust and authentication | Panel authenticates the worker/session as defined by worker-v1. Both deployments are operated by one administrator. Capability declarations remain scheduling hints, never security attestations or authorization. |
 | Filesystem | Panel never mounts or reads worker files. The non-root worker resolves every checkout, worktree, command cwd, and cleanup target beneath one configured absolute workspace root; caches have separate configured roots and are never command cwd. Repository content is untrusted. |
-| Secrets | Worker receives only its Panel credential and least-scope repository push, Codex, PR, and restricted Linear credentials. It never receives Panel database credentials or a general Linear token. Secrets are injected at runtime, excluded from task payloads and local summaries, redacted from uploaded event detail, and rotated independently. |
-| Network | Worker needs authenticated access only to Panel, Codex, configured Git/PR host, dependency registries required by the project, and the restricted Linear gateway. Deployment egress rules enforce this allow-list; capability fields do not. |
+| Secrets | Worker receives only its Panel credential, least-scope repository push, Codex, PR, and existing `LINEAR_API_KEY` credentials. It never receives Panel database credentials. Secrets are injected at runtime, excluded from task payloads and local summaries, redacted from uploaded event detail, and rotated independently. |
+| Network | Worker needs authenticated access only to Panel, Codex, configured Git/PR host, Linear API, and dependency registries required by the project. Deployment egress rules enforce this allow-list; capability fields do not. |
 | Process | One supervisor owns a process group for each lease, including hooks, Codex, allowed gates, and handoff commands. It enforces time/resource limits and reaps descendants. No execution subprocess runs in the Panel release, and the worker does not invoke a container engine or image-level validation. |
 
 This resolves SYM-7 by putting Elixir/OTP, `make`, and the other project-required tools in the
@@ -108,10 +108,10 @@ the run attempt.
 | Worker registered | Authenticate worker session and retain advertised slots/capabilities. | Register, heartbeat, and advertise only available capacity and scheduling hints. |
 | Claimed / lease acquired | Atomically return task and current lease identifiers, attempts, expiry, and execution payload. | Verify supported payload, start the lease supervisor, renew the lease, and emit accepted/progress events. |
 | Workspace prepared | Lease remains authoritative. | Create a contained checkout/worktree at the requested revision; report resolved source revision or a typed preparation failure. |
-| Codex / hooks | Payload supplies rendered prompt/command, hook commands, limits, and handoff policy resolved from the current workflow. | Run hooks and Codex in order; report phase, Codex session identifier, bounded redacted detail, duration, and typed outcome. |
+| Codex / hooks | Payload supplies the structured rendered prompt, app-server settings, hook commands, limits, and handoff policy resolved from the current workflow. | Run hooks and one Codex app-server JSON-RPC turn in order; report phase, Codex session identifier, bounded redacted detail, duration, and typed outcome. |
 | Required validation | Payload supplies ordered commands and timeouts. | Run every required gate in the final worktree, in order, within this lease; write the local machine-readable summary and report its bounded summary. |
-| Git / PR / Linear handoff | Existing PR-first and restricted Linear rules remain authoritative. | Only after required gates pass, push the exact branch/commit, find or create the PR idempotently, then perform the allowed Linear handoff; report references or typed failure. |
-| Terminal event | Panel applies the landed current-lease check and updates persisted task/run state. | Send one of `task.completed`, `task.failed`, or `task.cancelled` with phase, reason, validation summary, runtime identity, and handoff references. Retry duplicate delivery using existing idempotency behavior. |
+| Git / PR / Linear handoff | Existing PR-first and task-scoped Linear rules remain authoritative. | Codex submits a validated `handoff` payload after `create_pull_request`; only after required gates pass does the worker write the attachment, comment, and `Ready to Merge` state, then report references or typed failure. |
+| Terminal event | Panel applies the landed current-lease check, updates persisted task/run state, and releases the issue's in-memory orchestration claim after any accepted terminal event. | Send one of `task.completed`, `task.failed`, or `task.cancelled` with phase, reason, validation summary, runtime identity, and handoff references. Retry duplicate delivery using existing idempotency behavior. |
 
 Progress events need the envelope identifiers, phase/type, occurrence time, and bounded payload.
 Terminal payloads additionally need outcome/reason; source revision; worker image tag or digest and
