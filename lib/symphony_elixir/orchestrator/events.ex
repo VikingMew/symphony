@@ -75,6 +75,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
         },
         "limits" => %{
           "max_turns" => settings.agent.max_turns,
+          "max_failure_retries" => settings.agent.max_failure_retries,
           "turn_timeout_ms" => settings.codex.turn_timeout_ms,
           "read_timeout_ms" => settings.codex.read_timeout_ms,
           "stall_timeout_ms" => settings.codex.stall_timeout_ms

@@ -71,7 +71,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:turn_input_required, payload}} =
+      assert {:blocked, %{reason: :turn_input_required, detail: payload}} =
                AppServer.run(workspace, "Needs input", issue)
 
       assert payload["method"] == "turn/input_required"
@@ -136,7 +136,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:turn_input_required, payload}} =
+      assert {:blocked, %{reason: :turn_input_required, detail: payload}} =
                AppServer.run(workspace, "Needs mcp input", issue)
 
       assert payload["method"] == "mcpServer/elicitation/request"
@@ -202,7 +202,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
         labels: ["backend"]
       }
 
-      assert {:error, {:approval_required, payload}} =
+      assert {:blocked, %{reason: :approval_required, detail: payload}} =
                AppServer.run(workspace, "Handle approval request", issue)
 
       assert payload["method"] == "item/commandExecution/requestApproval"

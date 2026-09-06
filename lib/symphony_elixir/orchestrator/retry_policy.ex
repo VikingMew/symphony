@@ -13,6 +13,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
           optional(:error) => String.t(),
           optional(:worker_host) => String.t(),
           optional(:workspace_path) => String.t(),
+          optional(:failure_count) => non_neg_integer(),
           optional(:delay_type) => atom()
         }
 
@@ -29,6 +30,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       error: pick_retry_error(previous_retry, metadata),
       worker_host: pick_retry_worker_host(previous_retry, metadata),
       workspace_path: pick_retry_workspace_path(previous_retry, metadata),
+      failure_count: Map.get(metadata, :failure_count, Map.get(previous_retry, :failure_count, 0)),
       delay_type: Map.get(metadata, :delay_type)
     }
   end
@@ -44,7 +46,8 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       identifier: prepared_retry.identifier,
       error: prepared_retry.error,
       worker_host: prepared_retry.worker_host,
-      workspace_path: prepared_retry.workspace_path
+      workspace_path: prepared_retry.workspace_path,
+      failure_count: prepared_retry.failure_count
     }
   end
 
@@ -58,7 +61,8 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
           identifier: Map.get(retry_entry, :identifier),
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
-          workspace_path: Map.get(retry_entry, :workspace_path)
+          workspace_path: Map.get(retry_entry, :workspace_path),
+          failure_count: Map.get(retry_entry, :failure_count, 0)
         }
 
         {:ok, attempt, metadata, Map.delete(retry_attempts, issue_id)}
@@ -111,6 +115,18 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
   @spec normalize_attempt(term()) :: non_neg_integer()
   def normalize_attempt(attempt) when is_integer(attempt) and attempt > 0, do: attempt
   def normalize_attempt(_attempt), do: 0
+
+  @spec failure_decision(non_neg_integer(), non_neg_integer()) ::
+          {:retry, pos_integer()} | {:exhausted, pos_integer()}
+  def failure_decision(previous_failures, max_failure_retries)
+      when is_integer(previous_failures) and previous_failures >= 0 and
+             is_integer(max_failure_retries) and max_failure_retries >= 0 do
+    failure_count = previous_failures + 1
+
+    if failure_count > max_failure_retries,
+      do: {:exhausted, failure_count},
+      else: {:retry, failure_count}
+  end
 
   @spec next_retry_attempt_from_running(map()) :: pos_integer() | nil
   def next_retry_attempt_from_running(running_entry) when is_map(running_entry) do

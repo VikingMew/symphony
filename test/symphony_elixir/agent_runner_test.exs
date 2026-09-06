@@ -1,6 +1,21 @@
 defmodule SymphonyElixir.AgentRunnerTest do
   use SymphonyElixir.TestSupport
 
+  test "normalizes explicit terminal outcomes without inspecting blocker reason" do
+    blocked = %{
+      reason: "blocked_on_push_auth",
+      detail: "refresh credentials",
+      references: %{remote: "origin"}
+    }
+
+    assert AgentRunner.normalize_outcome(:ok) == :success
+    assert AgentRunner.normalize_outcome({:blocked, blocked}) == {:blocked, blocked}
+    assert AgentRunner.normalize_outcome({:error, :boom}) == {:failed, :boom}
+
+    assert AgentRunner.normalize_outcome(%{reason: "looks blocked"}) ==
+             {:failed, {:invalid_agent_outcome, %{reason: "looks blocked"}}}
+  end
+
   test "builds canonical operator task identities" do
     assert AgentRunner.operator_task_identity(:nap, "operator-123") == %{
              identifier: "NAP-operator-123",
@@ -99,7 +114,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
       }
 
       before = MapSet.new(File.ls!(workspace_root))
-      assert :ok = AgentRunner.run(issue)
+      assert :success = AgentRunner.run(issue)
       entries_after = MapSet.new(File.ls!(workspace_root))
 
       created =
@@ -198,7 +213,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       test_pid = self()
 
-      assert :ok =
+      assert :success =
                AgentRunner.run(
                  issue,
                  test_pid,
@@ -309,7 +324,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         :ok
       end
 
-      assert :ok =
+      assert :success =
                AgentRunner.run(issue, nil,
                  implementation_start_transitioner: transitioner,
                  issue_state_fetcher: fn ["issue-ready-transition"] -> {:ok, [%{issue | state: "Done"}]} end
@@ -366,7 +381,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         flunk("Ready issue should not transition when Codex startup fails")
       end
 
-      assert {:error, {:codex_startup_failed, _details}} =
+      assert {:failed, {:codex_startup_failed, _details}} =
                AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
     after
       File.rm_rf(test_root)
@@ -443,7 +458,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         {:ok, [%{issue | state: state}]}
       end
 
-      assert :ok =
+      assert :success =
                AgentRunner.run(issue, nil,
                  workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
                  refinement_start_transitioner: transitioner,
@@ -507,7 +522,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         labels: []
       }
 
-      assert {:error, {:refinement_start_transition_failed, :linear_rejected}} =
+      assert {:failed, {:refinement_start_transition_failed, :linear_rejected}} =
                AgentRunner.run(issue, nil,
                  workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
                  refinement_start_transitioner: fn ^issue, "Refining" -> {:error, :linear_rejected} end
@@ -586,7 +601,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       transitioner = fn _transition_issue, "In Progress" -> {:error, :linear_state_not_found} end
 
-      assert {:error, {:implementation_start_transition_failed, :linear_state_not_found}} =
+      assert {:failed, {:implementation_start_transition_failed, :linear_state_not_found}} =
                AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
 
       trace = File.read!(trace_file)
@@ -655,7 +670,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         state: "In Progress"
       }
 
-      assert {:error, {:workspace_prepare_failed, "worker-a", 75, "worker-a prepare failed\n"}} =
+      assert {:failed, {:workspace_prepare_failed, "worker-a", 75, "worker-a prepare failed\n"}} =
                AgentRunner.run(issue, nil, worker_host: "worker-a")
 
       trace = File.read!(trace_file)
@@ -766,7 +781,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         labels: []
       }
 
-      assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
+      assert :success = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
       assert_receive {:issue_state_fetch, 1}
       assert_receive {:issue_state_fetch, 2}
 
@@ -883,7 +898,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         labels: []
       }
 
-      assert :ok =
+      assert :success =
                AgentRunner.run(issue, nil,
                  issue_state_fetcher: state_fetcher,
                  pull_request_ensurer: fn _issue, _project, _opts ->
@@ -1019,7 +1034,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
         end
       end
 
-      assert :ok =
+      assert :success =
                AgentRunner.run(issue, nil,
                  workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
                  implementation_branch_checkout: fn ^workspace, "feature/sym-1", _opts ->

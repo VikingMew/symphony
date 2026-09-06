@@ -3,6 +3,14 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
 
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
+  test "failure budget allows configured retries after the first attempt" do
+    assert RetryPolicy.failure_decision(0, 3) == {:retry, 1}
+    assert RetryPolicy.failure_decision(1, 3) == {:retry, 2}
+    assert RetryPolicy.failure_decision(2, 3) == {:retry, 3}
+    assert RetryPolicy.failure_decision(3, 3) == {:exhausted, 4}
+    assert RetryPolicy.failure_decision(0, 0) == {:exhausted, 1}
+  end
+
   test "prepare_retry normalizes attempt, delay, and metadata from previous retry" do
     previous_timer = make_ref()
 
@@ -69,7 +77,8 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
              identifier: "MT-3",
              error: "boom",
              worker_host: "worker-b",
-             workspace_path: "/tmp/work"
+             workspace_path: "/tmp/work",
+             failure_count: 0
            }
 
     assert remaining == %{}

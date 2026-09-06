@@ -1406,6 +1406,15 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     ref = make_ref()
     initial_state = :sys.get_state(pid)
 
+    FakePersistence.put_issues([
+      %{
+        identifier: "MT-BLOCK",
+        tracker_issue_id: issue_id,
+        blocking_decision: nil,
+        no_progress_streak: 0
+      }
+    ])
+
     running_entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: ref,
@@ -1418,7 +1427,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       started_at: DateTime.utc_now(),
       session_history: [],
       session_history_total_count: 0,
-      agent_result: {:error, {:turn_input_required, %{"method" => "turn/input_required", "params" => %{"reason" => "operator decision"}}}}
+      agent_result:
+        {:blocked,
+         %{
+           reason: "blocked_on_push_auth",
+           detail: %{"action" => "refresh GitHub credentials"},
+           references: %{"remote" => "origin"}
+         }}
     }
 
     :sys.replace_state(pid, fn _ ->
@@ -1435,14 +1450,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.claimed, issue_id)
     assert state.retry_attempts == %{}
-    assert %{reason: :turn_input_required, detail: detail} = state.blocked[issue_id]
-    assert detail =~ "waiting for user input"
+    assert %{reason: "blocked_on_push_auth", detail: detail} = state.blocked[issue_id]
+    assert detail =~ "refresh GitHub credentials"
 
     snapshot = GenServer.call(pid, :snapshot)
-    assert [%{issue_id: ^issue_id, reason: :turn_input_required}] = snapshot.blocked
+    assert [%{issue_id: ^issue_id, reason: "blocked_on_push_auth"}] = snapshot.blocked
   end
 
-  test "stalled input-required sessions become blocked instead of retrying" do
+  test "stalled sessions consume the failure budget without inspecting protocol events" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
       codex_stall_timeout_ms: 1_000
@@ -1496,8 +1511,9 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     refute Process.alive?(worker_pid)
     refute Map.has_key?(state.running, issue_id)
     assert MapSet.member?(state.claimed, issue_id)
-    assert state.retry_attempts == %{}
-    assert %{reason: :turn_input_required} = state.blocked[issue_id]
+    assert %{attempt: 1} = state.retry_attempts[issue_id]
+    assert state.failure_counts[issue_id] == 1
+    refute Map.has_key?(state.blocked, issue_id)
   end
 
   test "orchestrator does not treat pre-codex workspace preparation as codex stall" do
