@@ -551,7 +551,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           params
         )
 
-        {:error, {:turn_failed, params}}
+        normalize_failed_turn(params)
 
       {:turn_cancelled, payload, params, payload_string} ->
         emit_turn_event(
@@ -649,7 +649,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata
         )
 
-        {:error, {:turn_input_required, payload}}
+        {:blocked, blocked_outcome(:turn_input_required, payload)}
 
       {:reply, reply, event, extra_details} ->
         send_message(port, reply)
@@ -671,7 +671,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata
         )
 
-        {:error, {:approval_required, payload}}
+        {:blocked, blocked_outcome(:approval_required, payload)}
 
       :unhandled ->
         if ToolRequestHandler.needs_input?(method, payload) do
@@ -682,7 +682,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             metadata
           )
 
-          {:error, {:turn_input_required, payload}}
+          {:blocked, blocked_outcome(:turn_input_required, payload)}
         else
           emit_message(
             on_message,
@@ -699,6 +699,35 @@ defmodule SymphonyElixir.Codex.AppServer do
         end
     end
   end
+
+  defp normalize_failed_turn(params) do
+    case param(params, "outcome") || param(params, "status") do
+      outcome when outcome in ["blocked", :blocked] ->
+        {:blocked,
+         %{
+           reason: param(params, "reason") || "blocked",
+           detail: param(params, "detail") || params,
+           references: param(params, "references") || %{}
+         }}
+
+      outcome when outcome in ["failed", :failed] ->
+        {:error, {:turn_failed, params}}
+
+      outcome ->
+        {:error, {:invalid_turn_outcome, outcome, params}}
+    end
+  end
+
+  defp blocked_outcome(reason, payload),
+    do: %{reason: reason, detail: payload, references: %{}}
+
+  defp param(params, "outcome"), do: Map.get(params, "outcome") || Map.get(params, :outcome)
+  defp param(params, "status"), do: Map.get(params, "status") || Map.get(params, :status)
+  defp param(params, "reason"), do: Map.get(params, "reason") || Map.get(params, :reason)
+  defp param(params, "detail"), do: Map.get(params, "detail") || Map.get(params, :detail)
+
+  defp param(params, "references"),
+    do: Map.get(params, "references") || Map.get(params, :references)
 
   defp await_response(port, request_id) do
     with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "")

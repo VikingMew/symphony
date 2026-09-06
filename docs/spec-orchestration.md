@@ -198,6 +198,15 @@ Backoff formula:
 - Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
+- A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
+  After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
+  persists a blocking decision and delivers the Linear comment and `Blocked` transition.
+- Continuations, capacity requeues, and tracker failures while polling a retry do not consume the
+  failure budget. A successful run clears the issue's current failure chain.
+
+The orchestrator accepts an explicit `blocked` outcome without inspecting its reason or detail.
+Those opaque values and the run/session/references are persisted through `BlockingDecision`; the
+orchestrator has no blocked-reason or protocol-method whitelist.
 
 Retry handling behavior:
 

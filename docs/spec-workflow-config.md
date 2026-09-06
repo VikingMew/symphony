@@ -194,6 +194,10 @@ Fields:
 - `max_retry_backoff_ms` (integer)
   - Default: `300000` (5 minutes)
   - Changes SHOULD be re-applied at runtime and affect future retry scheduling.
+- `max_failure_retries` (non-negative integer)
+  - Default: `3`
+  - Maximum automatic retries after the first failed/crashed/stalled worker attempt.
+  - Negative and non-integer values fail configuration validation.
 
 #### 5.3.6 `codex` (object)
 
@@ -383,6 +387,7 @@ not require recognizing or validating extension fields unless that extension is 
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
+- `agent.max_failure_retries`: non-negative integer, default `3`
 - `codex.command`: shell command string, default `codex app-server`
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined

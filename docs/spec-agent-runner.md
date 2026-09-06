@@ -125,6 +125,12 @@ Important emitted events include, for example:
 - `other_message`
 - `malformed`
 
+The AppServer/AgentRunner completion boundary has three normalized outcomes: `success`, `blocked`,
+and `failed`. `blocked` carries an opaque reason, bounded detail, and references. Only an explicit
+outcome/status may select `blocked`; missing or invalid terminal outcome values are protocol
+failures. Targeted input, approval, and MCP elicitation requests are converted to `blocked` by the
+Codex adapter, not classified by the orchestrator.
+
 ### 10.5 Approval, Tool Calls, and User Input Policy
 
 Approval, sandbox, and user-input behavior is implementation-defined.

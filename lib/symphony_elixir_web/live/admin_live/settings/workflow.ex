@@ -149,6 +149,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Workflow do
               <input id={workflow_field_id("agent_max_turns")} class={workflow_field_class(@workflow_field_errors, "agent_max_turns")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_turns")} type="number" min="1" name="workflow[agent_max_turns]" value={@workflow_form["agent_max_turns"]} />
               <.workflow_field_error field="agent_max_turns" errors={@workflow_field_errors} />
             </label>
+            <label>
+              <span class="metric-label">Max failure retries</span>
+              <input id={workflow_field_id("agent_max_failure_retries")} class={workflow_field_class(@workflow_field_errors, "agent_max_failure_retries")} aria-invalid={workflow_field_invalid?(@workflow_field_errors, "agent_max_failure_retries")} type="number" min="0" name="workflow[agent_max_failure_retries]" value={@workflow_form["agent_max_failure_retries"]} />
+              <.workflow_field_error field="agent_max_failure_retries" errors={@workflow_field_errors} />
+            </label>
           </section>
 
           <section class="workflow-form-section">

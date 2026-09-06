@@ -35,7 +35,9 @@ defmodule SymphonyElixir.AgentRunner do
           description: String.t()
         }
 
-  @spec run(map(), pid() | nil, keyword()) :: :ok | {:error, term()}
+  @type outcome :: :success | {:blocked, map()} | {:failed, term()}
+
+  @spec run(map(), pid() | nil, keyword()) :: outcome()
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
     # The orchestrator owns host retries so one worker lifetime never hops machines.
     worker_host =
@@ -46,16 +48,24 @@ defmodule SymphonyElixir.AgentRunner do
 
     Logger.info("Starting agent run for #{issue_context(issue)} worker_host=#{worker_host_for_log(worker_host)}")
 
-    case run_on_worker_host(issue, codex_update_recipient, opts, worker_host) do
-      :ok ->
-        :ok
+    case normalize_outcome(run_on_worker_host(issue, codex_update_recipient, opts, worker_host)) do
+      :success = outcome ->
+        outcome
 
-      {:error, reason} ->
+      {:blocked, _blocked} = outcome ->
+        outcome
+
+      {:failed, reason} = outcome ->
         Logger.error("Agent run failed for #{issue_context(issue)}: #{Policy.failure_summary(reason)}")
-
-        {:error, reason}
+        outcome
     end
   end
+
+  @spec normalize_outcome(term()) :: outcome()
+  def normalize_outcome(:ok), do: :success
+  def normalize_outcome({:blocked, blocked}) when is_map(blocked), do: {:blocked, blocked}
+  def normalize_outcome({:error, reason}), do: {:failed, reason}
+  def normalize_outcome(other), do: {:failed, {:invalid_agent_outcome, other}}
 
   @spec run_operator(atom(), String.t(), pid() | nil, keyword()) :: :ok | {:error, term()}
   def run_operator(kind, run_id, codex_update_recipient \\ nil, opts \\ [])
