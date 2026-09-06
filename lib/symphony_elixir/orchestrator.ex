@@ -593,7 +593,6 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_from_decision(state, issue_id, running_entry, decision) do
-    stop_running_process(running_entry)
     delivery = BlockingDecision.deliver(issue_id, running_entry.identifier)
 
     persist_event(
@@ -1371,18 +1370,6 @@ defmodule SymphonyElixir.Orchestrator do
 
       :active ->
         state
-    end
-  end
-
-  defp stop_running_process(running_entry) when is_map(running_entry) do
-    case Map.get(running_entry, :pid) do
-      pid when is_pid(pid) -> terminate_task(pid)
-      _ -> :ok
-    end
-
-    case Map.get(running_entry, :ref) do
-      ref when is_reference(ref) -> Process.demonitor(ref, [:flush])
-      _ -> :ok
     end
   end
 
