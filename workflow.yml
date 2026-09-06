@@ -1,5 +1,6 @@
 agent:
   max_turns: 20
+  max_failure_retries: 3
 codex:
   approval_policy: "never"
   command: "codex --config 'model=\"gpt-5.5\"' --config model_reasoning_effort=xhigh app-server"

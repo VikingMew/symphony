@@ -72,6 +72,7 @@ defmodule SymphonyElixir.Orchestrator do
       codex_last_reported_total_tokens: 0,
       turn_count: 0,
       retry_attempt: 0,
+      failure_count: 0,
       session_history: [],
       session_history_total_count: 0,
       linear_state_transitions: [],
@@ -137,6 +138,7 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
+      failure_counts: %{},
       codex_totals: nil,
       codex_rate_limits: nil,
       codex_rate_limit_observation: nil,
@@ -489,15 +491,27 @@ defmodule SymphonyElixir.Orchestrator do
   defp handle_issue_worker_down_reason(
          state,
          issue_id,
-         %{agent_result: {:error, reason}} = running_entry,
+         %{agent_result: {:failed, reason}} = running_entry,
          :normal,
          session_id
        ) do
     handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id)
   end
 
+  defp handle_issue_worker_down_reason(
+         state,
+         issue_id,
+         %{agent_result: {:blocked, outcome}} = running_entry,
+         :normal,
+         session_id
+       ) do
+    block_issue_for_input(state, issue_id, running_entry, outcome, session_id)
+  end
+
   defp handle_issue_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
     persist_run_finished(running_entry, "completed", nil)
+
+    state = clear_failure_count(state, issue_id)
 
     if run_made_progress?(running_entry) do
       _ = BlockingDecision.clear(running_entry.identifier)
@@ -532,15 +546,9 @@ defmodule SymphonyElixir.Orchestrator do
   defp handle_issue_worker_down_reason(state, issue_id, running_entry, reason, session_id) do
     Logger.warning("Agent task crashed for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}; scheduling retry")
 
-    next_attempt = RetryPolicy.next_retry_attempt_from_running(running_entry)
     summary = "agent crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
-    schedule_issue_retry(state, issue_id, next_attempt, %{
-      identifier: running_entry.identifier,
-      error: summary,
-      worker_host: Map.get(running_entry, :worker_host),
-      workspace_path: Map.get(running_entry, :workspace_path)
-    })
+    fail_or_retry(state, issue_id, running_entry, summary, :worker_crash, reason)
     |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
   end
 
@@ -622,6 +630,7 @@ defmodule SymphonyElixir.Orchestrator do
     |> Map.update!(:running, &Map.delete(&1, issue_id))
     |> Map.update!(:blocked, &Map.put(&1, issue_id, blocked_entry))
     |> Map.update!(:claimed, &MapSet.put(&1, issue_id))
+    |> clear_failure_count(issue_id)
   end
 
   defp delivery_transition_completed?({:ok, %{transition: :ok}}), do: true
@@ -713,66 +722,93 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_agent_domain_failure(state, issue_id, running_entry, reason, session_id) do
-    if InputBlocker.blocked?(reason) do
-      block_issue_for_input(state, issue_id, running_entry, reason, session_id)
+    summary = agent_failure_summary(reason)
+    Logger.warning("Agent task failed for issue_id=#{issue_id} session_id=#{session_id} #{summary}")
+
+    fail_or_retry(state, issue_id, running_entry, summary, :failure_retries_exhausted, reason)
+    |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+  end
+
+  defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail) do
+    decision =
+      RetryPolicy.failure_decision(
+        Map.get(state.failure_counts, issue_id, 0),
+        Config.settings!().agent.max_failure_retries
+      )
+
+    failure_count = elem(decision, 1)
+    state = %{state | failure_counts: Map.put(state.failure_counts, issue_id, failure_count)}
+
+    if match?({:exhausted, _}, decision) do
+      references =
+        run_references(running_entry)
+        |> Map.put(:failure_attempt, failure_count)
+        |> Map.put(:session_id, running_entry.session_id)
+
+      persist_and_block_issue(
+        state,
+        issue_id,
+        running_entry,
+        exhausted_reason,
+        %{summary: summary, detail: detail, failure_attempt: failure_count},
+        references
+      )
     else
-      summary = agent_failure_summary(reason)
-
-      Logger.warning("Agent task failed for issue_id=#{issue_id} session_id=#{session_id} #{summary}; scheduling retry")
-
-      next_attempt = RetryPolicy.next_retry_attempt_from_running(running_entry)
-
-      schedule_issue_retry(state, issue_id, next_attempt, %{
-        identifier: running_entry.identifier,
-        error: summary,
-        worker_host: Map.get(running_entry, :worker_host),
-        workspace_path: Map.get(running_entry, :workspace_path)
-      })
-      |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+      schedule_issue_retry(
+        state,
+        issue_id,
+        RetryPolicy.next_retry_attempt_from_running(running_entry),
+        %{
+          identifier: running_entry.identifier,
+          error: summary,
+          worker_host: Map.get(running_entry, :worker_host),
+          workspace_path: Map.get(running_entry, :workspace_path),
+          failure_count: failure_count
+        }
+      )
     end
   end
 
-  defp block_issue_for_input(state, issue_id, running_entry, reason, session_id) do
-    summary = InputBlocker.summary(reason)
+  defp clear_failure_count(state, issue_id),
+    do: %{state | failure_counts: Map.delete(state.failure_counts, issue_id)}
+
+  defp block_issue_for_input(state, issue_id, running_entry, outcome, session_id) do
+    summary = InputBlocker.summary(outcome)
 
     Logger.warning("Agent task blocked for issue_id=#{issue_id} session_id=#{session_id} #{summary}; waiting for operator input")
 
     updated_running_entry =
       append_session_history(
         running_entry,
-        InputBlocker.event(reason),
-        InputBlocker.label(reason),
-        %{message: blocked_payload(reason), source: :agent}
+        :blocked,
+        "Agent blocked",
+        %{message: outcome.detail, reason: outcome.reason, source: :agent}
       )
-
-    blocked_entry = InputBlocker.entry(issue_id, Map.from_struct(updated_running_entry), reason)
-
-    persist_event(
-      "run.blocked",
-      running_entry.identifier,
-      %{issue_id: issue_id, reason: summary},
-      Map.get(running_entry, :run_id)
-    )
 
     persist_run_finished(updated_running_entry, "blocked", summary)
 
-    %{
-      state
-      | blocked: Map.put(state.blocked, issue_id, blocked_entry),
-        retry_attempts: Map.delete(state.retry_attempts, issue_id),
-        claimed: MapSet.put(state.claimed, issue_id)
-    }
+    references =
+      run_references(updated_running_entry)
+      |> Map.merge(Map.get(outcome, :references, %{}))
+      |> Map.put(:session_id, session_id)
+
+    persist_and_block_issue(
+      state,
+      issue_id,
+      updated_running_entry,
+      outcome.reason,
+      outcome.detail,
+      references
+    )
   end
 
-  defp blocked_payload({reason, payload})
-       when reason in [:turn_input_required, :approval_required] and is_map(payload), do: payload
+  defp agent_exit_summary(:normal, %{agent_result: :success}), do: "completed"
 
-  defp blocked_payload(reason), do: %{event: reason}
-
-  defp agent_exit_summary(:normal, %{agent_result: :ok}), do: "completed"
-
-  defp agent_exit_summary(:normal, %{agent_result: {:error, reason}}),
+  defp agent_exit_summary(:normal, %{agent_result: {:failed, reason}}),
     do: "failed #{agent_failure_summary(reason)}"
+
+  defp agent_exit_summary(:normal, %{agent_result: {:blocked, outcome}}),
+    do: InputBlocker.summary(outcome)
 
   defp agent_exit_summary(:normal, _running_entry), do: "completed"
 
@@ -1314,44 +1350,27 @@ defmodule SymphonyElixir.Orchestrator do
   defp restart_stalled_issue(state, _run_id, %RunningOperator{}, _now, _timeout_ms), do: state
 
   defp restart_stalled_issue(state, issue_id, %RunningIssue{} = running_entry, now, timeout_ms) do
-    blocking_reason = InputBlocker.blocked_reason(blocking_signal(running_entry))
     stall_decision = RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)
 
-    case {blocking_reason, stall_decision} do
-      {{:blocked, reason, payload}, {:stalled, decision}} ->
-        Logger.warning(
-          "Issue stalled while waiting for input: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; marking blocked"
-        )
-
-        stop_running_process(running_entry)
-
-        state
-        |> record_session_completion_totals(running_entry)
-        |> Map.update!(:running, &Map.delete(&1, issue_id))
-        |> block_issue_for_input(issue_id, running_entry, {reason, payload}, decision.session_id)
-
-      {_input_state, {:stalled, decision}} ->
+    case stall_decision do
+      {:stalled, decision} ->
         Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
+
+        summary = decision.metadata.error
 
         state
         |> terminate_running_issue(issue_id, false)
-        |> schedule_issue_retry(issue_id, decision.attempt, decision.metadata)
+        |> fail_or_retry(
+          issue_id,
+          running_entry,
+          summary,
+          :failure_retries_exhausted,
+          %{kind: :stall, elapsed_ms: decision.elapsed_ms}
+        )
+        |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
 
-      {_input_state, :active} ->
+      :active ->
         state
-    end
-  end
-
-  defp blocking_signal(running_entry) when is_map(running_entry) do
-    cond do
-      InputBlocker.blocked?(Map.get(running_entry, :last_codex_event)) ->
-        Map.get(running_entry, :last_codex_event)
-
-      InputBlocker.blocked?(Map.get(running_entry, :last_codex_message)) ->
-        Map.get(running_entry, :last_codex_message)
-
-      true ->
-        nil
     end
   end
 
@@ -1594,6 +1613,7 @@ defmodule SymphonyElixir.Orchestrator do
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: RetryPolicy.normalize_attempt(attempt),
+            failure_count: Map.get(state.failure_counts, issue.id, 0),
             started_at: DateTime.utc_now(),
             session_history: initial_session_history(issue, attempt, worker_host),
             session_history_total_count: 1
@@ -1696,6 +1716,7 @@ defmodule SymphonyElixir.Orchestrator do
       state
       | completed: MapSet.put(state.completed, issue_id),
         retry_attempts: Map.delete(state.retry_attempts, issue_id),
+        failure_counts: Map.delete(state.failure_counts, issue_id),
         claimed: MapSet.delete(state.claimed, issue_id)
     }
   end
@@ -1958,7 +1979,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp release_issue_claim(%State{} = state, issue_id) do
-    %{state | claimed: MapSet.delete(state.claimed, issue_id)}
+    %{
+      state
+      | claimed: MapSet.delete(state.claimed, issue_id),
+        failure_counts: Map.delete(state.failure_counts, issue_id)
+    }
   end
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry

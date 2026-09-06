@@ -85,6 +85,10 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Normal worker exit schedules a short continuation retry (attempt 1)
 - Abnormal worker exit increments retries with 10s-based exponential backoff
 - Retry backoff cap uses configured `agent.max_retry_backoff_ms`
+- Explicit failed outcomes, abnormal exits, and stalls share the bounded
+  `agent.max_failure_retries` budget; scheduling requeues do not consume it
+- Explicit blocked outcomes with arbitrary reasons use persistent blocking-decision delivery and
+  never enter the retry queue
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason
@@ -203,4 +207,3 @@ Use the same validation profiles as Section 17:
 - Verify hook execution and runtime path resolution on the target host OS/shell environment.
 - If the OPTIONAL HTTP server is shipped, verify the configured port behavior and loopback/default
   bind expectations on the target environment.
-

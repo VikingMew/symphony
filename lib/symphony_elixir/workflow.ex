@@ -73,7 +73,7 @@ defmodule SymphonyElixir.Workflow do
         "polling" => defaults["polling"],
         "server" => Map.put(defaults["server"], "port", port),
         "workspace" => defaults["workspace"],
-        "agent" => Map.take(defaults["agent"], ["max_turns"]),
+        "agent" => Map.take(defaults["agent"], ["max_turns", "max_failure_retries"]),
         "codex" => Map.take(defaults["codex"], ["command", "pre_start_commands", "approval_policy", "thread_sandbox"]),
         "workflow" => defaults["workflow"],
         "profiles" => defaults["profiles"]

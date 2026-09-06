@@ -846,6 +846,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       "workspace_root" => "/tmp/symphony-workspaces",
       "initialize_timeout_ms" => "60000",
       "agent_max_turns" => "20",
+      "agent_max_failure_retries" => "3",
       "codex_command" => "codex app-server",
       "codex_pre_start_commands" => "",
       "codex_approval_policy" => "never",

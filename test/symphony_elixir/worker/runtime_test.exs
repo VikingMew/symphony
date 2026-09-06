@@ -135,6 +135,17 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
   end
 
+  test "executor task startup failure is delivered as task.failed", %{config: config} do
+    put_claims([claim("task-1", false)])
+    config = %{config | task_supervisor: SymphonyElixir.Worker.MissingTaskSupervisor}
+
+    runtime = start_runtime(config)
+
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+    assert Process.alive?(runtime)
+    assert phases("task-1") == []
+  end
+
   defp claim(task_id, block) do
     %{
       "task_id" => task_id,

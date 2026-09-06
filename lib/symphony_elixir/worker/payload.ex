@@ -14,8 +14,8 @@ defmodule SymphonyElixir.Worker.Payload do
     stall_timeout_ms
   )
 
-  @enforce_keys [:repository, :revision, :branch, :codex, :gates]
-  defstruct @enforce_keys ++ [repository_url: nil, default_branch: nil, hooks: [], handoff: %{}]
+  @enforce_keys [:repository, :default_branch, :branch, :codex, :gates]
+  defstruct @enforce_keys ++ [repository_url: nil, hooks: [], handoff: %{}]
 
   @type command :: %{required(:command) => String.t(), required(:timeout_seconds) => pos_integer()}
   @type codex :: %{
@@ -28,7 +28,6 @@ defmodule SymphonyElixir.Worker.Payload do
           repository: String.t(),
           repository_url: String.t(),
           default_branch: String.t(),
-          revision: String.t(),
           branch: String.t(),
           codex: codex(),
           hooks: [command()],
@@ -41,7 +40,7 @@ defmodule SymphonyElixir.Worker.Payload do
     with :ok <- reject_forbidden(payload),
          {:ok, repository} <- required_string(payload, "repository"),
          :ok <- reject_repository_credentials(repository),
-         {:ok, revision} <- required_string(payload, "revision"),
+         {:ok, default_branch} <- required_string(payload, "default_branch"),
          {:ok, branch} <- required_string(payload, "branch"),
          {:ok, codex} <- codex(Map.get(payload, "codex")),
          {:ok, hooks} <- commands(Map.get(payload, "hooks", []), "hooks", true),
@@ -50,8 +49,7 @@ defmodule SymphonyElixir.Worker.Payload do
        %__MODULE__{
          repository: repository,
          repository_url: Map.get(payload, "repository_url", repository),
-         default_branch: Map.get(payload, "default_branch", revision),
-         revision: revision,
+         default_branch: default_branch,
          branch: branch,
          codex: codex,
          hooks: hooks,

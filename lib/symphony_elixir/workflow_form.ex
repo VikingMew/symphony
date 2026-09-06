@@ -40,6 +40,7 @@ defmodule SymphonyElixir.WorkflowForm do
       "initialize_timeout_ms" => get_integer_string(display_config, ["workspace", "initialize_timeout_ms"]),
       "workspace_min_free_gib" => min_free_gib_string(get_in(display_config, ["workspace", "min_free_bytes"])),
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"]),
+      "agent_max_failure_retries" => get_integer_string(display_config, ["agent", "max_failure_retries"]),
       "codex_command" => get_string(display_config, ["codex", "command"]),
       "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
       "codex_approval_policy" => get_codex_approval_policy(display_config),
@@ -97,6 +98,7 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, initialize_timeout_ms} <- parse_positive_integer(draft, "initialize_timeout_ms", "Initialize timeout"),
          {:ok, workspace_min_free_bytes} <- parse_min_free_bytes(draft),
          {:ok, max_turns} <- parse_positive_integer(draft, "agent_max_turns", "Max turns"),
+         {:ok, max_failure_retries} <- parse_non_negative_integer(draft, "agent_max_failure_retries", "Max failure retries"),
          {:ok, rate_limit_gate_5h_threshold} <- parse_percent(draft, "codex_rate_limit_gate_5h_threshold_percent", "5-hour rate-limit threshold"),
          {:ok, rate_limit_gate_7d_threshold} <- parse_percent(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold"),
          {:ok, rate_limit_gate_post_reset_delay_ms} <- parse_non_negative_integer(draft, "codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"),
@@ -120,6 +122,7 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["workspace", "min_free_bytes"], workspace_min_free_bytes)
         |> drop_legacy_capacity_keys()
         |> put_path(["agent", "max_turns"], max_turns)
+        |> put_path(["agent", "max_failure_retries"], max_failure_retries)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
         |> put_path(["codex", "pre_start_commands"], lines(Map.get(draft, "codex_pre_start_commands", "")))
         |> put_path(["codex", "approval_policy"], Map.get(draft, "codex_approval_policy", "never"))
@@ -143,6 +146,7 @@ defmodule SymphonyElixir.WorkflowForm do
       {"initialize_timeout_ms", "Initialize timeout"},
       {"workspace_min_free_gib", "Minimum free GiB"},
       {"agent_max_turns", "Max turns"},
+      {"agent_max_failure_retries", "Max failure retries"},
       {"codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"},
       {"hook_timeout_ms", "Hook timeout"}
     ]

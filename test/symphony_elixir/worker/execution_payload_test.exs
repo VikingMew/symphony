@@ -9,7 +9,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
 
     assert execution["version"] == 1
     assert execution["repository"] == "https://example.test/repo.git"
-    assert execution["revision"] == "main"
+    assert execution["default_branch"] == "main"
+    refute Map.has_key?(execution, "revision")
     assert execution["branch"] == "vikingmew-sym-45"
     assert execution["codex"]["command"] == "codex app-server"
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001

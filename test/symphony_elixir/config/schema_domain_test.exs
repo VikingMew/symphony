@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
              Path.join(System.tmp_dir!(), "symphony_workspaces")
 
     refute Map.has_key?(defaults["agent"], "max_concurrent_agents")
+    assert defaults["agent"]["max_failure_retries"] == 3
     refute Map.has_key?(defaults["tracker"], "api_key")
   end
 
@@ -37,6 +38,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert config.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
     assert config.workspace.initialize_timeout_ms == 60_000
     assert config.worker.max_concurrent_agents_per_host == nil
+    assert config.agent.max_failure_retries == 3
     assert config.codex.command == "codex app-server"
     assert config.codex.pre_start_commands == []
     assert config.codex.approval_policy == "never"
@@ -113,6 +115,14 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     write_workflow_file!(Workflow.workflow_file_path(), initialize_timeout_ms: 0)
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "workspace.initialize_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), max_failure_retries: -1)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.max_failure_retries"
+
+    write_workflow_file!(Workflow.workflow_file_path(), max_failure_retries: "three")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.max_failure_retries"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_active_states: %{todo: true},

@@ -5,12 +5,7 @@ defmodule SymphonyElixir.BlockingDecision do
 
   alias SymphonyElixir.{PersistenceProvider, Tracker}
 
-  @type reason ::
-          :reported_blocker
-          | :implementation_handoff_failure
-          | :push_permission_blocked
-          | :merge_conflict
-          | :no_progress
+  @type reason :: term()
 
   @doc """
   Normalizes blocker evidence for orchestration decisions.
@@ -161,8 +156,8 @@ defmodule SymphonyElixir.BlockingDecision do
 
   defp persist_decision(persistence, issue, reason, evidence, run_id, references) do
     decision = %{
-      "reason" => Atom.to_string(reason),
-      "evidence" => to_string(evidence),
+      "reason" => decision_text(reason),
+      "evidence" => decision_text(evidence),
       "run_id" => run_id,
       "decided_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
       "references" => references,
@@ -175,4 +170,8 @@ defmodule SymphonyElixir.BlockingDecision do
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp decision_text(value) when is_binary(value), do: String.slice(value, 0, 4_000)
+  defp decision_text(value) when is_atom(value), do: Atom.to_string(value)
+  defp decision_text(value), do: value |> inspect(limit: 50, printable_limit: 4_000) |> String.slice(0, 4_000)
 end

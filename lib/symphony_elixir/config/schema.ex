@@ -249,6 +249,7 @@ defmodule SymphonyElixir.Config.Schema do
     embedded_schema do
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
+      field(:max_failure_retries, :integer, default: 3)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
@@ -258,12 +259,14 @@ defmodule SymphonyElixir.Config.Schema do
         attrs,
         [
           :max_turns,
-          :max_retry_backoff_ms
+          :max_retry_backoff_ms,
+          :max_failure_retries
         ],
         empty_values: []
       )
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
+      |> validate_number(:max_failure_retries, greater_than_or_equal_to: 0)
     end
   end
 
