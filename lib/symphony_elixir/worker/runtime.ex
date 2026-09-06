@@ -186,23 +186,37 @@ defmodule SymphonyElixir.Worker.Runtime do
     if map_size(state.active) < state.config.slots and not Map.has_key?(state.active, task_id) do
       runtime = self()
 
-      task =
-        Task.Supervisor.async_nolink(SymphonyElixir.Worker.TaskSupervisor, fn ->
-          execute_claim(runtime, state.config, claim)
-        end)
+      case start_executor(runtime, state.config, claim) do
+        {:ok, task} ->
+          watchdog =
+            Process.send_after(
+              self(),
+              {:executor_start_timeout, task_id, task.pid},
+              state.config.executor_start_timeout_seconds * 1_000
+            )
 
-      watchdog =
-        Process.send_after(
-          self(),
-          {:executor_start_timeout, task_id, task.pid},
-          state.config.executor_start_timeout_seconds * 1_000
-        )
+          active = %{ref: task.ref, pid: task.pid, claim: claim, phase: :starting, watchdog: watchdog, attempts: 0}
+          put_active(state, task_id, active)
 
-      active = %{ref: task.ref, pid: task.pid, claim: claim, phase: :starting, watchdog: watchdog, attempts: 0}
-      put_active(state, task_id, active)
+        {:error, reason} ->
+          active = %{ref: nil, pid: nil, claim: claim, phase: :starting, watchdog: nil, attempts: 0}
+          result = %{status: :failed, reason: inspect(reason)}
+          state |> put_active(task_id, active) |> begin_terminal_delivery(task_id, "task.failed", result)
+      end
     else
       state
     end
+  end
+
+  defp start_executor(runtime, config, claim) do
+    task =
+      Task.Supervisor.async_nolink(config.task_supervisor, fn ->
+        execute_claim(runtime, config, claim)
+      end)
+
+    {:ok, task}
+  catch
+    :exit, reason -> {:error, {:executor_start_failed, reason}}
   end
 
   defp execute_claim(runtime, config, claim) do
@@ -296,7 +310,11 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp reason_for(_, _), do: "worker_error"
 
   defp recover_session(state) do
-    Enum.each(state.active, fn {_task_id, lease} -> Process.exit(lease.pid, :shutdown) end)
+    Enum.each(state.active, fn
+      {_task_id, %{pid: pid}} when is_pid(pid) -> Process.exit(pid, :shutdown)
+      _ -> :ok
+    end)
+
     schedule(:register, 0)
     %{state | identity: nil, active: %{}}
   end
