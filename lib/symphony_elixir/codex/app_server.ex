@@ -166,6 +166,11 @@ defmodule SymphonyElixir.Codex.AppServer do
              |> Map.put(:handoff, Process.delete(handoff_key))
              |> Map.put(:review_result, Process.delete(review_key))}
 
+          {:blocked, outcome} ->
+            Logger.warning("Codex session blocked for #{issue_context(issue)} session_id=#{session_id}: #{inspect(outcome)}")
+
+            {:blocked, outcome}
+
           {:error, reason} ->
             Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")
 
@@ -723,7 +728,7 @@ defmodule SymphonyElixir.Codex.AppServer do
            references: param(params, "references") || %{}
          }}
 
-      outcome when outcome in ["failed", :failed] ->
+      outcome when outcome in [nil, "failed", :failed] ->
         {:error, {:turn_failed, params}}
 
       outcome ->
