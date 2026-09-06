@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     Codex.ToolRequestHandler,
     Config,
     PathSafety,
+    Payload,
     RuntimeProxy,
     SSH
   }
@@ -721,13 +722,11 @@ defmodule SymphonyElixir.Codex.AppServer do
   defp blocked_outcome(reason, payload),
     do: %{reason: reason, detail: payload, references: %{}}
 
-  defp param(params, "outcome"), do: Map.get(params, "outcome") || Map.get(params, :outcome)
-  defp param(params, "status"), do: Map.get(params, "status") || Map.get(params, :status)
-  defp param(params, "reason"), do: Map.get(params, "reason") || Map.get(params, :reason)
-  defp param(params, "detail"), do: Map.get(params, "detail") || Map.get(params, :detail)
-
-  defp param(params, "references"),
-    do: Map.get(params, "references") || Map.get(params, :references)
+  defp param(params, "outcome"), do: Payload.get_any(params, ["outcome", :outcome])
+  defp param(params, "status"), do: Payload.get_any(params, ["status", :status])
+  defp param(params, "reason"), do: Payload.get_any(params, ["reason", :reason])
+  defp param(params, "detail"), do: Payload.get_any(params, ["detail", :detail])
+  defp param(params, "references"), do: Payload.get_any(params, ["references", :references])
 
   defp await_response(port, request_id) do
     with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "")
