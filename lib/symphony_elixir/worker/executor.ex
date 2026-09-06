@@ -22,15 +22,15 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, log_dir} <- Paths.log_dir(config, claim["task_id"], claim["lease_id"]),
          :ok <- File.mkdir_p(workspace),
          :ok <- not_cancelled(),
-         {:ok, revision} <- prepare(payload, workspace),
+         {:ok, source} <- prepare(payload, workspace),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
          :ok <- require_handoff(payload, codex),
-         {:ok, validation} <- validate(config, claim, revision, codex, payload.gates, workspace, log_dir),
+         {:ok, validation} <- validate(config, claim, source, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
          {:ok, handoff} <- handoff(claim, payload, codex) do
-      summary = summary(config, claim, revision, codex, validation)
+      summary = summary(config, claim, source, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
       Map.merge(summary, %{status: :completed, phase: :handoff, handoff: handoff})
     else
@@ -139,17 +139,88 @@ defmodule SymphonyElixir.Worker.Executor do
     }
   end
 
-  defp prepare(payload, workspace) do
+  @doc false
+  @spec prepare(Payload.t(), Path.t()) :: {:ok, map()} | {:error, term()} | :cancelled | map()
+  def prepare(payload, workspace) do
+    default_ref = "refs/remotes/origin/#{payload.default_branch}"
+
     with :ok <- not_cancelled(),
-         %{status: :passed} <- Command.run(%{command: "git clone --no-checkout -- #{shell(payload.repository)} .", timeout_seconds: 300}, workspace),
+         :ok <- recreate_workspace(workspace),
+         :ok <- command(:clone_failed, "git clone --no-checkout -- #{shell(payload.repository)} .", 300, workspace),
          :ok <- not_cancelled(),
-         %{status: :passed} <- Command.run(%{command: "git checkout --detach #{shell(payload.revision)} && git rev-parse HEAD", timeout_seconds: 120}, workspace),
-         {revision, 0} <- System.cmd("git", ["rev-parse", "HEAD"], cd: workspace) do
-      {:ok, String.trim(revision)}
+         :ok <- fetch_branch(payload.default_branch, workspace, :default_branch_fetch_failed),
+         {:ok, base_sha} <- resolve_commit(default_ref, workspace, :base_ref_resolution_failed),
+         :ok <- prepare_task_branch(payload.branch, base_sha, workspace),
+         {:ok, prepared_head} <- resolve_commit("HEAD", workspace, :prepared_head_resolution_failed),
+         {:ok, prepared_branch} <- current_branch(workspace) do
+      {:ok,
+       %{
+         base_sha: base_sha,
+         default_branch: payload.default_branch,
+         prepared_head: prepared_head,
+         task_branch: prepared_branch
+       }}
+    end
+  end
+
+  defp recreate_workspace(workspace) do
+    with {:ok, _paths} <- File.rm_rf(workspace),
+         :ok <- File.mkdir_p(workspace) do
+      :ok
     else
-      :cancelled -> :cancelled
+      reason -> {:error, {:source_preparation_failed, :workspace_recreation_failed, reason}}
+    end
+  end
+
+  defp fetch_branch(branch, workspace, failure) do
+    refspec = "+refs/heads/#{branch}:refs/remotes/origin/#{branch}"
+    command(failure, "git fetch --no-tags -- origin #{shell(refspec)}", 300, workspace)
+  end
+
+  defp prepare_task_branch(branch, base_sha, workspace) do
+    lookup = Command.run(%{command: "git ls-remote --exit-code --heads -- origin #{shell(branch)}", timeout_seconds: 120}, workspace)
+
+    case lookup do
+      %{status: :passed} ->
+        with :ok <- fetch_branch(branch, workspace, :task_branch_fetch_failed) do
+          command(
+            :task_branch_checkout_failed,
+            "git checkout -b #{shell(branch)} --track #{shell("refs/remotes/origin/#{branch}")}",
+            120,
+            workspace
+          )
+        end
+
+      %{status: :failed, exit_code: 2} ->
+        command(:task_branch_create_failed, "git checkout -b #{shell(branch)} #{shell(base_sha)}", 120, workspace)
+
+      %{status: :cancelled} = result ->
+        result
+
+      result ->
+        {:error, {:source_preparation_failed, :task_branch_lookup_failed, result}}
+    end
+  end
+
+  defp command(failure, command, timeout_seconds, workspace) do
+    case Command.run(%{command: command, timeout_seconds: timeout_seconds}, workspace) do
+      %{status: :passed} -> :ok
       %{status: :cancelled} = result -> result
-      result -> {:error, {:source_preparation_failed, result}}
+      result -> {:error, {:source_preparation_failed, failure, result}}
+    end
+  end
+
+  defp resolve_commit(ref, workspace, failure) do
+    case System.cmd("git", ["rev-parse", "--verify", "#{ref}^{commit}"], cd: workspace, stderr_to_stdout: true) do
+      {sha, 0} -> {:ok, String.trim(sha)}
+      {detail, status} -> {:error, {:source_preparation_failed, failure, %{status: status, detail: String.trim(detail)}}}
+    end
+  end
+
+  defp current_branch(workspace) do
+    case System.cmd("git", ["symbolic-ref", "--short", "HEAD"], cd: workspace, stderr_to_stdout: true) do
+      {branch, 0} -> {:ok, String.trim(branch)}
+      {detail, status} -> {:error, {:source_preparation_failed, :prepared_branch_resolution_failed, %{status: status, detail: String.trim(detail)}}}
     end
   end
 
@@ -173,9 +244,9 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp validate(config, claim, revision, codex, gates, workspace, log_dir) do
+  defp validate(config, claim, source, codex, gates, workspace, log_dir) do
     validation = Validation.run(gates, workspace, &run_gate/2)
-    summary = summary(config, claim, revision, codex, validation)
+    summary = summary(config, claim, source, codex, validation)
     Validation.write!(Path.join(log_dir, "validation.json"), summary)
 
     case validation.overall_status do
@@ -243,10 +314,11 @@ defmodule SymphonyElixir.Worker.Executor do
     Client.graphql_with_auth(query, variables, RuntimeResolver.env_secret("LINEAR_API_KEY"), @linear_endpoint, [])
   end
 
-  defp summary(config, claim, revision, codex, validation) do
+  defp summary(config, claim, source, codex, validation) do
     %{
       envelope: Map.take(claim, ["task_id", "lease_id", "project_id", "run_id"]),
-      source_revision: revision,
+      source_revision: source.prepared_head,
+      source: source,
       runtime_identity: %{image: config.image_reference, worker_source_revision: config.source_revision},
       codex: %{session_id: Map.get(codex, :session_id), duration_ms: codex.duration_ms, outcome: codex.status},
       validation: validation

@@ -275,7 +275,7 @@ POST /api/worker/v1/tasks/claim
   "execution": {
     "version": 1,
     "repository": "https://github.com/example/repository.git",
-    "revision": "main",
+    "default_branch": "main",
     "branch": "exact-linear-branch",
     "codex": {
       "command": "codex app-server",

@@ -92,7 +92,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       project_id: "project-1",
       run_id: "run-1",
       issue_identifier: "SYM-12",
-      payload: panel_payload(source, revision, codex_binary)
+      payload: panel_payload(source, codex_binary)
     }
 
     lease = %{id: "lease-1", attempt: 1, expires_at: DateTime.add(DateTime.utc_now(), 60, :second)}
@@ -113,11 +113,12 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       File.rm_rf(root)
     end)
 
-    {:ok, root: root, codex_trace: codex_trace, codex_binary: codex_binary}
+    {:ok, root: root, revision: revision, codex_trace: codex_trace, codex_binary: codex_binary}
   end
 
   test "runs register through terminal event over the real worker HTTP surface", %{
     root: root,
+    revision: revision,
     codex_trace: codex_trace
   } do
     config = config(root)
@@ -147,6 +148,10 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.codex.session_id == "thread-worker-turn-worker"
     assert result.validation.overall_status == :passed
     assert result.handoff == %{}
+    assert result.source.base_sha == revision
+    assert result.source.default_branch == "main"
+    assert result.source.prepared_head == revision
+    assert result.source.task_branch == "vikingmew-sym-12"
 
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
     assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
@@ -225,7 +230,6 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
   defp execute_implementation(root, codex_binary, task_id) do
     source = Path.join(root, "source")
-    revision = git!(source, ["rev-parse", "HEAD"])
 
     claim = %{
       "project_id" => "project-1",
@@ -234,7 +238,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "issue_id" => "issue-1",
       "run_id" => "run-1",
       "execution" =>
-        panel_payload(source, revision, codex_binary, "implementation")
+        panel_payload(source, codex_binary, "implementation")
         |> ExecutionPayload.from_task_payload()
     }
 
@@ -255,7 +259,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp panel_payload(source, revision, codex_binary, profile \\ "refinement") do
+  defp panel_payload(source, codex_binary, profile \\ "refinement") do
     %{
       "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
       "prompt" => "Complete the task.",
@@ -263,7 +267,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "execution_mode" => "worker",
       "repository" => %{
         "url" => source,
-        "source_ref" => revision,
+        "source_ref" => "main",
         "implementation_branch" => "vikingmew-sym-12"
       },
       "hooks" => %{
