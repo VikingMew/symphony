@@ -175,7 +175,10 @@ curl --fail http://127.0.0.1:${SYMPHONY_DASHBOARD_PORT:-4000}/health/ready
 
 Compose waits for `pg_isready`, requires the migration container to exit successfully, then starts
 Symphony. `/health/live` proves HTTP is serving; `/health/ready` also proves persistence is
-reachable. An empty but migrated database reports setup-required while keeping Settings available.
+reachable and reports `checks.migrations: "current"`. An empty but migrated database reports
+setup-required while keeping Settings available. A mismatch has no HTTP surface because startup
+exits first; inspect the searchable `Migration startup check status=mismatch` or `status=failed`
+log.
 
 Run migrations explicitly when diagnosing or before a controlled start:
 
@@ -207,6 +210,12 @@ docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
 docker compose -f compose.yaml -f compose.published.yaml up -d symphony
 docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker up -d execution-worker
 ```
+
+Never omit either Compose file from a published-image migration or start command. The override
+requires one immutable `SYMPHONY_IMAGE` for both `migrate` and `symphony`, so there is no published
+path that can silently fall back to `symphony:local`. Panel startup compares the migrations in that
+image with the complete `schema_migrations` set before any business child starts. Pending and
+image-unknown applied versions both fail startup without writing schema changes.
 
 Public GHCR packages allow anonymous pulls. If this package is private, authenticate with a GitHub
 token that has `read:packages` before pulling; do not put the token in `.env` or Compose:

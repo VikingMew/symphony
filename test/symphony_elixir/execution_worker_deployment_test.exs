@@ -236,6 +236,30 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "pull_policy: always"
   end
 
+  test "published migration and Panel require the same immutable image" do
+    compose = File.read!(@published_compose)
+    required_image = "${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}"
+
+    for service <- ["migrate", "symphony"] do
+      body = service_body(compose, service)
+      assert body =~ "build: !reset null"
+      assert body =~ "image: #{required_image}"
+      assert body =~ "pull_policy: always"
+    end
+  end
+
+  test "published deployment commands always use the overlay file pair" do
+    readme = File.read!(Path.expand("../../README.md", __DIR__))
+    compose_guide = File.read!(Path.expand("../../docs/compose.md", __DIR__))
+
+    readme_commands = command_lines_between(readme, "For a published deployment", "The final image")
+    guide_commands = command_lines_between(compose_guide, "## Published Multi-architecture Image", "## Daily Operations")
+
+    for command <- readme_commands ++ guide_commands do
+      assert command =~ "-f compose.yaml -f compose.published.yaml", command
+    end
+  end
+
   test "published worker Panel excludes Codex from its image and volumes" do
     workflow = File.read!(@publish_workflow)
     compose = File.read!(@published_compose)
@@ -270,6 +294,16 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     |> List.last()
     |> String.split(~r/^  [a-zA-Z0-9_-]+:\n/m, parts: 2)
     |> List.first()
+  end
+
+  defp command_lines_between(document, from, to) do
+    document
+    |> String.split(from, parts: 2)
+    |> List.last()
+    |> String.split(to, parts: 2)
+    |> List.first()
+    |> String.split("\n")
+    |> Enum.filter(&String.starts_with?(&1, "docker compose "))
   end
 
   defp stage_body(dockerfile, stage) do
