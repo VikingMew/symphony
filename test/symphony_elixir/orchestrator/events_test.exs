@@ -27,53 +27,46 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
            }
   end
 
-  test "run and task attrs preserve existing payload contract" do
+  test "run and assignment payload attrs preserve existing contract" do
     issue = issue()
     workflow = %{}
     run = %{id: "run-1", project_id: "project-1"}
 
     run_attrs = Events.run_attrs(issue, workflow, "worker", 2)
     assert run_attrs.issue_identifier == "MT-1"
-    assert run_attrs.status == "queued"
+    assert run_attrs.status == "running"
     assert run_attrs.execution_mode == "worker"
     assert run_attrs.attempt == 2
 
-    task_attrs =
+    assignment_attrs =
       SymphonyElixir.Config.with_workflow_context(workflow_context(), fn ->
-        Events.worker_task_attrs(issue, run, workflow, "Prompt", "implementation")
+        Events.worker_assignment_payload(issue, run, workflow, "Prompt", "implementation")
       end)
 
-    assert task_attrs.project_id == "project-1"
-    assert task_attrs.run_id == "run-1"
-    assert task_attrs.payload["issue"]["identifier"] == "MT-1"
-    assert task_attrs.payload["prompt"] == "Prompt"
-    assert task_attrs.payload["workflow_profile"] == "implementation"
-    assert task_attrs.payload["execution_mode"] == "worker"
+    payload = assignment_attrs.payload
 
-    assert Enum.map(task_attrs.payload["required_gates"], & &1["command"]) == [
+    assert payload["issue"]["identifier"] == "MT-1"
+    assert payload["prompt"] == "Prompt"
+    assert payload["workflow_profile"] == "implementation"
+    assert payload["execution_mode"] == "worker"
+
+    assert Enum.map(payload["required_gates"], & &1["command"]) == [
              "scripts/check.sh",
              "scripts/unit.sh",
              "scripts/dialyzer.sh"
            ]
 
-    assert task_attrs.payload["repository"]["implementation_branch"] == "feature/mt-1"
-    refute recursively_has_key?(task_attrs.payload, "workflow_version_id")
+    assert payload["repository"]["implementation_branch"] == "feature/mt-1"
+    refute recursively_has_key?(payload, "workflow_version_id")
   end
 
-  test "event attrs cover run, task, and workspace events" do
+  test "event attrs cover run and workspace events" do
     issue = issue()
     run = %{id: "run-1"}
-    task = %{id: "task-1"}
     running_entry = %{identifier: "MT-1", run_id: "run-1", workspace_path: "/tmp/work", worker_host: "worker-a"}
 
     assert Events.run_started_event(issue, run, "worker-a") ==
              Events.event_attrs("run.started", "MT-1", %{issue_id: "issue-1", run_id: "run-1", worker_host: "worker-a"}, "run-1")
-
-    assert Events.task_queued_event(issue, run, task).payload == %{
-             issue_id: "issue-1",
-             run_id: "run-1",
-             task_id: "task-1"
-           }
 
     assert Events.run_finished_event(running_entry, "failed", "boom").payload == %{
              run_id: "run-1",

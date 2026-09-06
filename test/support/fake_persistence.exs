@@ -33,16 +33,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :runs, runs))
   end
 
-  def put_tasks(tasks) when is_list(tasks) do
-    ensure_started()
-    Agent.update(@name, &Map.put(&1, :tasks, tasks))
-  end
-
-  def put_cancel_task_errors(errors) when is_map(errors) do
-    ensure_started()
-    Agent.update(@name, &Map.put(&1, :cancel_task_errors, errors))
-  end
-
   def put_issues(issues) when is_list(issues) do
     ensure_started()
     Agent.update(@name, &Map.put(&1, :issues, issues))
@@ -364,66 +354,29 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
         |> Enum.filter(&(Map.get(&1, :status) == "online"))
         |> Enum.sum_by(&Map.fetch!(&1, :total_slots))
 
-      occupied =
-        Enum.count(state.tasks, fn task ->
-          Map.get(task, :execution_mode, "worker") == "worker" and
-            Map.get(task, :status) in ["queued", "leased", "running"]
-        end)
-
-      max(capacity - occupied, 0)
+      capacity
     end)
   end
 
-  def list_tasks(opts \\ []) do
+  def active_worker_session(worker_id, session_id) do
     ensure_started()
 
     Agent.get(@name, fn state ->
-      state.tasks
-      |> filter_eq(:project_id, Keyword.get(opts, :project_id))
+      worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
+      session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
+      if worker && session && session.worker_id == worker_id && session.status == "online", do: {:ok, worker, session}, else: {:error, :worker_session_not_found}
     end)
   end
 
-  def enqueue_task(attrs) when is_map(attrs) do
-    ensure_started()
-
-    task =
-      attrs
-      |> Map.put_new(:id, "fake-task-#{System.unique_integer([:positive])}")
-      |> Map.put_new(:status, "queued")
-      |> Map.put_new(:queued_at, DateTime.utc_now())
-
-    Agent.get_and_update(@name, fn state ->
-      {{:ok, task}, state |> record_call({:enqueue_task, attrs}) |> update_in([:tasks], &[task | &1])}
-    end)
+  def heartbeat_worker(worker_id, session_id) do
+    with {:ok, _worker, _session} <- active_worker_session(worker_id, session_id) do
+      {:ok, %{ok: true, server_time: DateTime.utc_now()}}
+    end
   end
 
-  def list_task_leases(_opts \\ []) do
-    ensure_started()
-    Agent.get(@name, & &1.task_leases)
-  end
+  def expire_stale_worker_sessions(_opts \\ []), do: 0
 
   def export_workflow(%{raw_workflow_md: raw}), do: raw
-
-  def cancel_task(id, reason \\ "cancelled") do
-    ensure_started()
-    task = %{id: id, status: "cancelled", payload: %{"reason" => reason}}
-
-    Agent.get_and_update(@name, fn state ->
-      state = record_call(state, {:cancel_task, id, reason})
-
-      case Map.fetch(state.cancel_task_errors, id) do
-        {:ok, error} -> {{:error, error}, state}
-        :error -> {{:ok, task}, state}
-      end
-    end)
-  end
-
-  def requeue_task(id) do
-    ensure_started()
-    task = %{id: id, status: "queued"}
-    Agent.update(@name, &record_call(&1, {:requeue_task, id}))
-    {:ok, task}
-  end
 
   def repo_available? do
     :symphony_elixir
@@ -717,9 +670,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       events: [],
       workers: [],
       worker_sessions: [],
-      tasks: [],
-      cancel_task_errors: %{},
-      task_leases: [],
       issues: [],
       workflows: [],
       next_import_workflow_error: nil,

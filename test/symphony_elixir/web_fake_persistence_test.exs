@@ -169,11 +169,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> post("/api/worker/v1/heartbeat", %{"active_leases" => []})
              |> json_response(200)
 
-    assert %{"accepted" => true} =
+    assert %{"error" => %{"code" => "lease_not_active"}} =
              build_conn()
              |> worker_headers(worker_id, session_id)
              |> post("/api/worker/v1/tasks/fake-task/events", %{"event_type" => "task.completed", "payload" => %{}})
-             |> json_response(202)
+             |> json_response(409)
 
     assert Enum.any?(FakePersistence.calls(), fn
              {:register_worker, %{"worker_name" => "fake-worker"}} -> true
@@ -204,7 +204,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> json_response(422)
   end
 
-  test "terminal worker event without payload correlation is accepted" do
+  test "terminal worker event without a current assignment is rejected" do
     Application.put_env(
       :symphony_elixir,
       :persistence_module,
@@ -213,14 +213,14 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     start_test_endpoint()
 
-    assert %{"accepted" => true} =
+    assert %{"error" => %{"code" => "lease_not_active"}} =
              build_conn()
              |> worker_headers("worker", "session")
              |> post("/api/worker/v1/tasks/task-1/events", %{
                "event_type" => "task.completed",
                "payload" => %{}
              })
-             |> json_response(202)
+             |> json_response(409)
   end
 
   defp start_test_endpoint do

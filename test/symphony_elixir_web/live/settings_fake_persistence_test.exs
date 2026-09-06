@@ -115,8 +115,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     defdelegate export_workflow(version), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_runs_page(opts), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_events(opts), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate list_tasks(opts), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate list_task_leases(opts), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
   defmodule BusyOperatorOrchestrator do

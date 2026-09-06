@@ -54,6 +54,9 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       {:ok, %{ok: true, lease_renewals: params["active_leases"], commands: []}}
     end
 
+    def heartbeat_worker(_worker_id, _session_id),
+      do: {:ok, %{ok: true, server_time: DateTime.utc_now()}}
+
     def record_worker_task_event(_worker_id, _session_id, task_id, event_type, payload) do
       Agent.update(__MODULE__, &update_in(&1.events, fn events -> [{task_id, event_type, payload} | events] end))
 
@@ -130,18 +133,14 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "protocol_version" => Client.protocol_version()
     }
 
-    assert {:ok, claim} = Client.claim(config, Map.put(identity, "available_slots", 1))
+    claim = claim_payload()
     assert claim["task_id"] == "task-1"
     assert claim["issue_id"] == "issue-1"
     assert claim["run_attempt"] == 0
     assert claim["lease_attempt"] == 1
     assert claim["worker_session_id"] == "session-1"
-    assert {:ok, %{"task" => nil}} = Client.claim(config, Map.put(identity, "available_slots", 1))
     assert {:ok, heartbeat} = Client.heartbeat(config, identity, %{"active_leases" => [claim["lease_id"]]})
-    assert heartbeat["lease_renewals"] == ["lease-1"]
-
-    assert {:ok, %{"accepted" => true}} =
-             Client.event(config, identity, claim["task_id"], "task.progress", %{phase: "execution_started"})
+    assert heartbeat["lease_renewals"] == []
 
     result = Executor.execute(config, claim)
     assert result.status == :completed
@@ -153,13 +152,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.source.prepared_head == revision
     assert result.source.task_branch == "vikingmew-sym-12"
 
-    assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
-    assert {:ok, %{"accepted" => true}} = Client.event(config, identity, claim["task_id"], "task.completed", result)
-    assert [{"task-1", "task.progress", %{"phase" => "execution_started"}}, first, second] = Persistence.events()
-    assert {"task-1", "task.completed", payload} = first
-    assert {"task-1", "task.completed", ^payload} = second
-    assert payload["codex"]["session_id"] == "thread-worker-turn-worker"
-    refute inspect(payload) =~ "workflow_version_id"
+    refute inspect(result) =~ "workflow_version_id"
 
     turn_start =
       codex_trace
@@ -191,14 +184,32 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "protocol_version" => Client.protocol_version()
     }
 
-    assert {:ok, claim} = Client.claim(config, Map.put(identity, "available_slots", 1))
+    claim = claim_payload()
     assert claim["execution"]["codex"]["command"] == "#{codex_binary} app-server"
 
     result = Executor.execute(config, claim)
     assert result.status == :failed
     assert result.reason == :failed
-    assert result.detail =~ "turn_failed"
+    assert result.detail =~ "invalid_turn_outcome"
     assert result.detail =~ "worker fixture failure"
+  end
+
+  defp claim_payload do
+    %{task: task, lease: lease, correlation: correlation} = Agent.get(Persistence, & &1.claim)
+
+    %{
+      "task_id" => task.id,
+      "lease_id" => lease.id,
+      "lease_expires_at" => DateTime.to_iso8601(lease.expires_at),
+      "project_id" => task.project_id,
+      "run_id" => task.run_id,
+      "issue_id" => correlation["issue_id"],
+      "issue_identifier" => task.issue_identifier,
+      "run_attempt" => correlation["run_attempt"],
+      "lease_attempt" => lease.attempt,
+      "worker_session_id" => correlation["worker_session_id"],
+      "execution" => ExecutionPayload.from_task_payload(task.payload)
+    }
   end
 
   test "classifies a workflow-scope push rejection as permission blocked", %{

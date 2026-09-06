@@ -154,6 +154,10 @@ defmodule SymphonyElixir.Codex.AppServer do
 
             {:ok, Map.put(completion, :handoff, Process.delete(handoff_key))}
 
+          {:blocked, blocker} ->
+            Logger.warning("Codex session blocked for #{issue_context(issue)} session_id=#{session_id}: #{inspect(blocker.reason)}")
+            {:blocked, blocker}
+
           {:error, reason} ->
             Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")
 

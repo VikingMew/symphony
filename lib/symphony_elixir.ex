@@ -42,7 +42,7 @@ defmodule SymphonyElixir.Application do
         {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
         SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
-        worker_reconciler_child(),
+        assignment_manager_child(),
         SymphonyElixir.Orchestrator,
         http_server_child(),
         SymphonyElixir.StatusDashboard
@@ -68,9 +68,9 @@ defmodule SymphonyElixir.Application do
     end
   end
 
-  defp worker_reconciler_child do
-    if Application.get_env(:symphony_elixir, :start_repo, true) do
-      SymphonyElixir.Persistence.WorkerReconciler
+  defp assignment_manager_child do
+    if SymphonyElixir.Config.execution_mode() == :worker do
+      SymphonyElixir.Worker.AssignmentManager
     end
   end
 

@@ -1,0 +1,386 @@
+defmodule SymphonyElixir.Worker.AssignmentManager do
+  @moduledoc """
+  Owns the Panel's single ephemeral worker assignment.
+
+  Every assignment starts from a fresh tracker candidate read and a second issue read. Nothing in
+  PostgreSQL is treated as queued work; runs and events are audit history only.
+  """
+
+  use GenServer
+
+  alias SymphonyElixir.{Config, PersistenceProvider, PromptBuilder, RunLifecycle, Tracker, WorkerResult, WorkflowStore}
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
+
+  @terminal_events ["task.completed", "task.failed", "task.cancelled"]
+
+  @type assignment :: map()
+
+  @spec start_link(keyword()) :: GenServer.on_start()
+  def start_link(opts \\ []) do
+    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
+  end
+
+  @spec claim(String.t(), String.t(), map(), GenServer.server()) ::
+          {:ok, assignment() | nil} | {:error, term()}
+  def claim(worker_id, session_id, attrs, server \\ __MODULE__),
+    do: if(process_alive?(server), do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity), else: {:ok, nil})
+
+  @spec heartbeat(String.t(), String.t(), map(), GenServer.server()) :: {:ok, map()} | {:error, term()}
+  def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__),
+    do: if(process_alive?(server), do: GenServer.call(server, {:heartbeat, worker_id, session_id, attrs}), else: inactive_heartbeat(worker_id, session_id))
+
+  @spec record_event(String.t(), String.t(), String.t(), String.t(), map(), GenServer.server()) ::
+          {:ok, map()} | {:error, term()}
+  def record_event(worker_id, session_id, assignment_id, event_type, payload, server \\ __MODULE__),
+    do: if(process_alive?(server), do: GenServer.call(server, {:event, worker_id, session_id, assignment_id, event_type, payload}), else: {:error, :lease_not_active})
+
+  @spec current_assignment(GenServer.server()) :: assignment() | nil
+  def current_assignment(server \\ __MODULE__) do
+    if process_alive?(server), do: GenServer.call(server, :current_assignment), else: nil
+  end
+
+  @spec cancel_current(String.t(), GenServer.server()) :: :ok
+  def cancel_current(reason, server \\ __MODULE__) do
+    if process_alive?(server), do: GenServer.call(server, {:cancel_current, reason}), else: :ok
+  end
+
+  @spec reconcile(GenServer.server()) :: :ok
+  def reconcile(server \\ __MODULE__), do: GenServer.cast(server, :reconcile)
+
+  @impl true
+  def init(opts) do
+    state = %{
+      assignment: nil,
+      tracker: Keyword.get(opts, :tracker, Tracker),
+      persistence: Keyword.get(opts, :persistence, PersistenceProvider.module()),
+      workflows: Keyword.get(opts, :workflows, WorkflowStore),
+      now: Keyword.get(opts, :now, &DateTime.utc_now/0),
+      reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000)
+    }
+
+    schedule_reconciliation(state)
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_cast(:reconcile, state), do: {:noreply, reconcile_zombies(state)}
+
+  @impl true
+  def handle_info(:reconcile, state) do
+    state = reconcile_zombies(state)
+    schedule_reconciliation(state)
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:current_assignment, _from, state), do: {:reply, state.assignment, state}
+
+  def handle_call({:cancel_current, _reason}, _from, %{assignment: nil} = state),
+    do: {:reply, :ok, state}
+
+  def handle_call({:cancel_current, reason}, _from, state) do
+    _ = persist_event(state.persistence, state.assignment, "task.cancelled", %{"reason" => reason}, nil)
+    _ = transition_run(state.persistence, state.assignment.run_id, "task.cancelled", nil)
+    {:reply, :ok, %{state | assignment: nil}}
+  end
+
+  def handle_call({:claim, worker_id, session_id, attrs}, _from, state) do
+    state = expire_assignment(state)
+
+    result =
+      with nil <- state.assignment,
+           true <- available_slots(attrs) > 0,
+           {:ok, worker, session} <- state.persistence.active_worker_session(worker_id, session_id) do
+        claim_from_workflows(state, worker, session)
+      else
+        %{} -> {:ok, nil}
+        false -> {:ok, nil}
+        {:error, reason} -> {:error, reason}
+      end
+
+    case result do
+      {:ok, %{} = assignment} -> {:reply, {:ok, assignment}, %{state | assignment: assignment}}
+      other -> {:reply, other, state}
+    end
+  end
+
+  def handle_call({:heartbeat, worker_id, session_id, attrs}, _from, state) do
+    state = expire_assignment(state)
+
+    with {:ok, base} <- state.persistence.heartbeat_worker(worker_id, session_id) do
+      active_ids = map_get(attrs, "active_leases", :active_leases) || []
+      {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
+      {:reply, {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}, %{state | assignment: assignment}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:event, worker_id, session_id, assignment_id, event_type, payload}, _from, state) do
+    state = expire_assignment(state)
+
+    with {:ok, assignment} <- matching_assignment(state.assignment, worker_id, session_id, assignment_id),
+         :ok <- validate_correlation(payload, assignment.correlation),
+         {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
+         {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
+         :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
+      assignment = if event_type in @terminal_events, do: nil, else: assignment
+      {:reply, {:ok, event}, %{state | assignment: assignment}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp claim_from_workflows(state, worker, session) do
+    Enum.reduce_while(state.workflows.list_enabled(), {:ok, nil}, fn workflow, _acc ->
+      result = Config.with_workflow_context(workflow, fn -> claim_from_workflow(state, worker, session, workflow) end)
+      if match?({:ok, %{}}, result), do: {:halt, result}, else: {:cont, result}
+    end)
+  end
+
+  defp claim_from_workflow(state, worker, session, workflow) do
+    with {:ok, candidates} <- state.tracker.fetch_candidate_issues(),
+         %Issue{} = candidate <- select_candidate(candidates, state.persistence),
+         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker),
+         {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue) do
+      {:ok, assignment}
+    else
+      nil -> {:ok, nil}
+      {:skip, _reason} -> {:ok, nil}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp select_candidate(candidates, persistence) do
+    candidates
+    |> DispatchPolicy.sort_issues_for_dispatch()
+    |> Enum.find(&(eligible_issue?(&1) and dispatchable_from_history?(&1, persistence)))
+  end
+
+  defp dispatchable_from_history?(%Issue{state: state}, _persistence)
+       when state not in ["In Progress", "in progress"],
+       do: true
+
+  defp dispatchable_from_history?(%Issue{} = issue, persistence) do
+    case persistence.list_runs_for_issue(issue.identifier, limit: 1) do
+      [%{status: status} | _] -> status in ["succeeded", "failed", "cancelled"]
+      [] -> false
+      {:error, _reason} -> false
+    end
+  end
+
+  defp eligible_issue?(%Issue{} = issue) do
+    normalized = SymphonyElixir.StateName.normalize(issue.state)
+    active = Config.settings!().tracker.active_states |> DispatchPolicy.normalized_state_set()
+    MapSet.member?(active, normalized) and issue.blocked_by == [] and !Config.human_review_state?(issue.state)
+  end
+
+  defp revalidate(%Issue{id: issue_id}, tracker) do
+    case tracker.fetch_issue_states_by_ids([issue_id]) do
+      {:ok, [%Issue{} = issue | _]} -> if eligible_issue?(issue), do: {:ok, issue}, else: {:skip, :stale}
+      {:ok, []} -> {:skip, :missing}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp create_assignment(state, worker, session, workflow, issue) do
+    now = state.now.()
+    assignment_id = Ecto.UUID.generate()
+    expires_at = DateTime.add(now, state.persistence.worker_lease_duration_seconds(), :second)
+    project_id = workflow.project_id
+    profile = Config.workflow_profile_for_state(issue.state)
+    prompt = PromptBuilder.build_prompt(issue, profile: profile, profile_policy: Config.workflow_profile(profile), allowed_updates: Config.workflow_allowed_updates(profile))
+
+    with {:ok, issue_record} <- state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
+         {:ok, run} <- state.persistence.create_run(Events.run_attrs(issue, workflow, "worker", nil) |> Map.merge(%{issue_id: issue_record.id, project_id: project_id, status: "running"})),
+         :ok <- move_to_in_progress(state.tracker, issue),
+         assignment <- build_assignment(assignment_id, issue, run, worker, session, workflow, prompt, profile, expires_at),
+         {:ok, _event} <- state.persistence.record_event(assignment_event(assignment, "task.accepted", %{})) do
+      {:ok, assignment}
+    else
+      {:error, reason} = error ->
+        close_failed_run(state.persistence, issue.identifier, reason)
+        error
+    end
+  end
+
+  defp build_assignment(id, issue, run, worker, session, workflow, prompt, profile, expires_at) do
+    payload = Events.worker_assignment_payload(issue, run, workflow, prompt, profile).payload
+
+    correlation = %{
+      "project_id" => run.project_id,
+      "run_id" => run.id,
+      "issue_id" => issue.id,
+      "issue_identifier" => issue.identifier,
+      "run_attempt" => run.attempt,
+      "task_id" => id,
+      "lease_id" => id,
+      "lease_attempt" => 1,
+      "worker_id" => worker.id,
+      "worker_session_id" => session.id,
+      "assignment_id" => id
+    }
+
+    %{
+      id: id,
+      task_id: id,
+      lease_id: id,
+      issue: issue,
+      issue_identifier: issue.identifier,
+      project_id: run.project_id,
+      run_id: run.id,
+      worker_id: worker.id,
+      session_id: session.id,
+      expires_at: expires_at,
+      payload: payload,
+      correlation: correlation
+    }
+  end
+
+  defp move_to_in_progress(_tracker, %Issue{state: state}) when state in ["In Progress", "in progress"], do: :ok
+  defp move_to_in_progress(tracker, %Issue{id: issue_id}), do: tracker.update_issue_state(issue_id, "In Progress")
+
+  defp renew_assignment(nil, _worker_id, _session_id, _active_ids, _state), do: {nil, []}
+
+  defp renew_assignment(assignment, worker_id, session_id, active_ids, state) do
+    if assignment.worker_id == worker_id and assignment.session_id == session_id and assignment.lease_id in active_ids do
+      expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
+      {%{assignment | expires_at: expires_at}, [%{lease_id: assignment.lease_id, lease_expires_at: expires_at}]}
+    else
+      {assignment, []}
+    end
+  end
+
+  defp expire_assignment(%{assignment: nil} = state), do: state
+
+  defp expire_assignment(state) do
+    if DateTime.compare(state.assignment.expires_at, state.now.()) == :lt do
+      _ = transition_run(state.persistence, state.assignment.run_id, "task.failed", nil)
+      _ = persist_event(state.persistence, state.assignment, "task.failed", %{"reason" => "assignment_expired"}, nil)
+      %{state | assignment: nil}
+    else
+      state
+    end
+  end
+
+  defp matching_assignment(nil, _worker_id, _session_id, _id), do: {:error, :lease_not_active}
+
+  defp matching_assignment(assignment, worker_id, session_id, id) do
+    if assignment.id == id and assignment.worker_id == worker_id and assignment.session_id == session_id,
+      do: {:ok, assignment},
+      else: {:error, :lease_not_active}
+  end
+
+  defp persist_event(persistence, assignment, event_type, payload, summary) do
+    event_payload = payload |> stringify_keys() |> Map.put("correlation", assignment.correlation) |> maybe_put_summary(summary)
+    persistence.record_event(assignment_event(assignment, event_type, event_payload))
+  end
+
+  defp assignment_event(assignment, event_type, payload) do
+    %{
+      project_id: assignment.project_id,
+      run_id: assignment.run_id,
+      issue_identifier: assignment.issue_identifier,
+      event_type: event_type,
+      payload: Map.put_new(payload, "correlation", assignment.correlation)
+    }
+  end
+
+  defp transition_run(persistence, run_id, event_type, summary) do
+    attrs = RunLifecycle.run_event_attrs(event_type, DateTime.utc_now())
+    attrs = if summary, do: Map.put(attrs, :execution_summary, summary), else: attrs
+
+    case {attrs, persistence.get_run(run_id)} do
+      {%{}, _run} when map_size(attrs) == 0 ->
+        :ok
+
+      {_attrs, nil} ->
+        {:error, :run_not_found}
+
+      {attrs, run} ->
+        case persistence.update_run(run, attrs) do
+          {:ok, _run} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp close_failed_run(persistence, identifier, reason) do
+    case persistence.list_runs_for_issue(identifier, limit: 1) do
+      [run | _] -> persistence.finish_run(run.id, "failed", inspect(reason))
+      _other -> :ok
+    end
+  end
+
+  defp reconcile_zombies(state) do
+    state.persistence.expire_stale_worker_sessions(now: state.now.())
+
+    Enum.each(state.workflows.list_enabled(), fn workflow ->
+      Config.with_workflow_context(workflow, fn -> reconcile_workflow_zombies(state) end)
+    end)
+
+    expire_assignment(state)
+  end
+
+  defp reconcile_workflow_zombies(state) do
+    case state.tracker.fetch_issues_by_states(["In Progress"]) do
+      {:ok, issues} -> Enum.each(issues, &reconcile_zombie(state, &1))
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp reconcile_zombie(%{assignment: %{issue: %{id: issue_id}}}, %Issue{id: issue_id}), do: :ok
+
+  defp reconcile_zombie(state, %Issue{} = issue) do
+    case state.persistence.list_runs_for_issue(issue.identifier, limit: 1) do
+      [run | _] -> maybe_requeue_zombie(state, issue, run)
+      _none -> :ok
+    end
+  end
+
+  defp maybe_requeue_zombie(state, issue, %{status: "running", started_at: %DateTime{} = started_at} = run) do
+    cutoff = DateTime.add(state.now.(), -state.persistence.worker_lease_duration_seconds(), :second)
+
+    if DateTime.compare(started_at, cutoff) == :lt do
+      with :ok <- state.tracker.update_issue_state(issue.id, "Ready"),
+           {:ok, _run} <- state.persistence.finish_run(run.id, "failed", "worker_assignment_lost") do
+        state.persistence.record_event(%{
+          project_id: run.project_id,
+          run_id: run.id,
+          issue_identifier: issue.identifier,
+          event_type: "task.failed",
+          payload: %{"reason" => "panel_restart_or_worker_loss"}
+        })
+      end
+    end
+  end
+
+  defp maybe_requeue_zombie(_state, _issue, _run), do: :ok
+
+  defp schedule_reconciliation(state) do
+    Process.send_after(self(), :reconcile, state.reconcile_interval_ms)
+  end
+
+  defp available_slots(attrs), do: map_get(attrs, "available_slots", :available_slots) || 1
+  defp validate_correlation(payload, correlation), do: validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)
+
+  defp validate_correlation_fields(supplied, authoritative) do
+    Enum.reduce_while(supplied, :ok, fn {key, value}, :ok ->
+      if Map.has_key?(authoritative, key) and authoritative[key] != value, do: {:halt, {:error, {:correlation_mismatch, key}}}, else: {:cont, :ok}
+    end)
+  end
+
+  defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
+  defp maybe_put_summary(payload, nil), do: payload
+  defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
+  defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
+  defp process_alive?(server) when is_atom(server), do: Process.whereis(server) != nil
+  defp process_alive?(server) when is_pid(server), do: Process.alive?(server)
+
+  defp inactive_heartbeat(worker_id, session_id) do
+    with {:ok, base} <- PersistenceProvider.module().heartbeat_worker(worker_id, session_id) do
+      {:ok, Map.merge(base, %{lease_renewals: [], commands: []})}
+    end
+  end
+end

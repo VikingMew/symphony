@@ -19,8 +19,6 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @run_id "40000000-0000-0000-0000-000000000001"
   @worker_id "50000000-0000-0000-0000-000000000001"
   @session_id "60000000-0000-0000-0000-000000000001"
-  @task_id "70000000-0000-0000-0000-000000000001"
-  @lease_id "80000000-0000-0000-0000-000000000001"
   @timestamp "2026-08-27T10:00:00.000000Z"
 
   @impl Mix.Task
@@ -106,9 +104,6 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
           status: "running"
         })
 
-      {:ok, task} = Persistence.enqueue_task(%{project_id: project.id, run_id: run.id})
-      true = task.project_id == project.id
-
       concurrent_event_writes!(project.id, run.id)
 
       {:ok, marker} =
@@ -175,12 +170,12 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     %{rows: [[foreign_keys]]} =
       SQL.query!(repo, "SELECT COUNT(*) FROM pg_constraint WHERE contype = 'f' AND connamespace = 'public'::regnamespace", [])
 
-    if foreign_keys < 10, do: Mix.raise("Expected PostgreSQL foreign keys, found #{foreign_keys}")
+    if foreign_keys < 7, do: Mix.raise("Expected PostgreSQL foreign keys, found #{foreign_keys}")
 
     %{rows: [[indexes]]} =
       SQL.query!(repo, "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname <> 'schema_migrations_pkey'", [])
 
-    if indexes < 20, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
+    if indexes < 14, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
   end
 
   defp assert_imported_relationships!(repo) do
@@ -199,11 +194,11 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     %{rows: [[@run_id, @issue_id]]} =
       SQL.query!(repo, "SELECT id::text, issue_id::text FROM runs WHERE id = $1::text::uuid", [@run_id])
 
-    %{rows: [[@lease_id, @task_id, @worker_id, @session_id]]} =
+    %{rows: [[@session_id, @worker_id]]} =
       SQL.query!(
         repo,
-        "SELECT id::text, task_id::text, worker_id::text, worker_session_id::text FROM task_leases WHERE id = $1::text::uuid",
-        [@lease_id]
+        "SELECT id::text, worker_id::text FROM worker_sessions WHERE id = $1::text::uuid",
+        [@session_id]
       )
   end
 
@@ -238,8 +233,6 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     CREATE TABLE app_settings (key TEXT, value TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE workers (id TEXT, name TEXT, status TEXT, labels TEXT, capabilities TEXT, credential_ref TEXT, last_seen_at TEXT, inserted_at TEXT, updated_at TEXT);
     CREATE TABLE worker_sessions (id TEXT, worker_id TEXT, protocol_version TEXT, worker_version TEXT, instance_id TEXT, total_slots INTEGER, connected_at TEXT, last_heartbeat_at TEXT, disconnected_at TEXT, status TEXT, inserted_at TEXT, updated_at TEXT);
-    CREATE TABLE tasks (id TEXT, project_id TEXT, run_id TEXT, workflow_version_id TEXT, issue_identifier TEXT, status TEXT, priority INTEGER, execution_mode TEXT, required_capabilities TEXT, payload TEXT, queued_at TEXT, started_at TEXT, finished_at TEXT, inserted_at TEXT, updated_at TEXT);
-    CREATE TABLE task_leases (id TEXT, task_id TEXT, worker_id TEXT, worker_session_id TEXT, status TEXT, attempt INTEGER, expires_at TEXT, acquired_at TEXT, released_at TEXT, inserted_at TEXT, updated_at TEXT);
 
     INSERT INTO users VALUES ('90000000-0000-0000-0000-000000000001', 'smoke', 'hash', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO projects VALUES ('#{@project_id}', 'Imported', 'imported', 'cutover fixture', 1, 'SYM', 'https://github.com/example/symphony.git', 'main', 1, 'clone', 1, 1, NULL, NULL, NULL, NULL, '#{@timestamp}', '#{@timestamp}');
@@ -253,8 +246,6 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     INSERT INTO app_settings VALUES ('default_project_id', '{"id":"#{@project_id}"}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workers VALUES ('#{@worker_id}', 'smoke-worker', 'online', '{"values":["linux"]}', '{"sandbox":["workspace-write"]}', 'worker:smoke', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO worker_sessions VALUES ('#{@session_id}', '#{@worker_id}', 'worker-api-v1', '1.0', 'smoke-instance', 1, '#{@timestamp}', '#{@timestamp}', NULL, 'online', '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO tasks VALUES ('#{@task_id}', '#{@project_id}', '#{@run_id}', '#{@workflow_id}', 'SYM-2', 'running', 1, 'worker', '{"labels":["linux"]}', '{"command":"smoke"}', '#{@timestamp}', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO task_leases VALUES ('#{@lease_id}', '#{@task_id}', '#{@worker_id}', '#{@session_id}', 'active', 1, '2026-08-28T10:00:00.000000Z', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
     """
   end
 end

@@ -42,8 +42,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:current_workflow, workflow)
     |> Runs.assign_page(reset: true)
     |> Events.assign_data()
-    |> assign(:tasks, persistence().list_tasks(limit: 100, project_id: project_filter(socket)))
-    |> assign(:task_leases, persistence().list_task_leases(limit: 100))
+    |> assign(:assignment, SymphonyElixir.Worker.AssignmentManager.current_assignment())
     |> assign(:execution_mode, Config.execution_mode())
     |> assign(:workflow_form, workflow_form)
     |> WorkflowState.assign_validation(workflow_form)
@@ -122,10 +121,6 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   end
 
   defp normalize_project_selection(socket, _projects, _selected_project), do: socket
-
-  defp project_filter(%{assigns: %{route_params: params}}) do
-    SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))
-  end
 
   defp runtime_source_summary({:ok, %{source: source}}), do: source_summary(source)
   defp runtime_source_summary({:error, :no_active_workflow}), do: %{type: "setup_required", detail: "setup required"}
