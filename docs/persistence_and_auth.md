@@ -4,7 +4,7 @@ genre: reference
 domain: [persistence, auth]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-09-06
 owner: SymphonyElixir.Persistence
 ---
 
@@ -37,6 +37,18 @@ mise exec -- mix symphony.migrate
 The local `bin/symphony` development command also applies pending migrations before starting the
 supervision tree. The Compose stack uses a one-shot release migration service and starts Symphony
 only after that service succeeds.
+
+### Additive Migration Compatibility
+
+New columns must remain writable by legitimate application versions that have not learned about
+them yet. An additive column must therefore be nullable, or have a database default that lets an
+older writer safely omit it. Do not add a `NOT NULL` column without such a default unless writer
+compatibility has been proved.
+
+A stricter constraint is permitted only after confirming that no old writers remain, or when the
+column has database semantics that make omission invalid and a safe rollout plan is already in
+place. Database defaults used for rollout compatibility do not replace validation by current
+application writers.
 
 ## Durable Workflow Authority
 
