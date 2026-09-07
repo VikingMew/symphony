@@ -18,6 +18,40 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
     end
   end
 
+  test "loads immutable pull request review context through gh" do
+    runner = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] ->
+          {"authenticated", 0}
+
+        ["pr", "view" | _rest] ->
+          {Jason.encode!(%{
+             "state" => "OPEN",
+             "url" => "https://github.com/acme/app/pull/12",
+             "title" => "Review",
+             "body" => "tests",
+             "baseRefOid" => String.duplicate("b", 40),
+             "headRefOid" => String.duplicate("a", 40)
+           }), 0}
+
+        ["pr", "diff" | _rest] ->
+          {"diff --git a/lib/a.ex b/lib/a.ex", 0}
+      end
+    end
+
+    job = %{pr_url: "https://github.com/acme/app/pull/12", repository: "acme/app"}
+
+    assert {:ok, context} =
+             GitHubPullRequest.review_context(job,
+               gh_executable: "/opt/bin/gh",
+               command_runner: runner
+             )
+
+    assert context["head_oid"] == String.duplicate("a", 40)
+    assert context["base_oid"] == String.duplicate("b", 40)
+    assert context["diff"] =~ "diff --git"
+  end
+
   test "reuses an existing open pull request through gh without creating a duplicate" do
     runner = fn _executable, args, _timeout_ms ->
       send(self(), {:gh, args})

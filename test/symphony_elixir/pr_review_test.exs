@@ -121,6 +121,34 @@ defmodule SymphonyElixir.PRReviewTest do
              )
   end
 
+  test "runner records review updates and preserves typed session failures" do
+    issue = %Issue{id: "linear-1", identifier: "SYM-26", state: "Ready to Merge"}
+
+    opts = [
+      workspace_root: System.tmp_dir!(),
+      state_fetcher: fn ["linear-1"] -> {:ok, [issue]} end,
+      issue_context_loader: fn "linear-1" -> {:ok, %{"description" => "criteria"}} end,
+      context_loader: fn _job, [] ->
+        {:ok, %{"head_oid" => @head, "pull_request" => %{"state" => "OPEN"}}}
+      end
+    ]
+
+    assert {:error, :review_result_missing} =
+             Runner.run(
+               job(),
+               Keyword.put(opts, :app_server, fn _, _, _, app_opts ->
+                 app_opts[:on_message].(%{event: :review_progress})
+                 {:ok, %{review_result: nil}}
+               end)
+             )
+
+    assert {:error, :turn_failed} =
+             Runner.run(
+               job(),
+               Keyword.put(opts, :app_server, fn _, _, _, _ -> {:error, :turn_failed} end)
+             )
+  end
+
   test "stable comments include reviewed head and actionable findings" do
     assert PRReview.comment(%{outcome: :approve, head_sha: @head, summary: "Ready"}) ==
              "Symphony PR review: APPROVE (head #{@head})\nReady"
