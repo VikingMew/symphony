@@ -44,6 +44,8 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
         id: "run-analytics-1",
         project_id: "fake-project-id",
         issue_identifier: "CCR-5",
+        kind: "issue",
+        profile: "implementation",
         status: "completed",
         execution_mode: "centralized",
         attempt: 1,
@@ -75,6 +77,13 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
         issue_identifier: "CCR-5",
         occurred_at: now,
         payload: %{characters: 800, lines: 40, over_limit: true}
+      },
+      %{
+        event_type: "linear.state_transition",
+        issue_identifier: "CCR-5",
+        run_id: "run-analytics-1",
+        occurred_at: now,
+        payload: %{"from_state" => "In Progress", "to_state" => "Ready to Merge"}
       }
     ])
 
@@ -89,6 +98,13 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
     assert html =~ "Refinement description"
     assert html =~ "1 samples"
     assert html =~ "over limit 1 (100.0%)"
+    assert html =~ "Issue-flow quality"
+    assert html =~ "First-handoff observed-return proxy"
+    assert html =~ "1 pending/censored"
+    assert html =~ "Workflow transitions only; not GitHub review/check outcomes."
+    assert html =~ "Implementation rework proxy"
+    assert html =~ "external/unknown"
+    assert html =~ "Canonical cumulative snapshots"
     assert html =~ ~s(href="/issues/CCR-5")
 
     document = Floki.parse_document!(html)

@@ -121,6 +121,48 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
             <.breakdown title="Failures" rows={@summary.failure_rows} />
             <.breakdown title="Events" rows={@summary.event_rows} />
           </section>
+
+          <section class="section-card">
+            <h2 class="section-title">Issue-flow quality</h2>
+            <p class="section-copy">Derived from persisted issue runs and events in the selected range.</p>
+            <div class="metric-grid">
+              <article class={["metric-card", warning_class(@summary.issue_quality.refinement.warning)]}>
+                <p class="metric-label">Refinement rounds</p>
+                <p class="metric-value numeric"><%= number(@summary.issue_quality.refinement.average) %></p>
+                <p class="metric-detail">0: <%= @summary.issue_quality.refinement.distribution.zero %> · 1: <%= @summary.issue_quality.refinement.distribution.one %> · 2: <%= @summary.issue_quality.refinement.distribution.two %> · 3+: <%= @summary.issue_quality.refinement.distribution.three_plus %>; <%= @summary.issue_quality.refinement.denominator %> issues</p>
+              </article>
+              <article class={["metric-card", warning_class(@summary.issue_quality.review_return.warning)]}>
+                <p class="metric-label">First-handoff observed-return proxy</p>
+                <p class="metric-value numeric"><%= ratio(@summary.issue_quality.review_return) %></p>
+                <p class="metric-detail"><%= @summary.issue_quality.review_return.pending_censored %> pending/censored. Workflow transitions only; not GitHub review/check outcomes.</p>
+              </article>
+              <article class={["metric-card", warning_class(@summary.issue_quality.blocked.warning)]}>
+                <p class="metric-label">Blocked issue rate</p>
+                <p class="metric-value numeric"><%= ratio(@summary.issue_quality.blocked) %></p>
+                <p class="metric-detail">Unique issues with a run in range.</p>
+              </article>
+              <article class={["metric-card", warning_class(@summary.issue_quality.description.warning)]}>
+                <p class="metric-label">Latest description length</p>
+                <p class="metric-value numeric"><%= number(@summary.issue_quality.description.average) %></p>
+                <p class="metric-detail">p50 <%= number(@summary.issue_quality.description.p50) %>; <%= @summary.issue_quality.description.missing %> missing. Latest observed snapshot, not creation-time length.</p>
+              </article>
+              <article class={["metric-card", warning_class(@summary.issue_quality.rework.warning)]}>
+                <p class="metric-label">Implementation rework proxy</p>
+                <p class="metric-value numeric"><%= ratio(@summary.issue_quality.rework) %></p>
+                <p class="metric-detail">Return transition or repeated handoff; does not infer diff size.</p>
+              </article>
+              <article class="metric-card">
+                <p class="metric-label">Issue origin coverage</p>
+                <p class="metric-value numeric"><%= @summary.issue_quality.origin.agent_created %>/<%= @summary.issue_quality.origin.denominator %></p>
+                <p class="metric-detail"><%= @summary.issue_quality.origin.external_unknown %> external/unknown. <%= if @summary.issue_quality.origin.status == :insufficient_coverage, do: "Unavailable / insufficient creator audit coverage.", else: "Agent-created evidence available." %></p>
+              </article>
+            </div>
+            <h3 class="section-title">Token usage by profile and issue</h3>
+            <p class="section-copy">Canonical cumulative snapshots; maximum absolute snapshot per run. No rate-limit percentages or monetary cost.</p>
+            <div class="table-wrap"><table class="data-table analytics-table"><thead><tr><th>Profile</th><th>Issue</th><th>Input</th><th>Output</th><th>Total</th></tr></thead><tbody>
+              <tr :for={row <- @summary.issue_quality.token_rows} class={warning_class(row.warning)}><td><%= row.profile %></td><td><%= row.issue_identifier %></td><td class="numeric"><%= row.tokens.input_tokens %></td><td class="numeric"><%= row.tokens.output_tokens %></td><td class="numeric"><%= row.tokens.total_tokens %></td></tr>
+            </tbody></table></div>
+          </section>
         <% end %>
       <% end %>
     </section>
@@ -176,6 +218,13 @@ defmodule SymphonyElixirWeb.AnalyticsLive do
 
   defp int(value) when is_integer(value), do: Integer.to_string(value)
   defp int(_value), do: "0"
+  defp number(nil), do: "Unavailable"
+  defp number(value) when is_float(value), do: value |> Float.round(2) |> to_string()
+  defp number(value), do: to_string(value)
+  defp ratio(%{denominator: 0}), do: "Unavailable"
+  defp ratio(metric), do: "#{metric.numerator}/#{metric.denominator} (#{number(metric.rate * 100)}%)"
+  defp warning_class(true), do: "status-warning"
+  defp warning_class(false), do: nil
 
   defp duration(seconds) when is_integer(seconds) and seconds >= 3600 do
     "#{div(seconds, 3600)}h #{div(rem(seconds, 3600), 60)}m"

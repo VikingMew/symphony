@@ -430,7 +430,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     assert html =~ "Referenced by Human review states"
     assert html =~ "Profile implementation target states"
     assert html =~ "Allowed transition In Progress -&gt; Ready to Merge"
-    assert html =~ "Open Workflow Settings"
+    assert html =~ "Open Settings Import"
     assert html =~ "Canceled"
     assert html =~ "Needs Refinement Review"
   end

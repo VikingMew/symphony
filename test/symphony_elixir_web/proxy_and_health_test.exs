@@ -68,6 +68,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
 
     assert payload["status"] == "ready"
     assert payload["checks"]["database"] == "ok"
+    assert payload["checks"]["migrations"] == "current"
     assert payload["checks"]["workflow"] == "setup_required"
     refute inspect(payload) =~ "token"
   end

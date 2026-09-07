@@ -339,7 +339,7 @@ Symphony is designed for long-running operation and transient failure recovery:
 
 - Missing startup workflow configuration enters setup-required mode instead of polling Linear.
 - Dashboard-first `--port` mode can boot without an active workflow, so the first workflow can be
-  created through `/settings/workflow`.
+  loaded through `/settings/import`.
 - Invalid workflow reloads are logged, while the last known good database workflow remains active.
 - Failed agent turns can be retried according to orchestrator policy.
 - Active runs are stopped when issue states become terminal or ineligible.
@@ -393,6 +393,13 @@ mise exec -- mix setup
 mise exec -- mix symphony.migrate
 mise exec -- mix build
 ```
+
+In the production Panel release, a read-only migration gate runs before the application
+supervision tree. It derives expected versions from packaged `priv/repo/migrations`, reads all
+PostgreSQL `schema_migrations` versions, and fails startup on pending or unknown-applied versions.
+Repo, reconciliation, orchestration, and HTTP therefore cannot run against a stale or forward
+schema. The execution-worker has no database dependency, and the local CLI retains automatic
+migration before its explicit supervisor start.
 
 Run without the dashboard:
 

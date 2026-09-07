@@ -141,12 +141,12 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
               Settings validation checks local structure. Linear diagnostics checks whether those state names exist in the configured Linear project.
             </p>
           </div>
-          <a class="subtle-button" href="/settings/workflow">Open Workflow Settings</a>
+          <a class="subtle-button" href="/settings/import">Open Settings Import</a>
         </div>
 
         <aside class="setup-guidance-card setup-guidance-card-warning" role="status" aria-live="polite">
           <h3>Missing Linear states</h3>
-          <p>Rename these references in Settings / Workflow to an existing Linear state, or create the missing statuses in Linear.</p>
+          <p>Update and import the workflow package with existing Linear state names, or create the missing statuses in Linear.</p>
           <ul>
             <li :for={item <- linear_state_fix_items(@diagnostics)}>
               <div class="setup-guidance-item-heading">
