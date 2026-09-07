@@ -27,13 +27,17 @@ Forwarded headers are ignored by default. Enable them only when Symphony is reac
 Health probes:
 
 - `GET /health/live`: process is serving HTTP.
-- `GET /health/ready`: web process is serving and the configured persistence layer is reachable.
+- `GET /health/ready`: web process is serving, migrations are current, and persistence is reachable.
 
-Readiness reports workflow setup as `configured` or `setup_required`; setup-required does not expose secrets and does not prevent the Settings UI from loading.
+Readiness reports `checks.migrations: "current"` and workflow setup as `configured` or
+`setup_required`; setup-required does not expose secrets and does not prevent the Settings UI from
+loading.
 
 Every deployment must provide `DATABASE_URL` and run `SymphonyElixir.Release.migrate!()` as a
-one-shot job before starting the web release. A missing or unreachable database is a startup error,
-not setup-required.
+one-shot job before starting the web release. Startup itself is read-only: before Repo and every
+business child, it requires packaged migrations and `schema_migrations` to match exactly. Pending
+or image-unknown versions, an unreachable database, and migration-state query failures are typed
+startup errors, not setup-required, and HTTP never starts.
 
 ## Nginx Example
 

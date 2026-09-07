@@ -258,6 +258,12 @@ docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d
 ```
 
+The published file pair is mandatory for every pull, migration, and start command. Its required
+immutable `SYMPHONY_IMAGE` is shared by `migrate` and `symphony`. Before Repo, orchestration,
+worker reconciliation, or HTTP starts, the Panel release performs a read-only exact comparison
+with `schema_migrations`; mismatches terminate startup. Successful readiness includes
+`checks.migrations: "current"`.
+
 The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, PostgreSQL clients,
 SQLite cutover tooling, and the repository-pinned Elixir quality-gate toolchain. The separate
 `worker` target remains available for SSH-reachable Codex workers.

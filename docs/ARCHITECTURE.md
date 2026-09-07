@@ -394,6 +394,13 @@ mise exec -- mix symphony.migrate
 mise exec -- mix build
 ```
 
+In the production Panel release, a read-only migration gate runs before the application
+supervision tree. It derives expected versions from packaged `priv/repo/migrations`, reads all
+PostgreSQL `schema_migrations` versions, and fails startup on pending or unknown-applied versions.
+Repo, reconciliation, orchestration, and HTTP therefore cannot run against a stale or forward
+schema. The execution-worker has no database dependency, and the local CLI retains automatic
+migration before its explicit supervisor start.
+
 Run without the dashboard:
 
 ```bash

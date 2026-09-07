@@ -28,9 +28,18 @@ defmodule SymphonyElixir.Application do
   end
 
   defp start_panel do
-    with :ok <- validate_database_config(),
+    with :ok <- validate_database_config() do
+      start_checked_supervisor(&validate_migrations/0, &start_supervisor/0)
+    end
+  end
+
+  @doc false
+  @spec start_checked_supervisor((-> :ok | {:error, term()}), (-> Supervisor.on_start())) ::
+          Supervisor.on_start() | {:error, term()}
+  def start_checked_supervisor(check_migrations, start_business_children) do
+    with :ok <- check_migrations.(),
          :ok <- SymphonyElixir.LogFile.configure() do
-      start_supervisor()
+      start_business_children.()
     end
   end
 
@@ -83,6 +92,14 @@ defmodule SymphonyElixir.Application do
   defp validate_database_config do
     if Application.get_env(:symphony_elixir, :start_repo, true) do
       SymphonyElixir.DatabaseSetup.validate_config()
+    else
+      :ok
+    end
+  end
+
+  defp validate_migrations do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.MigrationCheck.check()
     else
       :ok
     end
