@@ -114,13 +114,11 @@ defmodule SymphonyElixir.MixProject do
         remove_when: "context-level storage tests cover each schema/context public contract",
         exit_slices: %{
           SymphonyElixir.Persistence => "count after repository functions are tested through adapter contracts instead of real DB setup",
-          SymphonyElixir.Persistence.WorkerQueue =>
-            "extract queue command normalization and lease transition decisions behind a fake repository contract before counting Repo-bound queue orchestration",
+          SymphonyElixir.Persistence.WorkerRegistry => "cover worker identity and session persistence through a PostgreSQL integration target before counting Repo-bound registry orchestration",
           SymphonyElixir.Persistence.AgentTurn => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.EventRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.IssueRecord => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.Project => "count with schema changeset tests when persistence schemas leave the blanket group",
-          SymphonyElixir.Persistence.TaskLease => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.TrackerConfig => "count with schema changeset tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.User => "count with password/hash schema tests when persistence schemas leave the blanket group",
           SymphonyElixir.Persistence.WorkerSession => "count with schema changeset tests when persistence schemas leave the blanket group",
@@ -129,12 +127,11 @@ defmodule SymphonyElixir.MixProject do
         },
         modules: [
           SymphonyElixir.Persistence,
-          SymphonyElixir.Persistence.WorkerQueue,
+          SymphonyElixir.Persistence.WorkerRegistry,
           SymphonyElixir.Persistence.AgentTurn,
           SymphonyElixir.Persistence.EventRecord,
           SymphonyElixir.Persistence.IssueRecord,
           SymphonyElixir.Persistence.Project,
-          SymphonyElixir.Persistence.TaskLease,
           SymphonyElixir.Persistence.TrackerConfig,
           SymphonyElixir.Persistence.User,
           SymphonyElixir.Persistence.WorkerSession,

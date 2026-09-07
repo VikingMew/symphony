@@ -1,38 +1,17 @@
 defmodule SymphonyElixirWeb.WorkersLive do
   @moduledoc """
-  Worker registry and worker-backed task queue page.
+  Worker registry, current assignment, and worker execution history.
   """
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.{Config, PersistenceProvider}
+  alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixirWeb.Admin.ObservabilityPresenter
 
   @impl true
   def mount(params, _session, socket) do
     {:ok, socket |> assign(:route_params, params) |> refresh()}
-  end
-
-  @impl true
-  def handle_event("cancel_task", %{"id" => id}, socket) do
-    socket =
-      case persistence().cancel_task(id) do
-        {:ok, _task} -> socket |> put_flash(:info, "Task cancelled") |> refresh()
-        {:error, reason} -> put_flash(socket, :error, "Task cancellation failed: #{inspect(reason)}")
-      end
-
-    {:noreply, socket}
-  end
-
-  @impl true
-  def handle_event("requeue_task", %{"id" => id}, socket) do
-    socket =
-      case persistence().requeue_task(id) do
-        {:ok, _task} -> socket |> put_flash(:info, "Task requeued") |> refresh()
-        {:error, reason} -> put_flash(socket, :error, "Task requeue failed: #{inspect(reason)}")
-      end
-
-    {:noreply, socket}
   end
 
   @impl true
@@ -59,7 +38,7 @@ defmodule SymphonyElixirWeb.WorkersLive do
           <div class="metric-grid worker-mode-grid">
             <article class="metric-card">
               <p class="metric-label">Current path</p>
-              <p class="metric-detail">Panel-owned dispatch starts Codex without queueing HTTP worker-backed tasks.</p>
+              <p class="metric-detail">Panel-owned dispatch starts Codex directly.</p>
             </article>
             <article class="metric-card">
               <p class="metric-label">Worker-backed mode</p>
@@ -96,30 +75,34 @@ defmodule SymphonyElixirWeb.WorkersLive do
 
       <section class="section-card">
         <div class="section-header">
-          <h2 class="section-title">Tasks</h2>
+          <h2 class="section-title">Current assignment</h2>
           <SymphonyElixirWeb.Layouts.project_switcher projects={@projects} current={@project_filter} base_path="/workers" />
         </div>
-        <%= if @tasks == [] do %>
-          <p class="empty-state">No worker-backed tasks have been queued yet.</p>
+        <%= if is_nil(@assignment) do %>
+          <p class="empty-state">No in-memory worker assignment is active.</p>
         <% else %>
           <table class="data-table">
-            <thead><tr><th>Issue</th><th>Status</th><th>Validation</th><th>Source / runtime</th><th>Handoff</th><th>Queued</th><th></th></tr></thead>
+            <thead><tr><th>Issue</th><th>Assignment</th><th>Run</th><th>Session</th><th>Expires</th></tr></thead>
             <tbody>
-              <tr :for={task <- @tasks}>
-                <td class="issue-id"><%= task.issue_identifier || "n/a" %></td>
-                <td><span class={status_class(task.status)}><%= task.status %></span></td>
-                <td><%= summary_value(task, "validation_status") %><%= gate_statuses(task) %></td>
-                <td class="mono"><%= source_runtime(task) %></td>
-                <td class="mono"><%= task_handoff(task) %></td>
-                <td class="mono"><%= fmt_dt(task.queued_at) %></td>
-                <td>
-                  <button :if={task.status in ["queued", "leased", "running"]} class="subtle-button" phx-click="cancel_task" phx-value-id={task.id}>Cancel</button>
-                  <button :if={task.status in ["failed", "cancelled", "expired"]} class="subtle-button" phx-click="requeue_task" phx-value-id={task.id}>Requeue</button>
-                </td>
+              <tr>
+                <td class="issue-id"><%= @assignment.issue_identifier %></td>
+                <td class="mono"><%= @assignment.id %></td>
+                <td class="mono"><%= @assignment.run_id %></td>
+                <td class="mono"><%= @assignment.session_id %></td>
+                <td class="mono"><%= fmt_dt(@assignment.expires_at) %></td>
               </tr>
             </tbody>
           </table>
         <% end %>
+      </section>
+
+      <section class="section-card">
+        <h2 class="section-title">Worker run history</h2>
+        <p :if={@runs == []} class="empty-state">No worker execution runs recorded.</p>
+        <table :if={@runs != []} class="data-table">
+          <thead><tr><th>Issue</th><th>Status</th><th>Run</th><th>Started</th><th>Finished</th></tr></thead>
+          <tbody><tr :for={run <- @runs}><td><%= run.issue_identifier %></td><td><%= run.status %></td><td class="mono"><%= run.id %></td><td><%= fmt_dt(run.started_at) %></td><td><%= fmt_dt(run.finished_at) %></td></tr></tbody>
+        </table>
       </section>
     </section>
     """
@@ -134,7 +117,8 @@ defmodule SymphonyElixirWeb.WorkersLive do
     |> assign(:projects, projects)
     |> assign(:projects_error, projects_error)
     |> assign(:project_filter, filter)
-    |> assign(:tasks, persistence().list_tasks(limit: 100, project_id: filter))
+    |> assign(:assignment, AssignmentManager.current_assignment())
+    |> assign(:runs, worker_runs(filter))
     |> assign(:execution_mode, Config.execution_mode())
   end
 
@@ -150,44 +134,16 @@ defmodule SymphonyElixirWeb.WorkersLive do
   end
 
   defp persistence, do: PersistenceProvider.module()
+
+  defp worker_runs(project_id) do
+    case persistence().list_runs(limit: 100, project_id: project_id) do
+      runs when is_list(runs) -> Enum.filter(runs, &(&1.execution_mode == "worker"))
+      _error -> []
+    end
+  end
+
   defp worker_empty_message(mode), do: ObservabilityPresenter.worker_empty_message(mode)
   defp fmt_dt(value), do: ObservabilityPresenter.fmt_dt(value)
   defp labels_text(labels), do: ObservabilityPresenter.labels_text(labels)
   defp status_class(status), do: ObservabilityPresenter.status_class(status)
-
-  defp summary_value(task, key), do: execution_summary(task)[key] || "n/a"
-
-  defp gate_statuses(task) do
-    case get_in(execution_summary(task), ["gates"]) do
-      gates when is_list(gates) and gates != [] -> " (" <> Enum.map_join(gates, ", ", &"#{&1["name"]}: #{&1["status"]}") <> ")"
-      _ -> ""
-    end
-  end
-
-  defp source_runtime(task) do
-    summary = execution_summary(task)
-    runtime = summary["runtime"] || %{}
-
-    Enum.join(
-      Enum.reject(
-        [summary["source_revision"], runtime["image_digest"] || runtime["image_tag"], runtime["worker_source_revision"]],
-        &is_nil/1
-      ),
-      " | "
-    )
-  end
-
-  defp task_handoff(task) do
-    handoff = execution_summary(task)["handoff"] || %{}
-
-    Enum.join(
-      Enum.reject(
-        [handoff["branch"], handoff["commit"], handoff["pr_identifier"], handoff["pr_url"], handoff["linear_state"]],
-        &is_nil/1
-      ),
-      " | "
-    )
-  end
-
-  defp execution_summary(task), do: Map.get(task, :execution_summary) || %{}
 end

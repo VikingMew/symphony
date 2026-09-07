@@ -13,9 +13,8 @@ defmodule SymphonyElixir.Persistence do
     IssueRecord,
     Project,
     RunRecord,
-    TaskRecord,
     User,
-    WorkerQueue,
+    WorkerRegistry,
     WorkflowRecord,
     WorkflowStore,
     WorkspaceRecord
@@ -109,10 +108,6 @@ defmodule SymphonyElixir.Persistence do
     )
 
     Repo.update_all(from(issue in IssueRecord, where: issue.project_id == ^project.id),
-      set: [project_id: nil]
-    )
-
-    Repo.update_all(from(task in TaskRecord, where: task.project_id == ^project.id),
       set: [project_id: nil]
     )
 
@@ -417,64 +412,38 @@ defmodule SymphonyElixir.Persistence do
   end
 
   @spec worker_protocol_version() :: String.t()
-  defdelegate worker_protocol_version(), to: WorkerQueue
+  defdelegate worker_protocol_version(), to: WorkerRegistry
 
   @spec worker_heartbeat_interval_seconds() :: pos_integer()
-  defdelegate worker_heartbeat_interval_seconds(), to: WorkerQueue
+  defdelegate worker_heartbeat_interval_seconds(), to: WorkerRegistry
 
   @spec worker_lease_duration_seconds() :: pos_integer()
-  defdelegate worker_lease_duration_seconds(), to: WorkerQueue
+  defdelegate worker_lease_duration_seconds(), to: WorkerRegistry
 
   @spec worker_registration_token() :: String.t() | nil
-  defdelegate worker_registration_token(), to: WorkerQueue
+  defdelegate worker_registration_token(), to: WorkerRegistry
 
   @spec valid_worker_registration_token?(String.t() | nil) :: boolean()
-  defdelegate valid_worker_registration_token?(token), to: WorkerQueue
+  defdelegate valid_worker_registration_token?(token), to: WorkerRegistry
 
   @spec register_worker(map()) :: {:ok, map()} | {:error, term()}
-  defdelegate register_worker(attrs), to: WorkerQueue
+  defdelegate register_worker(attrs), to: WorkerRegistry
 
   @spec list_workers(keyword()) :: list()
-  defdelegate list_workers(opts \\ []), to: WorkerQueue
+  defdelegate list_workers(opts \\ []), to: WorkerRegistry
 
   @spec list_worker_sessions(keyword()) :: list()
-  defdelegate list_worker_sessions(opts \\ []), to: WorkerQueue
+  defdelegate list_worker_sessions(opts \\ []), to: WorkerRegistry
 
   @spec available_worker_slots(keyword()) :: non_neg_integer()
-  defdelegate available_worker_slots(opts \\ []), to: WorkerQueue
+  defdelegate available_worker_slots(opts \\ []), to: WorkerRegistry
 
-  @spec enqueue_task(map()) :: {:ok, term()} | {:error, term()}
-  defdelegate enqueue_task(attrs), to: WorkerQueue
+  @spec active_worker_session(String.t(), String.t()) :: {:ok, term(), term()} | {:error, term()}
+  defdelegate active_worker_session(worker_id, session_id), to: WorkerRegistry
 
-  @spec list_tasks(keyword()) :: list()
-  defdelegate list_tasks(opts \\ []), to: WorkerQueue
+  @spec heartbeat_worker(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+  defdelegate heartbeat_worker(worker_id, session_id), to: WorkerRegistry
 
-  @spec list_task_leases(keyword()) :: list()
-  defdelegate list_task_leases(opts \\ []), to: WorkerQueue
-
-  @spec claim_task(String.t(), String.t(), map()) :: {:ok, nil | map()} | {:error, term()}
-  defdelegate claim_task(worker_id, session_id, attrs \\ %{}), to: WorkerQueue
-
-  @spec heartbeat(String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
-  defdelegate heartbeat(worker_id, session_id, attrs \\ %{}), to: WorkerQueue
-
-  @spec expire_stale_worker_state(keyword()) :: {non_neg_integer(), non_neg_integer()}
-  defdelegate expire_stale_worker_state(opts \\ []), to: WorkerQueue
-
-  @spec cancel_task(String.t(), String.t()) :: {:ok, term()} | {:error, term()}
-  defdelegate cancel_task(task_id, reason \\ "operator_requested"), to: WorkerQueue
-
-  @spec requeue_task(String.t()) :: {:ok, term()} | {:error, term()}
-  defdelegate requeue_task(task_id), to: WorkerQueue
-
-  @spec record_worker_task_event(String.t(), String.t(), String.t(), String.t(), map()) ::
-          {:ok, EventRecord.t()} | {:error, term()}
-  defdelegate record_worker_task_event(
-                worker_id,
-                session_id,
-                task_id,
-                event_type,
-                payload \\ %{}
-              ),
-              to: WorkerQueue
+  @spec expire_stale_worker_sessions(keyword()) :: non_neg_integer()
+  defdelegate expire_stale_worker_sessions(opts \\ []), to: WorkerRegistry
 end

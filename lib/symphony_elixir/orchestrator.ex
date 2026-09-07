@@ -16,7 +16,6 @@ defmodule SymphonyElixir.Orchestrator do
     Nap.Results,
     Payload,
     PersistenceProvider,
-    PromptBuilder,
     RunLifecycle,
     StatusDashboard,
     Tracker,
@@ -32,6 +31,7 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.Orchestrator.InputBlocker
   alias SymphonyElixir.Orchestrator.RetryPolicy
   alias SymphonyElixir.Orchestrator.SessionHistory
+  alias SymphonyElixir.Worker.AssignmentManager
 
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
@@ -868,6 +868,14 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
+    if Config.execution_mode() == :worker do
+      state
+    else
+      dispatch_for_workflow_centrally(state, workflow)
+    end
+  end
+
+  defp dispatch_for_workflow_centrally(%State{} = state, workflow) do
     with :ok <- Config.validate!(),
          state = reconcile_ready_to_merge_issues(state),
          :allow <- rate_limit_gate_allows_dispatch(state),
@@ -1498,13 +1506,8 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host) do
-    if Config.execution_mode() == :worker do
-      enqueue_issue_for_worker(state, issue, attempt)
-    else
-      dispatch_issue_centrally(state, issue, attempt, preferred_worker_host)
-    end
-  end
+  defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host),
+    do: dispatch_issue_centrally(state, issue, attempt, preferred_worker_host)
 
   defp dispatch_issue_centrally(%State{} = state, issue, attempt, preferred_worker_host) do
     recipient = self()
@@ -1517,30 +1520,6 @@ defmodule SymphonyElixir.Orchestrator do
 
       worker_host ->
         spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
-    end
-  end
-
-  defp enqueue_issue_for_worker(%State{} = state, %Issue{} = issue, attempt) do
-    case persist_worker_task_queued(issue, attempt) do
-      {:ok, %{run: run, task: task}} ->
-        Logger.info("Queued issue for external worker: #{issue_context(issue)} run_id=#{run.id} task_id=#{task.id}")
-
-        %{
-          state
-          | claimed: MapSet.put(state.claimed, issue.id),
-            max_concurrent_agents: max(state.max_concurrent_agents - 1, 0),
-            retry_attempts: Map.delete(state.retry_attempts, issue.id)
-        }
-
-      {:error, reason} ->
-        Logger.error("Unable to queue worker task for #{issue_context(issue)}: #{inspect(reason)}")
-
-        persist_event("task.queue_failed", issue.identifier, %{
-          issue_id: issue.id,
-          error: inspect(reason)
-        })
-
-        state
     end
   end
 
@@ -3050,55 +3029,9 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp cancel_active_worker_tasks do
-    persistence = PersistenceProvider.module()
-
-    case PersistenceProvider.read(fn -> persistence.list_tasks(limit: 1_000) end) do
-      tasks when is_list(tasks) ->
-        tasks
-        |> Enum.filter(&(Map.get(&1, :status) in ["queued", "leased", "running"]))
-        |> Enum.reduce({0, []}, &accumulate_task_cancellation(&1, persistence, &2))
-        |> then(fn {cancelled, failed} ->
-          cancellation_result(cancelled, Enum.reverse(failed))
-        end)
-
-      {:error, reason} ->
-        cancellation_result(0, [%{task_id: nil, reason: inspect(reason)}])
-
-      other ->
-        cancellation_result(0, [%{task_id: nil, reason: inspect({:unexpected_result, other})}])
-    end
-  end
-
-  defp accumulate_task_cancellation(task, persistence, {cancelled, failed}) do
-    task_id = Map.get(task, :id)
-
-    case cancel_worker_task(persistence, task_id) do
-      :ok -> {cancelled + 1, failed}
-      {:error, reason} -> {cancelled, [%{task_id: task_id, reason: reason} | failed]}
-    end
-  end
-
-  defp cancel_worker_task(persistence, task_id) do
-    case persistence.cancel_task(task_id, "force_stop_all") do
-      {:ok, _task} -> :ok
-      {:error, reason} -> {:error, inspect(reason)}
-      other -> {:error, inspect({:unexpected_result, other})}
-    end
-  rescue
-    error -> {:error, inspect(error)}
-  catch
-    kind, reason -> {:error, inspect({kind, reason})}
-  end
-
-  defp cancellation_result(cancelled, failed) do
-    status =
-      cond do
-        failed == [] -> :ok
-        cancelled == 0 -> :error
-        true -> :partial
-      end
-
-    %{cancelled: cancelled, failed: failed, status: status}
+    assignment = AssignmentManager.current_assignment()
+    :ok = AssignmentManager.cancel_current("force_stop_all")
+    %{cancelled: if(assignment, do: 1, else: 0), failed: [], status: :ok}
   end
 
   defp integrate_codex_update(running_entry, %{event: _event, timestamp: _timestamp} = update) do
@@ -3542,54 +3475,6 @@ defmodule SymphonyElixir.Orchestrator do
       attempt: 0,
       started_at: task.started_at
     })
-  end
-
-  defp persist_worker_task_queued(%Issue{} = issue, attempt) do
-    if !persistence_enabled?(), do: throw(:persistence_disabled)
-
-    workflow = current_workflow_context()
-    project_id = Map.get(workflow, :project_id)
-
-    {:ok, issue_record} =
-      persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
-
-    workflow_record = current_workflow_record(workflow)
-
-    profile = Config.workflow_profile_for_state(issue.state)
-
-    prompt =
-      PromptBuilder.build_prompt(issue,
-        profile: profile,
-        profile_policy: Config.workflow_profile(profile),
-        allowed_updates: Config.workflow_allowed_updates(profile),
-        attempt: attempt
-      )
-
-    run_attrs =
-      issue
-      |> Events.run_attrs(workflow_record, "worker", attempt)
-      |> Map.put(:issue_id, issue_record.id)
-      |> Map.put_new(:project_id, project_id)
-
-    {:ok, run} = persistence().create_run(run_attrs)
-
-    {:ok, task} =
-      persistence().enqueue_task(
-        Events.worker_task_attrs(
-          issue,
-          run,
-          workflow_record,
-          prompt,
-          profile
-        )
-      )
-
-    persist_event(Events.task_queued_event(issue, run, task))
-    {:ok, %{run: run, task: task}}
-  rescue
-    error -> {:error, error}
-  catch
-    :persistence_disabled -> {:error, :persistence_disabled}
   end
 
   defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do

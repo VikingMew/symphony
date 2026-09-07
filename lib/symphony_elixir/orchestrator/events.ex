@@ -38,15 +38,15 @@ defmodule SymphonyElixir.Orchestrator.Events do
       when execution_mode in ["centralized", "worker"] do
     %{
       issue_identifier: issue.identifier,
-      status: if(execution_mode == "worker", do: "queued", else: "running"),
+      status: "running",
       execution_mode: execution_mode,
       attempt: RetryPolicy.normalize_attempt(attempt),
       started_at: DateTime.utc_now()
     }
   end
 
-  @spec worker_task_attrs(Issue.t(), map(), map() | nil, String.t(), String.t() | nil) :: map()
-  def worker_task_attrs(%Issue{} = issue, run, _workflow, prompt, profile) when is_map(run) do
+  @spec worker_assignment_payload(Issue.t(), map(), map() | nil, String.t(), String.t() | nil) :: map()
+  def worker_assignment_payload(%Issue{} = issue, run, _workflow, prompt, profile) when is_map(run) do
     settings = Config.settings!()
 
     %{
@@ -113,11 +113,6 @@ defmodule SymphonyElixir.Orchestrator.Events do
   @spec run_started_event(Issue.t(), map(), String.t() | nil) :: map()
   def run_started_event(%Issue{} = issue, run, worker_host) when is_map(run) do
     event_attrs("run.started", issue.identifier, %{issue_id: issue.id, run_id: run.id, worker_host: worker_host}, run.id)
-  end
-
-  @spec task_queued_event(Issue.t(), map(), map()) :: map()
-  def task_queued_event(%Issue{} = issue, run, task) when is_map(run) and is_map(task) do
-    event_attrs("task.queued", issue.identifier, %{issue_id: issue.id, run_id: run.id, task_id: task.id}, run.id)
   end
 
   @spec run_finished_event(map(), String.t(), String.t() | nil) :: map()

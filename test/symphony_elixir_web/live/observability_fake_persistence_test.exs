@@ -623,7 +623,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     refute second_html =~ "boom-a"
   end
 
-  test "workers page tasks filter by project query parameter" do
+  test "workers page run history filters by project query parameter" do
     refute Process.whereis(SymphonyElixir.Repo)
     start_test_endpoint()
     now = DateTime.utc_now()
@@ -637,22 +637,24 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
 
     second_project = FakePersistence.list_projects() |> List.last()
 
-    FakePersistence.put_tasks([
+    FakePersistence.put_runs([
       %{
-        id: "task-proj-a-1",
+        id: "run-proj-a-1",
         project_id: "fake-project-id",
         issue_identifier: "MT-TASKA-1",
-        status: "queued",
+        status: "running",
         execution_mode: "worker",
-        queued_at: now
+        started_at: now,
+        finished_at: nil
       },
       %{
-        id: "task-proj-b-1",
+        id: "run-proj-b-1",
         project_id: second_project.id,
         issue_identifier: "MT-TASKB-1",
-        status: "queued",
+        status: "failed",
         execution_mode: "worker",
-        queued_at: now
+        started_at: now,
+        finished_at: now
       }
     ])
 

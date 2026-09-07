@@ -8,6 +8,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   alias Plug.Conn
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
+  alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixir.Worker.ExecutionPayload
 
   @spec register(Conn.t(), map()) :: Conn.t()
@@ -37,25 +38,25 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec claim(Conn.t(), map()) :: Conn.t()
   def claim(conn, params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
-         {:ok, result} <- persistence().claim_task(worker_id, session_id, params) do
+         {:ok, result} <- AssignmentManager.claim(worker_id, session_id, params) do
       case result do
         nil ->
           json(conn, %{task: nil, poll_after_seconds: 5})
 
-        %{task: task, lease: lease, correlation: correlation} ->
+        assignment ->
           json(conn, %{
-            correlation: correlation,
-            task_id: task.id,
-            lease_id: lease.id,
-            lease_expires_at: lease.expires_at,
-            project_id: task.project_id,
-            run_id: task.run_id,
-            issue_id: correlation["issue_id"],
-            issue_identifier: task.issue_identifier,
-            run_attempt: correlation["run_attempt"],
-            lease_attempt: lease.attempt,
-            worker_session_id: correlation["worker_session_id"],
-            execution: ExecutionPayload.from_task_payload(task.payload)
+            correlation: assignment.correlation,
+            task_id: assignment.id,
+            lease_id: assignment.id,
+            lease_expires_at: assignment.expires_at,
+            project_id: assignment.project_id,
+            run_id: assignment.run_id,
+            issue_id: assignment.issue.id,
+            issue_identifier: assignment.issue_identifier,
+            run_attempt: assignment.correlation["run_attempt"],
+            lease_attempt: 1,
+            worker_session_id: assignment.session_id,
+            execution: ExecutionPayload.from_task_payload(assignment.payload)
           })
       end
     else
@@ -66,7 +67,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec heartbeat(Conn.t(), map()) :: Conn.t()
   def heartbeat(conn, params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
-         {:ok, payload} <- persistence().heartbeat(worker_id, session_id, params) do
+         {:ok, payload} <- AssignmentManager.heartbeat(worker_id, session_id, params) do
       json(conn, payload)
     else
       {:error, reason} -> worker_error(conn, reason)
@@ -77,7 +78,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, event} <-
-           persistence().record_worker_task_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
+           AssignmentManager.record_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
       notify_terminal_task(event_type, event)
 
       conn

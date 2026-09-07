@@ -16,27 +16,41 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
       url: "https://linear.example/SYM-66"
     }
 
-    profile = Config.workflow_profile_for_state(issue.state)
-
-    prompt =
-      PromptBuilder.build_prompt(issue,
-        profile: profile,
-        profile_policy: Config.workflow_profile(profile),
-        allowed_updates: Config.workflow_allowed_updates(profile),
-        attempt: 1
-      )
-
     task_attrs =
-      Events.worker_task_attrs(
-        issue,
-        %{id: "run-worker-prompt", project_id: "fake-project-id"},
-        %{},
-        prompt,
-        profile
-      )
+      Config.with_workflow_context(workflow_context(), fn ->
+        profile = Config.workflow_profile_for_state(issue.state)
+
+        prompt =
+          PromptBuilder.build_prompt(issue,
+            profile: profile,
+            profile_policy: Config.workflow_profile(profile),
+            allowed_updates: Config.workflow_allowed_updates(profile),
+            attempt: 1
+          )
+
+        Events.worker_assignment_payload(
+          issue,
+          %{id: "run-worker-prompt", project_id: "fake-project-id"},
+          %{},
+          prompt,
+          profile
+        )
+      end)
 
     assert task_attrs.payload["prompt"] =~ "create_pull_request"
     assert task_attrs.payload["prompt"] =~ "Ready to Merge"
     assert task_attrs.payload["prompt"] =~ "Base worker prompt."
+  end
+
+  defp workflow_context do
+    %{
+      config: %{
+        "project" => %{
+          "repository_url" => "https://github.com/openai/symphony",
+          "default_branch" => "main"
+        }
+      },
+      prompt_template: "Base worker prompt."
+    }
   end
 end

@@ -119,7 +119,7 @@ Fields:
 
 - `issue_id`
 - `identifier` (best-effort human ID for status surfaces/logs)
-- `attempt` (integer, 1-based for retry queue)
+- `attempt` (integer identifying a newly evidenced run attempt)
 - `due_at_ms` (monotonic clock timestamp)
 - `timer_handle` (runtime-specific timer reference)
 - `error` (string or null)
