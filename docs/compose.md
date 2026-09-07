@@ -197,12 +197,15 @@ docker compose run --rm migrate
 Successful `main`, release-tag (`vMAJOR.MINOR.PATCH[-prerelease]`), and manually dispatched image
 workflows publish `ghcr.io/vikingmew/symphony` and
 `ghcr.io/vikingmew/symphony-execution-worker` for exactly `linux/amd64` and `linux/arm64` in one
-run. Both receive `sha-<full commit SHA>`; `main` updates both `latest` tags, and a release-tag push
-adds that exact tag to both. A manual run off `main` never updates `latest`.
+run. Both always receive `sha-<full commit SHA>`. A release-tag push also adds that exact,
+overwrite-protected release tag to both repositories. The workflow never creates or updates a
+Symphony `latest` tag.
 
-Use matching immutable full-SHA tags or recorded digests from one workflow run. Set the worker
-source revision to the full SHA that built its image. The published override removes all application
-builds, requires both references, and always pulls them; the worker profile remains opt-in:
+Use matching immutable full-SHA tags or recorded digests from the same successful workflow run.
+Before pulling or starting services, verify that the selected full commit was reviewed and that its
+required CI checks passed. Set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that exact full commit
+SHA. The published override removes all application builds, requires both references, and always
+pulls them; the worker profile remains opt-in:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
@@ -238,11 +241,12 @@ docker buildx imagetools inspect --raw "$SYMPHONY_IMAGE" |
   jq -r '.manifests[].platform | "\(.os)/\(.architecture)"' | sort -u
 ```
 
-`latest` is available as a convenience for tracking `main`, but it is mutable and is not a
-rollback reference. Roll back by changing both immutable references and the worker source revision
-to a previously recorded matching publication. The workflow summary records each image's digest,
-tags, and verified platforms, then runs the release version
-command under both platform variants through QEMU.
+After deployment, inspect the running Panel and execution-worker services and confirm that each uses
+the selected immutable tag or digest. Confirm Panel readiness and execution-worker health before
+declaring the deployment complete. Roll back by changing both immutable references and the worker
+source revision to a previously recorded matching publication. The workflow summary records each
+image's digest, immutable tags, and verified platforms, then runs the release version command under
+both platform variants through QEMU.
 
 ## Daily Operations
 

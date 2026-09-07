@@ -179,17 +179,14 @@ jobs:
               mise exec -- mix --version
             '
 
-      - name: Select immutable and mutable tags
+      - name: Select immutable tags
         id: tags
         shell: bash
         run: |
           set -euo pipefail
           tags="${IMAGE}:sha-${GITHUB_SHA}"
           worker_tags="${WORKER_IMAGE}:sha-${GITHUB_SHA}"
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            tags+=$'\n'"${IMAGE}:latest"
-            worker_tags+=$'\n'"${WORKER_IMAGE}:latest"
-          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == refs/tags/* ]]; then
             if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
               echo "Tag does not follow vMAJOR.MINOR.PATCH[-prerelease]: ${GITHUB_REF_NAME}" >&2
               exit 1
@@ -283,7 +280,7 @@ jobs:
           source_ref="${IMAGE}@${{ steps.existing.outputs.digest }}"
           while IFS= read -r tag; do
             [[ "$tag" == "${IMAGE}:sha-${GITHUB_SHA}" ]] && continue
-            if [[ "$tag" != "${IMAGE}:latest" ]] && docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+            if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
               echo "Immutable release tag already exists: $tag" >&2
               exit 1
             fi
@@ -300,7 +297,7 @@ jobs:
           source_ref="${WORKER_IMAGE}@${{ steps.worker-existing.outputs.digest }}"
           while IFS= read -r tag; do
             [[ "$tag" == "${WORKER_IMAGE}:sha-${GITHUB_SHA}" ]] && continue
-            if [[ "$tag" != "${WORKER_IMAGE}:latest" ]] && docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
+            if docker buildx imagetools inspect "$tag" >/dev/null 2>&1; then
               echo "Immutable release tag already exists: $tag" >&2
               exit 1
             fi
@@ -423,6 +420,6 @@ jobs:
             echo "- Run: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
             echo "- Quality gate: $QUALITY_RESULT; publish job: $PUBLISH_RESULT"
             tags="sha-${GITHUB_SHA}"
-            [[ "$GITHUB_REF" == refs/heads/main ]] && tags+=", latest"
+            [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* ]] && tags+=", ${GITHUB_REF_NAME}"
             echo "- Tags: $tags"
           } >> "$GITHUB_STEP_SUMMARY"
