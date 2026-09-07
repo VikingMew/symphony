@@ -89,7 +89,7 @@ Project Settings 应展示并保存 project-specific source 信息：
 - clean stale worktree
 - setup / cleanup commands
 
-Workflow Settings 应继续展示并保存：
+workflow package 应继续定义并保存：
 
 - initialize timeout
 - lifecycle hooks
