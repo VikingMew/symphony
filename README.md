@@ -263,7 +263,9 @@ curl --fail http://127.0.0.1:4000/health/ready
 CI publishes matching `ghcr.io/vikingmew/symphony` and
 `ghcr.io/vikingmew/symphony-execution-worker` manifests for `linux/amd64` and `linux/arm64`.
 Local Compose still builds both targets from source. For a published deployment, select immutable
-references from the same workflow run and keep the worker source revision equal to its commit:
+full-SHA tags (or their recorded digests) from the same successful publish run. Before pulling,
+verify that the full commit was reviewed and passed required CI, and keep the worker source revision
+equal to that full commit SHA:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
@@ -272,6 +274,10 @@ export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcde
 docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d
 ```
+
+After deployment, the operator must confirm that Panel and execution-worker are running the two
+selected immutable references, that Panel readiness is healthy, and that the execution-worker is
+healthy. CI never publishes or updates a Symphony `latest` tag.
 
 The published file pair is mandatory for every pull, migration, and start command. Its required
 immutable `SYMPHONY_IMAGE` is shared by `migrate` and `symphony`. Before Repo, orchestration,

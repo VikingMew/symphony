@@ -201,15 +201,20 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
   end
 
-  test "publication workflow publishes the execution worker image" do
+  test "publication workflow publishes only immutable Panel and execution worker tags" do
     workflow = File.read!(@publish_workflow)
 
     assert workflow =~ "WORKER_IMAGE: ghcr.io/vikingmew/symphony-execution-worker"
     assert workflow =~ "target: execution-worker"
     assert workflow =~ "platforms: linux/amd64,linux/arm64"
     assert workflow =~ "worker_tags=\"${WORKER_IMAGE}:sha-${GITHUB_SHA}\""
-    assert workflow =~ "${WORKER_IMAGE}:latest"
+    assert workflow =~ "tags=\"${IMAGE}:sha-${GITHUB_SHA}\""
     assert workflow =~ "worker_release_tag=\"${WORKER_IMAGE}:${GITHUB_REF_NAME}\""
+    assert workflow =~ "release_tag=\"${IMAGE}:${GITHUB_REF_NAME}\""
+    refute workflow =~ ~S("${IMAGE}:latest")
+    refute workflow =~ ~S("${WORKER_IMAGE}:latest")
+    refute workflow =~ "tags+=\", latest\""
+    refute workflow =~ "Select immutable and mutable tags"
     assert workflow =~ "Inspect worker manifest platforms"
     assert workflow =~ "Smoke published worker on both platforms"
   end
@@ -238,6 +243,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   test "published migration and Panel require the same immutable image" do
     compose = File.read!(@published_compose)
+    local_compose = File.read!(@compose)
     required_image = "${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}"
 
     for service <- ["migrate", "symphony"] do
@@ -246,6 +252,10 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~ "image: #{required_image}"
       assert body =~ "pull_policy: always"
     end
+
+    refute compose =~ ":latest"
+    assert local_compose =~ "image: ${SYMPHONY_IMAGE:-symphony:local}"
+    assert local_compose =~ "build:"
   end
 
   test "published deployment commands always use the overlay file pair" do
