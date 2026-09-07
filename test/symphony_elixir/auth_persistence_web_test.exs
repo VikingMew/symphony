@@ -152,17 +152,15 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     refute html =~ ~s(href="/workflows")
     refute html =~ ~s(href="/agent-settings")
 
-    {:ok, _workflow_view, workflow_html} = live(build_conn(), "/settings/workflow")
-    assert workflow_html =~ ~s(class="top-banner")
-    assert workflow_html =~ ~s(href="/")
-    assert workflow_html =~ ~s(aria-current="page")
-    assert workflow_html =~ ~s(href="/settings/projects")
-    assert workflow_html =~ ~s(href="/settings/workflow")
-    assert workflow_html =~ ~s(href="/settings/agents")
-    assert workflow_html =~ ~s(href="/settings/runtime")
-    assert workflow_html =~ "Draft Configuration"
-    refute workflow_html =~ ~s(name="workflow[tracker_project_slug]")
-    refute workflow_html =~ "Raw workflow source"
+    {:ok, _settings_view, settings_html} = live(build_conn(), "/settings/agents")
+    assert settings_html =~ ~s(class="top-banner")
+    assert settings_html =~ ~s(href="/")
+    assert settings_html =~ ~s(aria-current="page")
+    assert settings_html =~ ~s(href="/settings/projects")
+    refute settings_html =~ ~s(href="/settings/workflow")
+    assert settings_html =~ ~s(href="/settings/agents")
+    assert settings_html =~ ~s(href="/settings/runtime")
+    assert settings_html =~ "Profile Configuration"
   end
 
   defp start_test_endpoint do

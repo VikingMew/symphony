@@ -32,6 +32,7 @@ defmodule SymphonyElixirWeb.HealthController do
       "checks" => %{
         "web" => "ok",
         "database" => if(repo_ready?, do: "ok", else: "unavailable"),
+        "migrations" => "current",
         "workflow" => workflow_state
       },
       "external_url" => ProxyHeaders.external_url(conn, conn.request_path),

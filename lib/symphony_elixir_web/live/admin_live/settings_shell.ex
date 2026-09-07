@@ -8,7 +8,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
 
   alias SymphonyElixir.Linear.Discovery
   alias SymphonyElixirWeb.Admin.ObservabilityPresenter
-  alias SymphonyElixirWeb.AdminLive.Settings.{Agents, Import, Projects, Runtime, Workflow}
+  alias SymphonyElixirWeb.AdminLive.Settings.{Agents, Import, Projects, Runtime}
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -19,7 +19,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
       <div class="section-header">
         <div>
           <h1 class="section-title">Settings</h1>
-          <p class="metric-label">Configure projects, workflow routing, agent profiles, and runtime settings.</p>
+          <p class="metric-label">Configure projects, agent profiles, imports, and runtime settings.</p>
         </div>
         <SymphonyElixirWeb.Layouts.project_switcher
           projects={@projects}
@@ -36,7 +36,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
     </aside>
 
     <.linear_discovery_panel
-      :if={@settings_tab in [:projects, :workflow]}
+      :if={@settings_tab == :projects}
       status={@linear_discovery_status}
       discovery={@linear_discovery}
       message={@linear_discovery_message}
@@ -76,7 +76,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
       <div class="section-header">
         <div>
           <h2 class="section-title">Linear Configuration Discovery</h2>
-          <p class="workflow-help-copy">Fetch read-only Linear projects, teams, and workflow states while filling project and workflow settings.</p>
+          <p class="workflow-help-copy">Fetch read-only Linear projects, teams, and workflow states while filling project settings.</p>
         </div>
         <button type="button" class="subtle-button" phx-click="fetch_linear_discovery" phx-disable-with="Fetching...">
           <%= if @status == :fetched, do: "Refresh Linear configuration", else: "Fetch Linear configuration" %>
@@ -119,7 +119,6 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
   end
 
   defp page(:projects, assigns), do: Projects.render(assigns)
-  defp page(:workflow, assigns), do: Workflow.render(assigns)
   defp page(:agents, assigns), do: Agents.render(assigns)
   defp page(:runtime, assigns), do: Runtime.render(assigns)
   defp page(:import, assigns), do: Import.render(assigns)

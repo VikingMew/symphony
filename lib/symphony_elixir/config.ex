@@ -94,6 +94,9 @@ defmodule SymphonyElixir.Config do
   @spec required_gates() :: [map()]
   def required_gates, do: settings!().project.required_gates
 
+  @spec analytics_thresholds() :: SymphonyElixir.Config.Schema.Analytics.t()
+  def analytics_thresholds, do: settings!().analytics
+
   @spec workflow_profile_for_state(String.t() | nil) :: String.t() | nil
   def workflow_profile_for_state(state_name) do
     Schema.workflow_profile_for_state(settings!(), state_name)
@@ -208,7 +211,7 @@ defmodule SymphonyElixir.Config do
   defp format_config_error(reason) do
     case reason do
       :setup_required ->
-        "No workflow is configured. Open /settings/workflow to create one."
+        "No workflow is configured. Import a workflow package in /settings/import."
 
       {:invalid_workflow_config, message} ->
         "Invalid workflow config: #{message}"
