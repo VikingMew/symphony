@@ -48,14 +48,13 @@ Elixir / Phoenix Web Service
 
 当前已知对齐说明：
 
-- `已落地`：每项目唯一的 PostgreSQL current workflow、Settings tabbed configuration、结构化 `/settings/workflow` draft form、`/settings/agents` base prompt/profile 编辑、原位保存、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
+- `已落地`：每项目唯一的 PostgreSQL current workflow、Settings tabbed configuration、`/settings/import` package 导入、`/settings/agents` base prompt/profile 编辑、原位保存、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
 - `已落地`：Project source/bootstrap 由 Project Settings 和 Workflow Bootstrap 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；Workflow Bootstrap 拥有 `workspace.initialize_timeout_ms`，用于 clone/worktree 初始化和 project setup 超时。`hooks.timeout_ms` 只控制 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 - `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取 DB current workflow；本地 split package 文件只作为导入/导出格式和示例存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
 - `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
 - `已落地`：中心化 agent run 终态必须持久化 `status`、`finished_at` 和失败原因；Orchestrator 启动时会把上一次 runtime 遗留的 `running` rows 标记为 failed 并写入明确原因，避免 Runs 页面长期显示多个过期 running attempts。
 - `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，展示 staged diff/review，并在确认后写入 editable draft；运行时仍只在正常 Save 后变化。
 - `已落地`：input-required / approval-required / MCP elicitation 会作为 blocked session 暴露在 snapshot、API 和 dashboard 中，不再当作普通 retry failure。
-- `部分落地`：Workflow 页面已经不是纯 raw textarea，但仍未覆盖完整字段级 verification、页面级导出按钮；allowed transitions 目前主要以只读结构展示，不是完整编辑器。
 - `已落地`：默认交付使用 refinement/implementation 两个 Codex profile；实现完成后由
   `AgentRunner` 确保 open GitHub PR，再进入 `Ready to Merge` 等待人 review。后端不 merge，
   `manual` / `external_worker` 仍是扩展契约。
@@ -252,13 +251,12 @@ events
 
 ### 阶段 2：Web UI 管理配置
 
-当前 Settings 已从早期 raw editor 演进为 tabbed configuration：`/settings/projects` 承载 project 设置，`/settings/workflow` 承载结构化 workflow/routing draft form，`/settings/agents` 承载 profile 设置，`/settings/runtime` 承载运行时摘要。可以从数据库 workflow
-version 和 projects 表生成表单，编辑后保存为新的数据库版本或 project 记录。Settings 顶部提供 project 选择器：
-选中 project 后，workflow/agents/runtime 表单和版本历史都限定到该 project；Projects tab 仍列出全部 project 用于 enable/disable 编辑。这个阶段仍是 `部分落地`：页面已经不再只是一个巨大纯文本框，但还没有完整覆盖字段级
-verification、diff 审计、导出按钮和所有配置域的高级编辑。后续目标是继续把 workflow package 拆成更
-完整的可编辑数据模型。拆分时必须覆盖整个运行时 contract，而不是只覆盖 prompt：
+当前 Settings 是 tabbed configuration：`/settings/projects` 承载 project 设置，`/settings/import`
+承载 split workflow package 导入，`/settings/agents` 承载 profile 设置，`/settings/runtime` 承载运行时摘要。
+Settings 顶部提供 project 选择器；Projects tab 仍列出全部 project 用于 enable/disable 编辑。workflow
+states/transitions 不提供第二套 UI 编辑入口，导入保存后的 PostgreSQL current workflow 是运行时权威。
 
-- project 配置：每个 project 的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述；这些字段不属于 Workflow tab。
+- project 配置：每个 project 的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述。
 - tracker 连接边界：tracker kind 和 endpoint 是固定的 Linear/runtime 连接语义，不作为用户可编辑 workflow 字段。
 - polling 配置
 - workspace 配置
@@ -273,18 +271,14 @@ verification、diff 审计、导出按钮和所有配置域的高级编辑。后
 此阶段应支持 split package 上传导入和导出。当前 `/settings/import` 已支持粘贴或上传 package、staged review 和 diff；
 页面级导出按钮仍属于后续补齐项。早期 raw editor 不是长期目标入口；长期主入口应保持结构化表单。导入/导出是数据交换能力，不是运行时 source 选择。
 
-Settings 页面长期应提供几个互相一致的 tab/入口：
+Settings 页面提供几个互相一致的 tab/入口：
 
 - `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
-- `/settings/workflow` 结构化编辑：按 tracker policy、bootstrap、workspace、hooks、agent、codex、
-  workflow routing、human review states、allowed transitions 等区域编辑（通过 Settings 顶部 project 选择器限定到指定 project）。project repository 和 Linear project slug 不在这里编辑。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy（project 选择器限定到指定 project）。
 - `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
 - Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，根据 YAML 字段自动识别 package 类型，显示 staged diff 和校验结果。确认导入只修改 editable draft；字段可解析时可以保存为 current workflow；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
 这些入口必须写入同一个 current workflow 模型。导入文件写入 DB workflow；导出文件来自 DB workflow；运行时只读取 DB current workflow，避免 UI 配置、文件配置和运行时配置分裂。
-详细页面结构、verification 分层、上传导入流程和导出定位维护在
-[Workflow 页面设计目标](workflow-page-design.md)。
 
 #### Settings 保存和校验原则
 
@@ -303,7 +297,7 @@ Linear 相关配置必须避免在 Settings、Diagnostics 和 runtime 之间制�
 
 - Linear API token 只来自环境变量，例如 `LINEAR_API_KEY`。UI 不显示、不保存、不回填 token；最多展示是否存在、来源和安全摘要。
 - Tracker kind 固定为 Linear，endpoint 固定为默认 Linear GraphQL endpoint。它们可以在 diagnostics 中展示为 runtime fact，但不应显示为用户需要填写的 `n/a` 配置项。
-- Linear discovery 是 Settings 的只读辅助能力。Projects 和 Workflow tab 共享同一份读取结果：Projects 用它复制 project slug，Workflow 用它核对 active/terminal/review state 和 transition target。
+- Linear discovery 是 Settings 的只读辅助能力。Projects tab 用它复制 project slug；workflow state mismatch 由 diagnostics 展示。
 - Discovery 必须显示 fetching、fetched、failed 状态；失败要展示可行动原因。读取结果不能自动修改 Settings，用户必须显式复制或保存。
 - Diagnostics 验证的是 active runtime config；Settings 验证的是当前 draft 和保存后的数据库配置。两者可以同时显示同一个 Linear state mismatch，但措辞必须说明问题归属：project 字段缺失去 Projects 修，workflow state/transition 缺失去 Workflow 修，token 缺失去环境变量修。
 - Linear state mismatch 需要聚焦核心：列出 missing state、引用位置、是否在 Linear available states 里有近似可选项，以及用户下一步可以“改 workflow state 名称”还是“去 Linear 新建/重命名 state”。
@@ -642,7 +636,7 @@ lib/symphony_elixir_web/
 ### Milestone 3：配置 UI（结构化 Settings 基础路径已完成）
 
 - 已有 projects 页面。
-- 已有 `/settings/workflow` 结构化 draft form，可编辑核心 tracker、project/bootstrap、hooks、runtime、codex 和 state routing 字段，并保存为完整 current workflow。
+- 已有 `/settings/import` split package 导入，可保存完整 current workflow；workflow state/routing 不提供独立 UI 编辑入口。
 - 已有 `/settings/agents` 设置 tab，可编辑 base prompt、profiles、profile prompt 和 allowed updates。
 - 页面不再以 raw textarea 作为主要编辑入口；`/settings/import` 已支持 split package 粘贴/上传、staged review 和 diff。导出入口仍需补齐。
 - 每次保存原位更新 current workflow；不保留或激活历史版本。

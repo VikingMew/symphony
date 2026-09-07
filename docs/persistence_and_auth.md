@@ -4,7 +4,7 @@ genre: reference
 domain: [persistence, auth]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-09-06
 owner: SymphonyElixir.Persistence
 ---
 
@@ -25,8 +25,11 @@ export SYMPHONY_DATABASE_POOL_SIZE=5
 ```
 
 `DATABASE_URL` must identify an existing database. Symphony does not create a PostgreSQL database
-or silently substitute a local file. A missing URL, unreachable server, or failed migration stops
-startup with an explicit database error.
+or silently substitute a local file. A missing URL, unreachable server, or migration-state read
+failure stops startup with an explicit typed database error. The production Panel performs no DDL:
+before Repo, orchestration, reconciliation, and HTTP, it compares `priv/repo/migrations` with all
+applied `schema_migrations` versions. It lists every pending version/name and every version unknown
+to the image. Successful readiness reports `checks.migrations: "current"`.
 
 Run migrations before starting the service:
 
@@ -34,9 +37,21 @@ Run migrations before starting the service:
 mise exec -- mix symphony.migrate
 ```
 
-The local `bin/symphony` development command also applies pending migrations before starting the
-supervision tree. The Compose stack uses a one-shot release migration service and starts Symphony
-only after that service succeeds.
+The local `bin/symphony` development command still applies pending migrations before starting the
+supervision tree. The Compose one-shot release migration service remains the production schema
+writer; the startup gate only verifies its result.
+
+### Additive Migration Compatibility
+
+New columns must remain writable by legitimate application versions that have not learned about
+them yet. An additive column must therefore be nullable, or have a database default that lets an
+older writer safely omit it. Do not add a `NOT NULL` column without such a default unless writer
+compatibility has been proved.
+
+A stricter constraint is permitted only after confirming that no old writers remain, or when the
+column has database semantics that make omission invalid and a safe rollout plan is already in
+place. Database defaults used for rollout compatibility do not replace validation by current
+application writers.
 
 ## Durable Workflow Authority
 

@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.WorkersLive do
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
   alias SymphonyElixir.{Config, PersistenceProvider}
+  alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixirWeb.Admin.ObservabilityPresenter
 
   @impl true
@@ -116,7 +117,7 @@ defmodule SymphonyElixirWeb.WorkersLive do
     |> assign(:projects, projects)
     |> assign(:projects_error, projects_error)
     |> assign(:project_filter, filter)
-    |> assign(:assignment, SymphonyElixir.Worker.AssignmentManager.current_assignment())
+    |> assign(:assignment, AssignmentManager.current_assignment())
     |> assign(:runs, worker_runs(filter))
     |> assign(:execution_mode, Config.execution_mode())
   end

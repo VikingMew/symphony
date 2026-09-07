@@ -19,7 +19,9 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @run_id "40000000-0000-0000-0000-000000000001"
   @worker_id "50000000-0000-0000-0000-000000000001"
   @session_id "60000000-0000-0000-0000-000000000001"
+  @legacy_session_id "60000000-0000-0000-0000-000000000002"
   @timestamp "2026-08-27T10:00:00.000000Z"
+  @capacity_migration 20_260_905_000_000
 
   @impl Mix.Task
   @spec run([String.t()]) :: :ok
@@ -54,8 +56,11 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     with_repo!(fn repo ->
       migrations_path = :symphony_elixir |> :code.priv_dir() |> to_string() |> Path.join("repo/migrations")
       Ecto.Migrator.run(repo, migrations_path, :down, all: true)
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
+      seed_pre_repair_worker_session!(repo)
       Ecto.Migrator.run(repo, migrations_path, :up, all: true)
       verify_postgres_schema!(repo)
+      verify_worker_session_compatibility!(repo)
       verify_bootstrap_concurrency!()
     end)
   end
@@ -176,6 +181,62 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       SQL.query!(repo, "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname <> 'schema_migrations_pkey'", [])
 
     if indexes < 14, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
+  end
+
+  defp seed_pre_repair_worker_session!(repo) do
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO workers (id, name, status, labels, capabilities, inserted_at, updated_at)
+      VALUES ($1::uuid, 'migration-smoke-worker', 'online', '{}', '{}', NOW(), NOW())
+      """,
+      [@worker_id]
+    )
+
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO worker_sessions (
+        id, worker_id, protocol_version, total_slots, connected_at, status, inserted_at, updated_at
+      )
+      VALUES ($1::uuid, $2::uuid, 'worker-api-v1', 7, NOW(), 'online', NOW(), NOW())
+      """,
+      [@session_id, @worker_id]
+    )
+  end
+
+  defp verify_worker_session_compatibility!(repo) do
+    %{rows: [["YES", "1"]]} =
+      SQL.query!(
+        repo,
+        """
+        SELECT is_nullable, column_default
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'worker_sessions'
+          AND column_name = 'total_slots'
+        """,
+        []
+      )
+
+    %{rows: [[7]]} =
+      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::uuid", [@session_id])
+
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO worker_sessions (
+        id, worker_id, protocol_version, connected_at, status, inserted_at, updated_at
+      )
+      VALUES ($1::uuid, $2::uuid, 'legacy-worker-api-v1', NOW(), 'online', NOW(), NOW())
+      """,
+      [@legacy_session_id, @worker_id]
+    )
+
+    %{rows: [[1]]} =
+      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::uuid", [@legacy_session_id])
+
+    SQL.query!(repo, "DELETE FROM workers WHERE id = $1::uuid", [@worker_id])
   end
 
   defp assert_imported_relationships!(repo) do

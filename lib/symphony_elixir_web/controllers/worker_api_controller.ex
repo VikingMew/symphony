@@ -8,8 +8,8 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   alias Plug.Conn
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
-  alias SymphonyElixir.Worker.ExecutionPayload
   alias SymphonyElixir.Worker.AssignmentManager
+  alias SymphonyElixir.Worker.ExecutionPayload
 
   @spec register(Conn.t(), map()) :: Conn.t()
   def register(conn, params) do

@@ -22,7 +22,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Per-issue workspaces and Git worktrees.
 - PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, sessions, and workspace records.
 - Settings pages for Projects, Workflow, Agents, Runtime, and package import.
-- Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages.
+- Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages, including persisted issue-flow quality proxies and non-blocking warnings.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
 
 ## How It Works
@@ -40,13 +40,18 @@ Linear issue
 The default workflow is intentionally gated by human review states:
 
 ```text
-Backlog -> Refining -> Needs Refinement Review -> Ready -> In Progress
-  -> Ready to Merge -> Done
-              \-> Blocked --human recovery--> Ready / Needs Refinement Review / Canceled
+Todo -> Refining -> Needs Refinement Review
+Ready -> In Progress -> Ready to Merge
+             \-> Blocked --human recovery--> either loop
+Done (fixed successful completion state)
 ```
 
-`Refining`, `Ready`, and `In Progress` are agent-work states. `Needs Refinement Review` and
-`Ready to Merge` and `Blocked` are human-review states and are never dispatched. During normal
+The configurable workflow is the seven states in the two loops plus their shared `Blocked` state:
+`Todo`, `Refining`, `Needs Refinement Review`, `Ready`, `In Progress`, `Ready to Merge`, and
+`Blocked`. `Done` is the fixed successful completion state and is not configurable; `Backlog` and
+`Duplicate` are manual helper states outside workflow configuration. `Refining`, `Ready`, and
+`In Progress` are agent-work states. `Needs Refinement Review`, `Ready to Merge`, and `Blocked`
+are human-review states and are never dispatched. During normal
 control-plane reconciliation, Symphony checks the exact open PR handed off for `Ready to Merge`
 issues. A definitive GitHub merge conflict moves the issue to persistent `Blocked`; unknown,
 behind, CI, review, and transient API states leave it waiting. Symphony persists
@@ -258,6 +263,12 @@ export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcde
 docker compose -f compose.yaml -f compose.published.yaml pull
 docker compose -f compose.yaml -f compose.published.yaml up -d
 ```
+
+The published file pair is mandatory for every pull, migration, and start command. Its required
+immutable `SYMPHONY_IMAGE` is shared by `migrate` and `symphony`. Before Repo, orchestration,
+worker reconciliation, or HTTP starts, the Panel release performs a read-only exact comparison
+with `schema_migrations`; mismatches terminate startup. Successful readiness includes
+`checks.migrations: "current"`.
 
 The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, PostgreSQL clients,
 SQLite cutover tooling, and the repository-pinned Elixir quality-gate toolchain. The separate

@@ -7,8 +7,8 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
 
   import Ecto.Query
 
-  alias SymphonyElixir.Repo
   alias SymphonyElixir.Persistence.{Worker, WorkerSession}
+  alias SymphonyElixir.Repo
 
   @worker_protocol_version "worker-api-v1"
   @worker_heartbeat_interval_seconds 10

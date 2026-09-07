@@ -108,12 +108,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   def handle_call({:heartbeat, worker_id, session_id, attrs}, _from, state) do
     state = expire_assignment(state)
 
-    with {:ok, base} <- state.persistence.heartbeat_worker(worker_id, session_id) do
-      active_ids = map_get(attrs, "active_leases", :active_leases) || []
-      {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
-      {:reply, {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}, %{state | assignment: assignment}}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    case state.persistence.heartbeat_worker(worker_id, session_id) do
+      {:ok, base} ->
+        active_ids = map_get(attrs, "active_leases", :active_leases) || []
+        {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
+
+        reply = {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}
+        {:reply, reply, %{state | assignment: assignment}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -190,12 +194,24 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     expires_at = DateTime.add(now, state.persistence.worker_lease_duration_seconds(), :second)
     project_id = workflow.project_id
     profile = Config.workflow_profile_for_state(issue.state)
-    prompt = PromptBuilder.build_prompt(issue, profile: profile, profile_policy: Config.workflow_profile(profile), allowed_updates: Config.workflow_allowed_updates(profile))
 
-    with {:ok, issue_record} <- state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
-         {:ok, run} <- state.persistence.create_run(Events.run_attrs(issue, workflow, "worker", nil) |> Map.merge(%{issue_id: issue_record.id, project_id: project_id, status: "running"})),
+    prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: profile,
+        profile_policy: Config.workflow_profile(profile),
+        allowed_updates: Config.workflow_allowed_updates(profile)
+      )
+
+    with {:ok, issue_record} <-
+           state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
+         {:ok, run} <- create_run(state.persistence, issue, workflow, issue_record.id, project_id),
          :ok <- move_to_in_progress(state.tracker, issue),
-         assignment <- build_assignment(assignment_id, issue, run, worker, session, workflow, prompt, profile, expires_at),
+         assignment <-
+           build_assignment(assignment_id, issue, run, worker, session, workflow,
+             prompt: prompt,
+             profile: profile,
+             expires_at: expires_at
+           ),
          {:ok, _event} <- state.persistence.record_event(assignment_event(assignment, "task.accepted", %{})) do
       {:ok, assignment}
     else
@@ -205,8 +221,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp build_assignment(id, issue, run, worker, session, workflow, prompt, profile, expires_at) do
-    payload = Events.worker_assignment_payload(issue, run, workflow, prompt, profile).payload
+  defp create_run(persistence, issue, workflow, issue_id, project_id) do
+    attrs =
+      issue
+      |> Events.run_attrs(workflow, "worker", nil)
+      |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running"})
+
+    persistence.create_run(attrs)
+  end
+
+  defp build_assignment(id, issue, run, worker, session, workflow, opts) do
+    payload = Events.worker_assignment_payload(issue, run, workflow, opts[:prompt], opts[:profile]).payload
 
     correlation = %{
       "project_id" => run.project_id,
@@ -232,7 +257,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       run_id: run.id,
       worker_id: worker.id,
       session_id: session.id,
-      expires_at: expires_at,
+      expires_at: opts[:expires_at],
       payload: payload,
       correlation: correlation
     }
@@ -244,9 +269,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp renew_assignment(nil, _worker_id, _session_id, _active_ids, _state), do: {nil, []}
 
   defp renew_assignment(assignment, worker_id, session_id, active_ids, state) do
-    if assignment.worker_id == worker_id and assignment.session_id == session_id and assignment.lease_id in active_ids do
+    owned? = assignment.worker_id == worker_id and assignment.session_id == session_id
+
+    if owned? and assignment.lease_id in active_ids do
       expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
-      {%{assignment | expires_at: expires_at}, [%{lease_id: assignment.lease_id, lease_expires_at: expires_at}]}
+      renewal = %{lease_id: assignment.lease_id, lease_expires_at: expires_at}
+      {%{assignment | expires_at: expires_at}, [renewal]}
     else
       {assignment, []}
     end
@@ -363,11 +391,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp available_slots(attrs), do: map_get(attrs, "available_slots", :available_slots) || 1
-  defp validate_correlation(payload, correlation), do: validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)
+
+  defp validate_correlation(payload, correlation) do
+    validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)
+  end
 
   defp validate_correlation_fields(supplied, authoritative) do
     Enum.reduce_while(supplied, :ok, fn {key, value}, :ok ->
-      if Map.has_key?(authoritative, key) and authoritative[key] != value, do: {:halt, {:error, {:correlation_mismatch, key}}}, else: {:cont, :ok}
+      if Map.has_key?(authoritative, key) and authoritative[key] != value,
+        do: {:halt, {:error, {:correlation_mismatch, key}}},
+        else: {:cont, :ok}
     end)
   end
 

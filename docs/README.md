@@ -40,7 +40,6 @@ other documents link instead of restating.
 
 | Document | Purpose | Status |
 | --- | --- | --- |
-| [workflow-page-design.md](workflow-page-design.md) | Workflow settings page goals. | landed |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary. | landed |
 | [execution-runtime-design.md](execution-runtime-design.md) | Single trusted external worker runtime, in-lease validation, and handoff. | landed |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout. | landed |
@@ -76,6 +75,7 @@ other documents link instead of restating.
 
 | Document | Purpose |
 | --- | --- |
+| [analytics.md](analytics.md) | Historical analytics definitions, evidence coverage, and warning thresholds. |
 | [user-guide.zh-CN.md](user-guide.zh-CN.md) | Operator guide (zh-CN). |
 | [compose.md](compose.md) | Compose, PostgreSQL operations, backup/restore, and SQLite cutover guide. |
 | [deployment.md](deployment.md) | Reverse-proxy and Kubernetes deployment guide. |

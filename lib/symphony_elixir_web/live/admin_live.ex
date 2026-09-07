@@ -21,7 +21,6 @@ defmodule SymphonyElixirWeb.AdminLive do
   @settings_actions [
     :settings,
     :settings_projects,
-    :settings_workflow,
     :settings_agents,
     :settings_runtime,
     :settings_import
@@ -106,11 +105,6 @@ defmodule SymphonyElixirWeb.AdminLive do
   @impl true
   def handle_event("remove_project", %{"project_id" => id}, socket) do
     Projects.remove(id, socket)
-  end
-
-  @impl true
-  def handle_event("add_workflow_transition", _params, socket) do
-    WorkflowState.add_transition(socket)
   end
 
   @impl true

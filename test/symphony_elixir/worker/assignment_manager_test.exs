@@ -9,11 +9,23 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   defmodule Tracker do
     use Agent
 
-    def start_link(_opts), do: Agent.start_link(fn -> %{candidates: [], current: %{}, updates: []} end, name: __MODULE__)
+    def start_link(_opts) do
+      initial = %{candidates: [], current: %{}, updates: [], fetch_error: nil, update_error: nil}
+      Agent.start_link(fn -> initial end, name: __MODULE__)
+    end
+
     def put(issues), do: Agent.update(__MODULE__, &%{&1 | candidates: issues, current: Map.new(issues, fn issue -> {issue.id, issue} end)})
     def replace(issue), do: Agent.update(__MODULE__, &put_in(&1.current[issue.id], issue))
+    def fail_fetch(reason), do: Agent.update(__MODULE__, &%{&1 | fetch_error: reason})
+    def fail_update(reason), do: Agent.update(__MODULE__, &%{&1 | update_error: reason})
     def updates, do: Agent.get(__MODULE__, &Enum.reverse(&1.updates))
-    def fetch_candidate_issues, do: {:ok, Agent.get(__MODULE__, & &1.candidates)}
+
+    def fetch_candidate_issues do
+      Agent.get(__MODULE__, fn
+        %{fetch_error: nil, candidates: candidates} -> {:ok, candidates}
+        %{fetch_error: reason} -> {:error, reason}
+      end)
+    end
 
     def fetch_issue_states_by_ids(ids) do
       {:ok,
@@ -25,12 +37,14 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     def fetch_issues_by_states(states), do: {:ok, Agent.get(__MODULE__, &(&1.current |> Map.values() |> Enum.filter(fn issue -> issue.state in states end)))}
 
     def update_issue_state(id, state) do
-      Agent.update(__MODULE__, fn data ->
-        current = Map.update!(data.current, id, &%{&1 | state: state})
-        %{data | current: current, updates: [{id, state} | data.updates]}
-      end)
+      Agent.get_and_update(__MODULE__, fn
+        %{update_error: nil} = data ->
+          current = Map.update!(data.current, id, &%{&1 | state: state})
+          {:ok, %{data | current: current, updates: [{id, state} | data.updates]}}
 
-      :ok
+        %{update_error: reason} = data ->
+          {{:error, reason}, data}
+      end)
     end
   end
 
@@ -92,6 +106,19 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert Tracker.updates() == []
   end
 
+  test "surfaces tracker fetch and state transition failures", context do
+    ready = issue(1)
+    Tracker.put([ready])
+    Tracker.fail_fetch(:tracker_unavailable)
+    assert {:error, :tracker_unavailable} = claim(context)
+
+    Tracker.fail_fetch(nil)
+    Tracker.fail_update(:transition_rejected)
+    assert {:error, :transition_rejected} = claim(context)
+    assert [%{status: "failed"}] = FakePersistence.list_runs_for_issue(ready.identifier)
+    assert AssignmentManager.current_assignment(context.manager) == nil
+  end
+
   test "failure ends the assignment and the next claim rereads Linear", context do
     ready = issue(1)
     Tracker.put([ready])
@@ -135,6 +162,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Tracker.put([issue(1)])
     assert {:ok, nil} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
     assert {:error, :worker_session_not_found} = AssignmentManager.claim("wrong", "wrong", %{}, context.manager)
+    assert {:error, :worker_session_not_found} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
     assert {:ok, assignment} = claim(context)
 
     assert {:error, {:correlation_mismatch, "run_id"}} =

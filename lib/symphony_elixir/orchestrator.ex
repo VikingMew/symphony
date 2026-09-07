@@ -31,6 +31,7 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.Orchestrator.InputBlocker
   alias SymphonyElixir.Orchestrator.RetryPolicy
   alias SymphonyElixir.Orchestrator.SessionHistory
+  alias SymphonyElixir.Worker.AssignmentManager
 
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
@@ -592,7 +593,6 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_from_decision(state, issue_id, running_entry, decision) do
-    stop_running_process(running_entry)
     delivery = BlockingDecision.deliver(issue_id, running_entry.identifier)
 
     persist_event(
@@ -997,7 +997,7 @@ defmodule SymphonyElixir.Orchestrator do
     do: "Tracker kind missing in runtime tracker settings"
 
   defp config_validation_error_message(:setup_required),
-    do: "No workflow is configured. Open /settings/workflow to create one."
+    do: "No workflow is configured. Import a workflow package in /settings/import."
 
   defp config_validation_error_message(:workflow_front_matter_not_a_map) do
     "Failed to parse workflow config: front matter must decode to a map"
@@ -1378,18 +1378,6 @@ defmodule SymphonyElixir.Orchestrator do
 
       :active ->
         state
-    end
-  end
-
-  defp stop_running_process(running_entry) when is_map(running_entry) do
-    case Map.get(running_entry, :pid) do
-      pid when is_pid(pid) -> terminate_task(pid)
-      _ -> :ok
-    end
-
-    case Map.get(running_entry, :ref) do
-      ref when is_reference(ref) -> Process.demonitor(ref, [:flush])
-      _ -> :ok
     end
   end
 
@@ -3041,8 +3029,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp cancel_active_worker_tasks do
-    assignment = SymphonyElixir.Worker.AssignmentManager.current_assignment()
-    :ok = SymphonyElixir.Worker.AssignmentManager.cancel_current("force_stop_all")
+    assignment = AssignmentManager.current_assignment()
+    :ok = AssignmentManager.cancel_current("force_stop_all")
     %{cancelled: if(assignment, do: 1, else: 0), failed: [], status: :ok}
   end
 

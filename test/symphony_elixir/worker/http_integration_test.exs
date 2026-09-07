@@ -176,13 +176,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     )
 
     config = config(root)
-    assert {:ok, registration} = Client.register(config)
-
-    identity = %{
-      "worker_id" => registration["worker_id"],
-      "session_id" => registration["session_id"],
-      "protocol_version" => Client.protocol_version()
-    }
+    assert {:ok, _registration} = Client.register(config)
 
     claim = claim_payload()
     assert claim["execution"]["codex"]["command"] == "#{codex_binary} app-server"
@@ -190,7 +184,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     result = Executor.execute(config, claim)
     assert result.status == :failed
     assert result.reason == :failed
-    assert result.detail =~ "invalid_turn_outcome"
+    assert result.detail =~ "turn_failed"
     assert result.detail =~ "worker fixture failure"
   end
 

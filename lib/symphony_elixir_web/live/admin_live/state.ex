@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   import Phoenix.Component, only: [assign: 3]
 
   alias SymphonyElixir.{Config, PersistenceProvider, WorkflowStore}
+  alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixirWeb.Admin.ProjectSettings
 
   alias SymphonyElixirWeb.AdminLive.{
@@ -42,7 +43,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:current_workflow, workflow)
     |> Runs.assign_page(reset: true)
     |> Events.assign_data()
-    |> assign(:assignment, SymphonyElixir.Worker.AssignmentManager.current_assignment())
+    |> assign(:assignment, AssignmentManager.current_assignment())
     |> assign(:execution_mode, Config.execution_mode())
     |> assign(:workflow_form, workflow_form)
     |> WorkflowState.assign_validation(workflow_form)
