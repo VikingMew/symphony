@@ -8,7 +8,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   alias Ecto.Adapters.SQL
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Persistence.{Project, RunRecord, TaskRecord, WorkflowRecord}
+  alias SymphonyElixir.Persistence.{Project, WorkflowRecord}
   alias SymphonyElixir.{Repo, Workflow}
 
   @default_project_slug "default"
@@ -271,7 +271,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
           |> WorkflowRecord.changeset(Map.put(attrs, :project_id, project.id))
           |> Repo.insert_or_update!()
 
-        invalidate_queued_worker_work!(project.id)
         workflow
       end
     end)
@@ -282,33 +281,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       [:raw_workflow_md, :yaml_config, :prompt_body, :source],
       &(Map.get(existing, &1) != Map.get(attrs, &1))
     )
-  end
-
-  defp invalidate_queued_worker_work!(project_id) do
-    now = DateTime.utc_now()
-
-    {_, queued_tasks} =
-      Repo.update_all(
-        from(task in TaskRecord,
-          where: task.project_id == ^project_id and task.status == "queued",
-          select: task.run_id
-        ),
-        set: [status: "failed", finished_at: now, updated_at: now]
-      )
-
-    run_ids = Enum.reject(queued_tasks, &is_nil/1)
-
-    if run_ids != [] do
-      Repo.update_all(
-        from(run in RunRecord, where: run.id in ^run_ids and run.status == "queued"),
-        set: [
-          status: "failed",
-          failure_reason: "workflow_changed_before_claim",
-          finished_at: now,
-          updated_at: now
-        ]
-      )
-    end
   end
 
   defp test_workflow_source_allowed? do

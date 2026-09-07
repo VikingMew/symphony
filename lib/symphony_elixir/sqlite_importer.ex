@@ -159,37 +159,6 @@ defmodule SymphonyElixir.SQLiteImporter do
        status: :text,
        inserted_at: :timestamp,
        updated_at: :timestamp
-     ]},
-    {"tasks",
-     [
-       id: :uuid,
-       project_id: :uuid,
-       run_id: :uuid,
-       issue_identifier: :text,
-       status: :text,
-       priority: :integer,
-       execution_mode: :text,
-       required_capabilities: :jsonb,
-       payload: :jsonb,
-       queued_at: :timestamp,
-       started_at: :timestamp,
-       finished_at: :timestamp,
-       inserted_at: :timestamp,
-       updated_at: :timestamp
-     ]},
-    {"task_leases",
-     [
-       id: :uuid,
-       task_id: :uuid,
-       worker_id: :uuid,
-       worker_session_id: :uuid,
-       status: :text,
-       attempt: :integer,
-       expires_at: :timestamp,
-       acquired_at: :timestamp,
-       released_at: :timestamp,
-       inserted_at: :timestamp,
-       updated_at: :timestamp
      ]}
   ]
 

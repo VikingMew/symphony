@@ -10,6 +10,11 @@ owner: compose.yaml
 
 # Trusted HTTP Execution Worker Operations
 
+> Linear is the dispatch source and the Panel keeps one active assignment in memory. PostgreSQL
+> runs/events are history, not a recoverable queue. On worker loss, verify no duplicate claim before
+> timeout; after timeout reconciliation fails the old run and returns an eligible issue to Ready.
+> Any later claim must have a new run and assignment ID, and late old-assignment events are rejected.
+
 This L5 guide operates the opt-in Compose service named `execution-worker`. It is the trusted
 worker-v1 HTTP runtime, not the Dockerfile `worker` target used for centralized SSH execution.
 `centralized` remains the default. Enabling the profile alone does not route work; routing changes

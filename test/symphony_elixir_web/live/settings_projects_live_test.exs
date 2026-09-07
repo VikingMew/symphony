@@ -20,8 +20,6 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
     defdelegate export_workflow(workflow), to: FakePersistence
     defdelegate list_runs_page(opts), to: FakePersistence
     defdelegate list_events(opts), to: FakePersistence
-    defdelegate list_tasks(opts), to: FakePersistence
-    defdelegate list_task_leases(opts), to: FakePersistence
 
     def delete_project(id) do
       Agent.get_and_update(FakePersistence, &delete_project(&1, id))

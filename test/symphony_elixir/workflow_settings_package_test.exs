@@ -64,7 +64,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   end
 
   test "profiles package round trip preserves the default operator profiles" do
-    profiles_yaml = File.read!("profiles.yml")
+    profiles_yaml = File.read!("docs/examples/profiles.yml")
 
     assert {:ok, "profiles.yml", imported_draft} =
              WorkflowSettingsPackage.import_draft(profiles_yaml, WorkflowForm.empty())

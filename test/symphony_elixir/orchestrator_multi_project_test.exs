@@ -221,7 +221,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     refute log =~ "missing_project_context"
   end
 
-  test "worker kickoff renders the candidate project's persisted prompt" do
+  test "worker mode polling does not project Linear candidates into a database queue" do
     previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
     Application.put_env(:symphony_elixir, :execution_mode, :worker)
     on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
@@ -264,14 +264,8 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     send(pid, :run_poll_cycle)
 
     refute_receive {:candidate_fetch, "linear-a"}, 200
-    assert_receive {:candidate_fetch, "linear-b"}, 2_000
-
-    assert_eventually(fn ->
-      case FakePersistence.list_tasks(project_id: project_b.id) do
-        [%{payload: %{"prompt" => prompt}}] -> prompt =~ "Prompt B B-1"
-        _ -> false
-      end
-    end)
+    refute_receive {:candidate_fetch, "linear-b"}, 200
+    assert FakePersistence.list_runs(project_id: project_b.id) == []
   end
 
   defp workflow_markdown(base, prompt, threshold) do

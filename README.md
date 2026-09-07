@@ -18,9 +18,9 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Linear-backed issue discovery and workflow-state routing.
 - Local centralized Codex execution by default.
 - Optional remote execution through configured SSH worker hosts.
-- Optional HTTP worker-task queue mode for external workers.
+- Optional HTTP worker mode with live Linear-backed claims and ephemeral Panel assignments.
 - Per-issue workspaces and Git worktrees.
-- PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, tasks, leases, and workspace records.
+- PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, sessions, and workspace records.
 - Settings pages for Projects, Workflow, Agents, Runtime, and package import.
 - Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages, including persisted issue-flow quality proxies and non-blocking warnings.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
@@ -72,7 +72,7 @@ Linear's GitHub automation owns the final move to `Done`.
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
 | Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, and worker tasks carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
-| Worker mode | Optional HTTP task-queue mode where external workers claim current-workflow execution snapshots and return bounded validation/runtime/handoff evidence through `/api/worker/v1/*`. |
+| Worker mode | Optional HTTP mode where claims read and revalidate Linear before returning one ephemeral current-workflow assignment. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
 sharing a single Linear user, with per-project workflows and hooks. Settings and the
@@ -80,8 +80,8 @@ observability pages (Runs, Events, Workers) are project-aware.
 
 Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
 bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
-only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`, while queued, leased,
-and running worker tasks consume that shared capacity.
+only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`; one in-memory assignment
+consumes the current single-worker deployment capacity.
 
 ### Execution worker image
 
@@ -106,7 +106,8 @@ required gates, and handoff commands. Its Codex section carries app-server setti
 rendered prompt as structured data; the worker drives one JSON-RPC turn over stdio. The worker
 never derives a missing required gate. A claim is only a lease: accepted/executor/Codex progress
 is emitted when each fact occurs, terminal delivery retains heartbeat ownership through bounded
-retries, and Panel reconciliation expires and requeues leases that stop renewing.
+retries. Panel reconciliation fails expired runs and returns eligible zombie issues to Linear Ready;
+it never requeues a database task.
 
 ## Quick Start
 
@@ -140,9 +141,9 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
 
-On a fresh database, Symphony can also offer to import the checked-in `workflow.yml` and
-`profiles.yml` as the first current workflow. This is a one-time import prompt; the YAML
-files do not become runtime sources. To skip it and remain in setup-required mode, start with:
+On a fresh database, Symphony can also offer to import the checked-in package at
+`docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first current workflow.
+To skip it and remain in setup-required mode, start with:
 
 ```bash
 mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
@@ -150,13 +151,22 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-PostgreSQL is the durable runtime authority for project settings and profiles; workflow routing is
+The checked-in package under `docs/examples/` is the source for project settings and profiles;
+PostgreSQL is the durable runtime snapshot, while workflow routing is
 an immutable code contract. On cold start Symphony publishes the active per-project
 workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
-dispatch reads use that snapshot without querying PostgreSQL. Successful Settings mutations republish
+dispatch reads use that snapshot without querying PostgreSQL. Successful imports republish
 before reporting success, and background external-change detection retains last-known-good state
-during database stalls. `workflow.yml` and `profiles.yml` are import/export artifacts, not files
-that Symphony watches at runtime.
+during database stalls. Synchronize explicitly and detect drift with:
+
+```bash
+mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG
+mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG --check
+```
+
+Use `--all` instead of `--project PROJECT_SLUG` to operate on every enabled project. The command
+fully validates both files before opening any database write and is idempotent. Do not update the
+`workflows` table by hand.
 
 Useful startup options:
 
@@ -186,7 +196,7 @@ Common environment variables:
 | `SYMPHONY_AUTH_ENABLED` | Enables username/password auth for the web UI/API. |
 | `SYMPHONY_ADMIN_USERNAME` / `SYMPHONY_ADMIN_PASSWORD` | Simple local admin auth. |
 | `SECRET_KEY_BASE` | Release session-signing secret; Compose requires at least 64 bytes. |
-| `SYMPHONY_EXECUTION_MODE=worker` | Queue work for external workers instead of local Codex execution. |
+| `SYMPHONY_EXECUTION_MODE=worker` | Let external workers claim live Linear work instead of local Codex execution. |
 | `SYMPHONY_WORKER_REGISTRATION_TOKEN` | Shared token used by worker API clients. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used for Linear/Codex subprocess network access. |
 | `SYMPHONY_TRUST_X_FORWARDED_HEADERS=true` | Trust reverse-proxy forwarded scheme/host/prefix headers. |
@@ -217,7 +227,7 @@ Centralized execution is the default and does not require registered workers.
 | Runs list/detail | `/runs`, `/runs/:id` |
 | Issue detail | `/issues/:identifier` |
 | Raw events | `/events` |
-| Worker registry/tasks | `/workers` |
+| Worker registry, current assignment, and run history | `/workers` |
 | Linear diagnostics | `/diagnostics/linear` |
 | Settings | `/settings` |
 | JSON state API | `/api/v1/state` |
@@ -296,7 +306,7 @@ volume verification, restart testing, and rollback.
 - `test/`: ExUnit coverage for runtime behavior.
 - `config/` and `priv/`: application configuration, migrations, and static assets.
 - `docs/`: architecture, operations, feature designs, and governance.
-- `workflow.yml` and `profiles.yml`: example import/export workflow package.
+- `docs/examples/workflow.yml` and `docs/examples/profiles.yml`: repository workflow package and import examples.
 - `bin/symphony`: command-line launcher.
 - `.codex/`: repository-local Codex skills and setup helpers.
 
@@ -358,7 +368,7 @@ Implemented:
 - Codex app-server orchestration;
 - centralized, SSH-host, and worker-backed execution paths;
 - workspace/source preparation and cleanup policy;
-- persisted runs, events, agent turns, worker tasks, and analytics;
+- persisted runs, events, agent turns, worker sessions, and analytics;
 - health endpoints and reverse proxy support.
 
 Still alpha:

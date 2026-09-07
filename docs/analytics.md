@@ -4,6 +4,7 @@ genre: guide
 domain: [operations, analytics]
 status: current
 language: en
+updated: 2026-09-06
 ---
 
 # Analytics Operations

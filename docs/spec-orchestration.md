@@ -28,7 +28,7 @@ claim state.
    - In practice, claimed issues are either `Running` or `RetryQueued`.
 
 3. `Running`
-   - Worker task exists and the issue is tracked in `running` map.
+   - In worker mode, one ephemeral Panel assignment exists and its run is persisted for history.
 
 4. `RetryQueued`
    - Worker is not running, but a retry timer exists in `retry_attempts`.
@@ -185,8 +185,8 @@ Sorting order (stable intent):
 Capacity is deployment topology and is shared by every enabled project. In centralized mode,
 `SYMPHONY_PANEL_SLOTS` is the bounded deployment limit and available capacity subtracts the
 orchestrator `running` count. In worker mode, capacity is the sum of `total_slots` advertised by
-online worker sessions with a fresh heartbeat, less worker tasks in `queued`, `leased`, or
-`running`. No online fresh worker therefore means zero capacity. Each successful enqueue is
+online worker sessions with a fresh heartbeat, less the current in-memory assignment. No online
+fresh worker therefore means zero capacity. Each successful claim is
 visible to the next candidate in the same reduce. Worker claims additionally require the
 worker's current `available_slots` to be positive.
 
