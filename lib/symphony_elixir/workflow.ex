@@ -4,7 +4,8 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  runtime source is the project's current workflow in PostgreSQL.
+  checked-in package is synchronized into each project's current PostgreSQL
+  runtime snapshot.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -17,7 +18,7 @@ defmodule SymphonyElixir.Workflow do
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
     Application.get_env(:symphony_elixir, :workflow_file_path) ||
-      Path.join(File.cwd!(), "workflow.yml")
+      Path.join(SymphonyElixir.RepositoryWorkflow.package_root(), "workflow.yml")
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
