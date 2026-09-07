@@ -5,6 +5,13 @@ defmodule SymphonyElixir.PRReviewTest do
 
   @head String.duplicate("a", 40)
 
+  test "review identity is stable for an immutable pull request head" do
+    identity = PRReview.identity("issue-1", "https://github.com/acme/app/pull/1", @head)
+
+    assert identity == PRReview.identity("issue-1", "https://github.com/acme/app/pull/1", @head)
+    refute identity == PRReview.identity("issue-1", "https://github.com/acme/app/pull/1", String.duplicate("b", 40))
+  end
+
   test "review profile exposes only context read and typed result submission" do
     assert Enum.map(DynamicTool.tool_specs("review"), & &1["name"]) == [
              "review_context_read",
