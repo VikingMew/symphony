@@ -278,6 +278,15 @@ defmodule SymphonyElixir.Persistence do
     end)
   end
 
+  @spec list_analytics_runs() :: [RunRecord.t()] | {:error, read_error()}
+  def list_analytics_runs, do: read(fn -> Repo.all(order_runs(RunRecord)) end)
+
+  @spec list_analytics_events() :: [EventRecord.t()] | {:error, read_error()}
+  def list_analytics_events, do: read(fn -> Repo.all(order_events(EventRecord, :asc)) end)
+
+  @spec list_analytics_issues() :: [IssueRecord.t()] | {:error, read_error()}
+  def list_analytics_issues, do: read(fn -> Repo.all(IssueRecord) end)
+
   defp read(fun) do
     if repo_available?() do
       PersistenceProvider.read(fun)
