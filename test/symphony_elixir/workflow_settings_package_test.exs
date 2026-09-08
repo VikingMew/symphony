@@ -79,6 +79,24 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
              Map.take(defaults, ["nap", "day_dreaming"])
   end
 
+  test "default profiles and package carry the owning-design contract" do
+    profiles_yaml = File.read!("docs/examples/profiles.yml")
+    defaults = Schema.default_profiles()
+
+    for source <- [profiles_yaml, defaults["refinement"]["prompt"]["template"]] do
+      assert source =~ "Owning design docs"
+      assert source =~ "Change classification: behavior/architecture|non-behavior"
+      assert source =~ "Owner registration plan:"
+    end
+
+    for source <- [profiles_yaml, defaults["implementation"]["prompt"]["template"]] do
+      assert source =~ "actual diff"
+      assert source =~ "runtime configuration semantics"
+      assert source =~ "documentation-alignment row"
+      assert source =~ "disclosed in the PR body"
+    end
+  end
+
   test "workflow package round trip preserves analytics thresholds" do
     workflow_yaml = File.read!("docs/examples/workflow.yml")
 

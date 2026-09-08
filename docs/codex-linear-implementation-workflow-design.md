@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-08-27
+updated: 2026-09-08
 design_status: landed
 ---
 
@@ -62,6 +62,12 @@ SSH execution 中 workspace 只存在于 worker；后续 PR handoff 不得要求
 
 先运行与改动相关的 baseline/targeted checks，再做最小实现。遵循 repository `AGENTS.md`、spec、
 格式、静态检查和测试约束。验证强度与风险相称；失败命令和原因进入 final result。
+
+交付前必须按实际 diff 复核票面的 owning-design 声明。`lib/` 下行为代码或运行时配置语义变化必须
+在同一变更同步 Feature Design Index 指向的 L3 owner 及 `docs/documentation-alignment.md` canonical
+row。实际 diff 与票面 classification 不一致时，先修正 Linear description/work record 和文档范围。
+当前无 owner 时，PR body 必须明示原因，并在同一 PR 新登记 L3 owner 或把 concern 归并到现有 owner；
+“无 owner”不能作为跳过 design 同步的理由。
 
 ### 4. Commit 和 push
 

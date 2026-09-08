@@ -128,6 +128,13 @@ mix pr_body.check --file /path/to/pr_body.md
 
 If behavior/config changes, update docs in the same PR:
 
+- For behavior or architecture changes, use the Feature Design Index in `docs/design.md` and the
+  canonical rows in `docs/documentation-alignment.md` to identify the owning L3 design. Update that
+  design and its alignment row in the same change.
+- If no owner exists, state that explicitly in the task and PR, then register a new L3 owner or
+  merge the concern into an existing owner in the same change before merging. A missing owner is
+  not an exemption from design synchronization.
+
 - `README.md` for project concepts, goals, and implementation/run instructions.
 - `docs/examples/workflow.yml` and `docs/examples/profiles.yml` when the repository workflow package
   contract changes. The PostgreSQL current workflow is the runtime
