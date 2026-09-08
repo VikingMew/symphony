@@ -328,6 +328,47 @@ defmodule SymphonyElixir.PromptBuilderTest do
     end
   end
 
+  test "default refinement and implementation prompts enforce owning-design review" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-90",
+      title: "Keep owning designs synchronized",
+      description: "Enforce the owning-design contract",
+      state: "In Progress",
+      url: "https://example.org/issues/S-90",
+      labels: []
+    }
+
+    profiles = Config.Schema.default_profiles()
+
+    refinement_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "refinement",
+        profile_policy: profiles["refinement"],
+        allowed_updates: profiles["refinement"]["allowed_updates"]
+      )
+
+    assert refinement_prompt =~ "Owning design docs"
+    assert refinement_prompt =~ "Change classification: behavior/architecture|non-behavior"
+    assert refinement_prompt =~ "No owner: true"
+    assert refinement_prompt =~ "Owner registration plan:"
+    assert refinement_prompt =~ "non-empty `Reason:`"
+
+    implementation_prompt =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: profiles["implementation"],
+        allowed_updates: profiles["implementation"]["allowed_updates"]
+      )
+
+    assert implementation_prompt =~ "actual diff"
+    assert implementation_prompt =~ "behavior under `lib/`"
+    assert implementation_prompt =~ "runtime configuration semantics"
+    assert implementation_prompt =~ "documentation-alignment row"
+    assert implementation_prompt =~ "must be disclosed in the PR body"
+  end
+
   test "prompt builder supports disabled profile prompts and implementation branch contract" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
 

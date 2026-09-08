@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Codex.RefinementQualityGate do
 
   @required_sections [
     {"goal", "Goal"},
+    {"owning design docs", "Owning design docs"},
     {"scope", "Scope"},
     {"out of scope", "Out of scope"},
     {"acceptance criteria", "Acceptance criteria"},
@@ -12,6 +13,9 @@ defmodule SymphonyElixir.Codex.RefinementQualityGate do
   @context_marker ~r/\[CONTEXT REQUIRED\]/i
   @list_item ~r/^\s*(?:[-*+]\s+|\d+[.)]\s+)(.+)$/
   @question_sections ["open questions", "unresolved questions", "未决问题"]
+  @owner_path ~r/docs\/[A-Za-z0-9_.\/-]+-design\.md/
+  @no_owner_marker ~r/^\s*No owner:\s*true\s*$/mi
+  @owner_registration_plan ~r/^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?Owner registration plan:\s*\S.*$/mi
 
   @type violation :: %{code: String.t(), message: String.t()}
 
@@ -31,12 +35,118 @@ defmodule SymphonyElixir.Codex.RefinementQualityGate do
 
     violations =
       required_section_violations(sections) ++
+        owning_design_violations(sections) ++
         marker_violations(description) ++
         unresolved_question_violations(sections) ++ acceptance_violations(sections)
 
     case Enum.uniq(violations) do
       [] -> :ok
       violations -> {:error, violations}
+    end
+  end
+
+  defp owning_design_violations(sections) do
+    case Map.get(sections, "owning design docs") do
+      body when is_binary(body) -> if(blank?(body), do: [], else: validate_owning_design(body, sections))
+      _ -> []
+    end
+  end
+
+  defp validate_owning_design(body, sections) do
+    classification = declaration(body, "Change classification")
+    design_sync = declaration(body, "Design sync")
+    owners = @owner_path |> Regex.scan(body) |> List.flatten() |> Enum.uniq()
+    no_owner? = Regex.match?(@no_owner_marker, body)
+
+    classification_violations(classification) ++
+      design_sync_violations(design_sync) ++
+      behavior_design_violations(classification, design_sync, owners, no_owner?, sections) ++
+      non_behavior_design_violations(classification, design_sync, body) ++
+      required_design_sync_violations(design_sync, owners, no_owner?, sections)
+  end
+
+  defp classification_violations(nil),
+    do: [violation("missing_change_classification", "Add `Change classification: behavior/architecture|non-behavior`.")]
+
+  defp classification_violations(value) when value in ["behavior/architecture", "non-behavior"], do: []
+
+  defp classification_violations(_value),
+    do: [violation("invalid_change_classification", "Use `behavior/architecture` or `non-behavior` for `Change classification`.")]
+
+  defp design_sync_violations(nil),
+    do: [violation("missing_design_sync", "Add `Design sync: required|not required`.")]
+
+  defp design_sync_violations(value) when value in ["required", "not required"], do: []
+
+  defp design_sync_violations(_value),
+    do: [violation("invalid_design_sync", "Use `required` or `not required` for `Design sync`.")]
+
+  defp behavior_design_violations("behavior/architecture", design_sync, owners, no_owner?, sections) do
+    []
+    |> maybe_add(
+      design_sync == "not required",
+      violation("behavior_design_sync_not_required", "Set `Design sync: required` for `behavior/architecture` changes.")
+    )
+    |> maybe_add(
+      owners == [] and not no_owner?,
+      violation("missing_owning_design", "List a `docs/*-design.md` owner or add `No owner: true`.")
+    )
+    |> maybe_add(
+      no_owner? and not owner_registration_planned?(sections),
+      violation(
+        "missing_owner_registration_plan",
+        "Add a non-empty `Owner registration plan:` item to both `Scope` and `Acceptance criteria`."
+      )
+    )
+  end
+
+  defp behavior_design_violations(_classification, _design_sync, _owners, _no_owner?, _sections), do: []
+
+  defp non_behavior_design_violations("non-behavior", "not required", body) do
+    if declaration(body, "Reason") in [nil, ""] do
+      [violation("missing_design_sync_reason", "Add a non-empty `Reason:` for `non-behavior` with `Design sync: not required`.")]
+    else
+      []
+    end
+  end
+
+  defp non_behavior_design_violations(_classification, _design_sync, _body), do: []
+
+  defp required_design_sync_violations("required", owners, no_owner?, sections) do
+    scope = Map.get(sections, "scope", "")
+    acceptance = Map.get(sections, "acceptance criteria", "")
+
+    []
+    |> maybe_add(
+      owners != [] and Enum.any?(owners, &(not String.contains?(scope, &1))),
+      violation("design_sync_missing_from_scope", "Reference every listed owning design in `Scope`.")
+    )
+    |> maybe_add(
+      owners != [] and Enum.any?(owners, &(not String.contains?(acceptance, &1))),
+      violation("design_sync_missing_from_acceptance", "Reference every listed owning design in `Acceptance criteria`.")
+    )
+    |> maybe_add(
+      owners == [] and no_owner? and not Regex.match?(@owner_registration_plan, scope),
+      violation("design_sync_missing_from_scope", "Add the `Owner registration plan:` item to `Scope`.")
+    )
+    |> maybe_add(
+      owners == [] and no_owner? and not Regex.match?(@owner_registration_plan, acceptance),
+      violation("design_sync_missing_from_acceptance", "Add the `Owner registration plan:` item to `Acceptance criteria`.")
+    )
+  end
+
+  defp required_design_sync_violations(_design_sync, _owners, _no_owner?, _sections), do: []
+
+  defp owner_registration_planned?(sections) do
+    Enum.all?(["scope", "acceptance criteria"], fn section ->
+      Regex.match?(@owner_registration_plan, Map.get(sections, section, ""))
+    end)
+  end
+
+  defp declaration(body, field) do
+    case Regex.run(~r/^\s*#{Regex.escape(field)}:\s*(.*?)\s*$/mi, body, capture: :all_but_first) do
+      [value] -> normalize(value)
+      nil -> nil
     end
   end
 

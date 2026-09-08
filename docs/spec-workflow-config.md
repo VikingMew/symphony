@@ -255,6 +255,18 @@ MUST add those designs only when the issue text literally requires them and othe
 design or implementation minimal, consistent with the repository's no-defensive-programming and
 pre-release governance.
 
+The default refinement prompt MUST require a non-empty `Owning design docs` ATX section with the
+fixed `Change classification` and `Design sync` enums. Behavior/architecture candidates MUST list
+every `docs/*-design.md` owner and reference each owner in Scope and Acceptance criteria. A candidate
+with no current owner MUST use `No owner: true` and include a non-empty `Owner registration plan:`
+item in both sections. `non-behavior + not required` MUST include a non-empty `Reason:`.
+
+The default implementation prompt MUST require review of that declaration against the actual diff.
+Behavior changes under `lib/` and runtime-configuration semantic changes synchronize the owning L3
+design and documentation-alignment row in the same change. Classification drift is corrected in the
+Linear description or work record before delivery. A missing owner is disclosed in the PR body and
+registered or merged into an existing owner in that PR; it is not an exemption.
+
 When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
 request MUST contain the candidate description. Before any description or state write, Symphony
 MUST apply the deterministic refinement quality gate defined by

@@ -688,6 +688,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
              "missing_required_section",
              "missing_required_section",
              "missing_required_section",
+             "missing_required_section",
              "ambiguous_marker",
              "unresolved_questions",
              "missing_testable_acceptance"
@@ -857,14 +858,20 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     ## Goal
     Ship the gate.
 
+    ## Owning design docs
+    - `docs/codex-linear-task-refinement-workflow-design.md` — update required: yes
+
+    Change classification: behavior/architecture
+    Design sync: required
+
     ## Scope
-    Validate refinement output.
+    Update docs/codex-linear-task-refinement-workflow-design.md and validate refinement output.
 
     ## Out of scope
     Semantic review.
 
     ## Acceptance criteria
-    - Invalid output is rejected.
+    - docs/codex-linear-task-refinement-workflow-design.md documents the gate and invalid output is rejected.
 
     ## Validation
     Run unit tests.

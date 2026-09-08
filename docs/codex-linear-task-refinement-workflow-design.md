@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-09-08
 design_status: landed
 ---
 
@@ -194,6 +194,12 @@ Codex 在本地 workspace 中读取当前代码和设计文档，形成细化结
 - 验收标准。
 - 测试建议。
 - 风险或未决问题。
+- 非空 `Owning design docs` ATX 章节。章节用固定字段声明
+  `Change classification: behavior/architecture|non-behavior` 和
+  `Design sync: required|not required`。行为/架构变更列出 `docs/*-design.md` owner，并在
+  `Scope` 与 `Acceptance criteria` 同时引用每个 owner；暂无 owner 时写 `No owner: true`，且
+  两个章节各含非空 `Owner registration plan:` 条目。`non-behavior + not required` 必须写非空
+  `Reason:`。
 
 如果信息不足，Codex 应留在当前 run 内补全 description。带有未决问题或显式占位符的产物不能进入
 `Needs Refinement Review`。
@@ -288,8 +294,18 @@ profile 不受影响。完成请求缺少非空 description 时也视为门禁�
 
 门禁按 Markdown ATX heading 切分章节并返回稳定顺序的完整、去重 violation 集合：
 
-- `missing_required_section`：`Goal`、`Scope`、`Out of scope`、`Acceptance criteria`、
+- `missing_required_section`：`Goal`、`Owning design docs`、`Scope`、`Out of scope`、`Acceptance criteria`、
   `Validation` 任一章节不存在或为空；缺少候选 description 也使用此代码。
+- `missing_change_classification` / `invalid_change_classification`：缺少分类字段，或值不是
+  `behavior/architecture` / `non-behavior`。
+- `missing_design_sync` / `invalid_design_sync`：缺少同步字段，或值不是 `required` / `not required`。
+- `behavior_design_sync_not_required`：行为/架构变更声明不需要同步。
+- `missing_owning_design`：行为/架构变更既未列出 owner，也未写 `No owner: true`。
+- `missing_owner_registration_plan`：no-owner 任务未在 Scope 与 Acceptance criteria 同时落入固定
+  `Owner registration plan:` 条目。
+- `missing_design_sync_reason`：`non-behavior + not required` 未给出非空 `Reason:`。
+- `design_sync_missing_from_scope` / `design_sync_missing_from_acceptance`：`required` 声明列出的
+  owner 未全部出现在对应章节；no-owner 时，对应章节缺少 owner 登记/归并计划。
 - `ambiguous_marker`：正文不区分大小写包含 `[NEEDS CLARIFICATION]`、`[TODO]`、`TODO:`、
   `TBD` 或 `???`。
 - `unresolved_questions`：`Open questions`、`Unresolved questions` 或 `未决问题` 有非空内容，
@@ -299,7 +315,8 @@ profile 不受影响。完成请求缺少非空 description 时也视为门禁�
 - `implicit_context_reference`：正文不区分大小写包含 `[CONTEXT REQUIRED]`。
 
 失败时后端只创建一条诊断 comment，每项包含规则代码和修复提示；不执行候选 description 或状态
-写入。comment 成功后 tool 返回同一 violation 集合的 typed quality-gate error，让 agent 可在当前 run
+写入。上述规则只检查固定结构和字段一致性，不从自然语言或 diff 猜测分类。comment 成功后 tool
+返回同一 violation 集合的 typed quality-gate error，让 agent 可在当前 run
 修正并重试。comment API 失败则返回 typed Linear error，不伪装成门禁通过。
 
 如果 run 未修正并成功进入 review，Orchestrator 沿用唯一的 `no_progress_streak`：第一次完成但无状态
