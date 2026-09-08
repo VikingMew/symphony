@@ -80,7 +80,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   end
 
   test "workflow package round trip preserves analytics thresholds" do
-    workflow_yaml = File.read!("workflow.yml")
+    workflow_yaml = File.read!("docs/examples/workflow.yml")
 
     assert {:ok, "workflow.yml", draft} =
              WorkflowSettingsPackage.import_draft(workflow_yaml, WorkflowForm.empty())
