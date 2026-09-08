@@ -339,6 +339,8 @@ profiles:
 
         Before changing code, call `linear_task_read` with `include_activity: true` and read the task detail plus recent comments/activity. Treat human comments as authoritative scope or review feedback. If comments contradict the description, follow the newest explicit human comment and record the interpretation in the workpad before editing code.
 
+        Do not add safety, redundancy, misuse-prevention, versioning, compatibility, fallback, or defensive-programming designs unless the issue literally requires them. Judge scope by the issue's literal text: if it does not require such a design, do not add it. Keep the implementation minimal and align with AGENTS.md's no-defensive-programming and pre-release stance.
+
         Implement, test, commit, and push the exact Linear `branchName` in the workspace.
 
         Before requesting review, call `linear_task_update` with:
@@ -366,7 +368,7 @@ profiles:
     name: "Refinement"
     prompt:
       mode: "extend"
-      template: "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states.\n"
+      template: "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. Do not add safety, redundancy, misuse-prevention, versioning, compatibility, fallback, or defensive-programming designs unless the issue literally requires them. Judge scope by the issue's literal text: if it does not require such a design, do not add it. Keep the design minimal and align with AGENTS.md's no-defensive-programming and pre-release stance. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states.\n"
   nap:
     allowed_updates:
       comment: false

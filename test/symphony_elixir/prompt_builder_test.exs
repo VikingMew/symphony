@@ -298,6 +298,36 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert custom_prompt =~ "Base S-4"
   end
 
+  test "default refinement and implementation prompts reject speculative protective design" do
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+
+    issue = %Issue{
+      identifier: "S-61",
+      title: "Keep profile work minimal",
+      description: "Add a literal prompt constraint",
+      state: "In Progress",
+      url: "https://example.org/issues/S-61",
+      labels: []
+    }
+
+    profiles = Config.Schema.default_profiles()
+
+    for profile <- ["refinement", "implementation"] do
+      prompt =
+        PromptBuilder.build_prompt(issue,
+          profile: profile,
+          profile_policy: Map.fetch!(profiles, profile),
+          allowed_updates: Map.fetch!(profiles, profile)["allowed_updates"]
+        )
+
+      assert prompt =~
+               "Do not add safety, redundancy, misuse-prevention, versioning, compatibility, fallback, or defensive-programming designs unless the issue literally requires them."
+
+      assert prompt =~ "Judge scope by the issue's literal text"
+      assert prompt =~ "AGENTS.md's no-defensive-programming and pre-release stance"
+    end
+  end
+
   test "prompt builder supports disabled profile prompts and implementation branch contract" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
 

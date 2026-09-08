@@ -249,6 +249,12 @@ sockets, or image operations. A task that requires such validation MUST report b
 and use the persistent `blocking_decision` / `Blocked` path; allowed task-authored validation
 remains mandatory. Static inspection of container source/configuration remains allowed.
 
+The default refinement and implementation profile prompts prohibit speculative safety, redundancy,
+misuse-prevention, versioning, compatibility, fallback, and defensive-programming designs. Agents
+MUST add those designs only when the issue text literally requires them and otherwise keep the
+design or implementation minimal, consistent with the repository's no-defensive-programming and
+pre-release governance.
+
 When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
 request MUST contain the candidate description. Before any description or state write, Symphony
 MUST apply the deterministic refinement quality gate defined by

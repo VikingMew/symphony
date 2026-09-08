@@ -754,7 +754,7 @@ defmodule SymphonyElixir.Config.Schema do
         "prompt" => %{
           "mode" => "extend",
           "template" =>
-            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states."
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments. Refine the task description and acceptance criteria only when the feedback and repository context justify it. Do not add safety, redundancy, misuse-prevention, versioning, compatibility, fallback, or defensive-programming designs unless the issue literally requires them. Judge scope by the issue's literal text: if it does not require such a design, do not add it. Keep the design minimal and align with AGENTS.md's no-defensive-programming and pre-release stance. When the task is ready for human confirmation, add a concise comment and request one of the allowed target states."
         },
         "allowed_updates" => %{
           "description" => true,
@@ -770,7 +770,7 @@ defmodule SymphonyElixir.Config.Schema do
         "prompt" => %{
           "mode" => "extend",
           "template" =>
-            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Implement, validate, commit, and push the exact Linear branchName. Call create_pull_request with a title/body conforming to docs/pull-request-body.md, then post the final result, comment, and references including its URL and completion proof and explicitly request Ready to Merge. Symphony owns the tool backend and credentials. After human change requests return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again."
+            "Workflow profile: {{ workflow.profile_name }}\n\nRead the task and recent Linear comments before changing code. Do not add safety, redundancy, misuse-prevention, versioning, compatibility, fallback, or defensive-programming designs unless the issue literally requires them. Judge scope by the issue's literal text: if it does not require such a design, do not add it. Keep the implementation minimal and align with AGENTS.md's no-defensive-programming and pre-release stance. Implement, validate, commit, and push the exact Linear branchName. Call create_pull_request with a title/body conforming to docs/pull-request-body.md, then post the final result, comment, and references including its URL and completion proof and explicitly request Ready to Merge. Symphony owns the tool backend and credentials. After human change requests return the issue to In Progress, update the same branch and PR before requesting Ready to Merge again."
         },
         "allowed_updates" => %{
           "description" => false,
