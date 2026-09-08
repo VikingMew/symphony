@@ -184,11 +184,15 @@ Sorting order (stable intent):
 
 Capacity is deployment topology and is shared by every enabled project. In centralized mode,
 `SYMPHONY_PANEL_SLOTS` is the bounded deployment limit and available capacity subtracts the
-orchestrator `running` count. In worker mode, capacity is the sum of `total_slots` advertised by
-online worker sessions with a fresh heartbeat, less the current in-memory assignment. No online
-fresh worker therefore means zero capacity. Each successful claim is
-visible to the next candidate in the same reduce. Worker claims additionally require the
-worker's current `available_slots` to be positive.
+orchestrator `running` count. In worker mode, aggregate `total_slots` from fresh online sessions is
+an advertised deployment observation, not assignment concurrency. The current scheduler owns one
+ephemeral assignment, so effective admission capacity is `1` only when a claim comes from a fresh
+online session, that claim reports positive `available_slots`, and no assignment exists; otherwise
+it is `0`. Serialized claims make a successful assignment visible to every later claimant.
+
+An empty claim includes structured admission evidence distinguishing an active assignment, caller
+slot exhaustion, an absent/offline/stale session, and no eligible Linear candidate. Runs and events
+are audit history and never contribute queued or occupied capacity.
 
 Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
 rejection emits `global_capacity` skip evidence and never falls back to a workflow field.

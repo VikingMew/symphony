@@ -80,8 +80,9 @@ observability pages (Runs, Events, Workers) are project-aware.
 
 Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
 bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
-only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`; one in-memory assignment
-consumes the current single-worker deployment capacity.
+only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`. Advertised totals are
+deployment observability; the current scheduler's effective capacity is strictly 0/1, and one
+in-memory assignment blocks every other session regardless of advertised slot totals.
 
 ### Execution worker image
 

@@ -157,7 +157,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> post("/api/worker/v1/register", worker_registration_payload())
              |> json_response(200)
 
-    assert %{"task" => nil} =
+    assert %{"task" => nil, "admission" => %{"capacity" => 0, "reason" => "worker_dispatch_disabled"}} =
              build_conn()
              |> worker_headers(worker_id, session_id)
              |> post("/api/worker/v1/tasks/claim", %{"available_slots" => 1})

@@ -58,6 +58,28 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
     end
   end
 
+  @spec fresh_worker_session(String.t(), String.t(), keyword()) ::
+          {:ok, Worker.t(), WorkerSession.t()}
+          | {:error, :worker_session_not_found | :worker_session_offline | :worker_session_stale}
+  def fresh_worker_session(worker_id, session_id, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    timeout = Keyword.get(opts, :heartbeat_timeout_seconds, worker_heartbeat_interval_seconds() * 3)
+    cutoff = DateTime.add(now, -timeout, :second)
+
+    case {Repo.get(Worker, worker_id), Repo.get(WorkerSession, session_id)} do
+      {%Worker{} = worker, %WorkerSession{worker_id: ^worker_id, status: "online", last_heartbeat_at: heartbeat} = session} ->
+        if DateTime.compare(heartbeat, cutoff) in [:eq, :gt],
+          do: {:ok, worker, session},
+          else: {:error, :worker_session_stale}
+
+      {%Worker{}, %WorkerSession{worker_id: ^worker_id}} ->
+        {:error, :worker_session_offline}
+
+      _other ->
+        {:error, :worker_session_not_found}
+    end
+  end
+
   @spec heartbeat_worker(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def heartbeat_worker(worker_id, session_id) do
     with true <- repo_available?() || {:error, :repo_unavailable},

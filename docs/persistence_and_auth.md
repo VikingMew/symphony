@@ -118,10 +118,9 @@ The worker API uses its own protocol authentication. Registration requires
 PostgreSQL also stores Panel-side worker state:
 
 - workers and worker sessions;
-- queued/running/completed/failed/cancelled tasks;
-- active, expired, released, and cancelled task leases;
-- worker task events.
+- run and event audit history.
 
-`SYMPHONY_EXECUTION_MODE=worker` makes the orchestrator enqueue worker tasks. The default
-`centralized` mode runs Codex from the Symphony process and can still use configured SSH hosts for
-remote centralized execution.
+`SYMPHONY_EXECUTION_MODE=worker` enables live Linear-backed claims. The Panel owns at most one
+ephemeral assignment in memory; PostgreSQL does not store queued tasks, leases, or assignment
+occupancy. The default `centralized` mode runs Codex from the Symphony process and can still use
+configured SSH hosts for remote centralized execution.

@@ -12,12 +12,15 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 历史，但不保存待执行工作。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。它串行处理
-claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每次 claim 都验证在线 session
-和 slot，实时读取 Linear candidates，按 priority、created_at、identifier 排序，再按 issue id
+claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每次 claim 都验证 session 为 online、
+heartbeat 未超过 freshness cutoff 且调用方当次 `available_slots > 0`，再实时读取 Linear candidates，按 priority、created_at、identifier 排序，再按 issue id
 读取 Linear 并重新验证状态、依赖、routing/profile。Panel 创建新 run 和不可混淆 assignment id，
 将 issue 转为 `In Progress`；只有状态更新成功才返回当前 workflow 生成的 payload。
 
-没有合格 issue、已有 assignment 或没有 slot 时返回 `{task: null}`。真正访问 tracker 后的连续空
+`total_slots` 是 session/deployment 的 advertised aggregate 观测值，不允许并行发放多个 assignment。
+有效 admission capacity 仅在存在 fresh online advertised slot、调用方有 slot 且无当前 assignment 时为
+1，否则为 0。没有合格 issue、已有 assignment、session 不新鲜或没有 slot 时返回 `{task: null}`，
+并附带可测试的 structured admission reason（capacity 0/1 与拒绝原因）。真正访问 tracker 后的连续空
 claim 由 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
@@ -29,7 +32,7 @@ Linear 429、5xx 或 request failure 会立即停止 workflow 遍历，不能被
 内部重试耗尽后，对 HTTP 429/5xx 同样按 30、60 秒退避，任一成功 claim 清除该 HTTP failure
 streak；401 仍执行既有 session recovery。
 
-已有 assignment 或没有 slot 的快速路径不读取 Linear，也不改变 tracker streak。历史 run/event 和旧 payload
+已有 assignment、没有 slot 或 session 不新鲜的快速路径不读取 Linear，也不改变 tracker streak。历史 run/event 和旧 payload
 从不生成工作。协议继续把 assignment id 放在 `task_id` 与 `lease_id` 字段中以避免 worker 协议
 迁移；correlation 同时包含 project、issue、run、worker/session 和 assignment id。
 

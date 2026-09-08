@@ -84,7 +84,8 @@ http://127.0.0.1:4000/settings
 
 - 新保存的 workflow 影响后续读取配置、后续 dispatch、retry、resumed turn 和 operator task。
 - 已执行中的 turn 可使用已接收的输入完成；下一安全执行边界重新解析当前 workflow。
-- 保存时将尚未 claim 的 queued worker task 及其 queued run 标记失败，使 reconciliation 使用新 workflow 重新 dispatch；旧 payload 不会开始执行。
+- worker claim 每次从最新 workflow 构造 ephemeral payload；不存在尚未 claim 的 persisted task，
+  已发放的当前 assignment 不在保存时改写。
 - 已经启动的 Codex turn 不应被中途替换 prompt；下一次调度或下一次 run 才应使用新配置。
 - 如果新配置不通过 runtime validation，orchestrator 应停止监听或调度，而不是继续用旧配置假装成功。
 

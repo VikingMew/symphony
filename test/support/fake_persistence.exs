@@ -383,6 +383,34 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def fresh_worker_session(worker_id, session_id, opts \\ []) do
+    now = Keyword.get(opts, :now, DateTime.utc_now())
+    timeout = Keyword.get(opts, :heartbeat_timeout_seconds, worker_heartbeat_interval_seconds() * 3)
+    cutoff = DateTime.add(now, -timeout, :second)
+
+    Agent.get(@name, fn state ->
+      worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
+      session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
+
+      case {worker, session} do
+        {worker, %{worker_id: ^worker_id, status: "online"} = session} when not is_nil(worker) ->
+          fresh_session_result(worker, session, cutoff)
+
+        {worker, %{worker_id: ^worker_id}} when not is_nil(worker) ->
+          {:error, :worker_session_offline}
+
+        _other ->
+          {:error, :worker_session_not_found}
+      end
+    end)
+  end
+
+  defp fresh_session_result(worker, session, cutoff) do
+    if DateTime.compare(session.last_heartbeat_at, cutoff) in [:eq, :gt],
+      do: {:ok, worker, session},
+      else: {:error, :worker_session_stale}
+  end
+
   def heartbeat_worker(worker_id, session_id) do
     with {:ok, _worker, _session} <- active_worker_session(worker_id, session_id) do
       {:ok, %{ok: true, server_time: DateTime.utc_now()}}
