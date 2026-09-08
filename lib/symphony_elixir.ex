@@ -53,6 +53,7 @@ defmodule SymphonyElixir.Application do
         SymphonyElixir.WorkflowStore,
         assignment_manager_child(),
         SymphonyElixir.Orchestrator,
+        review_queue_child(),
         http_server_child(),
         SymphonyElixir.StatusDashboard
       ]
@@ -80,6 +81,12 @@ defmodule SymphonyElixir.Application do
   defp assignment_manager_child do
     if SymphonyElixir.Config.execution_mode() == :worker do
       SymphonyElixir.Worker.AssignmentManager
+    end
+  end
+
+  defp review_queue_child do
+    if Application.get_env(:symphony_elixir, :start_repo, true) do
+      SymphonyElixir.PRReview.Queue
     end
   end
 

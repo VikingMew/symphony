@@ -51,7 +51,9 @@ The configurable workflow is the seven states in the two loops plus their shared
 `Blocked`. `Done` is the fixed successful completion state and is not configurable; `Backlog` and
 `Duplicate` are manual helper states outside workflow configuration. `Refining`, `Ready`, and
 `In Progress` are agent-work states. `Needs Refinement Review`, `Ready to Merge`, and `Blocked`
-are human-review states and are never dispatched. During normal
+are human-review states and are never ordinarily dispatched. A successful implementation handoff
+enqueues one separate durable, read-only review job for the backend-resolved immutable PR head.
+During normal
 control-plane reconciliation, Symphony checks the exact open PR handed off for `Ready to Merge`
 issues. A definitive GitHub merge conflict moves the issue to persistent `Blocked`; unknown,
 behind, CI, review, and transient API states leave it waiting. Symphony persists

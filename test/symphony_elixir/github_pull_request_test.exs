@@ -18,6 +18,105 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
     end
   end
 
+  test "loads immutable pull request review context through gh" do
+    runner = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] ->
+          {"authenticated", 0}
+
+        ["pr", "view" | _rest] ->
+          {Jason.encode!(%{
+             "state" => "OPEN",
+             "url" => "https://github.com/acme/app/pull/12",
+             "title" => "Review",
+             "body" => "tests",
+             "baseRefOid" => String.duplicate("b", 40),
+             "headRefOid" => String.duplicate("a", 40)
+           }), 0}
+
+        ["pr", "diff" | _rest] ->
+          {"diff --git a/lib/a.ex b/lib/a.ex", 0}
+      end
+    end
+
+    job = %{pr_url: "https://github.com/acme/app/pull/12", repository: "acme/app"}
+
+    assert {:ok, context} =
+             GitHubPullRequest.review_context(job,
+               gh_executable: "/opt/bin/gh",
+               command_runner: runner
+             )
+
+    assert context["head_oid"] == String.duplicate("a", 40)
+    assert context["base_oid"] == String.duplicate("b", 40)
+    assert context["diff"] =~ "diff --git"
+  end
+
+  test "rejects incomplete or malformed review context" do
+    job = %{pr_url: "https://github.com/acme/app/pull/12", repository: "acme/app"}
+
+    for {view_result, expected} <- [
+          {Jason.encode!([]), {:github_cli_invalid_review_context, "[]"}},
+          {"not-json", :invalid_json}
+        ] do
+      runner = fn _executable, args, _timeout_ms ->
+        case args do
+          ["auth", "status"] -> {"authenticated", 0}
+          ["pr", "view" | _rest] -> {view_result, 0}
+        end
+      end
+
+      result =
+        GitHubPullRequest.review_context(job,
+          gh_executable: "/opt/bin/gh",
+          command_runner: runner
+        )
+
+      case expected do
+        :invalid_json -> assert {:error, {:github_cli_invalid_json, _message}} = result
+        reason -> assert {:error, ^reason} = result
+      end
+    end
+  end
+
+  test "propagates authenticated review metadata and diff command failures" do
+    job = %{pr_url: "https://github.com/acme/app/pull/12", repository: "acme/app"}
+
+    metadata =
+      Jason.encode!(%{
+        "state" => "OPEN",
+        "url" => job.pr_url,
+        "title" => "Review",
+        "body" => "tests",
+        "baseRefOid" => String.duplicate("b", 40),
+        "headRefOid" => String.duplicate("a", 40)
+      })
+
+    for {failed_command, expected} <- [
+          {:auth, {:github_cli_auth_failed, {:github_command_failed, ["auth", "status"], 1, "login required"}}},
+          {:view, {:github_command_failed, ["pr", "view", job.pr_url, "--repo", job.repository, "--json", "state,url,title,body,baseRefOid,headRefOid"], 1, "view failed"}},
+          {:diff, {:github_command_failed, ["pr", "diff", job.pr_url, "--repo", job.repository], 1, "diff failed"}}
+        ] do
+      runner = fn _executable, args, _timeout_ms ->
+        case {failed_command, args} do
+          {:auth, ["auth", "status"]} -> {"login required", 1}
+          {_command, ["auth", "status"]} -> {"authenticated", 0}
+          {:view, ["pr", "view" | _rest]} -> {"view failed", 1}
+          {_command, ["pr", "view" | _rest]} -> {metadata, 0}
+          {:diff, ["pr", "diff" | _rest]} -> {"diff failed", 1}
+        end
+      end
+
+      assert {:error, ^expected} =
+               GitHubPullRequest.review_context(job,
+                 gh_executable: "/opt/bin/gh",
+                 command_runner: runner
+               )
+    end
+
+    assert {:error, :gh_not_found} = GitHubPullRequest.review_context(job, gh_executable: nil)
+  end
+
   test "reuses an existing open pull request through gh without creating a duplicate" do
     runner = fn _executable, args, _timeout_ms ->
       send(self(), {:gh, args})
@@ -65,6 +164,55 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
                token: nil,
                command_runner: runner
              )
+  end
+
+  test "reports a missing open pull request as non-conflicting" do
+    runner = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] -> {"authenticated", 0}
+        ["pr", "list" | _rest] -> {"[]", 0}
+      end
+    end
+
+    assert {:ok, nil} =
+             GitHubPullRequest.mergeability(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: runner
+             )
+  end
+
+  test "returns typed mergeability failures when gh cannot provide a list" do
+    invalid_list = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] -> {"authenticated", 0}
+        ["pr", "list" | _rest] -> {"{}", 0}
+      end
+    end
+
+    assert {:error, {:github_cli_unusable, {:github_cli_invalid_pull_request_response, "%{}"}}} =
+             GitHubPullRequest.mergeability(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: invalid_list
+             )
+
+    malformed_json = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] -> {"authenticated", 0}
+        ["pr", "list" | _rest] -> {"not-json", 0}
+      end
+    end
+
+    assert {:error, {:github_cli_unusable, {:github_cli_invalid_json, _message}}} =
+             GitHubPullRequest.mergeability(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: malformed_json
+             )
+
+    assert {:error, {:github_auth_unavailable, :gh_not_found, ["GH_TOKEN", "GITHUB_TOKEN"]}} =
+             GitHubPullRequest.mergeability(issue(), project(), gh_executable: nil, token: nil)
   end
 
   test "classifies exact REST dirty and unknown mergeability states" do
@@ -262,6 +410,14 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
                no_client
              )
 
+    assert {:error, {:invalid_pull_request_content, :title}} =
+             GitHubPullRequest.ensure_open(
+               issue(),
+               project(),
+               %{title: nil, body: "body"},
+               no_client
+             )
+
     assert {:error, :invalid_issue_title} =
              GitHubPullRequest.ensure_open(
                issue(),
@@ -315,6 +471,38 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
                issue(),
                %{"default_branch" => "main", "repository_url" => "ssh://git@github.com/acme/nested/app"},
                no_client
+             )
+
+    assert {:error, :missing_issue_identifier} =
+             GitHubPullRequest.ensure_open(%{issue() | identifier: nil}, project(), %{})
+
+    assert {:error, :missing_linear_branch_name} =
+             GitHubPullRequest.mergeability(%{issue() | branch_name: nil}, project())
+  end
+
+  test "rejects pull requests whose backend response lacks an immutable head oid" do
+    runner = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] ->
+          {"authenticated", 0}
+
+        ["repo", "view", "acme/app", "--json", "nameWithOwner"] ->
+          {Jason.encode!(%{"nameWithOwner" => "acme/app"}), 0}
+
+        ["api", "--method", "GET", _path] ->
+          {"{}", 0}
+
+        ["pr", "list" | _rest] ->
+          pull_request = Map.put(gh_pull_request("OPEN"), "headRefOid", nil)
+          {Jason.encode!([pull_request]), 0}
+      end
+    end
+
+    assert {:error, {:github_cli_unusable, {:github_pull_request_head_oid_missing, nil}}} =
+             PullRequest.ensure_open(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: runner
              )
   end
 
@@ -381,6 +569,22 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
                gh_executable: "/opt/bin/gh",
                token: nil,
                command_runner: invalid_repo
+             )
+
+    invalid_pull_requests = fn _executable, args, _timeout_ms ->
+      case args do
+        ["auth", "status"] -> {"authenticated", 0}
+        ["repo", "view" | _rest] -> {Jason.encode!(%{"nameWithOwner" => "acme/app"}), 0}
+        ["api", "--method", "GET", _path] -> {"{}", 0}
+        ["pr", "list" | _rest] -> {"{}", 0}
+      end
+    end
+
+    assert {:error, {:github_cli_unusable, {:github_cli_invalid_pull_request_response, "%{}"}}} =
+             PullRequest.ensure_open(issue(), project(),
+               gh_executable: "/opt/bin/gh",
+               token: nil,
+               command_runner: invalid_pull_requests
              )
   end
 
@@ -460,6 +664,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
       "state" => state,
       "url" => "https://github.com/acme/app/pull/12",
       "headRefName" => "feature/sym-1",
+      "headRefOid" => String.duplicate("a", 40),
       "baseRefName" => "main",
       "headRepository" => %{"nameWithOwner" => "acme/app"},
       "headRepositoryOwner" => %{"login" => "acme"}
@@ -476,7 +681,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
       "number" => 12,
       "state" => "open",
       "html_url" => "https://github.com/acme/app/pull/12",
-      "head" => %{"ref" => "feature/sym-1", "repo" => %{"full_name" => "acme/app"}},
+      "head" => %{"ref" => "feature/sym-1", "sha" => String.duplicate("a", 40), "repo" => %{"full_name" => "acme/app"}},
       "base" => %{"ref" => "main", "repo" => %{"full_name" => "acme/app"}},
       "merged_at" => nil
     }

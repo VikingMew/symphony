@@ -72,8 +72,9 @@ Important boundary:
 - Restricted agent tools request ticket mutations. For implementation completion, Symphony first
   ensures an open GitHub PR for the validated repository/base/head tuple and only then performs the
   final Linear comment/reference/state writes.
-- The default successful run ends at the human-review handoff state `Ready to Merge`; `Done` is
-  reached later through Linear's GitHub merged-PR automation.
+- The default successful implementation run ends at `Ready to Merge`. Symphony then permits only
+  the durable, read-only post-handoff review job for that immutable PR head; ordinary issue
+  dispatch remains disabled. `Done` is reached later through Linear's GitHub merged-PR automation.
 
 ## 2. Goals and Non-Goals
 
