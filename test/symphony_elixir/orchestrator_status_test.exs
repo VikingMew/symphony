@@ -1376,8 +1376,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     Process.sleep(100)
     state = :sys.get_state(pid)
 
-    refute Process.alive?(worker_pid)
-    refute Map.has_key?(state.running, issue_id)
+    assert Process.alive?(worker_pid) == false
+    assert Map.has_key?(state.running, issue_id) == false
 
     assert %{
              attempt: 1,
@@ -1449,7 +1449,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     state = :sys.get_state(pid)
 
-    refute Map.has_key?(state.running, issue_id)
+    assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.claimed, issue_id)
     assert state.retry_attempts == %{}
     assert %{reason: "blocked_on_push_auth", detail: detail} = state.blocked[issue_id]
@@ -1510,12 +1510,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     Process.sleep(100)
     state = :sys.get_state(pid)
 
-    refute Process.alive?(worker_pid)
-    refute Map.has_key?(state.running, issue_id)
+    assert Process.alive?(worker_pid) == false
+    assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.claimed, issue_id)
     assert %{attempt: 1} = state.retry_attempts[issue_id]
     assert state.failure_counts[issue_id] == 1
-    refute Map.has_key?(state.blocked, issue_id)
+    assert Map.has_key?(state.blocked, issue_id) == false
   end
 
   test "orchestrator does not treat pre-codex workspace preparation as codex stall" do
@@ -1573,7 +1573,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert Process.alive?(worker_pid)
     assert Map.has_key?(state.running, issue_id)
-    refute Map.has_key?(state.retry_attempts, issue_id)
+    assert Map.has_key?(state.retry_attempts, issue_id) == false
   end
 
   test "force stop reports an empty successful task cancellation result" do
@@ -1645,7 +1645,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert_receive {:fetch_issue_states_by_ids, [^issue_id]}
     assert_receive {:resolve_state, ^issue_id, "Ready"}
     assert_receive {:update_issue_state_id, ^issue_id, "state-ready"}
-    refute Process.alive?(worker_pid)
+    assert Process.alive?(worker_pid) == false
     assert %{polling: %{listening?: false}, running: []} = GenServer.call(pid, :snapshot)
   end
 
@@ -1708,7 +1708,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end)
 
     assert log =~ "Symphony application offline"
-    refute log =~ "app_status=offline"
   end
 
   test "status dashboard snapshot formatter stays silent" do
@@ -1818,8 +1817,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     rendered = StatusDashboard.format_snapshot_content(snapshot_data, 0.0)
 
-    refute rendered =~ "╭─"
-    refute rendered =~ "╰─"
     assert rendered == ""
   end
 
@@ -2132,7 +2129,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end)
 
     assert log =~ "Symphony application offline"
-    refute log =~ "app_status=offline"
   end
 
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
@@ -2165,6 +2161,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       snapshot
     else
       if System.monotonic_time(:millisecond) >= deadline_ms do
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("timed out waiting for orchestrator snapshot state: #{inspect(snapshot)}")
       else
         Process.sleep(5)

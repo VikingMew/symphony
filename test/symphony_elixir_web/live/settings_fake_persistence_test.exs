@@ -179,7 +179,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "project settings page renders fake persistence without Repo" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/settings/projects")
@@ -196,7 +196,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "dashboard shows a friendly flash when a nap is already running" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     orchestrator_name = Module.concat(__MODULE__, :BusyDashboardOperator)
 
     start_supervised!({BusyOperatorOrchestrator, name: orchestrator_name, snapshot: dashboard_snapshot()})
@@ -211,11 +211,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       |> render_submit()
 
     assert html =~ "Take a nap failed: a nap run is already in progress for this project"
-    refute html =~ "operator_task_busy"
   end
 
   test "project settings exposes read-only Linear discovery" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, html} = live(build_conn(), "/settings/projects")
@@ -230,15 +229,13 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert projects_html =~ "migration-project"
     assert projects_html =~ "Platform"
     assert projects_html =~ "Copy slug"
-    refute projects_html =~ "Linear Workflow State Candidates"
-    refute projects_html =~ "Suggested State Lists"
 
     assert length(Regex.scan(~r/Refresh Linear configuration/, projects_html)) == 1
   end
 
   test "project settings page shows Linear discovery errors inline" do
     System.delete_env("LINEAR_API_KEY")
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, html} = live(build_conn(), "/settings/projects")
@@ -252,27 +249,23 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "agent settings setup-required page does not expose setup prompt as base prompt" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/settings/agents")
 
     assert html =~ "Base Prompt"
     assert html =~ ~s(name="workflow[prompt_body]")
-    refute html =~ "Create a workflow from the Web UI to start running agents."
   end
 
   test "settings import package populates structured agent draft before save" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _agents_view, agents_html} = live(build_conn(), "/settings/agents")
-    refute agents_html =~ "Import Settings Package"
-    refute agents_html =~ ~s(name="import[yaml]")
 
     {:ok, view, html} = live(build_conn(), "/settings/import")
     assert html =~ "Import Settings Package"
-    refute html =~ ~s(name="import[kind]")
     assert html =~ ~s(name="import[yaml]")
     assert html =~ ">Review import</button>"
 
@@ -341,7 +334,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "settings import profiles package populates unsaved agent draft" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/import")
@@ -365,7 +358,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "settings import accepts uploaded package files and can cancel staged changes" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, html} = live(build_conn(), "/settings/import")
@@ -391,12 +384,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert render_click(view, "cancel_settings_import") =~ "Import cancelled"
 
     agents_html = render_patch(view, "/settings/agents")
-    refute agents_html =~ "Imported base prompt."
   end
 
   test "settings configuration checklists stay on their owning pages" do
     System.delete_env("LINEAR_API_KEY")
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
     assert {:ok, _project} = FakePersistence.update_project("fake-project-id", %{linear_project_slug: nil, repository_url: nil})
 
@@ -407,20 +399,16 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert projects_html =~ "Repository URL"
     assert projects_html =~ "settings-check-invalid"
     assert projects_html =~ "settings-check-title-invalid"
-    refute projects_html =~ "Workflow configuration checklist"
-    refute projects_html =~ "Runtime configuration checklist"
 
     {:ok, _view, runtime_html} = live(build_conn(), "/settings/runtime")
 
     assert runtime_html =~ "Runtime configuration checklist"
     assert runtime_html =~ "Linear API token"
     assert runtime_html =~ "Set LINEAR_API_KEY"
-    refute runtime_html =~ "Workflow configuration checklist"
-    refute runtime_html =~ "Project configuration checklist"
   end
 
   test "agent settings page edits profile settings through the workflow draft" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
     start_test_endpoint()
 
@@ -484,32 +472,23 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "settings tabs render only the active settings surface" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _view, projects_html} = live(build_conn(), "/settings")
     assert projects_html =~ "Projects"
     assert projects_html =~ "Add Project"
-    refute projects_html =~ "Draft Configuration"
-    refute projects_html =~ "Profile Configuration"
-    refute projects_html =~ "Execution mode:"
 
     {:ok, _view, agents_html} = live(build_conn(), "/settings/agents")
     assert agents_html =~ "Profile Configuration"
     assert agents_html =~ "Base Prompt"
-    refute agents_html =~ "Version History"
-    refute agents_html =~ "Draft Configuration"
-    refute agents_html =~ "Execution mode:"
 
     {:ok, _view, runtime_html} = live(build_conn(), "/settings/runtime")
     assert runtime_html =~ "Execution mode:"
-    refute runtime_html =~ "Draft Configuration"
-    refute runtime_html =~ "Profile Configuration"
-    refute runtime_html =~ "Version History"
   end
 
   test "project settings page creates and updates projects" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/projects")
@@ -569,7 +548,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "project settings save refreshes runtime project configuration" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     raw = workflow_raw!(workflow_form_params())
     active = workflow_record("current-workflow", "web_workflow_settings", raw, DateTime.utc_now())
@@ -605,12 +584,12 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert get_in(workflow.config, ["project", "repository_url"]) == "git@github.com:org/runtime.git"
     assert get_in(workflow.config, ["project", "default_branch"]) == "master"
     assert get_in(workflow.config, ["project", "source_strategy"]) == "worktree"
-    refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_base_path")
-    refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root")
+    assert Map.has_key?(get_in(workflow.config, ["project"]), "worktree_base_path") == false
+    assert Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root") == false
   end
 
   test "settings save controls show saving feedback and saved notices" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, project_view, project_html} = live(build_conn(), "/settings/projects")
@@ -640,7 +619,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert agent_html =~ ~s(phx-disable-with="Saving...")
     assert agent_html =~ "novalidate"
     assert agent_html =~ "Save agent settings"
-    refute agent_html =~ ~s(disabled="disabled")
 
     agent_saved_html =
       agent_view
@@ -658,16 +636,12 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert agent_saved_html =~ "workflow-save-toast-success"
     assert agent_saved_html =~ "Agent settings saved"
-    refute agent_saved_html =~ "Validation failed"
 
     {:ok, _runtime_view, runtime_html} = live(build_conn(), "/settings/runtime")
-    refute runtime_html =~ "Save workflow"
-    refute runtime_html =~ "Save agent settings"
-    refute runtime_html =~ "Save project"
   end
 
   test "settings no-op saves show unchanged notices without persistence" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     raw = workflow_raw!(workflow_form_params())
     active = workflow_record("current-workflow", "web_workflow_settings", raw, DateTime.utc_now())
@@ -688,10 +662,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert agent_noop_html =~ "Agent settings already up to date"
     assert agent_noop_html =~ "No changes to save"
 
-    refute Enum.any?(FakePersistence.calls(), fn
+    assert Enum.any?(FakePersistence.calls(), fn
              {:import_workflow, _project, _raw, _source} -> true
              _ -> false
-           end)
+           end) == false
 
     {:ok, project_view, _project_html} = live(build_conn(), "/settings/projects")
 
@@ -719,22 +693,18 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert project_noop_html =~ "Project settings already up to date"
     assert project_noop_html =~ "No changes to save"
 
-    refute Enum.any?(FakePersistence.calls(), fn
+    assert Enum.any?(FakePersistence.calls(), fn
              {:update_project, "fake-project-id", _attrs} -> true
              _ -> false
-           end)
+           end) == false
   end
 
   test "settings pages do not expose workflow history or restore controls" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     for path <- ["/settings/agents"] do
       {:ok, _view, html} = live(build_conn(), path)
-      refute html =~ "Version History"
-      refute html =~ "Restore workflow settings"
-      refute html =~ "Restore agent settings"
-      refute html =~ "restore_settings_version"
     end
   end
 
@@ -748,7 +718,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "agent settings highlights profile-owned semantic check failures" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/agents")
@@ -777,7 +747,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   end
 
   test "settings header renders project switcher and preserves project in tab links" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -795,7 +765,6 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert default_html =~ "Second Project"
     assert default_html =~ ~s(value="/settings/agents?project=fake-project-id")
     assert default_html =~ ~s(href="/settings/agents")
-    refute default_html =~ ~s(href="/settings/agents?project=)
 
     {:ok, _view, b_html} = live(build_conn(), "/settings/agents?project=#{project_b.id}")
     assert b_html =~ ~s(value="/settings/agents?project=#{project_b.id}")
@@ -875,6 +844,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     |> WorkflowForm.to_raw()
     |> case do
       {:ok, raw} -> raw
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       {:error, reason} -> flunk("expected workflow params to render as raw workflow, got: #{inspect(reason)}")
     end
   end

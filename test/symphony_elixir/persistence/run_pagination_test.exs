@@ -32,7 +32,7 @@ defmodule SymphonyElixir.Persistence.RunPaginationTest do
     assert length(first.entries) == 25
     assert first.has_more?
     assert length(second.entries) == 5
-    refute second.has_more?
+    assert second.has_more? == false
 
     ids = Enum.map(first.entries ++ second.entries, & &1.id)
     assert Enum.sort(ids) == runs |> Enum.map(& &1.id) |> Enum.sort()

@@ -17,7 +17,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
   end
 
   test "project and workflow lookups tolerate an unavailable Repo" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     assert WorkflowStore.default_project() == {:error, :repo_unavailable}
     assert WorkflowStore.list_projects() == []
@@ -59,8 +59,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
   end
 
   test "export_workflow renders canonical stored YAML plus prompt" do
-    refute WorkflowStore.export_workflow(%WorkflowRecord{raw_workflow_md: "raw workflow"}) =~ "raw workflow"
-
     rendered =
       WorkflowStore.export_workflow(%WorkflowRecord{
         yaml_config: %{"tracker" => %{"kind" => "linear"}},

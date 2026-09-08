@@ -36,7 +36,7 @@ defmodule SymphonyElixir.Config.SchemaTest do
   end
 
   test "default policy uses the trimmed PR-first workflow" do
-    refute Map.has_key?(Schema.default_profiles(), "merge")
+    assert Map.has_key?(Schema.default_profiles(), "merge") == false
 
     assert Schema.default_profiles()["implementation"]["allowed_updates"]["target_states"] ==
              ["In Progress", "Ready to Merge"]
@@ -75,7 +75,7 @@ defmodule SymphonyElixir.Config.SchemaTest do
     assert Schema.workflow_profile_for_state(settings, "Ready") == "implementation"
     assert Schema.workflow_profile_for_state(settings, "Legacy") == nil
     assert Schema.human_review_state?(settings, "Blocked")
-    refute Schema.human_review_state?(settings, "Legacy Review")
+    assert Schema.human_review_state?(settings, "Legacy Review") == false
   end
 
   test "validates and preserves analytics warning thresholds" do

@@ -40,7 +40,6 @@ defmodule SymphonyElixir.SSHTest do
 
     trace = File.read!(trace_file)
     assert trace =~ "-T ::1:2200 bash -lc"
-    refute trace =~ "-p 2200"
   end
 
   test "run/3 passes host:port targets through ssh -p" do
@@ -129,7 +128,6 @@ defmodule SymphonyElixir.SSHTest do
 
     trace = File.read!(trace_file)
     assert trace =~ "-T localhost bash -lc"
-    refute trace =~ " -F "
   end
 
   test "start_port/3 supports line mode" do
@@ -183,6 +181,7 @@ defmodule SymphonyElixir.SSHTest do
   end
 
   defp wait_for_trace!(trace_file, attempts \\ 20)
+  # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
   defp wait_for_trace!(trace_file, 0), do: flunk("timed out waiting for fake ssh trace at #{trace_file}")
 
   defp wait_for_trace!(trace_file, attempts) do

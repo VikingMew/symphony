@@ -100,6 +100,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   defp workflow_raw!(draft) do
     case WorkflowForm.to_raw(draft) do
       {:ok, raw} -> raw
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       {:error, reason} -> flunk("expected raw workflow, got #{inspect(reason)}")
     end
   end

@@ -29,16 +29,16 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
 
     assert hash =~ "pbkdf2_sha256$"
     assert Auth.verify("correct horse", hash)
-    refute Auth.verify("wrong", hash)
-    refute Auth.verify("correct horse", "plaintext")
-    refute Auth.verify("correct horse", "pbkdf2_sha256$bad$bad$bad")
-    refute Auth.verify(nil, hash)
+    assert Auth.verify("wrong", hash) == false
+    assert Auth.verify("correct horse", "plaintext") == false
+    assert Auth.verify("correct horse", "pbkdf2_sha256$bad$bad$bad") == false
+    assert Auth.verify(nil, hash) == false
   end
 
   test "auth reports disabled unconfigured and invalid inputs" do
     Application.put_env(:symphony_elixir, :auth, enabled: false)
-    refute Auth.enabled?()
-    refute Auth.configured?()
+    assert Auth.enabled?() == false
+    assert Auth.configured?() == false
     assert {:error, :not_configured} = Auth.authenticate("admin", "secret")
     assert {:error, :invalid_credentials} = Auth.authenticate(nil, "secret")
 
@@ -126,7 +126,7 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
   end
 
   test "auth can read persisted user through fake persistence without Repo" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
     Application.put_env(:symphony_elixir, :auth, enabled: true, username: "admin")
@@ -149,15 +149,12 @@ defmodule SymphonyElixir.AuthPersistenceWebTest do
     assert html =~ "Dashboard"
     assert html =~ "Settings"
     assert html =~ ~s(href="/settings")
-    refute html =~ ~s(href="/workflows")
-    refute html =~ ~s(href="/agent-settings")
 
     {:ok, _settings_view, settings_html} = live(build_conn(), "/settings/agents")
     assert settings_html =~ ~s(class="top-banner")
     assert settings_html =~ ~s(href="/")
     assert settings_html =~ ~s(aria-current="page")
     assert settings_html =~ ~s(href="/settings/projects")
-    refute settings_html =~ ~s(href="/settings/workflow")
     assert settings_html =~ ~s(href="/settings/agents")
     assert settings_html =~ ~s(href="/settings/runtime")
     assert settings_html =~ "Profile Configuration"

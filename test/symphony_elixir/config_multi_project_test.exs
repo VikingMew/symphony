@@ -17,6 +17,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
   test "with_workflow_context makes settings! return the override workflow" do
     workflow_a = loaded_workflow_with_prompt("Project A agent")
     workflow_b = loaded_workflow_with_prompt("Project B agent")
+    default_prompt = Config.workflow_prompt()
 
     assert Config.settings!().workflow != nil
 
@@ -38,19 +39,20 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     assert result.inner.prompt == "Project B agent for this repository."
 
     # Context is restored after the block.
-    refute Config.workflow_prompt() == "Project A agent"
+    assert Config.workflow_prompt() == default_prompt
   end
 
   test "with_workflow_context restores previous context after nested use" do
     workflow_a = loaded_workflow_with_prompt("Project A agent")
     workflow_b = loaded_workflow_with_prompt("Project B agent")
+    default_prompt = Config.workflow_prompt()
 
     Config.with_workflow_context(workflow_a, fn ->
       Config.with_workflow_context(workflow_b, fn -> :ok end)
       assert Config.workflow_prompt() == "Project A agent for this repository."
     end)
 
-    refute Config.workflow_prompt() == "Project A agent for this repository."
+    assert Config.workflow_prompt() == default_prompt
   end
 
   test "current_workflow requires explicit context when real projects exist" do

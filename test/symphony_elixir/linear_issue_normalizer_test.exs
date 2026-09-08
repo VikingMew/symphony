@@ -43,8 +43,8 @@ defmodule SymphonyElixir.LinearIssueNormalizerTest do
   test "marks mismatched or missing assignees as not assigned when a filter exists" do
     {:ok, assignee_filter} = IssueNormalizer.build_assignee_filter("user-1")
 
-    refute IssueNormalizer.normalize_issue(%{"assignee" => %{"id" => "user-2"}}, assignee_filter).assigned_to_worker
-    refute IssueNormalizer.normalize_issue(%{"assignee" => nil}, assignee_filter).assigned_to_worker
+    assert IssueNormalizer.normalize_issue(%{"assignee" => %{"id" => "user-2"}}, assignee_filter).assigned_to_worker == false
+    assert IssueNormalizer.normalize_issue(%{"assignee" => nil}, assignee_filter).assigned_to_worker == false
   end
 
   test "blank assignee filter routes every normalized issue and me requests viewer resolution" do

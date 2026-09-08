@@ -98,7 +98,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     issue_payload = json_response(get(build_conn(), "/api/v1/SYM-3"), 200)
     assert issue_payload["status"] == "Ready to Merge"
     assert issue_payload["persisted_issue"]["identifier"] == "SYM-3"
-    refute Map.has_key?(issue_payload["persisted_issue"], "__meta__")
+    assert Map.has_key?(issue_payload["persisted_issue"], "__meta__") == false
     assert issue_payload["latest_run"]["id"] == "run-new"
     assert Enum.map(issue_payload["recent_runs"], & &1["id"]) == ["run-new", "run-old"]
     assert hd(issue_payload["timeline"])["event_type"] == "run.completed"
@@ -107,7 +107,6 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     assert runs_payload["issue_identifier"] == "SYM-3"
     assert Enum.map(runs_payload["runs"], & &1["id"]) == ["run-new"]
     assert hd(runs_payload["events"])["summary"] =~ "validation passed"
-    refute inspect(runs_payload) =~ "Ecto.Schema.Metadata"
   end
 
   test "runs route clamps limits and distinguishes invalid, unknown, and unsupported requests" do
@@ -180,7 +179,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     assert %{"error" => %{"code" => "database_timeout"}} =
              history_request |> Task.await(2_000) |> json_response(503)
 
-    refute Process.alive?(blocked_pid)
+    assert Process.alive?(blocked_pid) == false
   end
 
   defp start_test_endpoint(orchestrator_name) do

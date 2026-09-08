@@ -49,7 +49,7 @@ defmodule SymphonyElixirWeb.DashboardPresenterTest do
     }
 
     assert DashboardPresenter.session_history_key(entry) == "CCR-5"
-    refute DashboardPresenter.session_history_expanded?(MapSet.new(), entry)
+    assert DashboardPresenter.session_history_expanded?(MapSet.new(), entry) == false
     assert DashboardPresenter.session_history_expanded?(MapSet.new(["CCR-5"]), entry)
     assert DashboardPresenter.session_history_summary(entry) == "Session history (2 rows from 5 events)"
 

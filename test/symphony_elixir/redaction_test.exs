@@ -62,8 +62,11 @@ defmodule SymphonyElixir.RedactionTest do
 
       assert sanitized_payloads == List.duplicate(expected, 4)
       assert ObservabilityPresenter.safe_event_payload(payload) == inspect_payload(expected)
+      # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
       refute inspect(expected) =~ "ordinary-secret"
+      # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
       refute inspect(expected) =~ "key-secret"
+      # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
       refute inspect(expected) =~ "session-secret"
     end)
   end
@@ -96,7 +99,7 @@ defmodule SymphonyElixir.RedactionTest do
       "timestamp" => "2026-08-09T03:13:43Z"
     }
 
-    refute String.valid?(invalid)
+    assert String.valid?(invalid) == false
 
     sanitized = Redaction.payload(payload, 500)
 
@@ -112,7 +115,7 @@ defmodule SymphonyElixir.RedactionTest do
     # CJK text is multi-byte in UTF-8; naive byte truncation splits characters.
     value = String.duplicate("已按仓库现状完成细化测试数据", 200)
     assert byte_size(value) > 500
-    refute String.valid?(binary_part(value, 0, 500))
+    assert String.valid?(binary_part(value, 0, 500)) == false
 
     payload = %{"text" => value}
 

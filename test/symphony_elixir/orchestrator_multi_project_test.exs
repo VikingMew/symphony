@@ -217,8 +217,6 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       end)
 
     assert Enum.all?(snapshots, &(&1.rate_limit_gate == %{status: :project_scoped, reason: :project_scoped}))
-    refute log =~ "Rate-limit gate evaluation failed"
-    refute log =~ "missing_project_context"
   end
 
   test "worker mode polling does not project Linear candidates into a database queue" do

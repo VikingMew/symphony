@@ -47,6 +47,7 @@ defmodule SymphonyElixir.LinearHealthTest do
 
     assert signal.status == :error
     assert signal.detail =~ "API:"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspect(signal) =~ "secret-token"
   end
 
@@ -69,6 +70,7 @@ defmodule SymphonyElixir.LinearHealthTest do
     signal = LinearStatusSignal.from_health(health)
     assert signal.status == :warning
     assert signal.detail =~ "candidate issue fetch failed"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute signal.detail =~ "secret-token"
   end
 

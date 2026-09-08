@@ -38,7 +38,7 @@ defmodule SymphonyElixir.Workspace.WorktreeSourcePreparationTest do
       )
 
       assert {:error, {:invalid_worktree_base_repo, ^invalid_base_path}} = Workspace.create_for_issue("WT-BAD")
-      refute File.exists?(Path.join([worktree_root, "WT-BAD", ".git"]))
+      assert File.exists?(Path.join([worktree_root, "WT-BAD", ".git"])) == false
     after
       File.rm_rf(test_root)
     end

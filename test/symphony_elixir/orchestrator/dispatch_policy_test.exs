@@ -16,22 +16,22 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
 
     settings = dispatch_settings([])
 
-    refute DispatchPolicy.should_dispatch_issue?(issue("next-ready", "Ready"), state, settings)
+    assert DispatchPolicy.should_dispatch_issue?(issue("next-ready", "Ready"), state, settings) == false
 
     open_state = %{state | running: %{}}
     assert DispatchPolicy.should_dispatch_issue?(issue("next-ready", "Ready"), open_state, settings)
 
-    refute DispatchPolicy.should_dispatch_issue?(
+    assert DispatchPolicy.should_dispatch_issue?(
              issue("review", "Needs Review"),
              open_state,
              dispatch_settings(human_review?: fn "Needs Review" -> true end)
-           )
+           ) == false
 
-    refute DispatchPolicy.should_dispatch_issue?(
+    assert DispatchPolicy.should_dispatch_issue?(
              issue("manual", "Ready"),
              open_state,
              dispatch_settings(executor: fn "Ready" -> "human" end)
-           )
+           ) == false
   end
 
   test "worker selection keeps configured order when load ties" do
@@ -54,11 +54,11 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyTest do
       )
 
     assert DispatchPolicy.should_dispatch_issue?(issue("todo", "Todo"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("review", "Needs Refinement Review"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings)
-    refute DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings)
+    assert DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings) == false
+    assert DispatchPolicy.should_dispatch_issue?(issue("review", "Needs Refinement Review"), state, settings) == false
+    assert DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings) == false
+    assert DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings) == false
+    assert DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings) == false
   end
 
   defp issue(id, state, attrs \\ []) do

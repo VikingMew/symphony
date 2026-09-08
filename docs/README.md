@@ -70,6 +70,7 @@ other documents link instead of restating.
 | [persistence_and_auth.md](persistence_and_auth.md) | Persistence and authentication reference. |
 | [pull-request-body.md](pull-request-body.md) | Pull request body headings, content shape, and Linear closing-reference contract. |
 | [test_database_isolation.md](test_database_isolation.md) | Test database-isolation contract. |
+| [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
 
 ## L5 — Operational Guides
 

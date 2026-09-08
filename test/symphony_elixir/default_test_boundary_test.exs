@@ -5,7 +5,7 @@ defmodule SymphonyElixir.DefaultTestBoundaryTest do
   alias SymphonyElixir.TestSupport.FakePersistence
 
   test "default suite uses fake persistence and does not start Repo" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     assert Application.fetch_env!(:symphony_elixir, :start_repo) == false
     assert PersistenceProvider.module() == FakePersistence
   end

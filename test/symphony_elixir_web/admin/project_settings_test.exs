@@ -49,7 +49,7 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettingsTest do
       enabled: false
     }
 
-    refute ProjectSettings.changed?(project, Map.merge(ProjectSettings.attrs(%{"name" => "Default", "slug" => "default"}), %{linear_project_slug: "", repository_url: ""}))
+    assert ProjectSettings.changed?(project, Map.merge(ProjectSettings.attrs(%{"name" => "Default", "slug" => "default"}), %{linear_project_slug: "", repository_url: ""})) == false
     assert ProjectSettings.changed?(project, Map.merge(ProjectSettings.attrs(%{"name" => "Default", "slug" => "default"}), %{repository_url: "git@example.com:repo.git"}))
   end
 

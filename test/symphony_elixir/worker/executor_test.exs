@@ -74,7 +74,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     assert {:ok, source} = Executor.prepare(payload(fixture.remote), workspace)
     assert source.base_sha == base_sha
-    refute File.exists?(Path.join(workspace, "stale.txt"))
+    assert File.exists?(Path.join(workspace, "stale.txt")) == false
   end
 
   test "returns a typed preparation error when the configured default branch cannot be fetched" do
@@ -123,7 +123,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert result.status == :failed
     assert result.reason =~ "source_preparation_failed"
     assert result.reason =~ "default_branch_fetch_failed"
-    refute File.exists?(marker)
+    assert File.exists?(marker) == false
   end
 
   defp payload(remote) do
@@ -162,6 +162,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
   defp git!(cwd, args) do
     case System.cmd("git", args, cd: cwd, stderr_to_stdout: true) do
       {output, 0} -> String.trim(output)
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       {output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
     end
   end

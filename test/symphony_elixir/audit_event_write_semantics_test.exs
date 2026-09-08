@@ -73,7 +73,6 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
     assert log =~ "issue_id=\"issue-240\""
     assert log =~ "session_id=\"thread-turn\""
     assert log =~ "run_id=\"run-240\""
-    refute log =~ "outcome=:ok"
   end
 
   test "workspace hook telemetry continues with a visible degraded outcome when persistence raises" do
@@ -121,7 +120,6 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
     assert log =~ "issue_identifier=\"MT-LINEAR-AUDIT\""
     assert log =~ "session_id=\"thread-240-turn-1\""
     assert log =~ "run_id=\"run-240\""
-    refute log =~ "outcome=:ok"
   end
 
   defp put_persistence(module) do

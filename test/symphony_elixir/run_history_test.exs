@@ -130,7 +130,7 @@ defmodule SymphonyElixir.RunHistoryTest do
 
     assert tool_call.detail == "dynamic tool call requested (linear_task_read)"
     assert tool_call.operation == "item/tool/call"
-    refute tool_call.low_signal
+    assert tool_call.low_signal == false
   end
 
   test "coalesces repeated legacy empty codex notifications" do

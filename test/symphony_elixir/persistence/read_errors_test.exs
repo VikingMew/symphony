@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Persistence.ReadErrorsTest do
   end
 
   test "read APIs return repo_unavailable instead of empty values when the Repo is down" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     assert {:error, :repo_unavailable} = Persistence.list_projects()
     assert {:error, :repo_unavailable} = Persistence.list_runs_for_issue("SYM-239")

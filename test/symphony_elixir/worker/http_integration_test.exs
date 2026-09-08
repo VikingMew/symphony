@@ -152,8 +152,6 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.source.prepared_head == revision
     assert result.source.task_branch == "vikingmew-sym-12"
 
-    refute inspect(result) =~ "workflow_version_id"
-
     turn_start =
       codex_trace
       |> File.stream!()

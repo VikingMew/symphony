@@ -286,6 +286,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
         ["repo", "view", "acme/app", "--json", "nameWithOwner"] -> {Jason.encode!(%{"nameWithOwner" => "acme/app"}), 0}
         ["api", "--method", "GET", _path] -> {"{}", 0}
         ["pr", "list" | _rest] -> {Jason.encode!([gh_pull_request("CLOSED")]), 0}
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         ["pr", "create" | _rest] -> flunk("closed branch PR must not create an ambiguous duplicate")
       end
     end
@@ -303,6 +304,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
       case args do
         ["auth", "status"] -> {"authenticated", 0}
         ["repo", "view", "acme/app", "--json", "nameWithOwner"] -> {Jason.encode!(%{"nameWithOwner" => "other/app"}), 0}
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         _ -> flunk("repository mismatch must stop lookup")
       end
     end
@@ -370,6 +372,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
 
     assert {:error, {:github_http_request_failed, details}} = result
     assert details =~ "[REDACTED]"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute details =~ "super-secret-token"
   end
 
@@ -630,6 +633,7 @@ defmodule SymphonyElixir.GitHub.PullRequestTest do
           {:ok, %{status: 200, body: [%{rest_pull_request() | "state" => "closed", "merged_at" => "2026-08-27T00:00:00Z"}]}}
 
         method == :post ->
+          # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
           flunk("merged branch PR must not create a duplicate")
       end
     end

@@ -8,7 +8,7 @@ defmodule SymphonyElixir.StateNamePayloadTest do
     assert StateName.normalize(nil) == ""
     assert StateName.blank_string?(nil)
     assert StateName.blank_string?("  ")
-    refute StateName.blank_string?(:atom)
+    assert StateName.blank_string?(:atom) == false
   end
 
   test "reads mixed atom and string keyed payloads" do
@@ -24,11 +24,11 @@ defmodule SymphonyElixir.StateNamePayloadTest do
   test "shared text blank helpers support strict and form-style blank checks" do
     assert Text.blank?(nil)
     assert Text.blank?("  ")
-    refute Text.blank?(:atom)
+    assert Text.blank?(:atom) == false
 
     assert Text.blankish?(nil)
     assert Text.blankish?("  ")
-    refute Text.blankish?(:atom)
+    assert Text.blankish?(:atom) == false
     assert Text.blank_as_nil("  ") == nil
     assert Text.blank_as_nil(:value) == "value"
   end

@@ -23,7 +23,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         pull_request_creator: fn handoff_issue, rendered, handoff_opts ->
           Agent.update(order, &[{:pr, handoff_issue.branch_name} | &1])
           assert rendered.body =~ "Fixes SYM-1"
-          refute Keyword.has_key?(handoff_opts, :workspace)
+          assert Keyword.has_key?(handoff_opts, :workspace) == false
           {:ok, pull_request()}
         end,
         graphql: graphql_recorder(order)
@@ -68,10 +68,11 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         pull_request_creator: fn _issue, _payload, _opts ->
           {:error, {:implementation_handoff_failed, {:remote_branch_not_found, "feature/sym-1"}}}
         end,
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         graphql: fn _query, _variables -> flunk("Linear must not be called before PR success") end
       )
 
-    refute response["success"]
+    assert response["success"] == false
     assert response["output"] =~ "remote_branch_not_found"
   end
 
@@ -114,7 +115,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         graphql: graphql
       )
 
-    refute response["success"]
+    assert response["success"] == false
     assert response["output"] =~ "linear_issue_update_failed"
   end
 
@@ -125,7 +126,7 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
 
     missing_url = put_in(completion_payload(), ["references"], %{"branch" => "feature/sym-1"})
     response = DynamicTool.execute("linear_task_update", missing_url, issue: issue(), profile: "implementation")
-    refute response["success"]
+    assert response["success"] == false
     assert response["output"] =~ "create_pull_request"
 
     forged = put_in(completion_payload(), ["references", "pr_proof"], "forged")
@@ -136,10 +137,11 @@ defmodule SymphonyElixir.ImplementationHandoffTest do
         profile: "implementation",
         session_id: @session_id,
         pull_request_proof_secret: @proof_secret,
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         graphql: fn _query, _variables -> flunk("forged proof must fail before Linear writes") end
       )
 
-    refute response["success"]
+    assert response["success"] == false
     assert response["output"] =~ "create_pull_request"
   end
 

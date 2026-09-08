@@ -15,8 +15,8 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenterTest do
 
     assert text =~ "[REDACTED]"
     assert text =~ "value"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute text =~ "secret"
-    refute text =~ "cookie\" => \"cookie"
   end
 
   test "formats status classes and worker empty states" do

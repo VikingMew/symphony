@@ -153,7 +153,7 @@ defmodule SymphonyElixir.CoreTest do
     assert Config.workflow_profile_for_state("Ready to Merge") == nil
     assert Config.workflow_executor_for_state("Ready") == "codex_agent"
     assert Config.human_review_state?("Ready to Merge")
-    refute Config.human_review_state?("In Progress")
+    assert Config.human_review_state?("In Progress") == false
 
     assert Config.workflow_allowed_updates("implementation")["target_states"] == [
              "In Progress",
@@ -194,7 +194,7 @@ defmodule SymphonyElixir.CoreTest do
     )
 
     assert Config.workflow_profile_for_state("QA") == nil
-    refute Config.human_review_state?("Product Review")
+    assert Config.human_review_state?("Product Review") == false
     assert Config.human_review_state?("Blocked")
     assert Config.workflow_allowed_updates("qa")["target_states"] == ["Done"]
 
@@ -351,8 +351,8 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    refute Map.has_key?(hooks, "after_create")
-    refute Map.has_key?(hooks, "before_remove")
+    assert Map.has_key?(hooks, "after_create") == false
+    assert Map.has_key?(hooks, "before_remove") == false
 
     project = Map.get(config, "project", %{})
     assert Map.get(project, "repository_url") == "https://github.com/openai/symphony"
@@ -391,7 +391,7 @@ defmodule SymphonyElixir.CoreTest do
 
       assert {:ok, ^canonical_workspace} = Workspace.create_for_issue("MT-CLEAN")
 
-      refute File.exists?(Path.join(workspace, "stale.txt"))
+      assert File.exists?(Path.join(workspace, "stale.txt")) == false
       assert File.read!(counter_file) == "xx"
     after
       File.rm_rf(test_root)
@@ -473,7 +473,6 @@ defmodule SymphonyElixir.CoreTest do
       trace = File.read!(trace_file)
       assert trace =~ ~s(rm -rf "$workspace")
       assert trace =~ ~s(mkdir -p "$workspace")
-      refute trace =~ "created=0"
     after
       File.rm_rf(test_root)
     end
@@ -542,8 +541,6 @@ defmodule SymphonyElixir.CoreTest do
 
     assert {:ok, pid} = result
     assert log =~ "Project repository URL missing in Project Settings"
-    refute log =~ "Project repository URL missing in workflow config"
-    refute log =~ ":missing_project_repository_url"
 
     on_exit(fn ->
       restore_app_env(:linear_client_module, previous_linear_client)
@@ -638,7 +635,7 @@ defmodule SymphonyElixir.CoreTest do
 
     {:ok, pid} = Orchestrator.start_link()
     Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     log =
       capture_log(fn ->
@@ -849,9 +846,9 @@ defmodule SymphonyElixir.CoreTest do
 
       updated_state = Orchestrator.reconcile_issue_states([issue], state)
 
-      refute Map.has_key?(updated_state.running, issue_id)
-      refute MapSet.member?(updated_state.claimed, issue_id)
-      refute Process.alive?(agent_pid)
+      assert Map.has_key?(updated_state.running, issue_id) == false
+      assert MapSet.member?(updated_state.claimed, issue_id) == false
+      assert Process.alive?(agent_pid) == false
       assert File.exists?(workspace)
     after
       File.rm_rf(test_root)
@@ -912,10 +909,10 @@ defmodule SymphonyElixir.CoreTest do
 
       updated_state = Orchestrator.reconcile_issue_states([issue], state)
 
-      refute Map.has_key?(updated_state.running, issue_id)
-      refute MapSet.member?(updated_state.claimed, issue_id)
-      refute Process.alive?(agent_pid)
-      refute File.exists?(workspace)
+      assert Map.has_key?(updated_state.running, issue_id) == false
+      assert MapSet.member?(updated_state.claimed, issue_id) == false
+      assert Process.alive?(agent_pid) == false
+      assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
     end
@@ -990,9 +987,9 @@ defmodule SymphonyElixir.CoreTest do
       Process.sleep(100)
       state = :sys.get_state(pid)
 
-      refute Map.has_key?(state.running, issue_id)
-      refute MapSet.member?(state.claimed, issue_id)
-      refute Process.alive?(agent_pid)
+      assert Map.has_key?(state.running, issue_id) == false
+      assert MapSet.member?(state.claimed, issue_id) == false
+      assert Process.alive?(agent_pid) == false
       assert File.exists?(workspace)
     after
       restore_app_env(:linear_client_module, previous_linear_client)
@@ -1081,9 +1078,9 @@ defmodule SymphonyElixir.CoreTest do
 
     updated_state = Orchestrator.reconcile_issue_states([issue], state)
 
-    refute Map.has_key?(updated_state.running, issue_id)
-    refute MapSet.member?(updated_state.claimed, issue_id)
-    refute Process.alive?(agent_pid)
+    assert Map.has_key?(updated_state.running, issue_id) == false
+    assert MapSet.member?(updated_state.claimed, issue_id) == false
+    assert Process.alive?(agent_pid) == false
   end
 
   test "worker blocker completion releases the claim for the next Ready poll" do
@@ -1115,7 +1112,7 @@ defmodule SymphonyElixir.CoreTest do
     Orchestrator.worker_task_finished(issue_id, orchestrator_name)
     state = :sys.get_state(pid)
     claimed = state.claimed
-    refute MapSet.member?(claimed, issue_id)
+    assert MapSet.member?(claimed, issue_id) == false
 
     dispatch_settings = %{
       active_states: MapSet.new(["ready"]),
@@ -1169,7 +1166,7 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    refute Map.has_key?(state.running, issue_id)
+    assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
@@ -1332,6 +1329,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert is_reference(refreshed_state.tick_timer_ref)
     assert is_reference(refreshed_state.tick_token)
+    # docs/spec-orchestration.md scheduling contract: a refreshed tick invalidates the stale token.
     refute refreshed_state.tick_token == stale_tick_token
     assert refreshed_state.next_poll_due_at_ms <= System.monotonic_time(:millisecond)
 

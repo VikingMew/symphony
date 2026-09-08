@@ -10,7 +10,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["version"] == 1
     assert execution["repository"] == "https://example.test/repo.git"
     assert execution["default_branch"] == "main"
-    refute Map.has_key?(execution, "revision")
+    assert Map.has_key?(execution, "revision") == false
     assert execution["branch"] == "vikingmew-sym-45"
     assert execution["codex"]["command"] == "codex app-server"
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
@@ -26,15 +26,15 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
            ]
 
     assert execution["handoff"]["policy"] == panel_payload["handoff"]["policy"]
-    refute Map.has_key?(execution["handoff"], "command")
+    assert Map.has_key?(execution["handoff"], "command") == false
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
     assert parsed.codex.prompt == execution["codex"]["prompt"]
     assert parsed.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
 
-    refute Map.has_key?(execution, "issue")
-    refute Map.has_key?(execution, "prompt")
-    refute Map.has_key?(execution, "workflow_profile")
+    assert Map.has_key?(execution, "issue") == false
+    assert Map.has_key?(execution, "prompt") == false
+    assert Map.has_key?(execution, "workflow_profile") == false
     assert panel_payload["issue"]["identifier"] == "SYM-45"
   end
 

@@ -76,7 +76,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
 
     assert BlockingDecision.terminal_handoff_failure?({:implementation_handoff_field_required, "comment"})
 
-    refute BlockingDecision.terminal_handoff_failure?(:capacity_exhausted)
+    assert BlockingDecision.terminal_handoff_failure?(:capacity_exhausted) == false
   end
 
   test "persists policy-prohibited validation as ordinary reported blocker evidence" do

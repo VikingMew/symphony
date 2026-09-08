@@ -24,7 +24,7 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
   end
 
   test "settings import package reports parse errors without saving" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/import")
@@ -40,10 +40,10 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
 
     assert html =~ "Package import failed"
 
-    refute Enum.any?(FakePersistence.calls(), fn
+    assert Enum.any?(FakePersistence.calls(), fn
              {:import_workflow, _project, _raw, _source} -> true
              _ -> false
-           end)
+           end) == false
   end
 
   defp start_test_endpoint do

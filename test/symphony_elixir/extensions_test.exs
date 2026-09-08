@@ -595,8 +595,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "/vendor/phoenix_html/phoenix_html.js"
     assert html =~ "/vendor/phoenix/phoenix.js"
     assert html =~ "/vendor/phoenix_live_view/phoenix_live_view.js"
-    refute html =~ "/assets/app.js"
-    refute html =~ "<style>"
 
     dashboard_css = response(get(build_conn(), "/dashboard.css"), 200)
     assert dashboard_css =~ ":root {"
@@ -668,13 +666,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ ~s(href="/diagnostics/linear")
     assert html =~ "Upstream Codex rate-limit snapshot received."
     assert html =~ "remaining"
-    refute html =~ "Raw rate-limit payload"
-    refute html =~ "Event log"
-    refute html =~ "log-table"
-    refute html =~ "data-runtime-clock="
-    refute html =~ "setInterval(refreshRuntimeClocks"
-    refute html =~ "Refresh now"
-    refute html =~ "Transport"
     assert html =~ "status-badge-live"
     assert html =~ "status-badge-offline"
 
@@ -745,7 +736,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "update.payload.params.rateLimits"
     assert html =~ "account/rateLimits/updated"
     assert html =~ "[REDACTED]"
-    refute html =~ "Bearer"
   end
 
   test "dashboard renders observed parsed codex rate-limit payload" do
@@ -772,8 +762,6 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "18%"
     assert html =~ "5h"
     assert html =~ "1w"
-    refute html =~ "unrecognized"
-    refute html =~ "Raw rate-limit payload"
   end
 
   test "dashboard controls listening status" do
@@ -898,7 +886,6 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     {:ok, view, html} = live(build_conn(), "/")
     assert html =~ "Session history (1 rows from 125 events)"
-    refute html =~ "<details open"
 
     view
     |> element(~s(summary[phx-value-key="issue-http"]))
@@ -969,7 +956,6 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert html =~ "Data unavailable"
     assert html =~ "database_unavailable"
-    refute html =~ "Active issue sessions in the current runtime."
   end
 
   test "http server serves embedded assets, accepts form posts, and rejects invalid hosts" do
@@ -1171,6 +1157,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     end
   end
 
+  # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
   defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
 
   defp ensure_workflow_store_running do

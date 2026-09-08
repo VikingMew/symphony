@@ -138,7 +138,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   end
 
   test "worker API uses fake persistence without Repo" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     assert %{"error" => %{"code" => "worker_unauthorized"}} =

@@ -18,7 +18,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Map.has_key?(update_props, "comment")
     assert Map.has_key?(update_props, "target_state")
     assert Map.has_key?(create_props, "evidence")
-    refute Enum.any?(DynamicTool.tool_specs(), &(&1["name"] == "linear_graphql"))
+    assert Enum.any?(DynamicTool.tool_specs(), &(&1["name"] == "linear_graphql")) == false
   end
 
   test "unsupported tools return a failure payload with the supported tool list" do
@@ -75,7 +75,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         pull_request_proof_secret: "proof-secret"
       )
 
-    refute rejected["success"]
+    assert rejected["success"] == false
     assert rejected["output"] =~ "not allowed"
   end
 
@@ -112,7 +112,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     mismatched = put_in(payload, ["references", "pr_proof"], "other-proof")
     rejected = DynamicTool.execute("handoff", mismatched, profile: "implementation", pull_request_result: fn -> created end)
-    refute rejected["success"]
+    assert rejected["success"] == false
     assert rejected["output"] =~ "create_pull_request"
   end
 
@@ -142,12 +142,12 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     for {payload, field} <- cases do
       response = DynamicTool.execute("handoff", payload, profile: "implementation")
-      refute response["success"]
+      assert response["success"] == false
       assert response["output"] =~ field
     end
 
     rejected = DynamicTool.execute("handoff", valid, profile: "refinement")
-    refute rejected["success"]
+    assert rejected["success"] == false
     assert rejected["output"] =~ "only available to implementation"
   end
 
@@ -173,6 +173,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     rejected =
       DynamicTool.execute("linear_issue_create", payload,
         profile: "implementation",
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         issue_creator: fn _payload -> flunk("implementation profile must not create issues") end
       )
 
@@ -381,12 +382,14 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   end
 
   test "linear_task_read validates activity arguments" do
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     response =
       DynamicTool.execute("linear_task_read", %{"include_activity" => "yes"}, task_reader: fn _payload -> flunk("reader should not be called") end)
 
     assert response["success"] == false
     assert Jason.decode!(response["output"])["error"]["message"] =~ "include_activity"
 
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     response =
       DynamicTool.execute("linear_task_read", %{"activity_limit" => 101}, task_reader: fn _payload -> flunk("reader should not be called") end)
 
@@ -500,12 +503,14 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   end
 
   test "linear_task_update rejects empty and invalid update payloads" do
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     response =
       DynamicTool.execute("linear_task_update", %{}, task_updater: fn _payload -> flunk("updater should not be called") end)
 
     assert response["success"] == false
     assert Jason.decode!(response["output"])["error"]["message"] =~ "requires at least one"
 
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     response =
       DynamicTool.execute("linear_task_update", %{"references" => ["bad"]}, task_updater: fn _payload -> flunk("updater should not be called") end)
 
@@ -567,6 +572,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
               {:ok, %{"data" => %{"commentCreate" => %{"success" => true, "comment" => %{"id" => "comment-2"}}}}}
 
             true ->
+              # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
               flunk("unexpected graphql call")
           end
         end
@@ -614,6 +620,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         graphql: fn query, _variables ->
           if query =~ "attachmentCreate" do
             send(test_pid, :attachment_linked)
+            # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
             flunk("attachment should not be linked")
           else
             {:ok, %{"data" => %{"commentCreate" => %{"success" => true, "comment" => %{"id" => "comment-2"}}}}}
@@ -662,12 +669,13 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
           if query =~ "SymphonyLinearTaskCommentCreate" do
             {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
           else
+            # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
             flunk("quality gate must run before issue or state lookup writes")
           end
         end
       )
 
-    refute response["success"]
+    assert response["success"] == false
     error = Jason.decode!(response["output"])["error"]
     assert error["code"] == "refinement_quality_gate_failed"
 
@@ -703,7 +711,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         end
       )
 
-    refute response["success"]
+    assert response["success"] == false
     error = Jason.decode!(response["output"])["error"]
     assert error["message"] == "Restricted Linear task tool execution failed."
     assert error["reason"] =~ "linear_comment_create_failed"
@@ -745,6 +753,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
               {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
 
             true ->
+              # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
               flunk("unexpected GraphQL operation")
           end
         end

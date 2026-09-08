@@ -29,7 +29,7 @@ defmodule SymphonyElixirWeb.ProxyHeadersTest do
       |> put_req_header("x-forwarded-host", "public.example:9443")
       |> ProxyHeaders.call([])
 
-    refute conn.private.symphony_proxy_headers_trusted
+    assert conn.private.symphony_proxy_headers_trusted == false
     assert conn.scheme == :http
     assert conn.host == "www.example.com"
   end
@@ -60,7 +60,7 @@ defmodule SymphonyElixirWeb.ProxyHeadersTest do
       conn(:get, "/")
       |> ProxyHeaders.call([])
 
-    refute conn.private.symphony_proxy_headers_trusted
+    assert conn.private.symphony_proxy_headers_trusted == false
     assert conn.scheme == :https
     assert conn.host == "ops.example"
     assert conn.port == 443

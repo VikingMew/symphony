@@ -124,6 +124,7 @@ defmodule SymphonyElixir.LinearDiagnosticsProbesTest do
 
     assert {%{status: :error, detail: detail}, []} = Probes.candidate_probe(FakeClient)
     assert detail =~ "[REDACTED]"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute detail =~ "secret-token"
   end
 

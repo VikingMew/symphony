@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
            ]
 
     assert payload["repository"]["implementation_branch"] == "feature/mt-1"
-    refute recursively_has_key?(payload, "workflow_version_id")
+    assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 
   test "event attrs cover run and workspace events" do

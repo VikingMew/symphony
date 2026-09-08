@@ -37,7 +37,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     assert {:ok, %{workflow: workflow, source: source}} = WorkflowStore.current_with_source()
     assert workflow.prompt =~ "fake database agent"
     assert source.type == :database
-    refute Map.get(workflow, :setup_required, false)
+    assert Map.get(workflow, :setup_required, false) == false
   end
 
   test "database source reports no workflow when the database is empty even if local package exists" do
@@ -48,7 +48,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
 
     assert {:ok, %{setup_required: true}} = WorkflowStore.current()
     assert {:error, :setup_required} = Config.settings()
-    refute FakePersistence.current_workflow()
+    assert FakePersistence.current_workflow() == nil
   end
 
   test "database source keeps setup-required semantics at the Config boundary when files and workflow are missing" do

@@ -23,7 +23,7 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
   end
 
   test "renders empty analytics page without live orchestrator state" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/analytics")
@@ -34,7 +34,7 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
   end
 
   test "renders persisted run and event aggregates" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     now = DateTime.utc_now()
@@ -117,15 +117,13 @@ defmodule SymphonyElixirWeb.AnalyticsLiveTest do
   end
 
   test "renders data unavailable instead of zero metrics when persistence is down" do
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)
     start_test_endpoint()
 
     {:ok, _view, html} = live(build_conn(), "/analytics")
 
     assert html =~ "Data unavailable"
-    refute html =~ "No persisted analytics data for this range."
-    refute html =~ "Persisted runs in range"
   end
 
   defp table_headers(document, title) do

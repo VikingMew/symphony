@@ -31,6 +31,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuardTest do
 
     assert {:ok, %{free_bytes: :unchecked}} =
              WorkspaceDiskGuard.check(settings,
+               # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
                free_bytes_fun: fn _path -> flunk("disk check should be skipped") end
              )
   end
