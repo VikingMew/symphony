@@ -237,6 +237,7 @@ GraphQL operations from inside an agent session.
 lib/symphony_elixir_web/
 ├── components/layouts.ex
 ├── controllers/
+│   ├── control_api_controller.ex
 │   ├── observability_api_controller.ex
 │   ├── session_controller.ex
 │   ├── static_asset_controller.ex
@@ -263,6 +264,7 @@ lib/symphony_elixir_web/
 | `SymphonyElixirWeb.DashboardLive` | `live/dashboard_live.ex` | LiveView dashboard UI. |
 | `SymphonyElixirWeb.AdminLive` | `live/admin_live.ex` | Management pages for projects, runs, workers, workflows, and settings. |
 | `SymphonyElixirWeb.LinearDiagnosticsLive` | `live/linear_diagnostics_live.ex` | Linear diagnostics page. |
+| `SymphonyElixirWeb.ControlApiController` | `controllers/control_api_controller.ex` | Authenticated JSON API for listening and operator-task controls. |
 | `SymphonyElixirWeb.ObservabilityApiController` | `controllers/observability_api_controller.ex` | JSON API for runtime state and refresh. |
 | `SymphonyElixirWeb.WorkerApiController` | `controllers/worker_api_controller.ex` | External worker registration, claim, heartbeat, and event API. |
 | `SymphonyElixirWeb.StaticAssetController` | `controllers/static_asset_controller.ex` | Serves bundled static assets. |
@@ -392,6 +394,7 @@ SymphonyElixir.Orchestrator
 | Change dynamic tools exposed to Codex | `codex/dynamic_tool.ex` |
 | Change dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `symphony_elixir_web/live/admin_live.ex`, `presenter.ex` |
 | Change JSON observability API | `symphony_elixir_web/controllers/observability_api_controller.ex` |
+| Change JSON runtime control API | `symphony_elixir_web/controllers/control_api_controller.ex` |
 | Change worker API behavior | `symphony_elixir_web/controllers/worker_api_controller.ex`, `persistence.ex` |
 | Change persistence schema | `persistence/*.ex`, `priv/repo/migrations/*` |
 | Change auth behavior | `symphony_elixir_web/auth_plug.ex`, `controllers/session_controller.ex` |
