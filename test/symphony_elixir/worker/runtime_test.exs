@@ -27,10 +27,15 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     end
 
     defp pop_claim(state, %{"available_slots" => 0} = request) do
-      {{:ok, %{"task" => nil}}, %{state | claims_seen: state.claims_seen ++ [request]}}
+      {{:ok, %{"task" => nil, "poll_after_seconds" => 60}}, %{state | claims_seen: state.claims_seen ++ [request]}}
     end
 
-    defp pop_claim(%{claims: [claim | claims]} = state, request), do: {{:ok, claim}, %{state | claims: claims, claims_seen: state.claims_seen ++ [request]}}
+    defp pop_claim(%{claims: [{:error, _reason} = error | claims]} = state, request),
+      do: {error, %{state | claims: claims, claims_seen: state.claims_seen ++ [request]}}
+
+    defp pop_claim(%{claims: [claim | claims]} = state, request),
+      do: {{:ok, claim}, %{state | claims: claims, claims_seen: state.claims_seen ++ [request]}}
+
     defp pop_claim(state, request), do: {{:ok, %{"task" => nil}}, %{state | claims_seen: state.claims_seen ++ [request]}}
     defp pop_outcome([outcome | rest]), do: {outcome, rest}
     defp pop_outcome([]), do: {{:ok, %{}}, []}
@@ -146,6 +151,34 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert phases("task-1") == []
   end
 
+  test "empty claim advice is observed with a legacy fallback", %{config: config} do
+    put_claims([%{"task" => nil, "poll_after_seconds" => 30}, %{"task" => nil}])
+    runtime = start_runtime(config)
+
+    eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 30 end)
+    send(runtime, :poll)
+    eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 5 end)
+    assert :sys.get_state(runtime).claim_http_failure_streak == 0
+  end
+
+  test "claim HTTP failures back off to sixty seconds and success resets the streak", %{config: config} do
+    put_claims([
+      {:error, {:http_error, 429, %{}}},
+      {:error, {:http_error, 503, %{}}},
+      %{"task" => nil, "poll_after_seconds" => 5},
+      {:error, {:http_error, 500, %{}}}
+    ])
+
+    runtime = start_runtime(config)
+    eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 30 end)
+    send(runtime, :poll)
+    eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 60 end)
+    send(runtime, :poll)
+    eventually(fn -> :sys.get_state(runtime).claim_http_failure_streak == 0 end)
+    send(runtime, :poll)
+    eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 30 end)
+  end
+
   defp claim(task_id, block) do
     %{
       "task_id" => task_id,
@@ -166,6 +199,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
   end
 
   defp put_claims(claims), do: Agent.update(FakeClient, &%{&1 | claims: claims})
+
   defp state, do: Agent.get(FakeClient, & &1)
   defp terminal_count(task_id), do: terminal_count(task_id, "task.completed")
 
