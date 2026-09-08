@@ -1,0 +1,451 @@
+file	line	macro	category	decision	contract	source
+test/mix/tasks/workspace_before_remove_test.exs	162	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute error_output =~ "output="
+test/mix/tasks/workspace_before_remove_test.exs	200	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "pr close"
+test/mix/tasks/workspace_before_remove_test.exs	232	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "pr list"
+test/mix/tasks/workspace_before_remove_test.exs	252	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "pr list"
+test/mix/tasks/workspace_before_remove_test.exs	385	flunk	control-flow	rewrite-match	explicit success shape	1_000 -> flunk("Timed out waiting for captured task output")
+test/symphony_elixir/agent_runner/policy_test.exs	9	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Policy.implementation_start_transition_required?(%Issue{state: "In Progress"}, "implementation")
+test/symphony_elixir/agent_runner/policy_test.exs	10	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Policy.implementation_start_transition_required?(%Issue{state: "Ready"}, "refinement")
+test/symphony_elixir/agent_runner/policy_test.exs	16	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Policy.refinement_start_transition_required?(%Issue{state: "Refining"}, "refinement")
+test/symphony_elixir/agent_runner/policy_test.exs	35	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Policy.workflow_transition_allowed?(transitions, "Ready", "Done", "implementation")
+test/symphony_elixir/agent_runner_test.exs	337	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "Current status: Ready"
+test/symphony_elixir/agent_runner_test.exs	381	flunk	control-flow	rewrite-match	explicit success shape	flunk("Ready issue should not transition when Codex startup fails")
+test/symphony_elixir/agent_runner_test.exs	471	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "Current status: Todo"
+test/symphony_elixir/agent_runner_test.exs	533	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "Current status:"
+test/symphony_elixir/agent_runner_test.exs	609	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "Current status:"
+test/symphony_elixir/agent_runner_test.exs	678	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute trace =~ "worker-b bash -lc"
+test/symphony_elixir/agent_runner_test.exs	806	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Enum.at(turn_texts, 1) =~ "You are an agent for this repository."
+test/symphony_elixir/agent_runner_test.exs	905	flunk	control-flow	rewrite-match	explicit success shape	flunk("max-turn exhaustion must not create a pull request")
+test/symphony_elixir/app_server_startup_test.exs	85	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Enum.any?(lines, &String.contains?(&1, "--yolo"))
+test/symphony_elixir/app_server_startup_test.exs	212	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute String.contains?(argv_line, "--ask-for-approval never")
+test/symphony_elixir/app_server_startup_test.exs	213	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute String.contains?(argv_line, "--sandbox danger-full-access")
+test/symphony_elixir/audit_event_write_semantics_test.exs	76	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "outcome=:ok"
+test/symphony_elixir/audit_event_write_semantics_test.exs	124	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "outcome=:ok"
+test/symphony_elixir/auth_persistence_web_test.exs	32	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.verify("wrong", hash)
+test/symphony_elixir/auth_persistence_web_test.exs	33	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.verify("correct horse", "plaintext")
+test/symphony_elixir/auth_persistence_web_test.exs	34	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.verify("correct horse", "pbkdf2_sha256$bad$bad$bad")
+test/symphony_elixir/auth_persistence_web_test.exs	35	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.verify(nil, hash)
+test/symphony_elixir/auth_persistence_web_test.exs	40	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.enabled?()
+test/symphony_elixir/auth_persistence_web_test.exs	41	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Auth.configured?()
+test/symphony_elixir/auth_persistence_web_test.exs	129	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/auth_persistence_web_test.exs	152	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute html =~ ~s(href="/workflows")
+test/symphony_elixir/auth_persistence_web_test.exs	153	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ ~s(href="/agent-settings")
+test/symphony_elixir/auth_persistence_web_test.exs	160	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute settings_html =~ ~s(href="/settings/workflow")
+test/symphony_elixir/blocking_decision_test.exs	79	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute BlockingDecision.terminal_handoff_failure?(:capacity_exhausted)
+test/symphony_elixir/codex/app_server_startup_policy_test.exs	159	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(marker_file)
+test/symphony_elixir/codex/message_humanizer_status_test.exs	19	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute plain =~ <<27>>
+test/symphony_elixir/codex/message_humanizer_status_test.exs	20	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute plain =~ <<0>>
+test/symphony_elixir/codex/tool_request_handler_test.exs	115	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute ToolRequestHandler.needs_input?("turn/event", %{"params" => %{}})
+test/symphony_elixir/codex/tool_request_handler_test.exs	120	flunk	control-flow	rewrite-match	explicit success shape	fn _tool, _arguments -> flunk("tool executor should not be called") end
+test/symphony_elixir/config/project_commands_test.exs	21	refute	security-redline	retain-with-contract	security owning contract	refute commands =~ "credential.helper="
+test/symphony_elixir/config/project_commands_test.exs	35	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute commands =~ "GIT_SSH_COMMAND="
+test/symphony_elixir/config/project_commands_test.exs	36	refute	security-redline	retain-with-contract	security owning contract	refute commands =~ "credential.helper="
+test/symphony_elixir/config/schema_domain_test.exs	12	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(defaults["agent"], "max_concurrent_agents")
+test/symphony_elixir/config/schema_domain_test.exs	14	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(defaults["tracker"], "api_key")
+test/symphony_elixir/config/schema_domain_test.exs	281	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents)
+test/symphony_elixir/config/schema_domain_test.exs	282	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents_by_state)
+test/symphony_elixir/config/schema_domain_test.exs	297	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute StringOrMap.equal?(%{"a" => 1}, %{"a" => 2})
+test/symphony_elixir/config/schema_test.exs	39	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(Schema.default_profiles(), "merge")
+test/symphony_elixir/config/schema_test.exs	78	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Schema.human_review_state?(settings, "Legacy Review")
+test/symphony_elixir/config_multi_project_test.exs	41	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Config.workflow_prompt() == "Project A agent"
+test/symphony_elixir/config_multi_project_test.exs	53	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Config.workflow_prompt() == "Project A agent for this repository."
+test/symphony_elixir/core_test.exs	156	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Config.human_review_state?("In Progress")
+test/symphony_elixir/core_test.exs	197	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Config.human_review_state?("Product Review")
+test/symphony_elixir/core_test.exs	354	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(hooks, "after_create")
+test/symphony_elixir/core_test.exs	355	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(hooks, "before_remove")
+test/symphony_elixir/core_test.exs	394	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join(workspace, "stale.txt"))
+test/symphony_elixir/core_test.exs	476	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "created=0"
+test/symphony_elixir/core_test.exs	545	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute log =~ "Project repository URL missing in workflow config"
+test/symphony_elixir/core_test.exs	546	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ ":missing_project_repository_url"
+test/symphony_elixir/core_test.exs	557	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive :fetch_candidate_issues_called, 200
+test/symphony_elixir/core_test.exs	558	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive :fetch_terminal_issues_called, 200
+test/symphony_elixir/core_test.exs	590	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive :fetch_candidate_issues_called, 100
+test/symphony_elixir/core_test.exs	641	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/core_test.exs	650	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:agent_runner_started, "issue-persistence"}, 200
+test/symphony_elixir/core_test.exs	852	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(updated_state.running, issue_id)
+test/symphony_elixir/core_test.exs	853	refute	structure-data	rewrite-exact	tested data/state contract	refute MapSet.member?(updated_state.claimed, issue_id)
+test/symphony_elixir/core_test.exs	854	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.alive?(agent_pid)
+test/symphony_elixir/core_test.exs	915	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(updated_state.running, issue_id)
+test/symphony_elixir/core_test.exs	916	refute	structure-data	rewrite-exact	tested data/state contract	refute MapSet.member?(updated_state.claimed, issue_id)
+test/symphony_elixir/core_test.exs	917	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.alive?(agent_pid)
+test/symphony_elixir/core_test.exs	918	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(workspace)
+test/symphony_elixir/core_test.exs	993	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, issue_id)
+test/symphony_elixir/core_test.exs	994	refute	structure-data	rewrite-exact	tested data/state contract	refute MapSet.member?(state.claimed, issue_id)
+test/symphony_elixir/core_test.exs	995	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.alive?(agent_pid)
+test/symphony_elixir/core_test.exs	1084	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(updated_state.running, issue_id)
+test/symphony_elixir/core_test.exs	1085	refute	structure-data	rewrite-exact	tested data/state contract	refute MapSet.member?(updated_state.claimed, issue_id)
+test/symphony_elixir/core_test.exs	1086	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.alive?(agent_pid)
+test/symphony_elixir/core_test.exs	1118	refute	structure-data	rewrite-exact	tested data/state contract	refute MapSet.member?(claimed, issue_id)
+test/symphony_elixir/core_test.exs	1172	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, issue_id)
+test/symphony_elixir/core_test.exs	1335	refute	security-redline	retain-with-contract	security owning contract	refute refreshed_state.tick_token == stale_tick_token
+test/symphony_elixir/coverage_ignore_governance_test.exs	39	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.Shell in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	40	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.Payload in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	41	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.Redaction in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	42	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.StateName in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	43	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.Text in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	44	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.NumberFormat in ignore_modules
+test/symphony_elixir/coverage_ignore_governance_test.exs	45	refute	structure-data	rewrite-exact	tested data/state contract	refute SymphonyElixir.Codex.DynamicTool in ignore_modules
+test/symphony_elixir/dashboard_signal_test.exs	85	refute	structure-data	rewrite-exact	tested data/state contract	refute status.status == :unrecognized
+test/symphony_elixir/dashboard_signal_test.exs	117	refute	security-redline	retain-with-contract	security owning contract	refute inspected =~ "super-secret-token"
+test/symphony_elixir/dashboard_signal_test.exs	118	refute	security-redline	retain-with-contract	security owning contract	refute inspected =~ "super-secret-cookie"
+test/symphony_elixir/dashboard_signal_test.exs	119	refute	security-redline	retain-with-contract	security owning contract	refute inspected =~ "super-secret-api-key"
+test/symphony_elixir/default_test_boundary_test.exs	8	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/dynamic_tool_test.exs	21	refute	structure-data	rewrite-exact	tested data/state contract	refute Enum.any?(DynamicTool.tool_specs(), &(&1["name"] == "linear_graphql"))
+test/symphony_elixir/dynamic_tool_test.exs	78	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rejected["success"]
+test/symphony_elixir/dynamic_tool_test.exs	115	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rejected["success"]
+test/symphony_elixir/dynamic_tool_test.exs	145	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/dynamic_tool_test.exs	150	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rejected["success"]
+test/symphony_elixir/dynamic_tool_test.exs	176	flunk	control-flow	rewrite-match	explicit success shape	issue_creator: fn _payload -> flunk("implementation profile must not create issues") end
+test/symphony_elixir/dynamic_tool_test.exs	385	flunk	control-flow	rewrite-match	explicit success shape	DynamicTool.execute("linear_task_read", %{"include_activity" => "yes"}, task_reader: fn _payload -> flunk("reader should not be called") end)
+test/symphony_elixir/dynamic_tool_test.exs	391	flunk	control-flow	rewrite-match	explicit success shape	DynamicTool.execute("linear_task_read", %{"activity_limit" => 101}, task_reader: fn _payload -> flunk("reader should not be called") end)
+test/symphony_elixir/dynamic_tool_test.exs	504	flunk	control-flow	rewrite-match	explicit success shape	DynamicTool.execute("linear_task_update", %{}, task_updater: fn _payload -> flunk("updater should not be called") end)
+test/symphony_elixir/dynamic_tool_test.exs	510	flunk	control-flow	rewrite-match	explicit success shape	DynamicTool.execute("linear_task_update", %{"references" => ["bad"]}, task_updater: fn _payload -> flunk("updater should not be called") end)
+test/symphony_elixir/dynamic_tool_test.exs	570	flunk	control-flow	rewrite-match	explicit success shape	flunk("unexpected graphql call")
+test/symphony_elixir/dynamic_tool_test.exs	617	flunk	control-flow	rewrite-match	explicit success shape	flunk("attachment should not be linked")
+test/symphony_elixir/dynamic_tool_test.exs	665	flunk	control-flow	rewrite-match	explicit success shape	flunk("quality gate must run before issue or state lookup writes")
+test/symphony_elixir/dynamic_tool_test.exs	670	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/dynamic_tool_test.exs	706	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/dynamic_tool_test.exs	748	flunk	control-flow	rewrite-match	explicit success shape	flunk("unexpected GraphQL operation")
+test/symphony_elixir/event_presenter_test.exs	68	refute	security-redline	retain-with-contract	security owning contract	refute inspected =~ "secret-token"
+test/symphony_elixir/event_presenter_test.exs	69	refute	security-redline	retain-with-contract	security owning contract	refute inspected =~ "secret-cookie"
+test/symphony_elixir/execution_worker_deployment_test.exs	21	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute dockerfile =~ "npm install --global @openai/codex\n"
+test/symphony_elixir/execution_worker_deployment_test.exs	30	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute base =~ "CODEX_HOME"
+test/symphony_elixir/execution_worker_deployment_test.exs	31	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute base =~ "/home/symphony/.codex"
+test/symphony_elixir/execution_worker_deployment_test.exs	32	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute base =~ "COPY --from=codex"
+test/symphony_elixir/execution_worker_deployment_test.exs	33	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute without_codex =~ "CODEX_HOME"
+test/symphony_elixir/execution_worker_deployment_test.exs	34	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute without_codex =~ "COPY --from=codex"
+test/symphony_elixir/execution_worker_deployment_test.exs	69	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute dockerfile =~ ~r/mise[^\n]*(?:latest|releases\/latest)/i
+test/symphony_elixir/execution_worker_deployment_test.exs	102	refute	security-redline	retain-with-contract	security owning contract	refute workflow =~ "git credential fill"
+test/symphony_elixir/execution_worker_deployment_test.exs	109	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ "scripts/check.sh"
+test/symphony_elixir/execution_worker_deployment_test.exs	137	refute	security-redline	retain-with-contract	security owning contract	refute body =~ "x-access-token"
+test/symphony_elixir/execution_worker_deployment_test.exs	138	refute	security-redline	retain-with-contract	security owning contract	refute body =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
+test/symphony_elixir/execution_worker_deployment_test.exs	141	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute compose =~ ~r/GIT_CONFIG_(?:GLOBAL|COUNT|KEY|VALUE)/
+test/symphony_elixir/execution_worker_deployment_test.exs	161	refute	security-redline	retain-with-contract	security owning contract	refute worker =~ "DATABASE_URL"
+test/symphony_elixir/execution_worker_deployment_test.exs	162	refute	security-redline	retain-with-contract	security owning contract	refute worker =~ "POSTGRES_"
+test/symphony_elixir/execution_worker_deployment_test.exs	164	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute worker =~ "- database"
+test/symphony_elixir/execution_worker_deployment_test.exs	176	refute	security-redline	retain-with-contract	security owning contract	refute body =~ ~r/^\s*privileged:\s*true\s*$/m
+test/symphony_elixir/execution_worker_deployment_test.exs	177	refute	security-redline	retain-with-contract	security owning contract	refute body =~ "/var/run/docker.sock"
+test/symphony_elixir/execution_worker_deployment_test.exs	178	refute	security-redline	retain-with-contract	security owning contract	refute body =~ "/run/docker.sock"
+test/symphony_elixir/execution_worker_deployment_test.exs	179	refute	security-redline	retain-with-contract	security owning contract	refute body =~ ~r/(?:podman|containerd|nerdctl).*\.sock/i
+test/symphony_elixir/execution_worker_deployment_test.exs	189	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute body =~ ~r/^\s*(?:docker(?:-\S+)?|buildx|podman(?:-\S+)?|nerdctl)\s*\\?\s*$/mi
+test/symphony_elixir/execution_worker_deployment_test.exs	190	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute body =~ ~r/^\s*(?:COPY|ADD)\s+.*(?:docker|buildx|podman|nerdctl)/mi
+test/symphony_elixir/execution_worker_deployment_test.exs	214	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ ~S("${IMAGE}:latest")
+test/symphony_elixir/execution_worker_deployment_test.exs	215	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ ~S("${WORKER_IMAGE}:latest")
+test/symphony_elixir/execution_worker_deployment_test.exs	216	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ "tags+=\", latest\""
+test/symphony_elixir/execution_worker_deployment_test.exs	217	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ "Select immutable and mutable tags"
+test/symphony_elixir/execution_worker_deployment_test.exs	232	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute workflow =~ ".services.execution-worker"
+test/symphony_elixir/execution_worker_deployment_test.exs	256	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute compose =~ ":latest"
+test/symphony_elixir/execution_worker_deployment_test.exs	286	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute panel =~ "codex_home"
+test/symphony_elixir/extensions_test.exs	598	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "/assets/app.js"
+test/symphony_elixir/extensions_test.exs	599	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "<style>"
+test/symphony_elixir/extensions_test.exs	671	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Raw rate-limit payload"
+test/symphony_elixir/extensions_test.exs	672	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Event log"
+test/symphony_elixir/extensions_test.exs	673	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "log-table"
+test/symphony_elixir/extensions_test.exs	674	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "data-runtime-clock="
+test/symphony_elixir/extensions_test.exs	675	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "setInterval(refreshRuntimeClocks"
+test/symphony_elixir/extensions_test.exs	676	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Refresh now"
+test/symphony_elixir/extensions_test.exs	677	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Transport"
+test/symphony_elixir/extensions_test.exs	748	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Bearer"
+test/symphony_elixir/extensions_test.exs	775	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "unrecognized"
+test/symphony_elixir/extensions_test.exs	776	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Raw rate-limit payload"
+test/symphony_elixir/extensions_test.exs	901	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "<details open"
+test/symphony_elixir/extensions_test.exs	972	refute	structure-data	rewrite-exact	tested data/state contract	refute html =~ "Active issue sessions in the current runtime."
+test/symphony_elixir/extensions_test.exs	1174	flunk	structure-data	rewrite-exact	tested data/state contract	defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
+test/symphony_elixir/first_run_defaults_test.exs	51	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute prompt =~ "Disabled"
+test/symphony_elixir/github_pull_request_test.exs	141	flunk	control-flow	rewrite-match	explicit success shape	["pr", "create" | _rest] -> flunk("closed branch PR must not create an ambiguous duplicate")
+test/symphony_elixir/github_pull_request_test.exs	158	flunk	control-flow	rewrite-match	explicit success shape	_ -> flunk("repository mismatch must stop lookup")
+test/symphony_elixir/github_pull_request_test.exs	225	refute	security-redline	retain-with-contract	security owning contract	refute details =~ "super-secret-token"
+test/symphony_elixir/github_pull_request_test.exs	429	flunk	control-flow	rewrite-match	explicit success shape	flunk("merged branch PR must not create a duplicate")
+test/symphony_elixir/implementation_handoff_test.exs	26	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Keyword.has_key?(handoff_opts, :workspace)
+test/symphony_elixir/implementation_handoff_test.exs	71	flunk	control-flow	rewrite-match	explicit success shape	graphql: fn _query, _variables -> flunk("Linear must not be called before PR success") end
+test/symphony_elixir/implementation_handoff_test.exs	74	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/implementation_handoff_test.exs	117	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/implementation_handoff_test.exs	128	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/implementation_handoff_test.exs	139	flunk	control-flow	rewrite-match	explicit success shape	graphql: fn _query, _variables -> flunk("forged proof must fail before Linear writes") end
+test/symphony_elixir/implementation_handoff_test.exs	142	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute response["success"]
+test/symphony_elixir/linear_client_test.exs	36	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute issue.assigned_to_worker
+test/symphony_elixir/linear_client_test.exs	102	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute issue.assigned_to_worker
+test/symphony_elixir/linear_diagnostics_probes_test.exs	127	refute	security-redline	retain-with-contract	security owning contract	refute detail =~ "secret-token"
+test/symphony_elixir/linear_diagnostics_test.exs	276	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute diagnostics.probes.api.detail =~ "Settings / Projects"
+test/symphony_elixir/linear_diagnostics_test.exs	277	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute diagnostics.probes.api.detail =~ "Linear project slug"
+test/symphony_elixir/linear_diagnostics_test.exs	279	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute diagnostics.probes.api.detail =~ "Cannot load active workflow config"
+test/symphony_elixir/linear_diagnostics_test.exs	355	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rendered =~ "Authorization"
+test/symphony_elixir/linear_diagnostics_test.exs	356	refute	security-redline	retain-with-contract	security owning contract	refute rendered =~ "secret"
+test/symphony_elixir/linear_diagnostics_test.exs	494	refute	security-redline	retain-with-contract	security owning contract	refute log =~ "secret-token-value"
+test/symphony_elixir/linear_diagnostics_test.exs	689	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Fetch Linear configuration"
+test/symphony_elixir/linear_diagnostics_test.exs	690	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Linear Configuration Discovery"
+test/symphony_elixir/linear_diagnostics_test.exs	691	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "No discovery data fetched yet."
+test/symphony_elixir/linear_diagnostics_test.exs	693	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Shared health"
+test/symphony_elixir/linear_diagnostics_test.exs	694	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Latest shared Linear signal"
+test/symphony_elixir/linear_diagnostics_test.exs	705	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Authorization"
+test/symphony_elixir/linear_diagnostics_test.exs	706	refute	security-redline	retain-with-contract	security owning contract	refute html =~ "secret"
+test/symphony_elixir/linear_diagnostics_test.exs	724	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Fetch Linear configuration"
+test/symphony_elixir/linear_diagnostics_test.exs	725	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Linear Configuration Discovery"
+test/symphony_elixir/linear_health_test.exs	50	refute	security-redline	retain-with-contract	security owning contract	refute inspect(signal) =~ "secret-token"
+test/symphony_elixir/linear_health_test.exs	72	refute	security-redline	retain-with-contract	security owning contract	refute signal.detail =~ "secret-token"
+test/symphony_elixir/linear_issue_normalizer_test.exs	46	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute IssueNormalizer.normalize_issue(%{"assignee" => %{"id" => "user-2"}}, assignee_filter).assigned_to_worker
+test/symphony_elixir/linear_issue_normalizer_test.exs	47	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute IssueNormalizer.normalize_issue(%{"assignee" => nil}, assignee_filter).assigned_to_worker
+test/symphony_elixir/live_e2e_test.exs	142	flunk	control-flow	rewrite-match	explicit success shape	flunk("expected Linear team #{inspect(team_key)} to exist")
+test/symphony_elixir/live_e2e_test.exs	150	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("expected team to expose at least one non-terminal workflow state")
+test/symphony_elixir/live_e2e_test.exs	180	flunk	control-flow	rewrite-match	explicit success shape	flunk("expected workspace to expose a completed project status")
+test/symphony_elixir/live_e2e_test.exs	183	flunk	control-flow	rewrite-match	explicit success shape	flunk("expected project statuses list, got: #{inspect(payload)}")
+test/symphony_elixir/live_e2e_test.exs	237	flunk	control-flow	rewrite-match	explicit success shape	payload -> flunk("expected issue details payload, got: #{inspect(payload)}")
+test/symphony_elixir/live_e2e_test.exs	272	flunk	control-flow	rewrite-match	explicit success shape	flunk("Linear GraphQL returned partial errors: #{inspect(errors)}")
+test/symphony_elixir/live_e2e_test.exs	275	flunk	control-flow	rewrite-match	explicit success shape	flunk("Linear GraphQL failed: #{inspect(errors)}")
+test/symphony_elixir/live_e2e_test.exs	281	flunk	control-flow	rewrite-match	explicit success shape	flunk("Linear GraphQL returned unexpected payload: #{inspect(payload)}")
+test/symphony_elixir/live_e2e_test.exs	284	flunk	control-flow	rewrite-match	explicit success shape	flunk("Linear GraphQL request failed: #{inspect(reason)}")
+test/symphony_elixir/live_e2e_test.exs	295	flunk	control-flow	rewrite-match	explicit success shape	flunk("expected successful #{mutation_name} response, got: #{inspect(data)}")
+test/symphony_elixir/live_e2e_test.exs	371	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("timed out waiting for worker runtime info for #{inspect(issue_id)}")
+test/symphony_elixir/live_e2e_test.exs	389	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("failed to read remote result from #{worker_host}:#{remote_result_path} (status #{status}): #{inspect(output)}")
+test/symphony_elixir/live_e2e_test.exs	392	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("failed to read remote result from #{worker_host}:#{remote_result_path}: #{inspect(reason)}")
+test/symphony_elixir/live_e2e_test.exs	608	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("expected all live SSH workers to share one home directory, got: #{inspect(homes)}")
+test/symphony_elixir/live_e2e_test.exs	613	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	defp shared_remote_home!(_worker_hosts), do: flunk("expected at least one live SSH worker host")
+test/symphony_elixir/live_e2e_test.exs	621	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	"" -> flunk("expected non-empty remote home for #{worker_host}")
+test/symphony_elixir/live_e2e_test.exs	626	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("failed to resolve remote home for #{worker_host} (status #{status}): #{inspect(output)}")
+test/symphony_elixir/live_e2e_test.exs	629	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("failed to resolve remote home for #{worker_host}: #{inspect(reason)}")
+test/symphony_elixir/live_e2e_test.exs	659	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("docker worker mode requires `ssh-keygen` on PATH")
+test/symphony_elixir/live_e2e_test.exs	669	flunk	control-flow	rewrite-match	explicit success shape	{output, status} -> flunk("failed to generate live docker ssh key (status #{status}): #{inspect(output)}")
+test/symphony_elixir/live_e2e_test.exs	714	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("failed to start live docker workers (status #{status}): #{inspect(output)}")
+test/symphony_elixir/live_e2e_test.exs	757	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	flunk("timed out waiting for SSH worker #{worker_host} to accept connections")
+test/symphony_elixir/merge_conflict_reconciler_test.exs	90	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:delivery, _, _}
+test/symphony_elixir/merge_conflict_reconciler_test.exs	102	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:delivery, _, _}
+test/symphony_elixir/observability_pubsub_test.exs	24	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.PubSub)
+test/symphony_elixir/orchestrator/dispatch_policy_domain_test.exs	60	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
+test/symphony_elixir/orchestrator/dispatch_policy_domain_test.exs	80	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	19	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("next-ready", "Ready"), state, settings)
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	24	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	30	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	57	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("refining", "Refining"), state, settings)
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	58	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("review", "Needs Refinement Review"), state, settings)
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	59	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("ready", "Ready"), state, settings)
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	60	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("progress", "In Progress"), state, settings)
+test/symphony_elixir/orchestrator/dispatch_policy_test.exs	61	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute DispatchPolicy.should_dispatch_issue?(issue("merge", "Ready to Merge"), state, settings)
+test/symphony_elixir/orchestrator/events_test.exs	60	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute recursively_has_key?(payload, "workflow_version_id")
+test/symphony_elixir/orchestrator_multi_project_test.exs	126	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:candidate_fetch, "linear-b"}, 500
+test/symphony_elixir/orchestrator_multi_project_test.exs	179	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:candidate_fetch, "linear-a"}, 200
+test/symphony_elixir/orchestrator_multi_project_test.exs	220	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "Rate-limit gate evaluation failed"
+test/symphony_elixir/orchestrator_multi_project_test.exs	221	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "missing_project_context"
+test/symphony_elixir/orchestrator_multi_project_test.exs	266	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:candidate_fetch, "linear-a"}, 200
+test/symphony_elixir/orchestrator_multi_project_test.exs	267	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:candidate_fetch, "linear-b"}, 200
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	131	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	168	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	213	refute	structure-data	rewrite-exact	tested data/state contract	refute second.run_id == first.run_id
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	247	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	265	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	282	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	295	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :day_dreaming, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	388	refute	structure-data	rewrite-exact	tested data/state contract	refute run_id == stale_run_id
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	391	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, stale_run_id)
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	416	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+test/symphony_elixir/orchestrator_operator_tasks_test.exs	466	flunk	control-flow	rewrite-match	explicit success shape	flunk("timed out waiting for orchestrator snapshot state: #{inspect(snapshot)}")
+test/symphony_elixir/orchestrator_rate_limit_gate_test.exs	59	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive :fetch_candidate_issues_called, 100
+test/symphony_elixir/orchestrator_status_test.exs	1379	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Process.alive?(worker_pid)
+test/symphony_elixir/orchestrator_status_test.exs	1380	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, issue_id)
+test/symphony_elixir/orchestrator_status_test.exs	1452	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, issue_id)
+test/symphony_elixir/orchestrator_status_test.exs	1513	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Process.alive?(worker_pid)
+test/symphony_elixir/orchestrator_status_test.exs	1514	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.running, issue_id)
+test/symphony_elixir/orchestrator_status_test.exs	1518	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.blocked, issue_id)
+test/symphony_elixir/orchestrator_status_test.exs	1576	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(state.retry_attempts, issue_id)
+test/symphony_elixir/orchestrator_status_test.exs	1648	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Process.alive?(worker_pid)
+test/symphony_elixir/orchestrator_status_test.exs	1701	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:update_issue_state_id, ^issue_id, _state_id}, 100
+test/symphony_elixir/orchestrator_status_test.exs	1711	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "app_status=offline"
+test/symphony_elixir/orchestrator_status_test.exs	1821	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rendered =~ "╭─"
+test/symphony_elixir/orchestrator_status_test.exs	1822	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute rendered =~ "╰─"
+test/symphony_elixir/orchestrator_status_test.exs	2135	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "app_status=offline"
+test/symphony_elixir/orchestrator_status_test.exs	2168	flunk	control-flow	rewrite-match	explicit success shape	flunk("timed out waiting for orchestrator snapshot state: #{inspect(snapshot)}")
+test/symphony_elixir/orchestrator_workspace_disk_guard_test.exs	87	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:issue_agent_started, ^issue_id, _runner_pid}, 100
+test/symphony_elixir/orchestrator_workspace_disk_guard_test.exs	108	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:operator_runner_started, :nap, ^run_id, _runner_pid}, 100
+test/symphony_elixir/orchestrator_workspace_disk_guard_test.exs	142	refute_receive	timing	retain	ExUnit mailbox timeout contract	refute_receive {:issue_agent_started, ^issue_id, _runner_pid}, 100
+test/symphony_elixir/orchestrator_workspace_disk_guard_test.exs	155	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(:sys.get_state(pid).blocked, issue.id)
+test/symphony_elixir/persistence/project_test.exs	7	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(Repo)
+test/symphony_elixir/persistence/read_errors_test.exs	12	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/persistence/run_pagination_test.exs	35	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute second.has_more?
+test/symphony_elixir/persistence/schema_changeset_test.exs	10	refute	structure-data	rewrite-exact	tested data/state contract	refute RunRecord.changeset(%RunRecord{}, %{kind: "issue", status: "running"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	11	refute	structure-data	rewrite-exact	tested data/state contract	refute RunRecord.changeset(%RunRecord{}, %{kind: "other", status: "running"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	12	refute	structure-data	rewrite-exact	tested data/state contract	refute RunRecord.changeset(%RunRecord{}, %{kind: "issue", issue_identifier: "CCR-1", status: "running", execution_mode: "remote"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	18	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Worker.changeset(%Worker{}, %{status: "online"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	19	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Worker.changeset(%Worker{}, %{name: "worker-1", status: "busy"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	25	refute	structure-data	rewrite-exact	tested data/state contract	refute WorkspaceRecord.changeset(%WorkspaceRecord{}, %{issue_identifier: "CCR-1", status: "active"}).valid?
+test/symphony_elixir/persistence/schema_changeset_test.exs	26	refute	structure-data	rewrite-exact	tested data/state contract	refute WorkspaceRecord.changeset(%WorkspaceRecord{}, %{path: "/tmp/CCR-1", status: "active"}).valid?
+test/symphony_elixir/persistence/workflow_store_test.exs	20	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/persistence/workflow_store_test.exs	62	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute WorkflowStore.export_workflow(%WorkflowRecord{raw_workflow_md: "raw workflow"}) =~ "raw workflow"
+test/symphony_elixir/profile_prompt_summary_test.exs	29	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute replace.uses_base_prompt?
+test/symphony_elixir/profile_prompt_summary_test.exs	51	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute backend.prompt_used?
+test/symphony_elixir/redaction_test.exs	65	refute	security-redline	retain-with-contract	security owning contract	refute inspect(expected) =~ "ordinary-secret"
+test/symphony_elixir/redaction_test.exs	66	refute	security-redline	retain-with-contract	security owning contract	refute inspect(expected) =~ "key-secret"
+test/symphony_elixir/redaction_test.exs	67	refute	security-redline	retain-with-contract	security owning contract	refute inspect(expected) =~ "session-secret"
+test/symphony_elixir/redaction_test.exs	99	refute	structure-data	rewrite-exact	tested data/state contract	refute String.valid?(invalid)
+test/symphony_elixir/redaction_test.exs	115	refute	structure-data	rewrite-exact	tested data/state contract	refute String.valid?(binary_part(value, 0, 500))
+test/symphony_elixir/run_history_test.exs	133	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute tool_call.low_signal
+test/symphony_elixir/runtime_proxy_test.exs	64	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute RuntimeProxy.connect_options("https://api.example.test") == []
+test/symphony_elixir/runtime_proxy_test.exs	73	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute RuntimeProxy.connect_options("https://api.example.test") == []
+test/symphony_elixir/ssh_test.exs	43	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ "-p 2200"
+test/symphony_elixir/ssh_test.exs	132	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute trace =~ " -F "
+test/symphony_elixir/ssh_test.exs	186	flunk	control-flow	rewrite-match	explicit success shape	defp wait_for_trace!(trace_file, 0), do: flunk("timed out waiting for fake ssh trace at #{trace_file}")
+test/symphony_elixir/state_name_payload_test.exs	11	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute StateName.blank_string?(:atom)
+test/symphony_elixir/state_name_payload_test.exs	27	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Text.blank?(:atom)
+test/symphony_elixir/state_name_payload_test.exs	31	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Text.blankish?(:atom)
+test/symphony_elixir/status_dashboard_log_test.exs	15	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "level="
+test/symphony_elixir/status_dashboard_log_test.exs	16	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute log =~ "source="
+test/symphony_elixir/status_dashboard_log_test.exs	93	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute :sys.get_state(pid).enabled
+test/symphony_elixir/status_dashboard_log_test.exs	102	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "IO.ANSI.home"
+test/symphony_elixir/status_dashboard_log_test.exs	103	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "IO.ANSI.clear"
+test/symphony_elixir/status_dashboard_log_test.exs	104	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "terminal_log_line"
+test/symphony_elixir/status_dashboard_log_test.exs	105	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "level=#"
+test/symphony_elixir/status_dashboard_log_test.exs	106	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "source=#"
+test/symphony_elixir/status_dashboard_log_test.exs	107	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute source =~ "entity=#"
+test/symphony_elixir/web_fake_persistence_test.exs	141	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/worker/assignment_manager_test.exs	141	refute	structure-data	rewrite-exact	tested data/state contract	refute next.id == assignment.id
+test/symphony_elixir/worker/assignment_manager_test.exs	142	refute	structure-data	rewrite-exact	tested data/state contract	refute next.run_id == assignment.run_id
+test/symphony_elixir/worker/cleanup_test.exs	17	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(expired)
+test/symphony_elixir/worker/cleanup_test.exs	47	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(first)
+test/symphony_elixir/worker/execution_payload_test.exs	13	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "revision")
+test/symphony_elixir/worker/execution_payload_test.exs	29	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution["handoff"], "command")
+test/symphony_elixir/worker/execution_payload_test.exs	35	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "issue")
+test/symphony_elixir/worker/execution_payload_test.exs	36	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "prompt")
+test/symphony_elixir/worker/execution_payload_test.exs	37	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(execution, "workflow_profile")
+test/symphony_elixir/worker/executor_test.exs	77	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join(workspace, "stale.txt"))
+test/symphony_elixir/worker/executor_test.exs	126	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(marker)
+test/symphony_elixir/worker/executor_test.exs	165	flunk	control-flow	rewrite-match	explicit success shape	{output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
+test/symphony_elixir/worker/http_integration_test.exs	155	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute inspect(result) =~ "workflow_version_id"
+test/symphony_elixir/worker/payload_test.exs	12	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
+test/symphony_elixir/worker/validation_test.exs	32	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute contents =~ "sensitive"
+test/symphony_elixir/worker/validation_test.exs	33	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute contents =~ "bad"
+test/symphony_elixir/workflow_form_disk_guard_test.exs	15	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(setup_config["agent"], "max_concurrent_agents")
+test/symphony_elixir/workflow_form_disk_guard_test.exs	17	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(draft, "agent_max_concurrent_agents")
+test/symphony_elixir/workflow_form_disk_guard_test.exs	21	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(config["agent"], "max_concurrent_agents")
+test/symphony_elixir/workflow_form_disk_guard_test.exs	32	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(draft, "workspace_min_free_bytes")
+test/symphony_elixir/workflow_settings_package_test.exs	103	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	{:error, reason} -> flunk("expected raw workflow, got #{inspect(reason)}")
+test/symphony_elixir/workflow_store_fake_persistence_test.exs	40	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.get(workflow, :setup_required, false)
+test/symphony_elixir/workflow_store_fake_persistence_test.exs	51	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute FakePersistence.current_workflow()
+test/symphony_elixir/workflow_store_multi_project_test.exs	213	refute	structure-data	rewrite-exact	tested data/state contract	refute project_b.id in final_project_ids
+test/symphony_elixir/workflow_store_test.exs	125	refute	structure-data	rewrite-exact	tested data/state contract	refute retained_state.source.type == :setup_required
+test/symphony_elixir/workflow_store_test.exs	166	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/workflow_store_test.exs	179	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir/workspace/source_preparation_test.exs	196	refute	security-redline	retain-with-contract	security owning contract	refute ssh_hook =~ "credential.helper="
+test/symphony_elixir/workspace/source_preparation_test.exs	211	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute https_hook =~ "GIT_SSH_COMMAND"
+test/symphony_elixir/workspace/source_preparation_test.exs	213	refute	security-redline	retain-with-contract	security owning contract	refute https_hook =~ "credential.helper="
+test/symphony_elixir/workspace/source_preparation_test.exs	292	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join(second_workspace, "local-progress.txt"))
+test/symphony_elixir/workspace/source_preparation_test.exs	293	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join([second_workspace, "deps", "cache.txt"]))
+test/symphony_elixir/workspace/source_preparation_test.exs	294	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join([second_workspace, "_build", "artifact.txt"]))
+test/symphony_elixir/workspace/source_preparation_test.exs	295	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join([second_workspace, "tmp", "scratch.txt"]))
+test/symphony_elixir/workspace/source_preparation_test.exs	515	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join([workspace_root, "MT-INITIALIZE-TIMEOUT", "after-create"]))
+test/symphony_elixir/workspace/source_preparation_test.exs	730	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(target_workspace)
+test/symphony_elixir/workspace/source_preparation_test.exs	795	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(workspace)
+test/symphony_elixir/workspace/source_preparation_test.exs	820	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(workspace)
+test/symphony_elixir/workspace/source_preparation_test.exs	845	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(workspace)
+test/symphony_elixir/workspace/source_preparation_test.exs	882	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(workspace)
+test/symphony_elixir/workspace/worktree_source_preparation_test.exs	41	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join([worktree_root, "WT-BAD", ".git"]))
+test/symphony_elixir/workspace_disk_guard_test.exs	34	flunk	control-flow	rewrite-match	explicit success shape	free_bytes_fun: fn _path -> flunk("disk check should be skipped") end
+test/symphony_elixir_web/admin/observability_presenter_test.exs	18	refute	security-redline	retain-with-contract	security owning contract	refute text =~ "secret"
+test/symphony_elixir_web/admin/observability_presenter_test.exs	19	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute text =~ "cookie\" => \"cookie"
+test/symphony_elixir_web/admin/project_settings_test.exs	52	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute ProjectSettings.changed?(project, Map.merge(ProjectSettings.attrs(%{"name" => "Default", "slug" => "default"}), %{linear_project_slug: "", repository_url: ""}))
+test/symphony_elixir_web/analytics_live_test.exs	26	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/analytics_live_test.exs	37	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/analytics_live_test.exs	120	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/analytics_live_test.exs	127	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "No persisted analytics data for this range."
+test/symphony_elixir_web/analytics_live_test.exs	128	refute	structure-data	rewrite-exact	tested data/state contract	refute html =~ "Persisted runs in range"
+test/symphony_elixir_web/dashboard_presenter_test.exs	52	refute	structure-data	rewrite-exact	tested data/state contract	refute DashboardPresenter.session_history_expanded?(MapSet.new(), entry)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	129	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	135	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Listening:"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	136	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Start listening"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	137	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Stop listening"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	138	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Force stop all agents"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	142	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	149	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "No persisted runs yet."
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	153	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	176	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "MT-PAGE-30"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	188	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	209	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ ~s(href="/issues/)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	218	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	238	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	243	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute html =~ "Worker mode inactive"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	250	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	305	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute run_html =~ "Workflow Version"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	306	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute run_html =~ "ID: workflow-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	307	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute run_html =~ "active: true"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	313	refute	security-redline	retain-with-contract	security owning contract	refute run_html =~ "secret"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	326	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute filtered_events_html =~ "run.failed"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	330	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	394	refute	security-redline	retain-with-contract	security owning contract	refute html =~ "secret"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	395	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Empty Codex notification; detailed payload was not persisted"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	402	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute error_html =~ "Linear state moved In Progress"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	406	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute linear_html =~ "run.failed"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	410	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	468	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	511	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute filtered_html =~ "MT-B-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	515	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute second_html =~ "MT-A-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	519	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	567	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "MT-A-PAGE-30"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	568	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "MT-B-PAGE-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	576	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "MT-B-PAGE-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	581	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	619	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute filtered_html =~ "boom-b"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	623	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute second_html =~ "boom-a"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	627	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	667	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute filtered_html =~ "MT-TASKB-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	671	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute second_html =~ "MT-TASKA-1"
+test/symphony_elixir_web/live/observability_fake_persistence_test.exs	675	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	182	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	199	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	214	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "operator_task_busy"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	218	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	233	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute projects_html =~ "Linear Workflow State Candidates"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	234	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute projects_html =~ "Suggested State Lists"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	241	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	255	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	262	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute html =~ "Create a workflow from the Web UI to start running agents."
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	266	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	270	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ "Import Settings Package"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	271	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ ~s(name="import[yaml]")
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	275	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ ~s(name="import[kind]")
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	344	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	368	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	394	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ "Imported base prompt."
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	399	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	410	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute projects_html =~ "Workflow configuration checklist"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	411	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute projects_html =~ "Runtime configuration checklist"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	418	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute runtime_html =~ "Workflow configuration checklist"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	419	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Project configuration checklist"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	423	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	487	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	493	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute projects_html =~ "Draft Configuration"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	494	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute projects_html =~ "Profile Configuration"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	495	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute projects_html =~ "Execution mode:"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	500	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ "Version History"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	501	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ "Draft Configuration"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	502	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agents_html =~ "Execution mode:"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	506	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Draft Configuration"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	507	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Profile Configuration"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	508	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Version History"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	512	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	572	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	608	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_base_path")
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	609	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root")
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	613	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	643	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agent_html =~ ~s(disabled="disabled")
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	661	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute agent_saved_html =~ "Validation failed"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	664	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute runtime_html =~ "Save workflow"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	665	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Save agent settings"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	666	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute runtime_html =~ "Save project"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	670	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	691	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Enum.any?(FakePersistence.calls(), fn
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	722	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Enum.any?(FakePersistence.calls(), fn
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	729	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	734	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Version History"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	735	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute html =~ "Restore workflow settings"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	736	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "Restore agent settings"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	737	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "restore_settings_version"
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	751	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	780	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	798	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute default_html =~ ~s(href="/settings/agents?project=)
+test/symphony_elixir_web/live/settings_fake_persistence_test.exs	878	flunk	deployment-capability	review	docs/compose.md or docs/deployment.md	{:error, reason} -> flunk("expected workflow params to render as raw workflow, got: #{inspect(reason)}")
+test/symphony_elixir_web/live/settings_import_fake_persistence_test.exs	27	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.whereis(SymphonyElixir.Repo)
+test/symphony_elixir_web/live/settings_import_fake_persistence_test.exs	43	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute Enum.any?(FakePersistence.calls(), fn
+test/symphony_elixir_web/live/settings_projects_live_test.exs	75	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute has_element?(view, ~s(.project-edit-form[data-project-id="fake-project-id"]))
+test/symphony_elixir_web/observability_api_history_test.exs	101	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(issue_payload["persisted_issue"], "__meta__")
+test/symphony_elixir_web/observability_api_history_test.exs	110	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute inspect(runs_payload) =~ "Ecto.Schema.Metadata"
+test/symphony_elixir_web/observability_api_history_test.exs	183	refute	structure-data	rewrite-exact	tested data/state contract	refute Process.alive?(blocked_pid)
+test/symphony_elixir_web/proxy_and_health_test.exs	73	refute	security-redline	retain-with-contract	security owning contract	refute inspect(payload) =~ "token"
+test/symphony_elixir_web/proxy_headers_test.exs	32	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute conn.private.symphony_proxy_headers_trusted
+test/symphony_elixir_web/proxy_headers_test.exs	63	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute conn.private.symphony_proxy_headers_trusted
