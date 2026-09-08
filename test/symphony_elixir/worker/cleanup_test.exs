@@ -14,7 +14,7 @@ defmodule SymphonyElixir.Worker.CleanupTest do
       future = DateTime.add(DateTime.utc_now(), 120, :second)
       assert {:ok, [^expired]} = Cleanup.remove_expired(root, MapSet.new([active]), 60, future)
       assert File.dir?(active)
-      refute File.exists?(expired)
+      assert File.exists?(expired) == false
     after
       File.rm_rf(root)
     end
@@ -44,7 +44,7 @@ defmodule SymphonyElixir.Worker.CleanupTest do
 
     try do
       assert {:ok, [^first]} = Cleanup.evict_cache(root, 5, 1_000_000_000, DateTime.from_unix!(2))
-      refute File.exists?(first)
+      assert File.exists?(first) == false
       assert File.exists?(second)
     after
       File.rm_rf(root)

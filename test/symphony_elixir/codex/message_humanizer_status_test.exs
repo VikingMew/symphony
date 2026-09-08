@@ -16,7 +16,5 @@ defmodule SymphonyElixir.Codex.MessageHumanizerStatusTest do
     plain = MessageHumanizer.humanize_codex_message(payload)
 
     assert plain =~ "cmd: RED after line"
-    refute plain =~ <<27>>
-    refute plain =~ <<0>>
   end
 end

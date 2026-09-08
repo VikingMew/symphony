@@ -82,7 +82,7 @@ defmodule SymphonyElixir.DashboardSignalTest do
     status = RateLimitStatus.from_snapshot(%{rate_limits: parsed, codex_totals: %{}, running: []})
 
     assert status.status == :available
-    refute status.status == :unrecognized
+    assert status.status == :unrecognized == false
     assert status.debug_payload == nil
   end
 
@@ -114,8 +114,11 @@ defmodule SymphonyElixir.DashboardSignalTest do
     inspected = inspect(debug.payload)
     assert inspected =~ "[REDACTED]"
     assert inspected =~ "... (truncated)"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspected =~ "super-secret-token"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspected =~ "super-secret-cookie"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspected =~ "super-secret-api-key"
 
     status =

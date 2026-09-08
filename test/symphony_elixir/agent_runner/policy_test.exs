@@ -6,14 +6,14 @@ defmodule SymphonyElixir.AgentRunner.PolicyTest do
 
   test "detects implementation start transition only for Ready implementation issues" do
     assert Policy.implementation_start_transition_required?(%Issue{state: "Ready"}, "implementation")
-    refute Policy.implementation_start_transition_required?(%Issue{state: "In Progress"}, "implementation")
-    refute Policy.implementation_start_transition_required?(%Issue{state: "Ready"}, "refinement")
+    assert Policy.implementation_start_transition_required?(%Issue{state: "In Progress"}, "implementation") == false
+    assert Policy.implementation_start_transition_required?(%Issue{state: "Ready"}, "refinement") == false
   end
 
   test "detects and validates refinement kickoff only for Todo issues" do
     issue = %Issue{state: "Todo"}
     assert Policy.refinement_start_transition_required?(issue, "refinement")
-    refute Policy.refinement_start_transition_required?(%Issue{state: "Refining"}, "refinement")
+    assert Policy.refinement_start_transition_required?(%Issue{state: "Refining"}, "refinement") == false
 
     transitions = [
       %{"from" => "Todo", "to" => "Refining", "actor" => "codex", "profile" => "refinement"}
@@ -32,7 +32,7 @@ defmodule SymphonyElixir.AgentRunner.PolicyTest do
     ]
 
     assert Policy.workflow_transition_allowed?(transitions, "ready", "in progress", "implementation")
-    refute Policy.workflow_transition_allowed?(transitions, "Ready", "Done", "implementation")
+    assert Policy.workflow_transition_allowed?(transitions, "Ready", "Done", "implementation") == false
   end
 
   test "continues only while refreshed issue remains active" do

@@ -72,7 +72,7 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
     html = view |> element(button) |> render_click()
 
     assert html =~ "Project Fake Project removed."
-    refute has_element?(view, ~s(.project-edit-form[data-project-id="fake-project-id"]))
+    assert has_element?(view, ~s(.project-edit-form[data-project-id="fake-project-id"])) == false
     assert has_element?(view, ~s(.project-edit-form[data-project-id="#{fallback_project.id}"]))
 
     assert has_element?(

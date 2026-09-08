@@ -18,6 +18,7 @@ defmodule SymphonyElixir.Config.ProjectCommandsTest do
     assert commands =~
              "git -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 2 --branch 'main' 'https://github.com/example/repo.git' ."
 
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute commands =~ "credential.helper="
     assert commands =~ "\nmix deps.get"
   end
@@ -32,7 +33,7 @@ defmodule SymphonyElixir.Config.ProjectCommandsTest do
 
     commands = ProjectCommands.generated_project_bootstrap_commands(project)
 
-    refute commands =~ "GIT_SSH_COMMAND="
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute commands =~ "credential.helper="
     assert commands =~ "GIT_TERMINAL_PROMPT=0 GIT_ASKPASS= SSH_ASKPASS="
     assert commands =~ "'git@github.com:example/repo.git'"

@@ -210,7 +210,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     assert second.accepted == true
     assert second.status == "running"
-    refute second.run_id == first.run_id
+    assert second.run_id == first.run_id == false
     assert_receive {:operator_runner_started, :nap, second_run_id, second_runner_pid, _worker_host}, 500
     assert second_run_id == second.run_id
 
@@ -385,10 +385,10 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert reply.status == "running"
 
     assert_receive {:operator_runner_started, :day_dreaming, run_id, runner_pid, _worker_host}, 500
-    refute run_id == stale_run_id
+    assert run_id == stale_run_id == false
 
     state = :sys.get_state(pid)
-    refute Map.has_key?(state.running, stale_run_id)
+    assert Map.has_key?(state.running, stale_run_id) == false
     assert Map.has_key?(state.running, run_id)
 
     send(runner_pid, {:finish_operator_runner, :ok})
@@ -463,6 +463,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
       snapshot
     else
       if System.monotonic_time(:millisecond) >= deadline_ms do
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("timed out waiting for orchestrator snapshot state: #{inspect(snapshot)}")
       else
         Process.sleep(5)

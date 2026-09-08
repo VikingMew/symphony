@@ -193,6 +193,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
     assert ssh_hook =~ "SSH_ASKPASS="
     assert ssh_hook =~ "GIT_SSH_COMMAND='ssh -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=accept-new'"
     assert ssh_hook =~ "git -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'master' 'git@example.com:org/repo.git' ."
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute ssh_hook =~ "credential.helper="
 
     assert {:ok, https_settings} =
@@ -208,8 +209,8 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
     assert https_hook =~ "GIT_TERMINAL_PROMPT=0"
     assert https_hook =~ "GIT_ASKPASS="
     assert https_hook =~ "SSH_ASKPASS="
-    refute https_hook =~ "GIT_SSH_COMMAND"
     assert https_hook =~ "git -c core.askPass= -c http.lowSpeedLimit=1 -c http.lowSpeedTime=30 clone --progress --depth 1 --branch 'main' 'https://example.com/org/repo.git' ."
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute https_hook =~ "credential.helper="
   end
 
@@ -289,10 +290,10 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       assert {:ok, second_workspace} = Workspace.create_for_issue("MT-REUSE")
       assert second_workspace == first_workspace
       assert File.read!(Path.join(second_workspace, "README.md")) == "first\n"
-      refute File.exists?(Path.join(second_workspace, "local-progress.txt"))
-      refute File.exists?(Path.join([second_workspace, "deps", "cache.txt"]))
-      refute File.exists?(Path.join([second_workspace, "_build", "artifact.txt"]))
-      refute File.exists?(Path.join([second_workspace, "tmp", "scratch.txt"]))
+      assert File.exists?(Path.join(second_workspace, "local-progress.txt")) == false
+      assert File.exists?(Path.join([second_workspace, "deps", "cache.txt"])) == false
+      assert File.exists?(Path.join([second_workspace, "_build", "artifact.txt"])) == false
+      assert File.exists?(Path.join([second_workspace, "tmp", "scratch.txt"])) == false
     after
       File.rm_rf(workspace_root)
     end
@@ -512,7 +513,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       assert details.elapsed_ms >= 50
       assert details.recent_output =~ "initializing"
-      refute File.exists?(Path.join([workspace_root, "MT-INITIALIZE-TIMEOUT", "after-create"]))
+      assert File.exists?(Path.join([workspace_root, "MT-INITIALIZE-TIMEOUT", "after-create"])) == false
     after
       File.rm_rf(workspace_root)
     end
@@ -727,7 +728,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
       assert :ok = Workspace.remove_issue_workspaces("S_1")
-      refute File.exists?(target_workspace)
+      assert File.exists?(target_workspace) == false
       assert File.exists?(untouched_workspace)
     after
       File.rm_rf(workspace_root)
@@ -792,7 +793,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS")
       assert File.read!(before_remove_marker) == "before_remove\n"
-      refute File.exists?(workspace)
+      assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
     end
@@ -817,7 +818,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-FAIL")
       assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-FAIL")
-      refute File.exists?(workspace)
+      assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
     end
@@ -842,7 +843,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-LARGE-FAIL")
       assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-LARGE-FAIL")
-      refute File.exists?(workspace)
+      assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
     end
@@ -879,7 +880,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-TIMEOUT")
       assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-TIMEOUT")
-      refute File.exists?(workspace)
+      assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
     end

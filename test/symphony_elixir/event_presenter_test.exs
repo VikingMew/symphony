@@ -65,7 +65,9 @@ defmodule SymphonyElixir.EventPresenterTest do
 
     inspected = inspect(row.raw_payload)
     assert inspected =~ "[REDACTED]"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspected =~ "secret-token"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspected =~ "secret-cookie"
   end
 

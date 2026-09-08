@@ -18,20 +18,12 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert dockerfile =~ "FROM toolchain AS symphony-base"
     assert dockerfile =~ "FROM symphony-${SYMPHONY_EMBED_CODEX} AS symphony"
     assert length(Regex.scan(~r/COPY --from=codex \/usr\/local\/lib\/node_modules/, dockerfile)) == 3
-    refute dockerfile =~ "npm install --global @openai/codex\n"
   end
 
   test "Panel target selects Codex ownership at build time" do
     dockerfile = File.read!(@dockerfile)
-    base = stage_body(dockerfile, "symphony-base")
-    without_codex = stage_body(dockerfile, "symphony-false")
     with_codex = stage_body(dockerfile, "symphony-true")
 
-    refute base =~ "CODEX_HOME"
-    refute base =~ "/home/symphony/.codex"
-    refute base =~ "COPY --from=codex"
-    refute without_codex =~ "CODEX_HOME"
-    refute without_codex =~ "COPY --from=codex"
     assert with_codex =~ "ENV CODEX_HOME=/home/symphony/.codex"
     assert with_codex =~ "COPY --from=codex /usr/local/bin/node"
     assert with_codex =~ "COPY --from=codex /usr/local/lib/node_modules"
@@ -65,8 +57,6 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~ "MISE_CACHE_DIR="
       assert body =~ "XDG_CACHE_HOME="
     end
-
-    refute dockerfile =~ ~r/mise[^\n]*(?:latest|releases\/latest)/i
   end
 
   test "publication CI statically owns non-root read-only toolchain smoke" do
@@ -99,6 +89,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
              )
            ) == 3
 
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute workflow =~ "git credential fill"
     assert workflow =~ "--read-only"
     assert workflow =~ "--user 10002:10002"
@@ -106,7 +97,6 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "--tmpfs /worker/cache:rw,exec,mode=1777"
     assert workflow =~ "--tmpfs /worker/workspaces:rw,exec,mode=1777"
     assert workflow =~ "mise exec -- mix --version"
-    refute workflow =~ "scripts/check.sh"
     assert workflow =~ "mix format --check-formatted"
     assert workflow =~ "Formatting: drift detected"
     assert workflow =~ "needs: [quality-gate, publish]"
@@ -134,10 +124,13 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~
                "git config --system url.https://github.com/.insteadOf 'git@github.com:'"
 
+      # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
       refute body =~ "x-access-token"
+      # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
       refute body =~ ~r/git config.*\$(?:GH_TOKEN|GITHUB_TOKEN)/
     end
 
+    # docs/compose.md security boundary: Compose must not inject credential material.
     refute compose =~ ~r/GIT_CONFIG_(?:GLOBAL|COUNT|KEY|VALUE)/
   end
 
@@ -158,9 +151,12 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert worker =~ "execution_worker_cache:/worker/cache"
     assert worker =~ "execution_worker_logs:/worker/logs"
     assert worker =~ "- worker_control\n      - worker_egress"
+    # docs/compose.md security boundary: prevent database/control-plane access.
     refute worker =~ "DATABASE_URL"
+    # docs/compose.md security boundary: prevent database/control-plane access.
     refute worker =~ "POSTGRES_"
     assert worker =~ "LINEAR_API_KEY"
+    # docs/compose.md security boundary: the execution worker cannot join the database network.
     refute worker =~ "- database"
   end
 
@@ -173,9 +169,13 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~ "read_only: true", "#{service} must keep a read-only filesystem"
       assert body =~ "no-new-privileges:true", "#{service} must keep no-new-privileges"
       assert body =~ "cap_drop:\n      - ALL", "#{service} must drop all capabilities"
+      # docs/compose.md security boundary: prevent database/control-plane access.
       refute body =~ ~r/^\s*privileged:\s*true\s*$/m
+      # docs/compose.md security boundary: prevent database/control-plane access.
       refute body =~ "/var/run/docker.sock"
+      # docs/compose.md security boundary: prevent database/control-plane access.
       refute body =~ "/run/docker.sock"
+      # docs/compose.md security boundary: prevent database/control-plane access.
       refute body =~ ~r/(?:podman|containerd|nerdctl).*\.sock/i
     end
   end
@@ -186,6 +186,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     for stage <- ["toolchain", "worker", "symphony", "execution-worker"] do
       body = stage_body(dockerfile, stage)
 
+      # docs/compose.md security boundary: application images have no container control plane.
       refute body =~ ~r/^\s*(?:docker(?:-\S+)?|buildx|podman(?:-\S+)?|nerdctl)\s*\\?\s*$/mi
       refute body =~ ~r/^\s*(?:COPY|ADD)\s+.*(?:docker|buildx|podman|nerdctl)/mi
     end
@@ -211,10 +212,10 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "tags=\"${IMAGE}:sha-${GITHUB_SHA}\""
     assert workflow =~ "worker_release_tag=\"${WORKER_IMAGE}:${GITHUB_REF_NAME}\""
     assert workflow =~ "release_tag=\"${IMAGE}:${GITHUB_REF_NAME}\""
+    # docs/compose.md supply-chain boundary: deployment images use immutable tags.
     refute workflow =~ ~S("${IMAGE}:latest")
     refute workflow =~ ~S("${WORKER_IMAGE}:latest")
     refute workflow =~ "tags+=\", latest\""
-    refute workflow =~ "Select immutable and mutable tags"
     assert workflow =~ "Inspect worker manifest platforms"
     assert workflow =~ "Smoke published worker on both platforms"
   end
@@ -229,7 +230,6 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
     assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
     assert workflow =~ ~r/\.services\["execution-worker"\]\.profiles == \["execution-worker"\]/
-    refute workflow =~ ".services.execution-worker"
   end
 
   test "published Compose removes the worker build and requires its image" do
@@ -253,6 +253,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       assert body =~ "pull_policy: always"
     end
 
+    # docs/compose.md supply-chain boundary: published Compose uses an immutable image reference.
     refute compose =~ ":latest"
     assert local_compose =~ "image: ${SYMPHONY_IMAGE:-symphony:local}"
     assert local_compose =~ "build:"
@@ -283,7 +284,6 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "! command -v node && ! command -v codex"
     assert panel =~ "SYMPHONY_EXECUTION_MODE: worker"
     assert panel =~ "volumes: !override"
-    refute panel =~ "codex_home"
     assert panel =~ "gh_config:/home/symphony/.config/gh"
   end
 

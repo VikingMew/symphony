@@ -152,7 +152,7 @@ defmodule SymphonyElixir.OrchestratorWorkspaceDiskGuardTest do
 
     assert_receive {:issue_agent_started, ^issue_id, runner_pid}, 500
     assert %Orchestrator.RunningIssue{} = :sys.get_state(pid).running[issue.id]
-    refute Map.has_key?(:sys.get_state(pid).blocked, issue.id)
+    assert Map.has_key?(:sys.get_state(pid).blocked, issue.id) == false
 
     send(runner_pid, :finish)
   end

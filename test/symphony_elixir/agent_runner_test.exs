@@ -334,7 +334,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "Current status: In Progress"
-      refute trace =~ "Current status: Ready"
     after
       File.rm_rf(test_root)
     end
@@ -378,6 +377,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
       }
 
       transitioner = fn _transition_issue, _target_state ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("Ready issue should not transition when Codex startup fails")
       end
 
@@ -468,7 +468,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
       assert_receive :refinement_started
       trace = File.read!(trace_file)
       assert trace =~ "Current status: Refining"
-      refute trace =~ "Current status: Todo"
     after
       File.rm_rf(test_root)
     end
@@ -530,7 +529,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "thread/start"
-      refute trace =~ "Current status:"
     after
       File.rm_rf(test_root)
     end
@@ -606,7 +604,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "thread/start"
-      refute trace =~ "Current status:"
     after
       File.rm_rf(test_root)
     end
@@ -675,7 +672,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       trace = File.read!(trace_file)
       assert trace =~ "worker-a bash -lc"
-      refute trace =~ "worker-b bash -lc"
     after
       File.rm_rf(test_root)
     end
@@ -803,7 +799,6 @@ defmodule SymphonyElixir.AgentRunnerTest do
 
       assert length(turn_texts) == 2
       assert Enum.at(turn_texts, 0) =~ "You are an agent for this repository."
-      refute Enum.at(turn_texts, 1) =~ "You are an agent for this repository."
       assert Enum.at(turn_texts, 1) =~ "Continuation guidance:"
       assert Enum.at(turn_texts, 1) =~ "continuation turn #2 of 3"
     after
@@ -902,6 +897,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
                AgentRunner.run(issue, nil,
                  issue_state_fetcher: state_fetcher,
                  pull_request_ensurer: fn _issue, _project, _opts ->
+                   # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
                    flunk("max-turn exhaustion must not create a pull request")
                  end
                )

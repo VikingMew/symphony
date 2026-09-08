@@ -139,11 +139,13 @@ defmodule SymphonyElixir.LiveE2ETest do
         team
 
       _ ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("expected Linear team #{inspect(team_key)} to exist")
     end
   end
 
   defp active_state!(%{"states" => %{"nodes" => states}}) when is_list(states) do
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     Enum.find(states, &(&1["type"] == "started")) ||
       Enum.find(states, &(&1["type"] == "unstarted")) ||
       Enum.find(states, &(&1["type"] not in ["completed", "canceled"])) ||
@@ -176,10 +178,12 @@ defmodule SymphonyElixir.LiveE2ETest do
     |> get_in(["projectStatuses", "nodes"])
     |> case do
       statuses when is_list(statuses) ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         Enum.find(statuses, &(&1["type"] == "completed")) ||
           flunk("expected workspace to expose a completed project status")
 
       payload ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("expected project statuses list, got: #{inspect(payload)}")
     end
   end
@@ -234,6 +238,7 @@ defmodule SymphonyElixir.LiveE2ETest do
     |> get_in(["issue"])
     |> case do
       %{} = issue -> issue
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       payload -> flunk("expected issue details payload, got: #{inspect(payload)}")
     end
   end
@@ -269,18 +274,22 @@ defmodule SymphonyElixir.LiveE2ETest do
   defp graphql_data!(query, variables) when is_binary(query) and is_map(variables) do
     case Client.graphql(query, variables) do
       {:ok, %{"data" => data, "errors" => errors}} when is_map(data) and is_list(errors) ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("Linear GraphQL returned partial errors: #{inspect(errors)}")
 
       {:ok, %{"errors" => errors}} when is_list(errors) ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("Linear GraphQL failed: #{inspect(errors)}")
 
       {:ok, %{"data" => data}} when is_map(data) ->
         data
 
       {:ok, payload} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("Linear GraphQL returned unexpected payload: #{inspect(payload)}")
 
       {:error, reason} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("Linear GraphQL request failed: #{inspect(reason)}")
     end
   end
@@ -292,6 +301,7 @@ defmodule SymphonyElixir.LiveE2ETest do
         entity
 
       _ ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("expected successful #{mutation_name} response, got: #{inspect(data)}")
     end
   end
@@ -368,6 +378,7 @@ defmodule SymphonyElixir.LiveE2ETest do
         receive_runtime_info!(issue_id)
     after
       5_000 ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("timed out waiting for worker runtime info for #{inspect(issue_id)}")
     end
   end
@@ -386,9 +397,11 @@ defmodule SymphonyElixir.LiveE2ETest do
         output
 
       {:ok, {output, status}} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("failed to read remote result from #{worker_host}:#{remote_result_path} (status #{status}): #{inspect(output)}")
 
       {:error, reason} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("failed to read remote result from #{worker_host}:#{remote_result_path}: #{inspect(reason)}")
     end
   end
@@ -605,11 +618,13 @@ defmodule SymphonyElixir.LiveE2ETest do
     if Enum.all?(homes, fn {_host, other_home} -> other_home == home end) do
       home
     else
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       flunk("expected all live SSH workers to share one home directory, got: #{inspect(homes)}")
     end
   end
 
   defp shared_remote_home!([worker_host]) when is_binary(worker_host), do: remote_home!(worker_host)
+  # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
   defp shared_remote_home!(_worker_hosts), do: flunk("expected at least one live SSH worker host")
 
   defp remote_home!(worker_host) when is_binary(worker_host) do
@@ -618,14 +633,17 @@ defmodule SymphonyElixir.LiveE2ETest do
         output
         |> String.trim()
         |> case do
+          # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
           "" -> flunk("expected non-empty remote home for #{worker_host}")
           home -> home
         end
 
       {:ok, {output, status}} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("failed to resolve remote home for #{worker_host} (status #{status}): #{inspect(output)}")
 
       {:error, reason} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("failed to resolve remote home for #{worker_host}: #{inspect(reason)}")
     end
   end
@@ -656,6 +674,7 @@ defmodule SymphonyElixir.LiveE2ETest do
   defp generate_ssh_keypair!(key_path) when is_binary(key_path) do
     case System.find_executable("ssh-keygen") do
       nil ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("docker worker mode requires `ssh-keygen` on PATH")
 
       executable ->
@@ -666,6 +685,7 @@ defmodule SymphonyElixir.LiveE2ETest do
 
         case System.cmd(executable, ["-q", "-t", "ed25519", "-N", "", "-f", key_path], stderr_to_stdout: true) do
           {_output, 0} -> :ok
+          # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
           {output, status} -> flunk("failed to generate live docker ssh key (status #{status}): #{inspect(output)}")
         end
     end
@@ -711,6 +731,7 @@ defmodule SymphonyElixir.LiveE2ETest do
         :ok
 
       {output, status} ->
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         flunk("failed to start live docker workers (status #{status}): #{inspect(output)}")
     end
   end
@@ -754,6 +775,7 @@ defmodule SymphonyElixir.LiveE2ETest do
       Process.sleep(1_000)
       wait_for_ssh_host!(worker_host, deadline_ms)
     else
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       flunk("timed out waiting for SSH worker #{worker_host} to accept connections")
     end
   end

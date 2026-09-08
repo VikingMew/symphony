@@ -159,7 +159,6 @@ defmodule Mix.Tasks.Workspace.BeforeRemoveTest do
           end)
 
         assert error_output =~ "Failed to close PR #102 for branch feature/no-output: exit 17"
-        refute error_output =~ "output="
         log = File.read!(log_path)
         assert log =~ "pr list --repo openai/symphony --head feature/no-output --state open --json number --jq .[].number"
         assert log =~ "pr close 102 --repo openai/symphony"
@@ -196,8 +195,6 @@ defmodule Mix.Tasks.Workspace.BeforeRemoveTest do
 
         assert log =~
                  "pr list --repo openai/symphony --head feature/list-fails --state open --json number --jq .[].number"
-
-        refute log =~ "pr close"
       end
     )
   end
@@ -229,7 +226,6 @@ defmodule Mix.Tasks.Workspace.BeforeRemoveTest do
 
         log = File.read!(log_path)
         assert log == ""
-        refute log =~ "pr list"
       end
     )
   end
@@ -249,7 +245,6 @@ defmodule Mix.Tasks.Workspace.BeforeRemoveTest do
 
         log = File.read!(log_path)
         assert log =~ "auth status"
-        refute log =~ "pr list"
       end
     )
   end
@@ -382,6 +377,7 @@ defmodule Mix.Tasks.Workspace.BeforeRemoveTest do
       receive do
         {^ref, output} -> output
       after
+        # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
         1_000 -> flunk("Timed out waiting for captured task output")
       end
 

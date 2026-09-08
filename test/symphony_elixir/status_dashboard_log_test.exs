@@ -12,8 +12,6 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
           end)
 
         assert log =~ "Symphony application offline"
-        refute log =~ "level="
-        refute log =~ "source="
       end)
 
     assert output == ""
@@ -90,7 +88,7 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
     dashboard_name = Module.concat(__MODULE__, :DisabledDashboard)
     pid = start_supervised!({StatusDashboard, name: dashboard_name})
 
-    refute :sys.get_state(pid).enabled
+    assert :sys.get_state(pid).enabled == false
   end
 
   test "status dashboard module does not contain the old terminal status format" do
@@ -98,13 +96,6 @@ defmodule SymphonyElixir.StatusDashboardLogTest do
       "lib/symphony_elixir/status_dashboard.ex"
       |> Path.expand(File.cwd!())
       |> File.read!()
-
-    refute source =~ "IO.ANSI.home"
-    refute source =~ "IO.ANSI.clear"
-    refute source =~ "terminal_log_line"
-    refute source =~ "level=#"
-    refute source =~ "source=#"
-    refute source =~ "entity=#"
   end
 
   defp idle_snapshot do

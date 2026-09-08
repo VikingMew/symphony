@@ -26,7 +26,7 @@ defmodule SymphonyElixir.ProfilePromptSummaryTest do
         "prompt_template" => "Refine only"
       })
 
-    refute replace.uses_base_prompt?
+    assert replace.uses_base_prompt? == false
     assert replace.effective_chars == String.length("Refine only")
     assert replace.composition =~ "replaces the Base Prompt"
 
@@ -48,7 +48,7 @@ defmodule SymphonyElixir.ProfilePromptSummaryTest do
         "prompt_template" => "Not used"
       })
 
-    refute backend.prompt_used?
+    assert backend.prompt_used? == false
     assert is_nil(backend.effective_chars)
     assert backend.composition =~ "not used by this executor"
   end

@@ -156,7 +156,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
       assert details.reason == :port_exit
       assert details.output =~ "Symphony Codex pre-start command 2 failed"
       assert details.hint =~ "Settings / Workflow / Codex / Pre-start commands"
-      refute File.exists?(marker_file)
+      assert File.exists?(marker_file) == false
     after
       File.rm_rf(test_root)
     end

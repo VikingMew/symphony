@@ -9,9 +9,9 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert get_in(defaults, ["workspace", "root"]) ==
              Path.join(System.tmp_dir!(), "symphony_workspaces")
 
-    refute Map.has_key?(defaults["agent"], "max_concurrent_agents")
+    assert Map.has_key?(defaults["agent"], "max_concurrent_agents") == false
     assert defaults["agent"]["max_failure_retries"] == 3
-    refute Map.has_key?(defaults["tracker"], "api_key")
+    assert Map.has_key?(defaults["tracker"], "api_key") == false
   end
 
   test "config reads defaults for optional settings" do
@@ -278,8 +278,8 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     )
 
     settings = Config.settings!()
-    refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents)
-    refute Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents_by_state)
+    assert Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents) == false
+    assert Map.has_key?(Map.from_struct(settings.agent), :max_concurrent_agents_by_state) == false
 
     write_workflow_file!(Workflow.workflow_file_path(),
       worker_max_concurrent_agents_per_host: 2,
@@ -294,7 +294,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     assert StringOrMap.type() == :map
     assert StringOrMap.embed_as(:json) == :self
     assert StringOrMap.equal?(%{"a" => 1}, %{"a" => 1})
-    refute StringOrMap.equal?(%{"a" => 1}, %{"a" => 2})
+    assert StringOrMap.equal?(%{"a" => 1}, %{"a" => 2}) == false
 
     assert {:ok, "value"} = StringOrMap.cast("value")
     assert {:ok, %{"a" => 1}} = StringOrMap.cast(%{"a" => 1})

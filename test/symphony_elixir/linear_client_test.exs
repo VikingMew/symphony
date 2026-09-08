@@ -33,7 +33,7 @@ defmodule SymphonyElixir.LinearClientTest do
 
     assert Issue.label_names(issue) == ["frontend", "infra"]
     assert issue.labels == ["frontend", "infra"]
-    refute issue.assigned_to_worker
+    assert issue.assigned_to_worker == false
   end
 
   test "linear client normalizes blockers from inverse relations" do
@@ -99,7 +99,7 @@ defmodule SymphonyElixir.LinearClientTest do
     {:ok, assignee_filter} = IssueNormalizer.build_assignee_filter("user-1")
     issue = IssueNormalizer.normalize_issue(raw_issue, assignee_filter)
 
-    refute issue.assigned_to_worker
+    assert issue.assigned_to_worker == false
   end
 
   test "linear client pagination merge helper preserves issue ordering" do

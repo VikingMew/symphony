@@ -112,11 +112,12 @@ defmodule SymphonyElixir.Codex.ToolRequestHandlerTest do
     test "detects MCP elicitation and turn input-required payloads" do
       assert ToolRequestHandler.needs_input?("mcpServer/elicitation/request", %{})
       assert ToolRequestHandler.needs_input?("turn/event", %{"params" => %{"requiresInput" => true}})
-      refute ToolRequestHandler.needs_input?("turn/event", %{"params" => %{}})
+      assert ToolRequestHandler.needs_input?("turn/event", %{"params" => %{}}) == false
     end
   end
 
   defp unused_tool_executor do
+    # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
     fn _tool, _arguments -> flunk("tool executor should not be called") end
   end
 end

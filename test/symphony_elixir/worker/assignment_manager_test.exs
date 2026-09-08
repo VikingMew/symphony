@@ -138,8 +138,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, nil} = claim(context)
     Tracker.put([ready])
     assert {:ok, next} = claim(context)
-    refute next.id == assignment.id
-    refute next.run_id == assignment.run_id
+    assert next.id == assignment.id == false
+    assert next.run_id == assignment.run_id == false
   end
 
   test "heartbeat renews only the owning assignment and stale events are rejected", context do

@@ -122,7 +122,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     assert retained_state.default_project_id == previous_state.default_project_id
     assert retained_state.source == previous_state.source
     assert retained_state.source.type == :database
-    refute retained_state.source.type == :setup_required
+    assert retained_state.source.type == :setup_required == false
     assert log =~ "Workflow persistence query failed operation=default_project outcome=failed"
     assert log =~ "Workflow refresh failed action=retain_last_known_good"
   end
@@ -163,7 +163,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     assert {:ok, %{setup_required: true}} = WorkflowStore.current()
 
     Application.put_env(:symphony_elixir, :persistence_module, Persistence)
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
     assert {:error, {:refresh_failed, :repo_unavailable}} = WorkflowStore.force_reload()
 
     assert {:ok, %{setup_required: true}} = WorkflowStore.current()
@@ -176,7 +176,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     previous_state = :sys.get_state(WorkflowStore)
 
     Application.put_env(:symphony_elixir, :persistence_module, Persistence)
-    refute Process.whereis(SymphonyElixir.Repo)
+    assert Process.whereis(SymphonyElixir.Repo) == nil
 
     assert {:ok, degraded_state} = WorkflowStore.init([])
     assert degraded_state.workflows == %{}

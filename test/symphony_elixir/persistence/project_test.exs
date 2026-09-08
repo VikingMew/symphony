@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Persistence.ProjectTest do
   alias SymphonyElixir.{Persistence, Repo}
 
   test "delete_project returns repo unavailable when persistence is stopped" do
-    refute Process.whereis(Repo)
+    assert Process.whereis(Repo) == nil
     assert Persistence.delete_project("project-id") == {:error, :repo_unavailable}
   end
 

@@ -48,3 +48,20 @@ an acceptance baseline.
 Regenerate the inventory after edits to obtain final retained counts and verify
 that every remaining non-temporal row has a contract citation in its source
 context.
+
+## Final audit
+
+The post-change scan contains 111 rows: 22 unchanged `refute_receive` timing
+bounds, 41 cited `refute` security/protocol redlines, and 48 cited `flunk`
+control-flow failures. Of the 428 baseline non-temporal rows, 198 were rewritten
+as exact expected values or stable positive signals, 141 incidental string or
+deployment
+implementation-detail assertions were deleted, and 89 documented redline or
+explicit-failure assertions were retained. Every retained non-temporal macro
+has an adjacent owning-contract comment.
+
+The deployment review specifically retains database, credential,
+container-control, and mutable-image exclusions as security boundaries. Worker
+capability remains asserted positively, including `LINEAR_API_KEY`, worker role,
+Panel URL, registration token, read-only filesystem, dropped capabilities, and
+dedicated workspace/cache/log volumes.

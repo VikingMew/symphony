@@ -21,7 +21,7 @@ defmodule SymphonyElixir.ObservabilityPubSubTest do
 
     assert is_pid(Process.whereis(SymphonyElixir.PubSub))
     assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, pubsub_child_id)
-    refute Process.whereis(SymphonyElixir.PubSub)
+    assert Process.whereis(SymphonyElixir.PubSub) == nil
 
     assert :ok = ObservabilityPubSub.broadcast_update()
   end

@@ -210,7 +210,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
     assert {:ok, %{source: %{project_ids: final_project_ids}}} = WorkflowStore.current_with_source()
     assert final_project_ids == [default.id]
-    refute project_b.id in final_project_ids
+    assert project_b.id in final_project_ids == false
     assert b_new_workflow.id == b_old_version.id
   end
 

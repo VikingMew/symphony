@@ -70,6 +70,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
     assert payload["checks"]["database"] == "ok"
     assert payload["checks"]["migrations"] == "current"
     assert payload["checks"]["workflow"] == "setup_required"
+    # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute inspect(payload) =~ "token"
   end
 

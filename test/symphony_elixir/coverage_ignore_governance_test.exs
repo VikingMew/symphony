@@ -36,12 +36,12 @@ defmodule SymphonyElixir.CoverageIgnoreGovernanceTest do
     governed_modules = Enum.flat_map(MixProject.coverage_ignore_groups(), & &1.modules)
 
     assert ignore_modules == governed_modules
-    refute SymphonyElixir.Shell in ignore_modules
-    refute SymphonyElixir.Payload in ignore_modules
-    refute SymphonyElixir.Redaction in ignore_modules
-    refute SymphonyElixir.StateName in ignore_modules
-    refute SymphonyElixir.Text in ignore_modules
-    refute SymphonyElixir.NumberFormat in ignore_modules
-    refute SymphonyElixir.Codex.DynamicTool in ignore_modules
+    assert SymphonyElixir.Shell in ignore_modules == false
+    assert SymphonyElixir.Payload in ignore_modules == false
+    assert SymphonyElixir.Redaction in ignore_modules == false
+    assert SymphonyElixir.StateName in ignore_modules == false
+    assert SymphonyElixir.Text in ignore_modules == false
+    assert SymphonyElixir.NumberFormat in ignore_modules == false
+    assert SymphonyElixir.Codex.DynamicTool in ignore_modules == false
   end
 end

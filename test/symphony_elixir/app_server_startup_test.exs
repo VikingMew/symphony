@@ -82,7 +82,7 @@ defmodule SymphonyElixir.AppServerStartupTest do
 
       assert argv_line = Enum.find(lines, fn line -> String.starts_with?(line, "ARGV:") end)
       assert String.contains?(argv_line, "app-server")
-      refute Enum.any?(lines, &String.contains?(&1, "--yolo"))
+      assert Enum.any?(lines, &String.contains?(&1, "--yolo")) == false
       assert cwd_line = Enum.find(lines, fn line -> String.starts_with?(line, "CWD:") end)
       assert String.ends_with?(cwd_line, Path.basename(workspace))
 
@@ -209,8 +209,8 @@ defmodule SymphonyElixir.AppServerStartupTest do
 
       assert argv_line = Enum.find(lines, fn line -> String.starts_with?(line, "ARGV:") end)
       assert String.contains?(argv_line, "--config model=\"gpt-5.5\" app-server")
-      refute String.contains?(argv_line, "--ask-for-approval never")
-      refute String.contains?(argv_line, "--sandbox danger-full-access")
+      assert String.contains?(argv_line, "--ask-for-approval never") == false
+      assert String.contains?(argv_line, "--sandbox danger-full-access") == false
     after
       File.rm_rf(test_root)
     end

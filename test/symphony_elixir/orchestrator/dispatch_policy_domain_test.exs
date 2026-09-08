@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyDomainTest do
       blocked_by: [%{id: "blocker-1", identifier: "MT-1002", state: "In Progress"}]
     }
 
-    refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
+    assert DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings()) == false
   end
 
   test "issue assigned to another worker is not dispatch-eligible" do
@@ -77,7 +77,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicyDomainTest do
       assigned_to_worker: false
     }
 
-    refute DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings())
+    assert DispatchPolicy.should_dispatch_issue?(issue, state, dispatch_policy_settings()) == false
   end
 
   test "ready issue with terminal blockers remains dispatch-eligible" do

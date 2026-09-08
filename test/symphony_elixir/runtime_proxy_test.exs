@@ -61,7 +61,7 @@ defmodule SymphonyElixir.RuntimeProxyTest do
            ]
 
     System.put_env("NO_PROXY", "*.ignored")
-    refute RuntimeProxy.connect_options("https://api.example.test") == []
+    assert RuntimeProxy.connect_options("https://api.example.test") == [] == false
 
     System.put_env("NO_PROXY", "*")
     assert RuntimeProxy.connect_options("https://api.example.test") == []
@@ -70,7 +70,7 @@ defmodule SymphonyElixir.RuntimeProxyTest do
     assert RuntimeProxy.connect_options("https://api.example.test") == []
 
     System.put_env("NO_PROXY", "[::1]:8080")
-    refute RuntimeProxy.connect_options("https://api.example.test") == []
+    assert RuntimeProxy.connect_options("https://api.example.test") == [] == false
   end
 
   test "redacted proxy env leaves public proxies unchanged" do

@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert payload.codex.prompt == "Implement the task."
     assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
     assert Enum.map(payload.gates, & &1.command) == ["scripts/check.sh"]
-    refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
+    assert Map.has_key?(Map.from_struct(payload), :workflow_version_id) == false
   end
 
   test "rejects missing gates and unsupported versions" do

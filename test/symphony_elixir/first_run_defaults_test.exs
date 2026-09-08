@@ -48,7 +48,6 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert_received {:prompt, prompt}
     assert prompt =~ "1) Alpha (alpha)"
     assert prompt =~ "2) Beta (beta)"
-    refute prompt =~ "Disabled"
     assert_received {:import_workflow, %{id: "project-beta"}, raw, "first_run_default_yaml"}
     assert raw =~ "Default imported base prompt."
     assert raw =~ "implementation"
