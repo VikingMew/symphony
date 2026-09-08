@@ -45,6 +45,7 @@ other documents link instead of restating.
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout. | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior. | landed |
 | [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow. | landed |
+| [pr-review-design.md](pr-review-design.md) | Durable, immutable post-handoff pull request review. | landed |
 | [codex-linear-task-refinement-workflow-design.md](codex-linear-task-refinement-workflow-design.md) | Codex/Linear task refinement workflow. | landed |
 | [dashboard-color-system-design.md](dashboard-color-system-design.md) | Dashboard color system. | landed |
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability. | landed |

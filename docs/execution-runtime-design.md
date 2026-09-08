@@ -1,8 +1,11 @@
 ---
-layer: L3
-status: implemented
+title: External Execution Runtime Design
+genre: design
 domain: [worker, execution, validation]
+status: current
 language: en
+updated: 2026-09-08
+design_status: landed
 ---
 
 # External execution runtime
