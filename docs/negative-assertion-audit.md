@@ -5,6 +5,7 @@ domain: [testing]
 status: current
 language: en
 updated: 2026-09-08
+owner: SymphonyElixir.SpecsCheck
 ---
 
 # Negative Assertion Audit

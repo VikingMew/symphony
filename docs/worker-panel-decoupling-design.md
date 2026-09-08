@@ -1,8 +1,11 @@
 ---
-layer: L3
-status: implemented
+title: Panel / Worker Execution Design
+genre: design
 domain: [worker, architecture]
+status: current
 language: zh-CN
+updated: 2026-09-08
+design_status: landed
 ---
 
 # Panel / Worker 执行设计
