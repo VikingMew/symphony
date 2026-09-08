@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.PRReview.Runner do
   @moduledoc "Runs one immutable pull-request review in a read-only Codex session."
 
-  alias SymphonyElixir.{Codex.AppServer, GitHub.PullRequest, Linear.Issue, Tracker}
+  alias SymphonyElixir.{Codex.AppServer, Config, GitHub.PullRequest, Linear.Issue, Tracker}
 
   @ready "Ready to Merge"
 
@@ -60,7 +60,7 @@ defmodule SymphonyElixir.PRReview.Runner do
     root =
       case Keyword.fetch(opts, :workspace_root) do
         {:ok, configured} -> configured
-        :error -> SymphonyElixir.Config.settings!().workspace.root
+        :error -> Config.panel_workspace_root()
       end
 
     Path.join([Path.expand(root), ".reviews", job.id])

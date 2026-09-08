@@ -10,7 +10,10 @@ positive_panel_integer = fn name, default ->
   end
 end
 
-config :symphony_elixir, :panel, max_concurrent_agents: positive_panel_integer.("SYMPHONY_PANEL_SLOTS", "10")
+config :symphony_elixir, :panel,
+  max_concurrent_agents: positive_panel_integer.("SYMPHONY_PANEL_SLOTS", "10"),
+  max_concurrent_reviews: positive_panel_integer.("SYMPHONY_PANEL_MAX_CONCURRENT_REVIEWS", "2"),
+  workspace_root: System.get_env("SYMPHONY_PANEL_WORKSPACE_ROOT") || "/tmp/symphony-reviews"
 
 if worker_role do
   required = fn name ->

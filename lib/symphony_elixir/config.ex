@@ -86,6 +86,20 @@ defmodule SymphonyElixir.Config do
     |> Keyword.fetch!(:max_concurrent_agents)
   end
 
+  @spec panel_max_concurrent_reviews() :: pos_integer()
+  def panel_max_concurrent_reviews do
+    :symphony_elixir
+    |> Application.fetch_env!(:panel)
+    |> Keyword.fetch!(:max_concurrent_reviews)
+  end
+
+  @spec panel_workspace_root() :: String.t()
+  def panel_workspace_root do
+    :symphony_elixir
+    |> Application.fetch_env!(:panel)
+    |> Keyword.fetch!(:workspace_root)
+  end
+
   @spec workflow_policy() :: map()
   def workflow_policy do
     settings!().workflow
