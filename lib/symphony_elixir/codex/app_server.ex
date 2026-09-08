@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   alias SymphonyElixir.{
     Codex.DynamicTool,
+    Codex.LinearToolAudit.PanelRecorder,
     Codex.Protocol,
     Codex.Startup,
     Codex.ToolRequestHandler,
@@ -102,7 +103,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     case start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
       {:ok, turn_id} ->
         session_id = "#{thread_id}-#{turn_id}"
-        dynamic_tool_opts = Keyword.get(opts, :dynamic_tool_opts, [])
+
+        dynamic_tool_opts =
+          opts
+          |> Keyword.get(:dynamic_tool_opts, [])
+          |> Keyword.put_new(:audit_recorder, &PanelRecorder.record/2)
+
         handoff_key = {:codex_handoff, make_ref()}
         pull_request_key = {:codex_pull_request, make_ref()}
         review_key = {:codex_review, make_ref()}
