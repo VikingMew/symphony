@@ -38,10 +38,10 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec claim(Conn.t(), map()) :: Conn.t()
   def claim(conn, params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
-         {:ok, result} <- AssignmentManager.claim(worker_id, session_id, params) do
+         {:ok, result, evidence} <- AssignmentManager.claim_with_evidence(worker_id, session_id, params) do
       case result do
         {:empty, poll_after_seconds} ->
-          json(conn, %{task: nil, poll_after_seconds: poll_after_seconds})
+          json(conn, %{task: nil, poll_after_seconds: poll_after_seconds, admission: evidence})
 
         assignment ->
           json(conn, %{

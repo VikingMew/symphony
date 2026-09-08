@@ -26,8 +26,21 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   @spec claim(String.t(), String.t(), map(), GenServer.server()) ::
           {:ok, assignment() | {:empty, pos_integer()}} | {:error, term()} | {:error, term(), pos_integer()}
-  def claim(worker_id, session_id, attrs, server \\ __MODULE__),
-    do: if(process_alive?(server), do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity), else: {:ok, {:empty, @initial_poll_seconds}})
+  def claim(worker_id, session_id, attrs, server \\ __MODULE__) do
+    case claim_with_evidence(worker_id, session_id, attrs, server) do
+      {:ok, result, _evidence} -> {:ok, result}
+      {:error, reason, seconds} -> {:error, reason, seconds}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @spec claim_with_evidence(String.t(), String.t(), map(), GenServer.server()) ::
+          {:ok, assignment() | {:empty, pos_integer()}, map()} | {:error, term()} | {:error, term(), pos_integer()}
+  def claim_with_evidence(worker_id, session_id, attrs, server \\ __MODULE__) do
+    if process_alive?(server),
+      do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity),
+      else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled)}
+  end
 
   @spec heartbeat(String.t(), String.t(), map(), GenServer.server()) :: {:ok, map()} | {:error, term()}
   def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__),
@@ -94,24 +107,40 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     state = expire_assignment(state)
 
     result =
-      with nil <- state.assignment,
+      with {:ok, worker, session} <- state.persistence.fresh_worker_session(worker_id, session_id, now: state.now.()),
            true <- available_slots(attrs) > 0,
-           {:ok, worker, session} <- state.persistence.active_worker_session(worker_id, session_id) do
-        claim_from_workflows(state, worker, session)
+           nil <- state.assignment do
+        case claim_from_workflows(state, worker, session) do
+          {:ok, nil} -> {:ok, nil, admission_evidence(:no_eligible_candidate)}
+          {:ok, assignment} -> {:ok, assignment, admission_evidence(:assigned)}
+          error -> error
+        end
       else
-        %{} -> {:bypass, @initial_poll_seconds}
-        false -> {:bypass, @initial_poll_seconds}
-        {:error, reason} -> {:error, reason}
+        %{} ->
+          {:bypass, @initial_poll_seconds, admission_evidence(:active_assignment)}
+
+        false ->
+          {:bypass, @initial_poll_seconds, admission_evidence(:no_available_slots)}
+
+        {:error, reason} when reason in [:worker_session_not_found, :worker_session_offline, :worker_session_stale] ->
+          {:bypass, @initial_poll_seconds, admission_evidence(reason)}
+
+        {:error, reason} ->
+          {:error, reason}
       end
 
     case result do
-      {:ok, %{} = assignment} ->
-        {:reply, {:ok, assignment}, %{state | assignment: assignment, empty_claim_streak: 0, tracker_error_streak: 0}}
+      {:ok, %{} = assignment, evidence} ->
+        state = %{state | assignment: assignment, empty_claim_streak: 0, tracker_error_streak: 0}
+        {:reply, {:ok, assignment, evidence}, state}
 
-      {:ok, nil} ->
+      {:ok, nil, evidence} ->
         streak = state.empty_claim_streak + 1
         seconds = empty_poll_seconds(streak)
-        {:reply, {:ok, {:empty, seconds}}, %{state | empty_claim_streak: streak, tracker_error_streak: 0}}
+        {:reply, {:ok, {:empty, seconds}, evidence}, %{state | empty_claim_streak: streak, tracker_error_streak: 0}}
+
+      {:bypass, seconds, evidence} ->
+        {:reply, {:ok, {:empty, seconds}, evidence}, state}
 
       {:error, reason} = error ->
         if tracker_backoff_error?(reason) do
@@ -121,9 +150,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
         else
           {:reply, error, state}
         end
-
-      {:bypass, seconds} ->
-        {:reply, {:ok, {:empty, seconds}}, state}
     end
   end
 
@@ -423,7 +449,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Process.send_after(self(), :reconcile, state.reconcile_interval_ms)
   end
 
-  defp available_slots(attrs), do: map_get(attrs, "available_slots", :available_slots) || 1
+  defp available_slots(attrs), do: map_get(attrs, "available_slots", :available_slots) || 0
+
+  defp admission_evidence(reason) do
+    %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason}
+  end
 
   defp validate_correlation(payload, correlation) do
     validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)

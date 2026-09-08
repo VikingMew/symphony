@@ -65,7 +65,7 @@ flowchart TD
     orchestrator -->|centralized mode: start run| runner[Agent Runner]
     runner --> appserver[Codex App Server Client]
     appserver --> codex[Codex Coding Agent]
-    orchestrator -->|worker mode: enqueue task| workerapi[Worker Task Queue / HTTP API]
+    orchestrator -->|worker mode: expose current workflow| workerapi[Ephemeral Assignment / HTTP API]
     extworker[External Worker] -->|register / claim / heartbeat / events| workerapi
 
     codex -->|read/write files, run tests, git| issuews

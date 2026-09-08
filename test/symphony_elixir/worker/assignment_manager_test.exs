@@ -191,7 +191,13 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   test "rejects unavailable sessions, zero slots, and mismatched correlation", context do
     Tracker.put([issue(1)])
     assert {:ok, {:empty, 5}} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
-    assert {:error, :worker_session_not_found} = AssignmentManager.claim("wrong", "wrong", %{}, context.manager)
+
+    assert {:ok, {:empty, 5}, %{capacity: 0, reason: :no_available_slots}} =
+             AssignmentManager.claim_with_evidence(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
+
+    assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
+             AssignmentManager.claim_with_evidence("wrong", "wrong", %{"available_slots" => 1}, context.manager)
+
     assert {:error, :worker_session_not_found} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
     assert {:ok, assignment} = claim(context)
 
@@ -218,6 +224,54 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert :ok = AssignmentManager.cancel_current("operator", context.manager)
     assert AssignmentManager.current_assignment(context.manager) == nil
     assert :ok = AssignmentManager.cancel_current("operator", context.manager)
+  end
+
+  test "stale online sessions have zero admission capacity", context do
+    Tracker.put([issue(1)])
+
+    Agent.update(FakePersistence, fn state ->
+      update_in(state.worker_sessions, fn sessions ->
+        Enum.map(sessions, &%{&1 | last_heartbeat_at: DateTime.add(context.now, -31, :second)})
+      end)
+    end)
+
+    assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_stale}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 4},
+               context.manager
+             )
+
+    assert Tracker.updates() == []
+  end
+
+  test "one assignment consumes capacity across sessions and advertised slot totals", context do
+    Tracker.put([issue(1)])
+    {:ok, other} = FakePersistence.register_worker(%{"worker_name" => "other", "total_slots" => 8})
+    assert {:ok, first} = claim(context)
+
+    assert {:ok, {:empty, 5}, %{capacity: 0, reason: :active_assignment}} =
+             AssignmentManager.claim_with_evidence(
+               other.worker.id,
+               other.session.id,
+               %{"available_slots" => 8},
+               context.manager
+             )
+
+    complete(context, first)
+    Tracker.put([issue(2)])
+
+    assert {:ok, second, %{capacity: 1, reason: :assigned}} =
+             AssignmentManager.claim_with_evidence(
+               other.worker.id,
+               other.session.id,
+               %{"available_slots" => 8},
+               context.manager
+             )
+
+    assert second.id != first.id
+    assert second.run_id != first.run_id
   end
 
   test "expires an assignment before accepting a late event", context do

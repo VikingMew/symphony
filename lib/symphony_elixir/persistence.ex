@@ -454,6 +454,9 @@ defmodule SymphonyElixir.Persistence do
   @spec active_worker_session(String.t(), String.t()) :: {:ok, term(), term()} | {:error, term()}
   defdelegate active_worker_session(worker_id, session_id), to: WorkerRegistry
 
+  @spec fresh_worker_session(String.t(), String.t(), keyword()) :: {:ok, term(), term()} | {:error, term()}
+  defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: WorkerRegistry
+
   @spec heartbeat_worker(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   defdelegate heartbeat_worker(worker_id, session_id), to: WorkerRegistry
 
