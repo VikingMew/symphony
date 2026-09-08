@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Config.RuntimeResolver
   alias SymphonyElixir.GitHub.PullRequest
   alias SymphonyElixir.Linear.{Client, Issue}
-  alias SymphonyElixir.Worker.{Command, Config, Paths, Payload, Validation}
+  alias SymphonyElixir.Worker.{Command, Config, LinearToolAuditRecorder, Paths, Payload, Validation}
 
   @linear_endpoint "https://api.linear.app/graphql"
 
@@ -29,7 +29,7 @@ defmodule SymphonyElixir.Worker.Executor do
          :ok <- require_handoff(payload, codex),
          {:ok, validation} <- validate(config, claim, source, codex, payload.gates, workspace, log_dir),
          :ok <- not_cancelled(),
-         {:ok, handoff} <- handoff(claim, payload, codex) do
+         {:ok, handoff} <- handoff(config, claim, payload, codex) do
       summary = summary(config, claim, source, codex, validation)
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
       Map.merge(summary, %{status: :completed, phase: :handoff, handoff: handoff})
@@ -74,12 +74,16 @@ defmodule SymphonyElixir.Worker.Executor do
 
         progress.("codex_starting", %{})
 
+        audit_recorder = audit_recorder(config, claim)
+
         AppServer.run(workspace, codex.prompt, issue,
           profile: codex.profile,
           run_id: Map.fetch!(claim, "run_id"),
           on_message: &forward_codex_progress(&1, progress),
           dynamic_tool_opts: [
             allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+            audit_recorder: audit_recorder,
+            task_id: Map.fetch!(claim, "task_id"),
             graphql: &worker_graphql/2,
             pull_request_proof_secret: proof_secret,
             pull_request_creator: fn issue, rendered, _opts ->
@@ -279,7 +283,7 @@ defmodule SymphonyElixir.Worker.Executor do
     Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
   end
 
-  defp handoff(claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
+  defp handoff(config, claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do
     update = Map.put(codex.handoff, "target_state", "Ready to Merge")
 
@@ -290,6 +294,8 @@ defmodule SymphonyElixir.Worker.Executor do
         session_id: codex.session_id,
         pull_request_proof_secret: codex.proof_secret,
         allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+        audit_recorder: audit_recorder(config, claim),
+        task_id: Map.fetch!(claim, "task_id"),
         graphql: &worker_graphql/2
       )
 
@@ -306,7 +312,31 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp handoff(_claim, _payload, _codex), do: {:ok, %{}}
+  defp handoff(_config, _claim, _payload, _codex), do: {:ok, %{}}
+
+  defp audit_recorder(config, claim) do
+    context = %{
+      client: config.client_module,
+      config: config,
+      identity: Map.take(claim, ["worker_id", "session_id", "protocol_version"]),
+      task_id: Map.fetch!(claim, "task_id"),
+      correlation: %{
+        "project_id" => Map.fetch!(claim, "project_id"),
+        "run_id" => Map.fetch!(claim, "run_id"),
+        "issue_id" => Map.fetch!(claim, "issue_id"),
+        "issue_identifier" => Map.fetch!(claim, "issue_identifier"),
+        "run_attempt" => Map.fetch!(claim, "run_attempt"),
+        "task_id" => Map.fetch!(claim, "task_id"),
+        "lease_id" => Map.fetch!(claim, "lease_id"),
+        "lease_attempt" => Map.fetch!(claim, "lease_attempt"),
+        "worker_id" => Map.fetch!(claim, "worker_id"),
+        "worker_session_id" => Map.fetch!(claim, "session_id"),
+        "assignment_id" => Map.fetch!(claim, "task_id")
+      }
+    }
+
+    &LinearToolAuditRecorder.record(context, &1, &2)
+  end
 
   # Worker payloads do not include database-backed tracker settings. Linear
   # access uses the worker's existing runtime token and the standard endpoint.

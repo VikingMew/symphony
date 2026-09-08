@@ -158,6 +158,26 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              AssignmentManager.record_event(context.worker.id, context.session.id, "stale", "task.progress", %{}, context.manager)
   end
 
+  test "persists Linear audit events without releasing the assignment", context do
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    assert {:ok, event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "linear.tool_call",
+               %{"correlation" => assignment.correlation, "tool" => "linear_task_read", "status" => "success"},
+               context.manager
+             )
+
+    assert event.event_type == "linear.tool_call"
+    assert event.payload["tool"] == "linear_task_read"
+    assert event.payload["correlation"] == assignment.correlation
+    assert AssignmentManager.current_assignment(context.manager).id == assignment.id
+  end
+
   test "rejects unavailable sessions, zero slots, and mismatched correlation", context do
     Tracker.put([issue(1)])
     assert {:ok, nil} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)

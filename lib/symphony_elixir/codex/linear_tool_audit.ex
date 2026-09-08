@@ -5,7 +5,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   require Logger
 
-  alias SymphonyElixir.{Payload, PersistenceEventWriter, Redaction}
+  alias SymphonyElixir.{Payload, Redaction}
 
   @linear_tools ~w(linear_task_read linear_task_update linear_issue_create)
 
@@ -47,14 +47,9 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
         payload: payload
       }
 
-      # Restricted Linear tool events are critical audit records. The current
-      # fire-and-forget caller cannot act on the result, so failures are returned
-      # and logged at error level here instead of being reported as success.
-      case PersistenceEventWriter.record(attrs, payload) do
-        :ok -> :ok
-        {:degraded, reason} -> audit_write_error(tool, payload, reason)
-        {:error, reason} -> audit_write_error(tool, payload, reason)
-      end
+      opts
+      |> Keyword.fetch(:audit_recorder)
+      |> record_event(attrs, payload, tool, opts)
     else
       :ok
     end
@@ -176,11 +171,22 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
     end
   end
 
-  defp audit_write_error(tool, payload, reason) do
+  defp record_event({:ok, recorder}, attrs, payload, tool, opts) do
+    case recorder.(attrs, payload) do
+      :ok -> :ok
+      {:degraded, reason} -> audit_write_error(tool, payload, opts, reason)
+      {:error, reason} -> audit_write_error(tool, payload, opts, reason)
+    end
+  end
+
+  defp record_event(:error, _attrs, payload, tool, opts),
+    do: audit_write_error(tool, payload, opts, :recorder_not_configured)
+
+  defp audit_write_error(tool, payload, opts, reason) do
     result = {:error, {:linear_tool_audit_write_failed, reason}}
 
     Logger.error(
-      "Linear tool audit persistence failed action=surface_error tool=#{tool} issue_id=#{inspect(Map.get(payload, :issue_id))} issue_identifier=#{inspect(Map.get(payload, :issue_identifier))} session_id=#{inspect(Map.get(payload, :session_id))} run_id=#{inspect(Map.get(payload, :run_id))} outcome=#{inspect(result, limit: 20, printable_limit: 1_000)}"
+      "Linear tool audit recording failed action=continue_degraded tool=#{tool} task_id=#{inspect(Keyword.get(opts, :task_id))} issue_id=#{inspect(Map.get(payload, :issue_id))} issue_identifier=#{inspect(Map.get(payload, :issue_identifier))} session_id=#{inspect(Map.get(payload, :session_id))} run_id=#{inspect(Map.get(payload, :run_id))} outcome=#{inspect(result, limit: 20, printable_limit: 1_000)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
     )
 
     result

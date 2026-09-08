@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.RedactionTest do
   use ExUnit.Case, async: false
 
-  alias SymphonyElixir.Codex.{LinearToolAudit, Update}
+  alias SymphonyElixir.Codex.{LinearToolAudit, LinearToolAudit.PanelRecorder, Update}
   alias SymphonyElixir.EventPresenter
   alias SymphonyElixir.Redaction
   alias SymphonyElixir.TestSupport.FakePersistence
@@ -55,7 +55,9 @@ defmodule SymphonyElixir.RedactionTest do
       debug_payload = Update.rate_limit_debug_payload(%{payload: payload}).payload
       persisted_payload = Update.event_payload(%{event: :notification, payload: payload}).debug.payload
 
-      assert :ok = LinearToolAudit.record("linear_task_update", payload, %{"success" => true, "output" => "{}"}, [])
+      assert :ok =
+               LinearToolAudit.record("linear_task_update", payload, %{"success" => true, "output" => "{}"}, audit_recorder: &PanelRecorder.record/2)
+
       [audit_event] = FakePersistence.list_events(event_type: "linear.tool_call")
 
       sanitized_payloads = [event_payload, audit_event.payload.arguments, debug_payload, persisted_payload]

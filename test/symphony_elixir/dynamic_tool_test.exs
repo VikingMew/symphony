@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Codex.DynamicTool
+  alias SymphonyElixir.Codex.LinearToolAudit.PanelRecorder
   alias SymphonyElixir.Linear.Issue
 
   test "tool_specs advertises restricted task and pull request tools" do
@@ -198,6 +199,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         run_id: "run-operator",
         operator_kind: "nap",
         session_id: "thread-1-turn-1",
+        audit_recorder: &PanelRecorder.record/2,
         issue_creator: fn created_payload ->
           {:ok,
            %{
@@ -229,7 +231,8 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute("linear_issue_create", %{"title" => "Incomplete"},
         profile: "day_dreaming",
         run_id: "run-day-dreaming",
-        operator_kind: "day_dreaming"
+        operator_kind: "day_dreaming",
+        audit_recorder: &PanelRecorder.record/2
       )
 
     assert response["success"] == false
@@ -258,6 +261,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
       DynamicTool.execute("linear_issue_create", payload,
         run_id: "run-missing-profile",
         operator_kind: "nap",
+        audit_recorder: &PanelRecorder.record/2,
         issue: %Issue{id: "operator-nap", identifier: "NAP-1", state: "Nap"}
       )
 
