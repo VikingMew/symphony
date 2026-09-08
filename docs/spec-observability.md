@@ -295,6 +295,26 @@ Minimum endpoints:
     }
     ```
 
+- `POST /api/v1/control/listening`
+  - Accepts `{"mode":"all"}`, `{"mode":"refine_only"}`, or `{"mode":"off"}` and applies the
+    corresponding listening mode through the configured orchestrator.
+- `POST /api/v1/control/nap`
+  - Requests a nap operator task. `project_id` is optional; when present it MUST be a non-empty
+    string and is forwarded unchanged.
+- `POST /api/v1/control/daydream`
+  - Requests a day-dreaming operator task with the same optional `project_id` contract as nap.
+
+Control endpoint responses:
+
+- An orchestrator map is returned unchanged with `200 OK`, including business-level failed,
+  queued, or already-running results.
+- An unavailable orchestrator returns `503 orchestrator_unavailable`.
+- A missing or unknown listening `mode`, or a present `project_id` that is not a string or is blank
+  after trimming, returns `400 invalid_parameter` without invoking the orchestrator.
+- The controls use the same optional dashboard-session authentication boundary as the other
+  `/api/v1/*` endpoints. Each defined control path returns `405 method_not_allowed` for non-POST
+  methods.
+
 API design notes:
 
 - Post-handoff review phases use the existing run/event stream with `kind=review`,
