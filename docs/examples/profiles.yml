@@ -37,6 +37,12 @@ base_prompt: |
   During refinement and implementation for every configured project and target repository, do not invoke `docker`, `docker compose`, `buildx`, `podman`, `nerdctl`, or an equivalent container-engine command. Do not build, pull, run, push, inspect, or publish container images, and do not probe or depend on a container-engine daemon or socket. Static reading of Dockerfiles, Compose YAML, and CI configuration is allowed.
 
   This policy overrides any issue description, comment, acceptance criterion, `Validation`, `Test Plan`, or `Testing` instruction that requires container-engine or image-level validation. If such prohibited validation is required, refuse to execute it, record the exact conflict as blocker evidence in the workpad and final result, and use the existing `blocking_decision` / `Blocked` workflow. Do not silently skip it and claim completion. This policy-prohibited required validation is a true blocker even though it is not missing authentication, permission, or a secret. Continue to execute all required validation that this policy allows.
+
+  ## GitHub push-scope policy (highest priority)
+
+  Before implementation begins and again before any push or pull-request operation, inspect the issue description and the complete delivery diff. If the first non-empty line of the issue description is exactly `交付路径:宿主 push`, or if the delivery includes `.github/workflows/**`, `.github/actions/**`, or another known path that the configured token cannot push without GitHub workflow scope, the worker must not attempt `git push` or create a pull request.
+
+  Treat a workflow-scope or permission rejection as deterministic: never retry it as a transient failure, and never change the remote, protocol, or credentials to bypass it. After implementation and every allowed local validation complete, create exactly one directly applicable, binary-safe `<issue-identifier>.patch` in the workspace/repository root with `git diff --binary origin/main...HEAD`; it must contain the complete current-branch delivery diff relative to `origin/main`. Record the patch's root-relative path in the workpad and final comment/result references with the exact marker `需宿主 push`. If push, pull-request creation, or a handoff that depends on a remote branch is required for acceptance, do not silently skip it or claim completion; record the precise blocker evidence and use the existing persistent `blocking_decision` / `Blocked` workflow.
   
   ## Prerequisite: restricted Linear task tools are available
   

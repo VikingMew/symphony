@@ -257,12 +257,34 @@ defmodule SymphonyElixir.PromptBuilderTest do
     assert replace_prompt =~ "Container-engine validation policy (highest priority)"
   end
 
-  test "profiles import artifact carries the same container validation priority" do
+  test "profiles import artifact carries the highest-priority safety policies" do
     profiles = File.read!("docs/examples/profiles.yml")
 
     assert profiles =~ "Container-engine validation policy (highest priority)"
     assert profiles =~ "policy-prohibited required validation is a true blocker"
     assert profiles =~ "execute every allowed ticket-provided"
+    assert profiles =~ "GitHub push-scope policy (highest priority)"
+    assert profiles =~ "first non-empty line of the issue description is exactly `交付路径:宿主 push`"
+    assert profiles =~ "`.github/workflows/**`, `.github/actions/**`"
+    assert profiles =~ "git diff --binary"
+    assert profiles =~ "`需宿主 push`"
+    assert profiles =~ "persistent `blocking_decision` / `Blocked` workflow"
+  end
+
+  test "push skill checks the complete branch diff before push and PR operations" do
+    skill = File.read!(Path.expand("../../.codex/skills/push/SKILL.md", __DIR__))
+
+    preflight = :binary.match(skill, "git diff --name-only origin/main...HEAD")
+    first_push = :binary.match(skill, "git push -u origin HEAD")
+    first_pr = :binary.match(skill, "gh pr view --json state")
+
+    assert preflight < first_push
+    assert preflight < first_pr
+    assert skill =~ "grep -Eq '^\\.github/'"
+    assert skill =~ "git diff --binary origin/main...HEAD"
+    assert skill =~ "do not push, create a pull"
+    assert skill =~ "request, or rewrite the remote, protocol, or credentials"
+    assert skill =~ "需宿主 push"
   end
 
   test "prompt builder renders built-in refinement and custom profile contracts" do
