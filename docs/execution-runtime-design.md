@@ -22,7 +22,11 @@ a Linear client nor a Linear credential.
 One supervised process group owns checkout, hooks, Codex, validation, and handoff for an assignment.
 It renews only that assignment and emits accepted/progress/completed/failed/cancelled events with
 project, issue, run, worker/session, and assignment correlation. The Panel rejects expired or
-mismatched events.
+mismatched events. Restricted Linear tool audits use the same worker task-event endpoint: the
+worker sends a non-terminal `linear.tool_call` event with assignment correlation, and only the
+Panel persists it. Audit delivery failures are logged as degraded execution and do not change the
+tool response or assignment lifecycle. Centralized execution records the same audit locally in the
+Panel.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
 later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,

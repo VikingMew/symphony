@@ -133,7 +133,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "protocol_version" => Client.protocol_version()
     }
 
-    claim = claim_payload()
+    claim = Map.merge(claim_payload(), identity)
     assert claim["task_id"] == "task-1"
     assert claim["issue_id"] == "issue-1"
     assert claim["run_attempt"] == 0
@@ -174,9 +174,15 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     )
 
     config = config(root)
-    assert {:ok, _registration} = Client.register(config)
+    assert {:ok, registration} = Client.register(config)
 
-    claim = claim_payload()
+    claim =
+      Map.merge(claim_payload(), %{
+        "worker_id" => registration["worker_id"],
+        "session_id" => registration["session_id"],
+        "protocol_version" => Client.protocol_version()
+      })
+
     assert claim["execution"]["codex"]["command"] == "#{codex_binary} app-server"
 
     result = Executor.execute(config, claim)
@@ -239,7 +245,13 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "task_id" => task_id,
       "lease_id" => "missing-handoff-lease",
       "issue_id" => "issue-1",
+      "issue_identifier" => "SYM-12",
       "run_id" => "run-1",
+      "run_attempt" => 0,
+      "lease_attempt" => 1,
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "protocol_version" => Client.protocol_version(),
       "execution" =>
         panel_payload(source, codex_binary, "implementation")
         |> ExecutionPayload.from_task_payload()

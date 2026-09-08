@@ -9,6 +9,7 @@ defmodule SymphonyElixir.AgentRunner do
     AgentRunner.Policy,
     BranchName,
     Codex.AppServer,
+    Codex.LinearToolAudit.PanelRecorder,
     Codex.RateLimitGate,
     Config,
     Git,
@@ -484,7 +485,7 @@ defmodule SymphonyElixir.AgentRunner do
              on_message: codex_message_handler(codex_update_recipient, issue),
              workspace: workspace,
              run_id: Keyword.get(opts, :run_id),
-             dynamic_tool_opts: Keyword.get(opts, :dynamic_tool_opts, [])
+             dynamic_tool_opts: panel_dynamic_tool_opts(opts)
            ) do
       Logger.info("Completed agent run for #{issue_context(issue)} session_id=#{turn_session[:session_id]} workspace=#{workspace} turn=#{turn_number}/#{max_turns}")
 
@@ -636,7 +637,8 @@ defmodule SymphonyElixir.AgentRunner do
                  workspace: workspace,
                  profile: profile,
                  operator_kind: profile,
-                 run_id: Keyword.get(opts, :run_id)
+                 run_id: Keyword.get(opts, :run_id),
+                 dynamic_tool_opts: panel_dynamic_tool_opts(opts)
                ) do
           Logger.info("Completed operator run for #{issue_context(issue)} profile=#{profile} session_id=#{turn_session[:session_id]} workspace=#{workspace}")
 
@@ -644,6 +646,12 @@ defmodule SymphonyElixir.AgentRunner do
         end
       end
     )
+  end
+
+  defp panel_dynamic_tool_opts(opts) do
+    opts
+    |> Keyword.get(:dynamic_tool_opts, [])
+    |> Keyword.put_new(:audit_recorder, &PanelRecorder.record/2)
   end
 
   defp with_codex_session(workspace, issue, opts, worker_host, prepare, run) do

@@ -1,7 +1,14 @@
 defmodule SymphonyElixir.PRReview.Runner do
   @moduledoc "Runs one immutable pull-request review in a read-only Codex session."
 
-  alias SymphonyElixir.{Codex.AppServer, Config, GitHub.PullRequest, Linear.Issue, Tracker}
+  alias SymphonyElixir.{
+    Codex.AppServer,
+    Codex.LinearToolAudit.PanelRecorder,
+    Config,
+    GitHub.PullRequest,
+    Linear.Issue,
+    Tracker
+  }
 
   @ready "Ready to Merge"
 
@@ -26,6 +33,7 @@ defmodule SymphonyElixir.PRReview.Runner do
              thread_sandbox: "read-only",
              turn_sandbox_policy: %{"type" => "readOnly", "networkAccess" => false},
              dynamic_tool_opts: [
+               audit_recorder: &PanelRecorder.record/2,
                review_context: context,
                review_head_oid: job.head_oid
              ],

@@ -2,6 +2,7 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Codex.LinearToolAudit
+  alias SymphonyElixir.Codex.LinearToolAudit.PanelRecorder
   alias SymphonyElixir.PersistenceEventWriter
 
   defmodule RepoUnavailablePersistence do
@@ -109,13 +110,14 @@ defmodule SymphonyElixir.AuditEventWriteSemanticsTest do
                    issue_id: "issue-linear-audit",
                    issue_identifier: "MT-LINEAR-AUDIT",
                    session_id: "thread-240-turn-1",
-                   run_id: "run-240"
+                   run_id: "run-240",
+                   audit_recorder: &PanelRecorder.record/2
                  )
 
         assert is_list(stacktrace)
       end)
 
-    assert log =~ "Linear tool audit persistence failed action=surface_error"
+    assert log =~ "Linear tool audit recording failed action=continue_degraded"
     assert log =~ "issue_id=\"issue-linear-audit\""
     assert log =~ "issue_identifier=\"MT-LINEAR-AUDIT\""
     assert log =~ "session_id=\"thread-240-turn-1\""

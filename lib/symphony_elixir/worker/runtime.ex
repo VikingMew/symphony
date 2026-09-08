@@ -47,7 +47,7 @@ defmodule SymphonyElixir.Worker.Runtime do
     next =
       case client(state).claim(state.config, request) do
         {:ok, %{"task" => nil}} -> state
-        {:ok, %{"task_id" => task_id} = claim} -> start_claim(state, task_id, claim)
+        {:ok, %{"task_id" => task_id} = claim} -> start_claim(state, task_id, Map.merge(claim, identity))
         {:error, {:http_error, 401, _body}} -> recover_session(state)
         _ -> state
       end
