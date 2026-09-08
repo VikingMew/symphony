@@ -13,7 +13,16 @@ defmodule SymphonyElixir.Worker.Runtime do
   def init(config) do
     Process.send_after(self(), :register, 0)
     Process.send_after(self(), :cleanup, 0)
-    {:ok, %{config: config, identity: nil, active: %{}, heartbeat_seconds: 10}}
+
+    {:ok,
+     %{
+       config: config,
+       identity: nil,
+       active: %{},
+       heartbeat_seconds: 10,
+       claim_http_failure_streak: 0,
+       next_poll_seconds: nil
+     }}
   end
 
   @impl true
@@ -44,16 +53,26 @@ defmodule SymphonyElixir.Worker.Runtime do
         "capabilities" => %{"execution" => ["v1"]}
       })
 
-    next =
+    {next, poll_after_seconds} =
       case client(state).claim(state.config, request) do
-        {:ok, %{"task" => nil}} -> state
-        {:ok, %{"task_id" => task_id} = claim} -> start_claim(state, task_id, Map.merge(claim, identity))
-        {:error, {:http_error, 401, _body}} -> recover_session(state)
-        _ -> state
+        {:ok, %{"task" => nil} = response} ->
+          {reset_claim_http_failures(state), response["poll_after_seconds"] || 5}
+
+        {:ok, %{"task_id" => task_id} = claim} ->
+          {state |> reset_claim_http_failures() |> start_claim(task_id, Map.merge(claim, identity)), 5}
+
+        {:error, {:http_error, 401, _body}} ->
+          {recover_session(state), nil}
+
+        {:error, {:http_error, status, _body}} when status == 429 or status in 500..599 ->
+          claim_http_failure(state)
+
+        _ ->
+          {state, 5}
       end
 
-    schedule(:poll, 5)
-    {:noreply, next}
+    if poll_after_seconds, do: schedule(:poll, poll_after_seconds)
+    {:noreply, %{next | next_poll_seconds: poll_after_seconds}}
   end
 
   def handle_info(:poll, state), do: {:noreply, state}
@@ -318,6 +337,14 @@ defmodule SymphonyElixir.Worker.Runtime do
     schedule(:register, 0)
     %{state | identity: nil, active: %{}}
   end
+
+  defp claim_http_failure(state) do
+    streak = state.claim_http_failure_streak + 1
+    seconds = if streak == 1, do: 30, else: 60
+    {%{state | claim_http_failure_streak: streak}, seconds}
+  end
+
+  defp reset_claim_http_failures(state), do: %{state | claim_http_failure_streak: 0}
 
   defp find_active(state, ref, pid) do
     Enum.find(state.active, fn {_task_id, active} -> active.ref == ref or active.pid == pid end)

@@ -13,6 +13,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
 
   @terminal_events ["task.completed", "task.failed", "task.cancelled"]
+  @initial_poll_seconds 5
+  @backoff_poll_seconds 30
+  @max_poll_seconds 60
 
   @type assignment :: map()
 
@@ -22,9 +25,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   @spec claim(String.t(), String.t(), map(), GenServer.server()) ::
-          {:ok, assignment() | nil} | {:error, term()}
+          {:ok, assignment() | {:empty, pos_integer()}} | {:error, term()} | {:error, term(), pos_integer()}
   def claim(worker_id, session_id, attrs, server \\ __MODULE__),
-    do: if(process_alive?(server), do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity), else: {:ok, nil})
+    do: if(process_alive?(server), do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity), else: {:ok, {:empty, @initial_poll_seconds}})
 
   @spec heartbeat(String.t(), String.t(), map(), GenServer.server()) :: {:ok, map()} | {:error, term()}
   def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__),
@@ -56,7 +59,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       persistence: Keyword.get(opts, :persistence, PersistenceProvider.module()),
       workflows: Keyword.get(opts, :workflows, WorkflowStore),
       now: Keyword.get(opts, :now, &DateTime.utc_now/0),
-      reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000)
+      reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
+      empty_claim_streak: 0,
+      tracker_error_streak: 0
     }
 
     schedule_reconciliation(state)
@@ -94,14 +99,31 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            {:ok, worker, session} <- state.persistence.active_worker_session(worker_id, session_id) do
         claim_from_workflows(state, worker, session)
       else
-        %{} -> {:ok, nil}
-        false -> {:ok, nil}
+        %{} -> {:bypass, @initial_poll_seconds}
+        false -> {:bypass, @initial_poll_seconds}
         {:error, reason} -> {:error, reason}
       end
 
     case result do
-      {:ok, %{} = assignment} -> {:reply, {:ok, assignment}, %{state | assignment: assignment}}
-      other -> {:reply, other, state}
+      {:ok, %{} = assignment} ->
+        {:reply, {:ok, assignment}, %{state | assignment: assignment, empty_claim_streak: 0, tracker_error_streak: 0}}
+
+      {:ok, nil} ->
+        streak = state.empty_claim_streak + 1
+        seconds = empty_poll_seconds(streak)
+        {:reply, {:ok, {:empty, seconds}}, %{state | empty_claim_streak: streak, tracker_error_streak: 0}}
+
+      {:error, reason} = error ->
+        if tracker_backoff_error?(reason) do
+          streak = state.tracker_error_streak + 1
+          seconds = failure_poll_seconds(streak)
+          {:reply, {:error, reason, seconds}, %{state | tracker_error_streak: streak}}
+        else
+          {:reply, error, state}
+        end
+
+      {:bypass, seconds} ->
+        {:reply, {:ok, {:empty, seconds}}, state}
     end
   end
 
@@ -139,9 +161,20 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp claim_from_workflows(state, worker, session) do
     Enum.reduce_while(state.workflows.list_enabled(), {:ok, nil}, fn workflow, _acc ->
       result = Config.with_workflow_context(workflow, fn -> claim_from_workflow(state, worker, session, workflow) end)
-      if match?({:ok, %{}}, result), do: {:halt, result}, else: {:cont, result}
+      if match?({:ok, nil}, result), do: {:cont, result}, else: {:halt, result}
     end)
   end
+
+  defp empty_poll_seconds(1), do: @initial_poll_seconds
+  defp empty_poll_seconds(streak) when streak in 2..5, do: @backoff_poll_seconds
+  defp empty_poll_seconds(_streak), do: @max_poll_seconds
+
+  defp failure_poll_seconds(1), do: @backoff_poll_seconds
+  defp failure_poll_seconds(_streak), do: @max_poll_seconds
+
+  defp tracker_backoff_error?({:linear_api_status, status, _body}) when status == 429 or status in 500..599, do: true
+  defp tracker_backoff_error?({:linear_api_request, _reason}), do: true
+  defp tracker_backoff_error?(_reason), do: false
 
   defp claim_from_workflow(state, worker, session, workflow) do
     with {:ok, candidates} <- state.tracker.fetch_candidate_issues(),

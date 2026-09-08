@@ -40,8 +40,8 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, result} <- AssignmentManager.claim(worker_id, session_id, params) do
       case result do
-        nil ->
-          json(conn, %{task: nil, poll_after_seconds: 5})
+        {:empty, poll_after_seconds} ->
+          json(conn, %{task: nil, poll_after_seconds: poll_after_seconds})
 
         assignment ->
           json(conn, %{
@@ -60,6 +60,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
           })
       end
     else
+      {:error, reason, poll_after_seconds} -> claim_error(conn, reason, poll_after_seconds)
       {:error, reason} -> worker_error(conn, reason)
     end
   end
@@ -172,10 +173,28 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     error_response(conn, 422, "worker_api_error", inspect(reason))
   end
 
+  defp claim_error(conn, {:linear_api_status, 429, body}, poll_after_seconds) do
+    error_response(conn, 429, "linear_rate_limited", inspect(body), poll_after_seconds)
+  end
+
+  defp claim_error(conn, {:linear_api_status, status, body}, poll_after_seconds) when status in 500..599 do
+    error_response(conn, 503, "linear_unavailable", inspect(body), poll_after_seconds)
+  end
+
+  defp claim_error(conn, {:linear_api_request, reason}, poll_after_seconds) do
+    error_response(conn, 503, "linear_unavailable", inspect(reason), poll_after_seconds)
+  end
+
   defp error_response(conn, status, code, message) do
     conn
     |> put_status(status)
     |> json(%{error: %{code: code, message: message}})
+  end
+
+  defp error_response(conn, status, code, message, poll_after_seconds) do
+    conn
+    |> put_status(status)
+    |> json(%{error: %{code: code, message: message}, poll_after_seconds: poll_after_seconds})
   end
 
   defp event_payload(params) do

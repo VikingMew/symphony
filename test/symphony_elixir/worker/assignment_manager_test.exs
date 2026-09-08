@@ -10,7 +10,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     use Agent
 
     def start_link(_opts) do
-      initial = %{candidates: [], current: %{}, updates: [], fetch_error: nil, update_error: nil}
+      initial = %{candidates: [], current: %{}, updates: [], fetch_error: nil, update_error: nil, fetch_count: 0}
       Agent.start_link(fn -> initial end, name: __MODULE__)
     end
 
@@ -19,11 +19,15 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     def fail_fetch(reason), do: Agent.update(__MODULE__, &%{&1 | fetch_error: reason})
     def fail_update(reason), do: Agent.update(__MODULE__, &%{&1 | update_error: reason})
     def updates, do: Agent.get(__MODULE__, &Enum.reverse(&1.updates))
+    def fetch_count, do: Agent.get(__MODULE__, & &1.fetch_count)
 
     def fetch_candidate_issues do
-      Agent.get(__MODULE__, fn
-        %{fetch_error: nil, candidates: candidates} -> {:ok, candidates}
-        %{fetch_error: reason} -> {:error, reason}
+      Agent.get_and_update(__MODULE__, fn
+        %{fetch_error: nil, candidates: candidates} = state ->
+          {{:ok, candidates}, %{state | fetch_count: state.fetch_count + 1}}
+
+        %{fetch_error: reason} = state ->
+          {{:error, reason}, %{state | fetch_count: state.fetch_count + 1}}
       end)
     end
 
@@ -49,7 +53,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   defmodule Workflows do
-    def list_enabled, do: [Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)]
+    def list_enabled do
+      workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
+      List.duplicate(workflow, Application.get_env(:symphony_elixir, :assignment_test_workflow_count, 1))
+    end
   end
 
   setup do
@@ -65,7 +72,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     pid =
       start_supervised!({AssignmentManager, name: name, tracker: Tracker, persistence: FakePersistence, workflows: Workflows, now: fn -> now end, reconcile_interval_ms: :timer.hours(1)})
 
-    on_exit(fn -> Application.delete_env(:symphony_elixir, :assignment_test_workflow) end)
+    on_exit(fn ->
+      Application.delete_env(:symphony_elixir, :assignment_test_workflow)
+      Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
+    end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now}
   end
@@ -78,7 +88,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     second_claim = Task.async(fn -> claim(context) end)
     results = Enum.map([first_claim, second_claim], &Task.await/1)
     assert Enum.count(results, &match?({:ok, %{}}, &1)) == 1
-    assert Enum.count(results, &(&1 == {:ok, nil})) == 1
+    assert Enum.count(results, &(&1 == {:ok, {:empty, 5}})) == 1
 
     {:ok, first} = Enum.find(results, &match?({:ok, %{}}, &1))
     complete(context, first)
@@ -101,7 +111,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Tracker.put([ready])
     Tracker.replace(%{ready | state: "Done"})
 
-    assert {:ok, nil} = claim(context)
+    assert {:ok, {:empty, 5}} = claim(context)
     assert FakePersistence.list_runs_for_issue(ready.identifier) == []
     assert Tracker.updates() == []
   end
@@ -135,7 +145,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     Tracker.put([])
-    assert {:ok, nil} = claim(context)
+    assert {:ok, {:empty, 5}} = claim(context)
     Tracker.put([ready])
     assert {:ok, next} = claim(context)
     assert next.id == assignment.id == false
@@ -180,7 +190,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   test "rejects unavailable sessions, zero slots, and mismatched correlation", context do
     Tracker.put([issue(1)])
-    assert {:ok, nil} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
+    assert {:ok, {:empty, 5}} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
     assert {:error, :worker_session_not_found} = AssignmentManager.claim("wrong", "wrong", %{}, context.manager)
     assert {:error, :worker_session_not_found} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
     assert {:ok, assignment} = claim(context)
@@ -237,7 +247,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Process.exit(context.manager, :normal)
     Process.sleep(10)
 
-    assert {:ok, nil} = AssignmentManager.claim(context.worker.id, context.session.id, %{}, context.manager)
+    assert {:ok, {:empty, 5}} = AssignmentManager.claim(context.worker.id, context.session.id, %{}, context.manager)
 
     assert {:ok, %{lease_renewals: [], commands: []}} =
              AssignmentManager.heartbeat(context.worker.id, context.session.id, %{}, context.manager)
@@ -282,6 +292,62 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert {:error, :lease_not_active} =
              AssignmentManager.record_event(context.worker.id, context.session.id, assignment.id, "task.completed", %{}, restarted)
+  end
+
+  test "empty claims follow the fixed schedule and stay below the hourly query quota", context do
+    Application.put_env(:symphony_elixir, :assignment_test_workflow_count, 4)
+    Tracker.put([])
+
+    assert Enum.map(1..7, fn _ -> claim(context) end) ==
+             [
+               {:ok, {:empty, 5}},
+               {:ok, {:empty, 30}},
+               {:ok, {:empty, 30}},
+               {:ok, {:empty, 30}},
+               {:ok, {:empty, 30}},
+               {:ok, {:empty, 60}},
+               {:ok, {:empty, 60}}
+             ]
+
+    polls_per_hour = 1 + div(3_600 - 5, 30)
+    assert polls_per_hour * 4 < 2_500
+  end
+
+  test "tracker errors halt workflow traversal, back off, and recover to the first empty poll", context do
+    Application.put_env(:symphony_elixir, :assignment_test_workflow_count, 4)
+    Tracker.fail_fetch({:linear_api_status, 429, "limited"})
+
+    assert {:error, {:linear_api_status, 429, "limited"}, 30} = claim(context)
+    assert Tracker.fetch_count() == 1
+    assert {:error, {:linear_api_status, 429, "limited"}, 60} = claim(context)
+    assert Tracker.fetch_count() == 2
+
+    Tracker.fail_fetch({:linear_api_status, 503, "down"})
+    assert {:error, {:linear_api_status, 503, "down"}, 60} = claim(context)
+    assert Tracker.fetch_count() == 3
+
+    Tracker.fail_fetch({:linear_api_request, :timeout})
+    assert {:error, {:linear_api_request, :timeout}, 60} = claim(context)
+    assert Tracker.fetch_count() == 4
+
+    Tracker.fail_fetch(nil)
+    assert {:ok, {:empty, 5}} = claim(context)
+    assert Tracker.fetch_count() == 8
+  end
+
+  test "assignment halts workflow traversal and resets empty and error streaks", context do
+    Application.put_env(:symphony_elixir, :assignment_test_workflow_count, 4)
+    Tracker.put([])
+    assert {:ok, {:empty, 5}} = claim(context)
+    assert {:ok, {:empty, 30}} = claim(context)
+
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+    assert Tracker.fetch_count() == 9
+    complete(context, assignment)
+
+    Tracker.put([])
+    assert {:ok, {:empty, 5}} = claim(context)
   end
 
   defp claim(context) do

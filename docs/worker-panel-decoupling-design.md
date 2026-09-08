@@ -17,7 +17,19 @@ claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每
 读取 Linear 并重新验证状态、依赖、routing/profile。Panel 创建新 run 和不可混淆 assignment id，
 将 issue 转为 `In Progress`；只有状态更新成功才返回当前 workflow 生成的 payload。
 
-没有合格 issue、已有 assignment 或没有 slot 时返回 `{task: null}`。历史 run/event 和旧 payload
+没有合格 issue、已有 assignment 或没有 slot 时返回 `{task: null}`。真正访问 tracker 后的连续空
+claim 由 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
+为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
+Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+
+Linear 429、5xx 或 request failure 会立即停止 workflow 遍历，不能被后续 workflow 的空结果
+覆盖。首次连续错误建议 30 秒，后续错误建议 60 秒并封顶；HTTP 分别映射为 429 和 503，响应
+顶层同时包含结构化 `error` 与 `poll_after_seconds`。tracker 再次成功会清除错误 streak，并把
+该次空结果作为新的首次空 claim；成功 assignment 清除全部 streak。worker 在 claim client 的
+内部重试耗尽后，对 HTTP 429/5xx 同样按 30、60 秒退避，任一成功 claim 清除该 HTTP failure
+streak；401 仍执行既有 session recovery。
+
+已有 assignment 或没有 slot 的快速路径不读取 Linear，也不改变 tracker streak。历史 run/event 和旧 payload
 从不生成工作。协议继续把 assignment id 放在 `task_id` 与 `lease_id` 字段中以避免 worker 协议
 迁移；correlation 同时包含 project、issue、run、worker/session 和 assignment id。
 
