@@ -23,6 +23,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [codex-linear-task-refinement-workflow-design.md](codex-linear-task-refinement-workflow-design.md) | Codex/Linear task refinement workflow | landed |
 | [dashboard-color-system-design.md](dashboard-color-system-design.md) | Dashboard color system | landed |
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability | landed |
+| [workflow-config-authority-design.md](workflow-config-authority-design.md) | Workflow configuration authority | landed |
 
 This document (L2) owns implementation conventions — repository layout, package rules, and the
 module map below. System topology, boundaries, and direction are owned by
@@ -93,8 +94,8 @@ implementation lives under the repository root.
 | Path | Purpose |
 | --- | --- |
 | `README.md` | Setup, run, configuration, testing, and FAQ for the Elixir implementation. |
-| `docs/examples/workflow.yml` | Repository source package for shared workflow routing and runtime settings. |
-| `docs/examples/profiles.yml` | Repository source package for the shared base prompt and agent profiles. |
+| `docs/examples/workflow.yml` | Example package for shared workflow routing and runtime settings (import material, not a configuration source). |
+| `docs/examples/profiles.yml` | Example package for the shared base prompt and agent profiles (import material, not a configuration source). |
 | `AGENTS.md` | Agent-facing repository guidance. |
 | `Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
 | `mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |

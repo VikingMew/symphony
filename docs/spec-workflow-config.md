@@ -30,18 +30,18 @@ Workflow source precedence:
 
 1. Workflow policy is the immutable contract returned by
    `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
-2. Project settings and profiles come from the current PostgreSQL snapshot, synchronized from the
-   checked-in package under `docs/examples/`.
+2. Project settings and profiles come from the current PostgreSQL snapshot of that project.
 3. Setup-required mode applies when no current workflow exists.
 
 Loader behavior:
 
 - If no active workflow exists, return a typed setup-required error and keep the service alive.
-- Each project has exactly one operator-visible current workflow record; synchronization updates
+- Each project has exactly one operator-visible current workflow record; an operator import updates
   that record in place and does not add configuration version semantics.
-- `mix symphony.workflow.sync` MUST validate the complete package before replacing a snapshot,
-  MUST be idempotent, and MUST support a read-only drift check. Manual workflow-table updates are
-  outside the supported lifecycle.
+- The package under `docs/examples/` is example and import material, not a synchronization source:
+  there is no package synchronization command and no drift contract between those files and the
+  database. Manual workflow-table updates are outside the supported lifecycle; Settings / Import is
+  the supported operator path.
 
 ### 5.2 Package Format
 
@@ -54,8 +54,8 @@ YAML:
 Design note:
 
 - A package SHOULD be self-contained enough to recreate a project's settings and profiles after import.
-- The checked-in package is the editable source of truth; runtime code MUST read its synchronized
-  PostgreSQL snapshot rather than files from the source checkout.
+- The package under `docs/examples/` is example and import material. Runtime code MUST read the
+  project's PostgreSQL snapshot rather than files from the source checkout.
 - Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
   runtime dispatch, transition validation, human-review classification, or profile routing.
 
