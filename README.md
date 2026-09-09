@@ -142,7 +142,7 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
 
-On a fresh database, Symphony can also offer to import the checked-in package at
+On a fresh database, Symphony can also offer to import the example package at
 `docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first current workflow.
 To skip it and remain in setup-required mode, start with:
 
@@ -152,22 +152,15 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-The checked-in package under `docs/examples/` is the source for project settings and profiles;
-PostgreSQL is the durable runtime snapshot, while workflow routing is
-an immutable code contract. On cold start Symphony publishes the active per-project
+PostgreSQL is the authority for project settings and profiles, while workflow routing is
+an immutable code contract. The package under `docs/examples/` is example and import material: it
+documents the package format and can be imported through Settings / Import, but it is never
+synchronized into the database. On cold start Symphony publishes the active per-project
 workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
 dispatch reads use that snapshot without querying PostgreSQL. Successful imports republish
 before reporting success, and background external-change detection retains last-known-good state
-during database stalls. Synchronize explicitly and detect drift with:
-
-```bash
-mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG
-mise exec -- mix symphony.workflow.sync --project PROJECT_SLUG --check
-```
-
-Use `--all` instead of `--project PROJECT_SLUG` to operate on every enabled project. The command
-fully validates both files before opening any database write and is idempotent. Do not update the
-`workflows` table by hand.
+during database stalls. Change configuration through Settings (or Settings / Import) and do not
+update the `workflows` table by hand.
 
 Useful startup options:
 

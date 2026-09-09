@@ -13,8 +13,9 @@ This directory contains the Elixir agent orchestration service that polls Linear
 ## Codebase-Specific Conventions
 
 - Runtime config is loaded from the project's current PostgreSQL workflow snapshot and should be accessed through
-  `SymphonyElixir.Config`. The checked-in package under `docs/examples/` is its repository source;
-  synchronize it with `mix symphony.workflow.sync`, never with a manual SQL `UPDATE`.
+  `SymphonyElixir.Config`. The package under `docs/examples/` is example and import material, not a
+  configuration source; change configuration through Settings (or Settings / Import), never with a
+  manual SQL `UPDATE`.
 - Keep the implementation aligned with [`docs/spec.md`](docs/spec.md) where practical.
   - The implementation may be a superset of the spec.
   - The implementation must not conflict with the spec.
@@ -136,10 +137,9 @@ If behavior/config changes, update docs in the same PR:
   not an exemption from design synchronization.
 
 - `README.md` for project concepts, goals, and implementation/run instructions.
-- `docs/examples/workflow.yml` and `docs/examples/profiles.yml` when the repository workflow package
-  contract changes. The PostgreSQL current workflow is the runtime
-  authority; local split package files are examples/import artifacts, not the
-  live runtime source.
+- `docs/examples/workflow.yml` and `docs/examples/profiles.yml` when the example package format
+  changes. The PostgreSQL current workflow is the runtime authority; local split package files are
+  examples/import artifacts, not the live runtime source.
 - `docs/documentation_alignment.md` when a change affects runtime source,
   Settings ownership, worker modes, observability/analytics, Linear
   integration, deployment ownership, or other long-lived documentation claims.

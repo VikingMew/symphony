@@ -4,8 +4,8 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  checked-in package is synchronized into each project's current PostgreSQL
-  runtime snapshot.
+  checked-in package is available for first-run import into a project's current
+  PostgreSQL runtime snapshot.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -13,12 +13,18 @@ defmodule SymphonyElixir.Workflow do
 
   @workflow_config_file_names ["workflow.yml", "workflow.yaml"]
   @profiles_config_file_names ["profiles.yml", "profiles.yaml"]
+  @example_package_root Path.join(["docs", "examples"])
   @setup_message "Create a workflow from the Web UI to start running agents."
+
+  @spec example_package_root() :: Path.t()
+  def example_package_root do
+    Path.join(File.cwd!(), @example_package_root)
+  end
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
     Application.get_env(:symphony_elixir, :workflow_file_path) ||
-      Path.join(SymphonyElixir.RepositoryWorkflow.package_root(), "workflow.yml")
+      Path.join(example_package_root(), "workflow.yml")
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
