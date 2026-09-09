@@ -43,6 +43,9 @@ defmodule SymphonyElixir.Worker.Executor do
       {:validation_failed, summary} ->
         Map.merge(summary, %{status: :failed, phase: :validation})
 
+      {:blocked, reason, detail} ->
+        %{status: :blocked, reason: inspect(reason), detail: detail}
+
       {:error, reason} ->
         %{status: :failed, reason: inspect(reason)}
 
@@ -265,7 +268,7 @@ defmodule SymphonyElixir.Worker.Executor do
          %{handoff: nil, detail: detail}
        ) do
     if push_permission_failure?(detail),
-      do: {:error, {:handoff_failed, {:push_permission_blocked, detail}}},
+      do: {:blocked, {:handoff_failed, {:push_permission_blocked, detail}}, detail},
       else: {:error, {:handoff_failed, :missing_handoff}}
   end
 

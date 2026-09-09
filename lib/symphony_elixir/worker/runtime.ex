@@ -325,6 +325,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   end
 
   defp reason_for(:cancelled, _), do: "cancelled"
+  defp reason_for(:blocked, _), do: "handoff_failed"
   defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed], do: Atom.to_string(reason)
   defp reason_for(_, _), do: "worker_error"
 

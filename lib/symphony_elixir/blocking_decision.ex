@@ -26,13 +26,6 @@ defmodule SymphonyElixir.BlockingDecision do
 
   def normalize_blocker(value), do: value |> inspect() |> normalize_blocker()
 
-  @spec terminal_handoff_failure?(term()) :: boolean()
-  def terminal_handoff_failure?({:implementation_handoff_failed, _reason}), do: true
-  def terminal_handoff_failure?({:handoff_failed, {:push_permission_blocked, _}}), do: true
-  def terminal_handoff_failure?({:implementation_handoff_field_required, _field}), do: true
-  def terminal_handoff_failure?(:implementation_handoff_unavailable), do: true
-  def terminal_handoff_failure?(_reason), do: false
-
   @spec decide(String.t(), reason(), term(), String.t() | nil, map()) ::
           {:ok, map()} | {:error, term()}
   def decide(identifier, reason, evidence, run_id, references \\ %{}) do

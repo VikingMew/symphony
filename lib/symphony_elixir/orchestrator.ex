@@ -152,15 +152,18 @@ defmodule SymphonyElixir.Orchestrator do
     @type t :: %__MODULE__{}
   end
 
+  @type worker_terminal_outcome ::
+          :success | :cancelled | {:blocked, term()} | {:failed, term()}
+
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  @spec worker_task_finished(String.t(), GenServer.server()) :: :ok
-  def worker_task_finished(issue_id, server \\ __MODULE__) when is_binary(issue_id) do
-    GenServer.cast(server, {:worker_task_finished, issue_id})
+  @spec worker_task_finished(String.t(), worker_terminal_outcome(), GenServer.server()) :: :ok
+  def worker_task_finished(issue_id, outcome, server \\ __MODULE__) when is_binary(issue_id) do
+    GenServer.cast(server, {:worker_task_finished, issue_id, outcome})
   end
 
   @impl true
@@ -209,8 +212,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def handle_cast({:worker_task_finished, issue_id}, state) when is_binary(issue_id) do
-    {:noreply, complete_issue(state, issue_id)}
+  def handle_cast({:worker_task_finished, issue_id, outcome}, state) when is_binary(issue_id) do
+    {:noreply, handle_worker_task_finished(state, issue_id, outcome)}
   end
 
   @impl true
@@ -425,6 +428,13 @@ defmodule SymphonyElixir.Orchestrator do
     blocker = tool_result |> blocker_value() |> BlockingDecision.normalize_blocker()
 
     cond do
+      match?({:error, _}, result) ->
+        reason = elem(result, 1)
+
+        state
+        |> handle_agent_domain_failure(issue_id, entry, reason, entry.session_id)
+        |> Map.update!(:running, &Map.delete(&1, issue_id))
+
       is_binary(blocker) ->
         persist_and_block_issue(
           state,
@@ -432,19 +442,6 @@ defmodule SymphonyElixir.Orchestrator do
           entry,
           :reported_blocker,
           blocker,
-          references
-        )
-
-      match?({:error, _}, result) and
-          BlockingDecision.terminal_handoff_failure?(elem(result, 1)) ->
-        {decision_reason, evidence} = handoff_blocking_decision(elem(result, 1))
-
-        persist_and_block_issue(
-          state,
-          issue_id,
-          entry,
-          decision_reason,
-          evidence,
           references
         )
 
@@ -462,11 +459,55 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp handoff_blocking_decision({:handoff_failed, {:push_permission_blocked, detail}}),
-    do: {:push_permission_blocked, "MANUAL_HANDOFF_REQUIRED: #{detail}"}
+  defp handle_worker_task_finished(state, issue_id, outcome)
+       when outcome in [:success, :cancelled],
+       do: complete_issue(state, issue_id)
 
-  defp handoff_blocking_decision(reason),
-    do: {:implementation_handoff_failure, inspect(reason)}
+  defp handle_worker_task_finished(state, issue_id, {:blocked, reason}) do
+    case Map.get(state.running, issue_id) do
+      %RunningIssue{} = running_entry ->
+        references =
+          running_entry
+          |> run_references()
+          |> Map.put(:session_id, running_entry.session_id)
+
+        persist_and_block_issue(
+          state,
+          issue_id,
+          running_entry,
+          reason,
+          reason,
+          references
+        )
+
+      nil ->
+        Logger.warning("Worker reported a blocked terminal outcome without a running entry issue_id=#{issue_id}; releasing claim")
+        complete_issue(state, issue_id)
+    end
+  end
+
+  defp handle_worker_task_finished(state, issue_id, {:failed, reason}) do
+    case Map.get(state.running, issue_id) do
+      %RunningIssue{} = running_entry ->
+        summary = agent_failure_summary(reason)
+
+        Logger.warning("Worker task failed for issue_id=#{issue_id} session_id=#{running_entry.session_id} #{summary}")
+
+        state
+        |> fail_or_retry(
+          issue_id,
+          running_entry,
+          summary,
+          :failure_retries_exhausted,
+          reason
+        )
+        |> Map.update!(:running, &Map.delete(&1, issue_id))
+
+      nil ->
+        Logger.warning("Worker reported a failed terminal outcome without a running entry issue_id=#{issue_id}; releasing claim")
+        complete_issue(state, issue_id)
+    end
+  end
 
   defp handle_worker_down_reason(
          state,

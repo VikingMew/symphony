@@ -222,7 +222,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     )
 
     result = execute_implementation(root, codex_binary, "push-permission-task")
-    assert result.status == :failed
+    assert result.status == :blocked
     assert result.reason =~ "push_permission_blocked"
     assert result.reason =~ "workflow scope"
   end

@@ -55,7 +55,15 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
         end
       end
 
-      %{status: :completed}
+      if claim["blocked"] do
+        %{
+          status: :blocked,
+          reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
+          detail: "workflow scope"
+        }
+      else
+        %{status: :completed}
+      end
     end
   end
 
@@ -138,6 +146,23 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert_receive {:executing, "task-1", _executor}, 1_000
     eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+  end
+
+  test "blocked executor outcome is delivered as task.failed with an explicit blocked summary", %{config: config} do
+    put_claims([Map.put(claim("task-1", false), "blocked", true)])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    assert [{"task-1", "task.failed", %{summary: summary}}] =
+             Enum.filter(state().events, fn {id, type, _payload} ->
+               id == "task-1" and type == "task.failed"
+             end)
+
+    assert summary["outcome"] == "blocked"
+    assert summary["reason"] == "handoff_failed"
+    assert summary["detail"] =~ "push_permission_blocked"
   end
 
   test "executor task startup failure is delivered as task.failed", %{config: config} do

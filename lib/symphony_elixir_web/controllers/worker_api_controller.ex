@@ -96,10 +96,10 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   defp notify_terminal_task(
          event_type,
-         %{payload: %{"correlation" => %{"issue_id" => issue_id}}}
+         %{payload: %{"correlation" => %{"issue_id" => issue_id}, "summary" => summary}}
        )
        when event_type in ["task.completed", "task.failed", "task.cancelled"] and is_binary(issue_id) do
-    Orchestrator.worker_task_finished(issue_id)
+    Orchestrator.worker_task_finished(issue_id, terminal_outcome(event_type, summary))
   end
 
   defp notify_terminal_task(event_type, _event)
@@ -107,6 +107,31 @@ defmodule SymphonyElixirWeb.WorkerApiController do
        do: :ok
 
   defp notify_terminal_task(_event_type, _event), do: :ok
+
+  @doc false
+  @spec terminal_outcome(String.t(), map()) :: Orchestrator.worker_terminal_outcome()
+  def terminal_outcome("task.completed", _summary), do: :success
+
+  def terminal_outcome(event_type, summary)
+      when event_type in ["task.failed", "task.cancelled"] and is_map(summary) do
+    reason = terminal_reason(summary)
+
+    case Map.get(summary, "outcome") do
+      outcome when outcome in ["succeeded", "success"] -> :success
+      "cancelled" -> :cancelled
+      "blocked" -> {:blocked, reason}
+      "failed" -> {:failed, reason}
+      _missing_or_unrecognized -> {:failed, reason}
+    end
+  end
+
+  defp terminal_reason(%{"reason" => reason, "detail" => detail})
+       when is_binary(reason) and is_binary(detail),
+       do: reason <> "\n" <> detail
+
+  defp terminal_reason(%{"reason" => reason}) when is_binary(reason), do: reason
+  defp terminal_reason(%{"detail" => detail}) when is_binary(detail), do: detail
+  defp terminal_reason(_summary), do: "worker terminal outcome did not include a reason"
 
   defp verify_registration_token(conn) do
     token =
