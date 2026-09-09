@@ -8,7 +8,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
 
   require Logger
 
-  alias SymphonyElixir.{Persistence, RepositoryWorkflow, Workflow}
+  alias SymphonyElixir.{Persistence, Workflow}
 
   @source "first_run_default_yaml"
 
@@ -135,7 +135,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
       current_workflow: &Persistence.current_workflow/0,
       list_projects: &Persistence.list_projects/0,
       import_workflow: &Persistence.WorkflowStore.import_workflow/3,
-      package_root: &RepositoryWorkflow.package_root/0,
+      package_root: &Workflow.example_package_root/0,
       read_file: &File.read/1,
       prompt: &IO.gets/1,
       interactive?: &interactive?/0,
