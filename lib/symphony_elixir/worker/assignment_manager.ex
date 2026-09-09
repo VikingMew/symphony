@@ -8,7 +8,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   use GenServer
 
-  alias SymphonyElixir.{Config, PersistenceProvider, PromptBuilder, RunLifecycle, Tracker, WorkerResult, WorkflowStore}
+  alias SymphonyElixir.{
+    Config,
+    EnvironmentFailureCircuit,
+    PersistenceProvider,
+    PromptBuilder,
+    RunLifecycle,
+    Tracker,
+    WorkerResult,
+    WorkflowStore
+  }
+
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
 
@@ -72,6 +82,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       persistence: Keyword.get(opts, :persistence, PersistenceProvider.module()),
       workflows: Keyword.get(opts, :workflows, WorkflowStore),
       now: Keyword.get(opts, :now, &DateTime.utc_now/0),
+      failure_circuit: Keyword.get(opts, :failure_circuit, EnvironmentFailureCircuit),
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
       empty_claim_streak: 0,
       tracker_error_streak: 0
@@ -109,6 +120,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     result =
       with {:ok, worker, session} <- state.persistence.fresh_worker_session(worker_id, session_id, now: state.now.()),
            true <- available_slots(attrs) > 0,
+           :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
         case claim_from_workflows(state, worker, session) do
           {:ok, nil} -> {:ok, nil, admission_evidence(:no_eligible_candidate)}
@@ -116,6 +128,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
           error -> error
         end
       else
+        {:block, circuit} ->
+          {:bypass, @max_poll_seconds, environment_failure_circuit_evidence(circuit)}
+
         %{} ->
           {:bypass, @initial_poll_seconds, admission_evidence(:active_assignment)}
 
@@ -177,6 +192,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
          {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
          {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
          :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
+      record_environment_failure_circuit(state, assignment, event_type, summary)
       assignment = if event_type in @terminal_events, do: nil, else: assignment
       {:reply, {:ok, event}, %{state | assignment: assignment}}
     else
@@ -454,6 +470,49 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp admission_evidence(reason) do
     %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason}
   end
+
+  defp environment_failure_circuit_evidence(circuit) do
+    :environment_failure_circuit_open
+    |> admission_evidence()
+    |> Map.put(:failure_fingerprint, circuit.triggering_fingerprint)
+  end
+
+  defp record_environment_failure_circuit(state, assignment, "task.completed", _summary) do
+    EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
+  end
+
+  defp record_environment_failure_circuit(state, assignment, "task.cancelled", _summary) do
+    EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
+  end
+
+  defp record_environment_failure_circuit(state, assignment, "task.failed", summary) do
+    circuit =
+      EnvironmentFailureCircuit.record_failure(
+        assignment.issue_identifier,
+        worker_failure_reason(summary),
+        %{issue_id: assignment.issue.id, run_id: assignment.run_id},
+        state.failure_circuit
+      )
+
+    if circuit.alert do
+      state.persistence.record_event(EnvironmentFailureCircuit.alert_event_attrs(circuit, assignment.project_id))
+    end
+  end
+
+  defp record_environment_failure_circuit(_state, _assignment, _event_type, _summary), do: :ok
+
+  defp worker_failure_reason(summary) do
+    Map.get(summary, "detail") || failed_gate_detail(summary) || Map.fetch!(summary, "reason")
+  end
+
+  defp failed_gate_detail(%{"gates" => gates}) do
+    Enum.find_value(gates, fn
+      %{"status" => "failed", "failure_detail" => detail} when is_binary(detail) -> detail
+      _gate -> nil
+    end)
+  end
+
+  defp failed_gate_detail(_summary), do: nil
 
   defp validate_correlation(payload, correlation) do
     validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)

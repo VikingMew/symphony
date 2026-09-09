@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   use ExUnit.Case, async: false
 
+  alias SymphonyElixir.EnvironmentFailureCircuit
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
@@ -62,6 +63,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   setup do
     FakePersistence.reset!()
     start_supervised!(Tracker)
+    circuit = Module.concat(__MODULE__, "Circuit#{System.unique_integer([:positive])}")
+    start_supervised!({EnvironmentFailureCircuit, name: circuit})
     {:ok, loaded} = Workflow.load()
     workflow = Map.put(loaded, :project_id, "fake-project-id")
     Application.put_env(:symphony_elixir, :assignment_test_workflow, workflow)
@@ -70,14 +73,16 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     name = Module.concat(__MODULE__, "Manager#{System.unique_integer([:positive])}")
 
     pid =
-      start_supervised!({AssignmentManager, name: name, tracker: Tracker, persistence: FakePersistence, workflows: Workflows, now: fn -> now end, reconcile_interval_ms: :timer.hours(1)})
+      start_supervised!(
+        {AssignmentManager, name: name, tracker: Tracker, persistence: FakePersistence, workflows: Workflows, now: fn -> now end, failure_circuit: circuit, reconcile_interval_ms: :timer.hours(1)}
+      )
 
     on_exit(fn ->
       Application.delete_env(:symphony_elixir, :assignment_test_workflow)
       Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
     end)
 
-    %{manager: pid, worker: registration.worker, session: registration.session, now: now}
+    %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
   end
 
   test "serializes live claims and creates a fresh assignment after completion", context do
@@ -330,7 +335,15 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     name = Module.concat(__MODULE__, "Restarted#{System.unique_integer([:positive])}")
 
     {:ok, restarted} =
-      AssignmentManager.start_link(name: name, tracker: Tracker, persistence: FakePersistence, workflows: Workflows, now: fn -> context.now end, reconcile_interval_ms: :timer.hours(1))
+      AssignmentManager.start_link(
+        name: name,
+        tracker: Tracker,
+        persistence: FakePersistence,
+        workflows: Workflows,
+        now: fn -> context.now end,
+        failure_circuit: context.circuit,
+        reconcile_interval_ms: :timer.hours(1)
+      )
 
     assert AssignmentManager.current_assignment(restarted) == nil
     AssignmentManager.reconcile(restarted)
@@ -404,8 +417,72 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, {:empty, 5}} = claim(context)
   end
 
+  test "docs/spec-reliability-security.md §14.5 and docs/spec-observability.md §13.8: stub worker failures open the circuit once",
+       context do
+    for number <- 1..EnvironmentFailureCircuit.threshold() do
+      Tracker.put([issue(number)])
+      assert {:ok, assignment} = claim(context)
+
+      assert {:ok, _event} =
+               AssignmentManager.record_event(
+                 context.worker.id,
+                 context.session.id,
+                 assignment.id,
+                 "task.failed",
+                 %{
+                   "correlation" => assignment.correlation,
+                   "summary" => failure_summary("bwrap: No permissions to create a new namespace")
+                 },
+                 context.manager
+               )
+    end
+
+    [alert] = FakePersistence.list_events(event_type: EnvironmentFailureCircuit.event_type())
+    assert alert.payload.triggering_fingerprint == EnvironmentFailureCircuit.fingerprint("bwrap: No permissions to create a new namespace")
+    assert alert.payload.issue_identifiers == ["SYM-1", "SYM-2", "SYM-3"]
+    assert alert.payload.distinct_issue_count == EnvironmentFailureCircuit.threshold()
+
+    assert %{active: true, triggering_fingerprint: fingerprint} = EnvironmentFailureCircuit.snapshot(context.circuit)
+
+    Tracker.put([issue(4)])
+    fetch_count = Tracker.fetch_count()
+
+    assert {:ok, {:empty, 60}, %{reason: :environment_failure_circuit_open, failure_fingerprint: ^fingerprint}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               context.manager
+             )
+
+    assert Tracker.fetch_count() == fetch_count
+
+    assert {:ok, assignment} = claim_after_circuit_reset(context, issue(4))
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.failed",
+               %{
+                 "correlation" => assignment.correlation,
+                 "summary" => failure_summary("bwrap: No permissions to create a new namespace")
+               },
+               context.manager
+             )
+
+    assert [_alert] = FakePersistence.list_events(event_type: EnvironmentFailureCircuit.event_type())
+  end
+
   defp claim(context) do
     AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, context.manager)
+  end
+
+  defp claim_after_circuit_reset(context, issue) do
+    EnvironmentFailureCircuit.reset(context.circuit)
+    Tracker.put([issue])
+    claim(context)
   end
 
   defp complete(context, assignment) do
@@ -447,5 +524,11 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       "validation_status" => if(outcome == "succeeded", do: "passed", else: "failed"),
       "gates" => []
     }
+  end
+
+  defp failure_summary(detail) do
+    "failed"
+    |> summary()
+    |> Map.put("detail", detail)
   end
 end

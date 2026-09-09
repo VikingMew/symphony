@@ -144,6 +144,12 @@ defmodule SymphonyElixir.TestSupport do
       setup do
         FakePersistence.reset!()
         Health.reset!()
+
+        unless Process.whereis(SymphonyElixir.EnvironmentFailureCircuit) do
+          start_supervised!(SymphonyElixir.EnvironmentFailureCircuit)
+        end
+
+        SymphonyElixir.EnvironmentFailureCircuit.reset()
         previous_linear_api_key = System.get_env("LINEAR_API_KEY")
         System.put_env("LINEAR_API_KEY", "token")
 

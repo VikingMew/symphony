@@ -430,6 +430,17 @@ defmodule SymphonyElixir.ExtensionsTest do
                "seconds_running" => 42.5
              },
              "rate_limits" => %{"primary" => %{"remaining" => 11}},
+             "environment_failure_circuit" => %{
+               "active" => false,
+               "consecutive_failures" => 0,
+               "distinct_issue_count" => 0,
+               "issue_identifiers" => [],
+               "status" => "allow",
+               "threshold" => 3,
+               "triggered_at" => nil,
+               "triggering_fingerprint" => nil,
+               "window_ms" => 1_800_000
+             },
              "rate_limit_status" => %{
                "active_sessions" => 1,
                "last_codex_event" => "notification",
@@ -1130,6 +1141,7 @@ defmodule SymphonyElixir.ExtensionsTest do
       ],
       codex_totals: %{input_tokens: 4, output_tokens: 8, total_tokens: 12, seconds_running: 42.5},
       rate_limits: %{"primary" => %{"remaining" => 11}},
+      environment_failure_circuit: SymphonyElixir.EnvironmentFailureCircuit.allow_snapshot(),
       polling: %{listening?: false, listening_mode: "not_listening"},
       operator_tasks: %{
         nap: %{status: "idle"},

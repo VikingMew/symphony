@@ -51,6 +51,7 @@ defmodule SymphonyElixir.Application do
         {Task.Supervisor, name: SymphonyElixir.TaskSupervisor},
         SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
+        SymphonyElixir.EnvironmentFailureCircuit,
         assignment_manager_child(),
         SymphonyElixir.Orchestrator,
         review_queue_child(),

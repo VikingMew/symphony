@@ -21,6 +21,7 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
     defp response(:start_listening), do: %{listening: true, mode: "all"}
     defp response(:start_refine_only_listening), do: %{listening: true, mode: "refine_only"}
     defp response(:stop_listening), do: %{listening: false, mode: "off"}
+    defp response(:reset_environment_failure_circuit), do: %{environment_failure_circuit: %{active: false, status: "allow"}}
 
     defp response({:request_operator_task, kind, project_id}),
       do: %{status: "failed", kind: Atom.to_string(kind), project_id: project_id}
@@ -62,6 +63,13 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
 
     assert %{"listening" => false, "mode" => "off"} = post_json("/api/v1/control/listening", %{mode: "off"}, 200)
     assert_receive {:orchestrator_call, :stop_listening}
+  end
+
+  test "environment failure circuit reset calls the injected orchestrator and returns its map" do
+    assert %{"environment_failure_circuit" => %{"active" => false, "status" => "allow"}} =
+             post_json("/api/v1/control/environment-failure-circuit/reset", %{}, 200)
+
+    assert_receive {:orchestrator_call, :reset_environment_failure_circuit}
   end
 
   test "listening rejects missing and unknown modes without calling the orchestrator" do
@@ -111,6 +119,7 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
 
     for {path, body} <- [
           {"/api/v1/control/listening", %{mode: "all"}},
+          {"/api/v1/control/environment-failure-circuit/reset", %{}},
           {"/api/v1/control/nap", %{}},
           {"/api/v1/control/daydream", %{project_id: "project-1"}}
         ] do
@@ -119,7 +128,12 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
   end
 
   test "defined control paths reject unsupported methods and unknown paths remain 404" do
-    for path <- ["/api/v1/control/listening", "/api/v1/control/nap", "/api/v1/control/daydream"] do
+    for path <- [
+          "/api/v1/control/listening",
+          "/api/v1/control/environment-failure-circuit/reset",
+          "/api/v1/control/nap",
+          "/api/v1/control/daydream"
+        ] do
       assert %{"error" => %{"code" => "method_not_allowed"}} =
                build_conn() |> get(path) |> json_response(405)
     end
@@ -135,7 +149,12 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
       password_hash: Auth.hash_password("secret")
     )
 
-    for path <- ["/api/v1/control/listening", "/api/v1/control/nap", "/api/v1/control/daydream"] do
+    for path <- [
+          "/api/v1/control/listening",
+          "/api/v1/control/environment-failure-circuit/reset",
+          "/api/v1/control/nap",
+          "/api/v1/control/daydream"
+        ] do
       assert %{"error" => %{"code" => "authentication_required"}} =
                build_conn() |> post(path, %{}) |> json_response(401)
     end

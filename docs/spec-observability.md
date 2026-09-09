@@ -57,6 +57,8 @@ SHOULD return:
   - `total_tokens`
   - `seconds_running` (aggregate runtime seconds as of snapshot time, including active sessions)
 - `rate_limits` (latest coding-agent rate limit payload, if available)
+- `environment_failure_circuit` (environment failure circuit status, triggering fingerprint, and
+  threshold/window counters)
 
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
 Failed external writes remain visible and retryable without creating a new coding-agent run;
@@ -298,6 +300,10 @@ Minimum endpoints:
 - `POST /api/v1/control/listening`
   - Accepts `{"mode":"all"}`, `{"mode":"refine_only"}`, or `{"mode":"off"}` and applies the
     corresponding listening mode through the configured orchestrator.
+- `POST /api/v1/control/environment-failure-circuit/reset`
+  - Clears the open environment failure circuit described in
+    [spec-reliability-security §14.5](spec-reliability-security.md).
+  - Returns the cleared circuit snapshot from the configured orchestrator.
 - `POST /api/v1/control/nap`
   - Requests a nap operator task. `project_id` is optional; when present it MUST be a non-empty
     string and is forwarded unchanged.
@@ -335,3 +341,25 @@ API design notes:
 - API errors SHOULD use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
 - If the dashboard is a client-side app, it SHOULD consume this API rather than duplicating state
   logic.
+
+### 13.8 Environment Failure Circuit Observability
+
+The environment failure circuit defined by [spec-reliability-security §14.5](spec-reliability-security.md)
+MUST be observable without reading durable history.
+
+`GET /api/v1/state` includes `environment_failure_circuit` with:
+
+- `status`: `allow` or `tripped`
+- `active`: boolean open/closed state
+- `triggering_fingerprint`: the normalized failure fingerprint when open, otherwise `null`
+- `triggered_at`: UTC trigger time when open, otherwise `null`
+- `threshold`: distinct issue threshold
+- `window_ms`: failure window in milliseconds
+- `consecutive_failures`: failures retained in the current same-fingerprint window
+- `distinct_issue_count`: distinct issue identifiers represented in that window
+- `issue_identifiers`: distinct issue identifiers that contributed to the current window
+
+When the circuit opens, the implementation emits exactly one `environment_failure_circuit.opened`
+event for that open period. The event payload uses the same fields as the state snapshot, omitting
+the transient alert flag. Repeated failures with the same triggering fingerprint do not emit another
+opened event until an operator reset clears the circuit.

@@ -22,6 +22,10 @@ defmodule SymphonyElixirWeb.ControlApiController do
   def listening(conn, _params),
     do: error_response(conn, 400, "invalid_parameter", "mode must be all, refine_only, or off")
 
+  @spec reset_environment_failure_circuit(Conn.t(), map()) :: Conn.t()
+  def reset_environment_failure_circuit(conn, _params),
+    do: control_response(conn, Orchestrator.reset_environment_failure_circuit(WebRuntime.orchestrator()))
+
   @spec nap(Conn.t(), map()) :: Conn.t()
   def nap(conn, params) do
     case optional_project_id(params) do
