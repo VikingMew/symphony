@@ -1109,7 +1109,7 @@ defmodule SymphonyElixir.CoreTest do
 
     # The worker's terminal summary carried blocker evidence, but task completion
     # must still release the orchestration claim.
-    Orchestrator.worker_task_finished(issue_id, orchestrator_name)
+    Orchestrator.worker_task_finished(issue_id, :success, orchestrator_name)
     state = :sys.get_state(pid)
     claimed = state.claimed
     assert MapSet.member?(claimed, issue_id) == false

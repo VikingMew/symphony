@@ -14,6 +14,13 @@ defmodule SymphonyElixir.WorkerResultTest do
     assert {:ok, %{"gates" => ^gates}} = WorkerResult.validate(summary(gates))
   end
 
+  test "accepts the explicit blocked terminal outcome" do
+    blocked = summary([]) |> Map.put("outcome", "blocked") |> Map.put("reason", "handoff_failed")
+
+    assert {:ok, %{"outcome" => "blocked", "reason" => "handoff_failed"}} =
+             WorkerResult.validate(blocked)
+  end
+
   test "rejects oversized, path-bearing, secret-bearing, and malformed evidence" do
     assert {:error, {:invalid_worker_summary, "gate count exceeds 32"}} =
              WorkerResult.validate(summary(List.duplicate(gate("gate", "passed", 0), 33)))

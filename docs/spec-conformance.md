@@ -89,6 +89,9 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
   `agent.max_failure_retries` budget; scheduling requeues do not consume it
 - Explicit blocked outcomes with arbitrary reasons use persistent blocking-decision delivery and
   never enter the retry queue
+- Worker terminal events route by explicit outcome only: `blocked` blocks immediately, `failed`
+  consumes the shared budget, and `success`/`cancelled` clear the failure chain; no reason or
+  method whitelist participates in the decision
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason

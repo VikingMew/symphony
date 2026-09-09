@@ -31,7 +31,6 @@ test/symphony_elixir/auth_persistence_web_test.exs	129	refute	structure-data	rew
 test/symphony_elixir/auth_persistence_web_test.exs	152	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute html =~ ~s(href="/workflows")
 test/symphony_elixir/auth_persistence_web_test.exs	153	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ ~s(href="/agent-settings")
 test/symphony_elixir/auth_persistence_web_test.exs	160	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute settings_html =~ ~s(href="/settings/workflow")
-test/symphony_elixir/blocking_decision_test.exs	79	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute BlockingDecision.terminal_handoff_failure?(:capacity_exhausted)
 test/symphony_elixir/codex/app_server_startup_policy_test.exs	159	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(marker_file)
 test/symphony_elixir/codex/message_humanizer_status_test.exs	19	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute plain =~ <<27>>
 test/symphony_elixir/codex/message_humanizer_status_test.exs	20	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute plain =~ <<0>>

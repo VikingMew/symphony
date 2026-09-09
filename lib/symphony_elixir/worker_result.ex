@@ -7,7 +7,7 @@ defmodule SymphonyElixir.WorkerResult do
   @max_text 512
   @max_detail 2_048
   @phases ~w(checkout codex hooks validation handoff complete)
-  @outcomes ~w(running succeeded failed cancelled)
+  @outcomes ~w(running succeeded blocked failed cancelled)
   @reasons ~w(in_progress completed non_zero timed_out cancelled lease_lost worker_error handoff_failed)
   @validation_statuses ~w(pending passed failed timed_out cancelled)
   @gate_statuses ~w(passed failed timed_out not_run)

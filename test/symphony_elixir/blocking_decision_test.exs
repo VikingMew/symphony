@@ -71,14 +71,6 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert issue.blocking_decision == nil
   end
 
-  test "classifies typed implementation handoff failures as terminal" do
-    assert BlockingDecision.terminal_handoff_failure?({:implementation_handoff_failed, :pull_request_conflict})
-
-    assert BlockingDecision.terminal_handoff_failure?({:implementation_handoff_field_required, "comment"})
-
-    assert BlockingDecision.terminal_handoff_failure?(:capacity_exhausted) == false
-  end
-
   test "persists policy-prohibited validation as ordinary reported blocker evidence" do
     evidence =
       "required image build conflicts with the container-engine validation policy"

@@ -219,6 +219,14 @@ The orchestrator accepts an explicit `blocked` outcome without inspecting its re
 Those opaque values and the run/session/references are persisted through `BlockingDecision`; the
 orchestrator has no blocked-reason or protocol-method whitelist.
 
+External worker terminal events carry the same normalized outcome vocabulary at the assignment
+boundary. `task.completed` reports `success`, `task.cancelled` reports `cancelled`, and
+`task.failed` reports either `blocked` or `failed` through the event payload's `outcome` field.
+The orchestrator routes on that field alone: `success` and `cancelled` clear the issue's failure
+chain, `blocked` persists a blocking decision immediately, and `failed` consumes one failure
+attempt. An outcome that is missing or unrecognized is treated as `failed`, so a protocol failure
+never bypasses the bounded budget.
+
 Retry handling behavior:
 
 1. Fetch active candidate issues (not all issues).

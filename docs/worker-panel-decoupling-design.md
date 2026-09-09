@@ -46,6 +46,12 @@ accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `ru
 当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、二次校验、新 run 和
 新 assignment。
 
+terminal event 必须携带归一化的 `outcome`（`success` / `blocked` / `failed` / `cancelled`），由 worker 侧的
+Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段分流：`success` 与 `cancelled` 清理
+该 issue 的失败链；`blocked` 立即持久化 blocking decision 并投递 Linear 评论与 `Blocked` 状态；
+`failed` 消耗一次 `agent.max_failure_retries` 预算，耗尽后同样持久化 blocking decision。outcome
+缺失或不在上述取值内按 `failed` 处理，协议异常不得绕过失败预算。
+
 Panel 重启不会恢复 assignment 或旧 payload。reconciliation 读取 Linear `In Progress` issue 和
 最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结
 旧 run。旧 worker 的迟到上报因不存在匹配 assignment 而被拒绝。
