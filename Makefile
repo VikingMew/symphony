@@ -1,12 +1,14 @@
-.PHONY: help setup deps build worker-image worker-image-check
+.PHONY: help all setup deps build worker-image worker-image-check
 
 MIX ?= mix
 WORKER_IMAGE ?= symphony-worker:local
 WORKER_SOURCE_REVISION ?= $(shell git rev-parse HEAD)
 
 help:
-	@echo "Targets: setup, deps, build, worker-image, worker-image-check"
+	@echo "Targets: all, setup, deps, build, worker-image, worker-image-check"
 	@echo "Quality checks: scripts/check.sh, scripts/unit.sh, scripts/e2e.sh, scripts/dialyzer.sh"
+
+all: build
 
 setup:
 	$(MIX) setup

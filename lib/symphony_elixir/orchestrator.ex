@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Orchestrator do
     Codex.RateLimitGate,
     Codex.Update,
     Config,
+    EnvironmentFailureCircuit,
     MergeConflictReconciler,
     Nap.Results,
     Payload,
@@ -551,6 +552,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp handle_issue_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
     persist_run_finished(running_entry, "completed", nil)
+    EnvironmentFailureCircuit.record_success(running_entry.identifier)
 
     state = clear_failure_count(state, issue_id)
 
@@ -770,6 +772,8 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail) do
+    record_environment_failure(issue_id, running_entry, detail)
+
     decision =
       RetryPolicy.failure_decision(
         Map.get(state.failure_counts, issue_id, 0),
@@ -807,6 +811,21 @@ defmodule SymphonyElixir.Orchestrator do
         }
       )
     end
+  end
+
+  defp record_environment_failure(issue_id, running_entry, reason) do
+    circuit =
+      EnvironmentFailureCircuit.record_failure(
+        Map.fetch!(running_entry, :identifier),
+        reason,
+        %{issue_id: issue_id, run_id: Map.get(running_entry, :run_id)}
+      )
+
+    if circuit.alert do
+      persist_event(EnvironmentFailureCircuit.alert_event_attrs(circuit, Map.get(running_entry, :project_id)))
+    end
+
+    circuit
   end
 
   defp clear_failure_count(state, issue_id),
@@ -919,6 +938,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp dispatch_for_workflow_centrally(%State{} = state, workflow) do
     with :ok <- Config.validate!(),
          state = reconcile_ready_to_merge_issues(state),
+         :allow <- environment_failure_circuit_allows_dispatch(),
          :allow <- rate_limit_gate_allows_dispatch(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues(),
          true <- available_slots(state) > 0,
@@ -939,6 +959,13 @@ defmodule SymphonyElixir.Orchestrator do
         state
         |> apply_rate_limit_gate_block(details)
         |> Map.put(:last_config_error, nil)
+
+      {:environment_failure_circuit_open, circuit} ->
+        Logger.warning(
+          "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
+        )
+
+        %{state | last_config_error: nil}
 
       false ->
         Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success dispatch=skipped reason=capacity")
@@ -1643,6 +1670,8 @@ defmodule SymphonyElixir.Orchestrator do
 
         failure_reason = "failed to spawn agent: #{inspect(reason)}"
 
+        record_environment_failure(issue.id, %{identifier: issue.identifier, run_id: run_record && run_record.id}, reason)
+
         persist_run_finished(
           %{
             run_id: run_record && run_record.id,
@@ -1885,21 +1914,35 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
-    case Tracker.fetch_candidate_issues() do
-      {:ok, issues} ->
-        issues
-        |> find_issue_by_id(issue_id)
-        |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
+    case environment_failure_circuit_allows_dispatch() do
+      :allow ->
+        case Tracker.fetch_candidate_issues() do
+          {:ok, issues} ->
+            issues
+            |> find_issue_by_id(issue_id)
+            |> handle_retry_issue_lookup(state, issue_id, attempt, metadata)
 
-      {:error, reason} ->
-        Logger.warning("Retry poll failed for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+          {:error, reason} ->
+            Logger.warning("Retry poll failed for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+
+            {:noreply,
+             schedule_issue_retry(
+               state,
+               issue_id,
+               attempt + 1,
+               Map.merge(metadata, %{error: "retry poll failed: #{inspect(reason)}"})
+             )}
+        end
+
+      {:environment_failure_circuit_open, circuit} ->
+        Logger.warning("Retry dispatch paused by environment failure circuit issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id} fingerprint=#{circuit.triggering_fingerprint}")
 
         {:noreply,
          schedule_issue_retry(
            state,
            issue_id,
-           attempt + 1,
-           Map.merge(metadata, %{error: "retry poll failed: #{inspect(reason)}"})
+           attempt,
+           Map.merge(metadata, %{error: "environment failure circuit open: #{circuit.triggering_fingerprint}"})
          )}
     end
   end
@@ -2083,6 +2126,16 @@ defmodule SymphonyElixir.Orchestrator do
     if Process.whereis(server), do: GenServer.call(server, :stop_listening), else: :unavailable
   end
 
+  @spec reset_environment_failure_circuit() :: map() | :unavailable
+  def reset_environment_failure_circuit, do: reset_environment_failure_circuit(__MODULE__)
+
+  @spec reset_environment_failure_circuit(GenServer.server()) :: map() | :unavailable
+  def reset_environment_failure_circuit(server) do
+    if Process.whereis(server),
+      do: GenServer.call(server, :reset_environment_failure_circuit),
+      else: :unavailable
+  end
+
   @spec request_nap() :: map() | :unavailable
   def request_nap, do: request_nap(nil)
 
@@ -2229,6 +2282,7 @@ defmodule SymphonyElixir.Orchestrator do
        rate_limits: Map.get(state, :codex_rate_limits),
        rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
        rate_limit_gate: rate_limit_gate_snapshot(),
+       environment_failure_circuit: EnvironmentFailureCircuit.snapshot(),
        config_error: config_error_payload(state.last_config_error),
        operator_tasks: operator_tasks_payload(state),
        polling: %{
@@ -2342,6 +2396,13 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     {:reply, reply, state}
+  end
+
+  def handle_call(:reset_environment_failure_circuit, _from, state) do
+    circuit = EnvironmentFailureCircuit.reset()
+    persist_event("environment_failure_circuit.reset", nil, %{status: :allow})
+    notify_dashboard()
+    {:reply, %{environment_failure_circuit: circuit, reset_at: DateTime.utc_now()}, state}
   end
 
   def handle_call(:force_stop_all, _from, state) do
@@ -3204,6 +3265,13 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp agent_runner do
     Application.get_env(:symphony_elixir, :agent_runner_module, AgentRunner)
+  end
+
+  defp environment_failure_circuit_allows_dispatch do
+    case EnvironmentFailureCircuit.check() do
+      :allow -> :allow
+      {:block, circuit} -> {:environment_failure_circuit_open, circuit}
+    end
   end
 
   defp rate_limit_gate_allows_dispatch(%State{} = state) do

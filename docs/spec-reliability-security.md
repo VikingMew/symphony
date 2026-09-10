@@ -95,6 +95,32 @@ Operators can control behavior by:
 - Restarting the service for process recovery or deployment (not as the normal path for applying
   workflow config changes).
 
+### 14.5 Environment Failure Circuit Breaker
+
+An environment failure fingerprint is the stable identifier derived from a normalized failure reason.
+Normalization lowercases the failure text, collapses whitespace, and replaces volatile UUIDs and
+standalone numbers before hashing. The fingerprint represents the failure cause, not a specific run,
+workspace path, issue id, or session id.
+
+The implementation MUST maintain an in-memory environment failure circuit for dispatcher admission.
+The circuit opens when the same fingerprint appears in failed terminal outcomes for at least three
+distinct issue identifiers within a 30-minute window, with no intervening success or different
+failure fingerprint before the threshold is reached.
+
+When the circuit is open:
+
+- Centralized dispatch MUST skip candidate fetch and MUST NOT start new coding-agent sessions.
+- Worker-mode assignment claims MUST return an empty assignment response before reading tracker
+  candidates.
+- Existing in-flight sessions or assignments MAY finish and report their terminal outcomes.
+- The circuit MUST stay open until an explicit operator reset through the control surface.
+- Reset clears the triggering fingerprint and current streak; normal dispatch eligibility then
+  resumes according to the usual listening mode, capacity, tracker, and rate-limit gates.
+
+This circuit does not replace per-issue retry or blocking behavior. Individual failures still follow
+the single-issue retry/blocking policy, and the environment circuit only governs admission of new
+work.
+
 ## 15. Security and Operational Safety
 
 ### 15.1 Trust Boundary Assumption
@@ -168,4 +194,3 @@ Possible hardening measures include:
 
 The correct controls are deployment-specific, but implementations SHOULD document them clearly and
 treat harness hardening as part of the core safety model rather than an optional afterthought.
-

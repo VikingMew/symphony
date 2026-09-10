@@ -80,6 +80,8 @@ defmodule SymphonyElixirWeb.Router do
     match(:*, "/api/v1/state", ObservabilityApiController, :method_not_allowed)
     post("/api/v1/control/listening", ControlApiController, :listening)
     match(:*, "/api/v1/control/listening", ControlApiController, :method_not_allowed)
+    post("/api/v1/control/environment-failure-circuit/reset", ControlApiController, :reset_environment_failure_circuit)
+    match(:*, "/api/v1/control/environment-failure-circuit/reset", ControlApiController, :method_not_allowed)
     post("/api/v1/control/nap", ControlApiController, :nap)
     match(:*, "/api/v1/control/nap", ControlApiController, :method_not_allowed)
     post("/api/v1/control/daydream", ControlApiController, :daydream)

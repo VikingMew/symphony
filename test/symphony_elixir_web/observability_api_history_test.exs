@@ -182,6 +182,39 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     assert Process.alive?(blocked_pid) == false
   end
 
+  test "state endpoint exposes environment failure circuit status and triggering fingerprint" do
+    orchestrator_name = Module.concat(__MODULE__, :CircuitOrchestrator)
+
+    snapshot = %{
+      empty_snapshot()
+      | environment_failure_circuit: %{
+          status: :tripped,
+          active: true,
+          triggering_fingerprint: "env_failure:abc123",
+          triggered_at: ~U[2026-09-09 02:30:00Z],
+          threshold: 3,
+          window_ms: 1_800_000,
+          consecutive_failures: 3,
+          distinct_issue_count: 3,
+          issue_identifiers: ["SYM-1", "SYM-2", "SYM-3"]
+        }
+    }
+
+    start_supervised!(%{
+      id: orchestrator_name,
+      start: {StaticOrchestrator, :start_link, [[name: orchestrator_name, snapshot: snapshot]]}
+    })
+
+    configure_endpoint(orchestrator_name)
+
+    payload = json_response(get(build_conn(), "/api/v1/state"), 200)
+
+    assert payload["environment_failure_circuit"]["active"] == true
+    assert payload["environment_failure_circuit"]["status"] == "tripped"
+    assert payload["environment_failure_circuit"]["triggering_fingerprint"] == "env_failure:abc123"
+    assert payload["environment_failure_circuit"]["issue_identifiers"] == ["SYM-1", "SYM-2", "SYM-3"]
+  end
+
   defp start_test_endpoint(orchestrator_name) do
     configure_endpoint(orchestrator_name)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
@@ -204,6 +237,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
       blocked: [],
       codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0},
       rate_limits: %{},
+      environment_failure_circuit: SymphonyElixir.EnvironmentFailureCircuit.allow_snapshot(),
       operator_tasks: %{},
       polling: %{listening?: false, listening_mode: "not_listening"}
     }
