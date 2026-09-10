@@ -102,10 +102,11 @@ Codex 的 `linear_task_update` 必须包含：
 并调用受限 `create_pull_request`；`AgentRunner` 提供 backend-owned lookup/create boundary。
 
 若 PR 修改 repository split workflow package（`docs/examples/workflow.yml` 或
-`docs/examples/profiles.yml`），PR Test Plan 只记录 merge 后由部署侧/宿主同步 PostgreSQL current
-workflow：`mise exec -- mix symphony.workflow.sync --all`，并以同目标 `--check` 验证无 drift。
-worker 不执行 runtime sync，不因缺少数据库连接而 block，也不声称 checked-in package 已经影响
-后续 dispatch。
+`docs/examples/profiles.yml`），PR Test Plan 只记录 merge 后由部署侧/宿主通过 Settings / Import
+导入并保存目标 project 的 PostgreSQL current workflow，预期结果是 import validation 通过且保存后的
+project current workflow 包含该 package 变更。worker 不执行 runtime import，不因缺少数据库连接而
+block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
+`mix symphony.workflow.sync` 或 drift `--check` 契约。
 
 ### 6. Symphony 原子 handoff
 
