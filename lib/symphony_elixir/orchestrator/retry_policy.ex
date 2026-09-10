@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
   @type retry_metadata :: %{
           optional(:identifier) => String.t(),
           optional(:error) => String.t(),
+          optional(:project_id) => String.t(),
           optional(:worker_host) => String.t(),
           optional(:workspace_path) => String.t(),
           optional(:failure_count) => non_neg_integer(),
@@ -28,6 +29,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       old_timer_ref: Map.get(previous_retry, :timer_ref),
       identifier: pick_retry_identifier(issue_id, previous_retry, metadata),
       error: pick_retry_error(previous_retry, metadata),
+      project_id: pick_retry_project_id(previous_retry, metadata),
       worker_host: pick_retry_worker_host(previous_retry, metadata),
       workspace_path: pick_retry_workspace_path(previous_retry, metadata),
       failure_count: Map.get(metadata, :failure_count, Map.get(previous_retry, :failure_count, 0)),
@@ -49,6 +51,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       workspace_path: prepared_retry.workspace_path,
       failure_count: prepared_retry.failure_count
     }
+    |> maybe_put(:project_id, prepared_retry.project_id)
   end
 
   @spec pop_retry_attempt(map(), String.t(), reference()) ::
@@ -57,13 +60,15 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       when is_map(retry_attempts) and is_binary(issue_id) and is_reference(retry_token) do
     case Map.get(retry_attempts, issue_id) do
       %{attempt: attempt, retry_token: ^retry_token} = retry_entry ->
-        metadata = %{
-          identifier: Map.get(retry_entry, :identifier),
-          error: Map.get(retry_entry, :error),
-          worker_host: Map.get(retry_entry, :worker_host),
-          workspace_path: Map.get(retry_entry, :workspace_path),
-          failure_count: Map.get(retry_entry, :failure_count, 0)
-        }
+        metadata =
+          %{
+            identifier: Map.get(retry_entry, :identifier),
+            error: Map.get(retry_entry, :error),
+            worker_host: Map.get(retry_entry, :worker_host),
+            workspace_path: Map.get(retry_entry, :workspace_path),
+            failure_count: Map.get(retry_entry, :failure_count, 0)
+          }
+          |> maybe_put(:project_id, Map.get(retry_entry, :project_id))
 
         {:ok, attempt, metadata, Map.delete(retry_attempts, issue_id)}
 
@@ -165,6 +170,10 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
     metadata[:error] || Map.get(previous_retry, :error)
   end
 
+  defp pick_retry_project_id(previous_retry, metadata) do
+    metadata[:project_id] || Map.get(previous_retry, :project_id)
+  end
+
   defp pick_retry_worker_host(previous_retry, metadata) do
     metadata[:worker_host] || Map.get(previous_retry, :worker_host)
   end
@@ -172,6 +181,9 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
   defp pick_retry_workspace_path(previous_retry, metadata) do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)
   end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp last_activity_timestamp(running_entry) when is_map(running_entry) do
     Map.get(running_entry, :last_codex_timestamp)

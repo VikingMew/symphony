@@ -48,8 +48,22 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
   end
 
   test "current uses the configured default workflow when multiple projects exist" do
+    # docs/remove-default-project-dependency-design.md and
+    # docs/default-project-bootstrap-and-remove-design.md own this selection order.
     raw = sample_workflow_markdown()
-    {:ok, default} = FakePersistence.default_project()
+
+    {:ok, fixture_project} = FakePersistence.update_project("fake-project-id", %{enabled: false})
+    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+
+    {:ok, default} =
+      FakePersistence.create_project(%{
+        name: "Default",
+        slug: "default",
+        linear_project_slug: "default-linear",
+        repository_url: "git@github.com:VikingMew/default.git",
+        enabled: true
+      })
+
     {:ok, _} = FakePersistence.import_workflow(default, raw, "test")
 
     {:ok, project_b} =
@@ -69,7 +83,9 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert default_id == default.id
   end
 
-  test "current falls back to the first enabled configured workflow when default is disabled" do
+  test "current uses the only enabled loaded workflow when default is disabled" do
+    # docs/remove-default-project-dependency-design.md and
+    # docs/default-project-bootstrap-and-remove-design.md allow this single-project no-context read.
     raw = sample_workflow_markdown()
     {:ok, default} = FakePersistence.default_project()
     {:ok, _} = FakePersistence.import_workflow(default, raw, "test")
@@ -89,6 +105,42 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, %{project_id: project_b_id}} = WorkflowStore.current()
     assert project_b_id == project_b.id
+  end
+
+  test "current requires project context when multiple enabled loaded workflows exist without configured default" do
+    # docs/remove-default-project-dependency-design.md and
+    # docs/default-project-bootstrap-and-remove-design.md prohibit selecting the first project here.
+    raw = sample_workflow_markdown()
+    {:ok, fixture_project} = FakePersistence.default_project()
+    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
+
+    {:ok, project_a} =
+      FakePersistence.create_project(%{
+        name: "Project A",
+        slug: "project-a",
+        linear_project_slug: "linear-a",
+        repository_url: "git@github.com:VikingMew/project-a.git",
+        enabled: true
+      })
+
+    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@github.com:VikingMew/project-b.git",
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+
+    assert :ok = WorkflowStore.force_reload()
+    assert MapSet.new(Enum.map(WorkflowStore.list_enabled(), & &1.project_id)) == MapSet.new([project_a.id, project_b.id])
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:error, :missing_project_context} = WorkflowStore.current_with_source()
   end
 
   test "default placeholder without repository URL is not published as an enabled workflow" do
@@ -183,6 +235,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
   test "workflow and project mutations publish complete first-read snapshots" do
     {:ok, loaded} = Workflow.load()
     {:ok, default} = FakePersistence.default_project()
+    default = update_project!(default, %{slug: "default"})
     default_raw = Workflow.to_markdown(loaded.config, "Default prompt")
 
     assert {:ok, _default_workflow} =
@@ -231,7 +284,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert get_in(b_workflow.config, ["hooks", "before_run"]) == "echo project-b"
 
     assert {:ok, _disabled_default} =
-             FakePersistence.update_project(default.id, %{enabled: false})
+             FakePersistence.update_project(default.id, Map.merge(default, %{enabled: false}))
              |> PersistenceProvider.publish_runtime_mutation()
 
     assert {:ok, %{project_id: project_b_id}} = WorkflowStore.current()
@@ -240,7 +293,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert project_b_id == project_b.id
 
     assert {:ok, _enabled_default} =
-             FakePersistence.update_project(default.id, %{enabled: true})
+             FakePersistence.update_project(default.id, Map.merge(default, %{enabled: true}))
              |> PersistenceProvider.publish_runtime_mutation()
 
     assert {:ok, %{project_id: default_project_id}} = WorkflowStore.current()
@@ -275,4 +328,9 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+
+  defp update_project!(project, attrs) do
+    {:ok, updated} = FakePersistence.update_project(project.id, Map.merge(project, attrs))
+    updated
+  end
 end

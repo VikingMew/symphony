@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   alias SymphonyElixir.{Repo, Text, Workflow}
 
   @default_project_slug "default"
+  @type current_workflow_error :: :missing_project_context
 
   @spec default_project() ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
@@ -96,15 +97,16 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  @spec current_workflow() :: WorkflowRecord.t() | nil
+  @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, current_workflow_error()}
   def current_workflow, do: current_workflow(nil)
 
-  @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
+  @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil | {:error, current_workflow_error()}
   def current_workflow(nil) do
     query(:current_workflow, fn ->
       if repo_available?() do
         current_workflow_candidate_projects!()
-        |> Enum.find_value(&current_workflow/1)
+        |> current_project_workflows!()
+        |> select_current_workflow()
       end
     end)
   end
@@ -112,14 +114,42 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   def current_workflow(%Project{id: project_id}) do
     query(:current_workflow, fn ->
       if repo_available?() do
-        Repo.one(
-          from(w in WorkflowRecord,
-            where: w.project_id == ^project_id,
-            where: ^test_workflow_source_allowed?() or w.source != "test"
-          )
-        )
+        current_workflow_for_project_id!(project_id)
       end
     end)
+  end
+
+  defp current_project_workflows!(projects) do
+    projects
+    |> Enum.flat_map(fn project ->
+      case current_workflow_for_project_id!(project.id) do
+        nil -> []
+        workflow -> [{project, workflow}]
+      end
+    end)
+  end
+
+  defp current_workflow_for_project_id!(project_id) do
+    Repo.one(
+      from(w in WorkflowRecord,
+        where: w.project_id == ^project_id,
+        where: ^test_workflow_source_allowed?() or w.source != "test"
+      )
+    )
+  end
+
+  defp select_current_workflow(project_workflows) do
+    case Enum.find(project_workflows, fn {project, _workflow} -> configured_default_project?(project) end) do
+      {_project, workflow} ->
+        workflow
+
+      nil ->
+        case project_workflows do
+          [] -> nil
+          [{_project, workflow}] -> workflow
+          _multiple -> {:error, :missing_project_context}
+        end
+    end
   end
 
   @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
@@ -159,26 +189,13 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end)
   end
 
-  defp project_for_runtime(_project_id) do
-    query(:project_for_runtime, fn ->
-      if repo_available?() do
-        current_workflow_candidate_projects!()
-        |> List.first()
-      end
-    end)
-  end
+  defp project_for_runtime(_project_id), do: nil
 
   defp current_workflow_candidate_projects! do
-    projects = Repo.all(from(p in Project, order_by: [asc: p.name]))
-
-    case Enum.find(projects, &configured_default_project?/1) do
-      %Project{} = default_project ->
-        [default_project | Enum.reject(projects, &(&1.id == default_project.id))]
-        |> Enum.filter(&runtime_project?/1)
-
-      nil ->
-        Enum.filter(projects, &runtime_project?/1)
-    end
+    Project
+    |> order_by([p], asc: p.name)
+    |> Repo.all()
+    |> Enum.filter(&runtime_project?/1)
   end
 
   defp configured_default_project?(%Project{slug: @default_project_slug} = project),

@@ -35,6 +35,8 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
   test "control API starts listening with a default placeholder and a configured project", %{
     previous_endpoint: previous_endpoint
   } do
+    # docs/remove-default-project-dependency-design.md and
+    # docs/default-project-bootstrap-and-remove-design.md define this placeholder as non-runtime data.
     configured_project = seed_default_placeholder_with_configured_project!()
     orchestrator = Module.concat(__MODULE__, :ApiOrchestrator)
 
@@ -64,6 +66,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
   end
 
   test "real enabled project without repository URL still blocks listening" do
+    # docs/spec-workflow-config.md keeps repository_url mandatory for dispatch/listening.
     seed_project_without_repository_url!()
     orchestrator = Module.concat(__MODULE__, :MissingRepositoryOrchestrator)
     start_orchestrator!(orchestrator)

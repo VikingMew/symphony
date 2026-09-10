@@ -266,6 +266,69 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert FakePersistence.list_runs(project_id: project_b.id) == []
   end
 
+  test "retry without project context does not crash when multiple projects require explicit context" do
+    raw = sample_workflow_markdown()
+    {:ok, fixture_project} = FakePersistence.default_project()
+    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
+
+    {:ok, project_a} =
+      FakePersistence.create_project(%{
+        name: "Project A",
+        slug: "project-a",
+        linear_project_slug: "linear-a",
+        repository_url: "git@example.test:a.git",
+        enabled: true
+      })
+
+    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@example.test:b.git",
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+
+    orchestrator_name = Module.concat(__MODULE__, :RetryContextOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    issue_id = "issue-retry-context"
+    retry_token = make_ref()
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | claimed: MapSet.put(state.claimed, issue_id),
+          retry_attempts: %{
+            issue_id => %{
+              attempt: 1,
+              retry_token: retry_token,
+              identifier: "SYM-RETRY"
+            }
+          }
+      }
+    end)
+
+    log =
+      capture_log(fn ->
+        send(pid, {:retry_issue, issue_id, retry_token})
+        state = :sys.get_state(pid)
+        assert state.retry_attempts == %{}
+        assert MapSet.member?(state.claimed, issue_id) == false
+      end)
+
+    assert Process.alive?(pid)
+    assert log =~ "workflow context unavailable"
+  end
+
   defp workflow_markdown(base, prompt, threshold) do
     config = put_in(base.config, ["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
     Workflow.to_markdown(config, prompt)

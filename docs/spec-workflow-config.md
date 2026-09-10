@@ -38,6 +38,10 @@ Loader behavior:
 - If no active workflow exists, return a typed setup-required error and keep the service alive.
 - Each project has exactly one operator-visible current workflow record; an operator import updates
   that record in place and does not add configuration version semantics.
+- Reads without explicit project context select a configured, enabled `slug=default` workflow when
+  present; otherwise they select the only enabled, loaded, non-placeholder project workflow when
+  exactly one exists. If two or more enabled loaded workflows exist without a configured Default,
+  return `:missing_project_context` instead of selecting by name or insertion order.
 - The package under `docs/examples/` is example and import material, not a synchronization source:
   there is no package synchronization command and no drift contract between those files and the
   database. Manual workflow-table updates are outside the supported lifecycle; Settings / Import is

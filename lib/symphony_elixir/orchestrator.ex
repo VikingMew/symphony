@@ -603,6 +603,7 @@ defmodule SymphonyElixir.Orchestrator do
     |> schedule_issue_retry(issue_id, 1, %{
       identifier: running_entry.identifier,
       delay_type: :continuation,
+      project_id: Map.get(running_entry, :project_id),
       worker_host: Map.get(running_entry, :worker_host),
       workspace_path: Map.get(running_entry, :workspace_path)
     })
@@ -772,12 +773,23 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail) do
+    case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
+      {:ok, settings} ->
+        do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings)
+
+      {:error, reason} ->
+        Logger.error("Run failure cannot be retried; workflow context unavailable issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} reason=#{inspect(reason)}")
+        complete_issue(state, issue_id)
+    end
+  end
+
+  defp do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings) do
     record_environment_failure(issue_id, running_entry, detail)
 
     decision =
       RetryPolicy.failure_decision(
         Map.get(state.failure_counts, issue_id, 0),
-        Config.settings!().agent.max_failure_retries
+        settings.agent.max_failure_retries
       )
 
     failure_count = elem(decision, 1)
@@ -805,6 +817,7 @@ defmodule SymphonyElixir.Orchestrator do
         %{
           identifier: running_entry.identifier,
           error: summary,
+          project_id: Map.get(running_entry, :project_id),
           worker_host: Map.get(running_entry, :worker_host),
           workspace_path: Map.get(running_entry, :workspace_path),
           failure_count: failure_count
@@ -1096,16 +1109,16 @@ defmodule SymphonyElixir.Orchestrator do
     if running_ids == [] do
       state
     else
-      case Tracker.fetch_issue_states_by_ids(running_ids) do
-        {:ok, issues} ->
-          issues
-          |> reconcile_running_issue_states(
-            state,
-            active_state_set(),
-            terminal_state_set()
-          )
-          |> reconcile_missing_running_issue_ids(running_ids, issues)
-
+      with {:ok, state_sets} <- runtime_state_sets(),
+           {:ok, issues} <- Tracker.fetch_issue_states_by_ids(running_ids) do
+        issues
+        |> reconcile_running_issue_states(
+          state,
+          state_sets.active,
+          state_sets.terminal
+        )
+        |> reconcile_missing_running_issue_ids(running_ids, issues)
+      else
         {:error, reason} ->
           Logger.debug("Failed to refresh running issue states: #{inspect(reason)}; keeping active workers")
 
@@ -1123,11 +1136,17 @@ defmodule SymphonyElixir.Orchestrator do
   """
   @spec reconcile_issue_states([Issue.t()], term()) :: term()
   def reconcile_issue_states(issues, %State{} = state) when is_list(issues) do
-    reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
+    case runtime_state_sets() do
+      {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+      {:error, _reason} -> state
+    end
   end
 
   def reconcile_issue_states(issues, state) when is_list(issues) do
-    reconcile_running_issue_states(issues, state, active_state_set(), terminal_state_set())
+    case runtime_state_sets() do
+      {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+      {:error, _reason} -> state
+    end
   end
 
   defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
@@ -1193,12 +1212,12 @@ defmodule SymphonyElixir.Orchestrator do
   defp reconcile_blocked_issues(%State{blocked: blocked} = state) do
     blocked_ids = Map.keys(blocked)
 
-    case Tracker.fetch_issue_states_by_ids(blocked_ids) do
-      {:ok, issues} ->
-        issues
-        |> reconcile_blocked_issue_states(state, active_state_set(), terminal_state_set())
-        |> reconcile_missing_blocked_issue_ids(blocked_ids, issues)
-
+    with {:ok, state_sets} <- runtime_state_sets(),
+         {:ok, issues} <- Tracker.fetch_issue_states_by_ids(blocked_ids) do
+      issues
+      |> reconcile_blocked_issue_states(state, state_sets.active, state_sets.terminal)
+      |> reconcile_missing_blocked_issue_ids(blocked_ids, issues)
+    else
       {:error, reason} ->
         Logger.debug("Failed to refresh blocked issue states: #{inspect(reason)}; keeping blocked claims")
 
@@ -1408,21 +1427,32 @@ defmodule SymphonyElixir.Orchestrator do
     if map_size(state.running) == 0 do
       state
     else
-      reconcile_stalled_running_issues(state, Config.settings!().codex.stall_timeout_ms)
+      do_reconcile_stalled_running_issues(state)
     end
   end
 
-  defp reconcile_stalled_running_issues(state, timeout_ms) when timeout_ms <= 0, do: state
-
-  defp reconcile_stalled_running_issues(state, timeout_ms) do
+  defp do_reconcile_stalled_running_issues(state) do
     now = DateTime.utc_now()
 
     Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
-      restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
+      restart_stalled_issue_with_context(state_acc, issue_id, running_entry, now)
     end)
   end
 
-  defp restart_stalled_issue(state, _run_id, %RunningOperator{}, _now, _timeout_ms), do: state
+  defp restart_stalled_issue_with_context(state, _issue_id, %RunningOperator{}, _now), do: state
+
+  defp restart_stalled_issue_with_context(state, issue_id, %RunningIssue{} = running_entry, now) do
+    case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
+      {:ok, settings} ->
+        restart_stalled_issue(state, issue_id, running_entry, now, settings.codex.stall_timeout_ms)
+
+      {:error, reason} ->
+        Logger.warning("Skipping stalled issue check; workflow context unavailable issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} reason=#{inspect(reason)}")
+        state
+    end
+  end
+
+  defp restart_stalled_issue(state, _issue_id, _running_entry, _now, timeout_ms) when timeout_ms <= 0, do: state
 
   defp restart_stalled_issue(state, issue_id, %RunningIssue{} = running_entry, now, timeout_ms) do
     stall_decision = RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)
@@ -1500,14 +1530,14 @@ defmodule SymphonyElixir.Orchestrator do
     SymphonyElixir.StateName.normalize(state_name)
   end
 
-  defp terminal_state_set do
-    Config.settings!().tracker.terminal_states
-    |> DispatchPolicy.normalized_state_set()
-  end
-
-  defp active_state_set do
-    Config.settings!().tracker.active_states
-    |> DispatchPolicy.normalized_state_set()
+  defp runtime_state_sets do
+    with {:ok, settings} <- Config.settings() do
+      {:ok,
+       %{
+         active: DispatchPolicy.normalized_state_set(settings.tracker.active_states),
+         terminal: DispatchPolicy.normalized_state_set(settings.tracker.terminal_states)
+       }}
+    end
   end
 
   defp dispatch_policy_settings(%State{} = state) do
@@ -1594,26 +1624,38 @@ defmodule SymphonyElixir.Orchestrator do
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
     case ensure_workspace_disk_available(issue) do
       :ok ->
-        workflow = current_workflow_context()
-
-        case persist_run_started(issue, attempt, worker_host) do
-          {:ok, run_record} ->
-            dispatch_issue_agent(
-              state,
-              issue,
-              attempt,
-              recipient,
-              worker_host,
-              workflow,
-              run_record
-            )
-
-          {:error, reason} ->
-            skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason)
-        end
+        spawn_issue_with_workflow_context(state, issue, attempt, recipient, worker_host)
 
       {:error, reason} ->
         block_issue_for_disk_guard(state, issue, reason, worker_host)
+    end
+  end
+
+  defp spawn_issue_with_workflow_context(state, issue, attempt, recipient, worker_host) do
+    case current_workflow_context() do
+      {:ok, workflow} ->
+        persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow)
+
+      {:error, reason} ->
+        skip_dispatch_for_workflow_context(state, issue, reason)
+    end
+  end
+
+  defp persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow) do
+    case persist_run_started(issue, attempt, worker_host) do
+      {:ok, run_record} ->
+        dispatch_issue_agent(
+          state,
+          issue,
+          attempt,
+          recipient,
+          worker_host,
+          workflow,
+          run_record
+        )
+
+      {:error, reason} ->
+        skip_dispatch_for_persistence(state, issue, attempt, worker_host, workflow, reason)
     end
   end
 
@@ -1688,6 +1730,7 @@ defmodule SymphonyElixir.Orchestrator do
         schedule_issue_retry(state, issue.id, next_attempt, %{
           identifier: issue.identifier,
           error: failure_reason,
+          project_id: Map.get(workflow, :project_id),
           worker_host: worker_host
         })
     end
@@ -1717,14 +1760,20 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp skip_dispatch_for_persistence(state, issue, attempt, worker_host, reason) do
+  defp skip_dispatch_for_persistence(state, issue, attempt, worker_host, workflow, reason) do
     Logger.error("Run-start persistence failed action=skip_dispatch #{issue_context(issue)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
 
     schedule_issue_retry(state, issue.id, next_spawn_attempt(attempt), %{
       identifier: issue.identifier,
       error: "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}",
+      project_id: Map.get(workflow, :project_id),
       worker_host: worker_host
     })
+  end
+
+  defp skip_dispatch_for_workflow_context(state, issue, reason) do
+    Logger.error("Skipping dispatch; workflow context unavailable #{issue_context(issue)} reason=#{inspect(reason)}")
+    release_issue_claim(state, issue.id)
   end
 
   defp next_spawn_attempt(attempt) when is_integer(attempt), do: attempt + 1
@@ -1847,13 +1896,24 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
 
+    case retry_settings(metadata) do
+      {:ok, settings} ->
+        do_schedule_issue_retry(state, issue_id, attempt, metadata, previous_retry, settings)
+
+      {:error, reason} ->
+        Logger.warning("Skipping retry scheduling; workflow context unavailable for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+        release_issue_claim(state, issue_id)
+    end
+  end
+
+  defp do_schedule_issue_retry(state, issue_id, attempt, metadata, previous_retry, settings) do
     prepared_retry =
       RetryPolicy.prepare_retry(
         issue_id,
         attempt,
         metadata,
         previous_retry,
-        Config.settings!().agent.max_retry_backoff_ms
+        settings.agent.max_retry_backoff_ms
       )
 
     retry_token = make_ref()
@@ -1902,6 +1962,19 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
+  defp retry_settings(metadata) do
+    case retry_workflow_context(metadata) do
+      {:ok, workflow} -> Config.with_workflow_context(workflow, &Config.settings/0)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp retry_workflow_context(%{project_id: project_id}) when is_binary(project_id) do
+    WorkflowStore.for_project(project_id)
+  end
+
+  defp retry_workflow_context(_metadata), do: current_workflow_context()
+
   defp pop_retry_attempt_state(%State{} = state, issue_id, retry_token)
        when is_reference(retry_token) do
     case RetryPolicy.pop_retry_attempt(state.retry_attempts, issue_id, retry_token) do
@@ -1914,6 +1987,19 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_retry_issue(%State{} = state, issue_id, attempt, metadata) do
+    case retry_workflow_context(metadata) do
+      {:ok, workflow} ->
+        Config.with_workflow_context(workflow, fn ->
+          handle_retry_issue_with_workflow(state, issue_id, attempt, metadata)
+        end)
+
+      {:error, reason} ->
+        Logger.warning("Skipping retry dispatch; workflow context unavailable for issue_id=#{issue_id} issue_identifier=#{metadata[:identifier] || issue_id}: #{inspect(reason)}")
+        {:noreply, release_issue_claim(state, issue_id)}
+    end
+  end
+
+  defp handle_retry_issue_with_workflow(%State{} = state, issue_id, attempt, metadata) do
     case environment_failure_circuit_allows_dispatch() do
       :allow ->
         case Tracker.fetch_candidate_issues() do
@@ -2004,6 +2090,19 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_active_retry(state, issue, attempt, metadata) do
+    case current_workflow_context() do
+      {:ok, workflow} ->
+        Config.with_workflow_context(workflow, fn ->
+          handle_active_retry_with_workflow(state, issue, attempt, metadata)
+        end)
+
+      {:error, reason} ->
+        Logger.warning("Skipping retry dispatch; workflow context unavailable for #{issue_context(issue)}: #{inspect(reason)}")
+        {:noreply, release_issue_claim(state, issue.id)}
+    end
+  end
+
+  defp handle_active_retry_with_workflow(state, issue, attempt, metadata) do
     state = refresh_deployment_capacity(state)
     dispatch_settings = dispatch_policy_settings(state)
     worker_settings = worker_policy_settings()
@@ -3451,9 +3550,14 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp persist_polled_issues(issues) do
     if persistence_enabled?() do
-      project_id = Map.get(current_workflow_context(), :project_id)
+      case current_workflow_context() do
+        {:ok, workflow} ->
+          project_id = Map.get(workflow, :project_id)
+          Enum.each(issues, &persist_polled_issue(&1, project_id))
 
-      Enum.each(issues, &persist_polled_issue(&1, project_id))
+        {:error, reason} ->
+          Logger.warning("Skipping polled issue persistence; workflow context unavailable: #{inspect(reason)}")
+      end
     end
 
     :ok
@@ -3471,11 +3575,9 @@ defmodule SymphonyElixir.Orchestrator do
   defp persist_polled_issue(_issue, _project_id), do: :ok
 
   # The workflow context is set by Config.with_workflow_context/2 while the
-  # orchestrator iterates enabled projects. Defaults keep single-project
-  # behavior intact when no context is active (e.g. operator tasks).
+  # orchestrator iterates enabled projects.
   defp current_workflow_context do
-    {:ok, workflow} = Config.current_workflow()
-    workflow
+    Config.current_workflow()
   end
 
   defp current_workflow_record(%{project_id: project_id}) when is_binary(project_id) do
@@ -3515,19 +3617,24 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp run_started_persist(issue, attempt, worker_host) do
-    workflow = current_workflow_context()
-    project_id = Map.get(workflow, :project_id)
-    context = persistence_context(issue)
+    case current_workflow_context() do
+      {:ok, workflow} ->
+        project_id = Map.get(workflow, :project_id)
+        context = persistence_context(issue)
 
-    with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
-         workflow_record = current_workflow_record(workflow),
-         run_attrs =
-           issue
-           |> Events.run_attrs(workflow_record, "centralized", attempt)
-           |> Map.put(:issue_id, issue_record.id)
-           |> Map.put_new(:project_id, project_id),
-         {:ok, run} <- persist_create_run(context, run_attrs) do
-      persist_run_started_event(issue, run, worker_host)
+        with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
+             workflow_record = current_workflow_record(workflow),
+             run_attrs =
+               issue
+               |> Events.run_attrs(workflow_record, "centralized", attempt)
+               |> Map.put(:issue_id, issue_record.id)
+               |> Map.put_new(:project_id, project_id),
+             {:ok, run} <- persist_create_run(context, run_attrs) do
+          persist_run_started_event(issue, run, worker_host)
+        end
+
+      {:error, reason} ->
+        {:error, {:workflow_context, reason}}
     end
   end
 
@@ -3561,11 +3668,17 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp operator_run_started_persist(task) do
-    workflow_record = current_workflow_record(current_workflow_context())
-    context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
+    case current_workflow_context() do
+      {:ok, workflow} ->
+        workflow_record = current_workflow_record(workflow)
+        context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
 
-    with {:ok, run} <- persist_create_operator_run(context, task, workflow_record) do
-      persist_operator_started_event(task, run)
+        with {:ok, run} <- persist_create_operator_run(context, task, workflow_record) do
+          persist_operator_started_event(task, run)
+        end
+
+      {:error, reason} ->
+        {:error, {:workflow_context, reason}}
     end
   end
 

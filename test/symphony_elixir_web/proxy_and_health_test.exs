@@ -5,6 +5,8 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
   import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.WorkflowStore
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -74,6 +76,16 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
     refute inspect(payload) =~ "token"
   end
 
+  test "readiness reports missing project context instead of configured" do
+    seed_multi_project_without_default_workflow!()
+
+    conn = get(build_conn(), "/health/ready")
+    payload = json_response(conn, 200)
+
+    assert payload["status"] == "ready"
+    assert payload["checks"]["workflow"] == "missing_project_context"
+  end
+
   test "readiness fails closed when database is unavailable" do
     Application.put_env(:symphony_elixir, :fake_persistence, repo_available?: false)
 
@@ -96,4 +108,39 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+
+  defp seed_multi_project_without_default_workflow! do
+    raw = sample_workflow_markdown()
+    {:ok, fixture_project} = FakePersistence.default_project()
+    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
+
+    {:ok, project_a} =
+      FakePersistence.create_project(%{
+        name: "Project A",
+        slug: "project-a",
+        linear_project_slug: "linear-a",
+        repository_url: "git@example.test:project-a.git",
+        enabled: true
+      })
+
+    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@example.test:project-b.git",
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+  end
+
+  defp sample_workflow_markdown do
+    Workflow.load()
+    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+  end
 end

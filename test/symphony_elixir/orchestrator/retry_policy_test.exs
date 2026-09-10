@@ -18,11 +18,12 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
       RetryPolicy.prepare_retry(
         "issue-1",
         nil,
-        %{error: "new error"},
+        %{error: "new error", project_id: "project-b"},
         %{
           attempt: 2,
           timer_ref: previous_timer,
           identifier: "MT-1",
+          project_id: "project-a",
           worker_host: "worker-a",
           workspace_path: "/tmp/work"
         },
@@ -34,6 +35,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
     assert prepared.old_timer_ref == previous_timer
     assert prepared.identifier == "MT-1"
     assert prepared.error == "new error"
+    assert prepared.project_id == "project-b"
     assert prepared.worker_host == "worker-a"
     assert prepared.workspace_path == "/tmp/work"
   end
@@ -63,6 +65,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
         retry_token: current_token,
         identifier: "MT-3",
         error: "boom",
+        project_id: "project-c",
         worker_host: "worker-b",
         workspace_path: "/tmp/work"
       }
@@ -76,6 +79,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
     assert metadata == %{
              identifier: "MT-3",
              error: "boom",
+             project_id: "project-c",
              worker_host: "worker-b",
              workspace_path: "/tmp/work",
              failure_count: 0

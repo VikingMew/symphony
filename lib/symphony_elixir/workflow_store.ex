@@ -228,12 +228,12 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp load_database_workflows do
-    with {:ok, default_project} <- load_default_project(),
+    with {:ok, _default_project} <- load_default_project(),
          {:ok, projects, workflows} <- load_project_workflows() do
       if map_size(workflows) == 0 do
         :setup_required
       else
-        {:ok, workflows, default_project_id(workflows, projects, default_project)}
+        {:ok, workflows, default_project_id(workflows, projects)}
       end
     end
   end
@@ -290,15 +290,32 @@ defmodule SymphonyElixir.WorkflowStore do
     Map.get(project, :slug) == @default_project_slug and Text.blank?(Map.get(project, :repository_url))
   end
 
-  defp default_project_id(workflows, projects, default_project) do
-    default_id = if is_map(default_project), do: Map.get(default_project, :id)
+  defp default_project_id(workflows, projects) do
+    case loaded_configured_default_id(workflows, projects) do
+      nil -> single_loaded_project_id(workflows)
+      project_id -> project_id
+    end
+  end
 
-    if is_map_key(workflows, default_id) do
-      default_id
-    else
-      projects
-      |> Enum.map(&Map.fetch!(&1, :id))
-      |> Enum.find(&is_map_key(workflows, &1))
+  defp loaded_configured_default_id(workflows, projects) do
+    projects
+    |> Enum.find(&configured_default_project?/1)
+    |> case do
+      nil ->
+        nil
+
+      project ->
+        project_id = Map.fetch!(project, :id)
+        if is_map_key(workflows, project_id), do: project_id
+    end
+  end
+
+  defp configured_default_project?(project), do: Map.get(project, :slug) == @default_project_slug
+
+  defp single_loaded_project_id(workflows) do
+    case Map.keys(workflows) do
+      [project_id] -> project_id
+      _none_or_multiple -> nil
     end
   end
 

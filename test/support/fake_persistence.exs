@@ -168,7 +168,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def current_workflow do
     ensure_started()
-    Agent.get(@name, fn state -> List.first(state.workflows) end)
+    Agent.get(@name, &select_current_workflow/1)
   end
 
   def current_workflow(%{id: project_id}) do
@@ -551,6 +551,51 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       Enum.find(state.projects, &(Map.get(&1, :id) == workflow.project_id)) || hd(state.projects)
     end)
   end
+
+  defp select_current_workflow(state) do
+    state.projects
+    |> Enum.filter(&runtime_project?/1)
+    |> current_project_workflows(state.workflows)
+    |> select_current_project_workflow()
+  end
+
+  defp current_project_workflows(projects, workflows) do
+    projects
+    |> Enum.flat_map(fn project ->
+      case Enum.find(workflows, &(Map.get(&1, :project_id) == project.id)) do
+        nil -> []
+        workflow -> [{project, workflow}]
+      end
+    end)
+  end
+
+  defp select_current_project_workflow(project_workflows) do
+    case Enum.find(project_workflows, fn {project, _workflow} -> configured_default_project?(project) end) do
+      {_project, workflow} ->
+        workflow
+
+      nil ->
+        case project_workflows do
+          [] -> nil
+          [{_project, workflow}] -> workflow
+          _multiple -> {:error, :missing_project_context}
+        end
+    end
+  end
+
+  defp configured_default_project?(project), do: Map.get(project, :slug) == "default"
+
+  defp runtime_project?(project) do
+    Map.get(project, :enabled, true) == true and bootstrap_default_placeholder?(project) == false
+  end
+
+  defp bootstrap_default_placeholder?(project) do
+    Map.get(project, :slug) == "default" and text_blank?(Map.get(project, :repository_url))
+  end
+
+  defp text_blank?(value) when is_binary(value), do: String.trim(value) == ""
+  defp text_blank?(nil), do: true
+  defp text_blank?(_value), do: false
 
   defp apply_project_runtime_settings(config, nil), do: config
 
