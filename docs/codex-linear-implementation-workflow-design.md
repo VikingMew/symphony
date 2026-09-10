@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-08
+updated: 2026-09-09
 design_status: landed
 ---
 
@@ -71,8 +71,23 @@ row。实际 diff 与票面 classification 不一致时，先修正 Linear descr
 
 ### 4. Commit 和 push
 
-确认 branch 等于 Linear `branchName`，review diff，创建有意义的 commit，并 push 同一 branch。
-worker host 需要 Git remote push auth。禁止把 feature result push 到 configured default branch。
+确认 branch 等于 Linear `branchName`，review diff，创建有意义的 commit。任何 `git push`
+或 pull-request 操作前，先确认 `origin/main` 可比较，并以 `git diff --name-only
+origin/main...HEAD` 检查当前分支相对 `origin/main` 的完整交付路径；不能只看 staged 或
+working-tree diff。
+
+若 issue description 首个非空行精确为 `交付路径:宿主 push`，或完整交付路径包含
+`.github/workflows/**`、`.github/actions/**`、或其他已知会因 worker token 缺少 workflow
+scope 被拒的路径，worker 不得 push、创建 PR、改 remote/protocol/credential，或把确定性
+permission/workflow-scope 拒绝当瞬态错误重试。完成实现和允许的本地验证后，worker 在
+workspace/repository 根生成一个 `<issue-identifier>.patch`，内容为 `git diff --binary
+origin/main...HEAD` 的完整 binary-safe delivery diff；workpad 和 final references 记录
+root-relative path，并标记 `需宿主 push`。若 ticket 必须以 push、PR、或依赖远端 branch 的
+handoff 作为验收，worker 记录精确 blocker evidence，并走 persistent `blocking_decision` /
+`Blocked` 流程。
+
+无 host-push 命中时，worker push 同一 branch。worker host 需要 Git remote push auth。禁止把
+feature result push 到 configured default branch。
 
 ### 5. 提交显式完成请求
 
@@ -85,6 +100,13 @@ Codex 的 `linear_task_update` 必须包含：
 
 初次实现不直接调用 `gh pr create`。Codex 按 [PR body contract](pull-request-body.md) 写 title/body
 并调用受限 `create_pull_request`；`AgentRunner` 提供 backend-owned lookup/create boundary。
+
+若 PR 修改 repository split workflow package（`docs/examples/workflow.yml` 或
+`docs/examples/profiles.yml`），PR Test Plan 只记录 merge 后由部署侧/宿主通过 Settings / Import
+导入并保存目标 project 的 PostgreSQL current workflow，预期结果是 import validation 通过且保存后的
+project current workflow 包含该 package 变更。worker 不执行 runtime import，不因缺少数据库连接而
+block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
+`mix symphony.workflow.sync` 或 drift `--check` 契约。
 
 ### 6. Symphony 原子 handoff
 

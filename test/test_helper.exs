@@ -6,6 +6,7 @@ Application.put_env(:symphony_elixir, :start_repo, false)
 Application.put_env(:symphony_elixir, :start_http_server, false)
 Application.put_env(:symphony_elixir, :allow_test_workflow_source, true)
 Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.TestSupport.FakePersistence)
+Application.put_env(:symphony_elixir, :fake_persistence, repo_available?: true)
 
 on_exit = fn ->
   :ok

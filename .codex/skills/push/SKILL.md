@@ -25,7 +25,20 @@ description:
 
 ## Steps
 
-1. Identify current branch and confirm remote state.
+1. Identify the current branch and confirm `origin/main` is available as a
+   comparison base. Before any push or pull-request operation, inspect the
+   complete branch changed-path set with `git diff --name-only
+   origin/main...HEAD`; checking only staged or working-tree changes is not
+   sufficient.
+   - If any changed path is under `.github/**`, do not push, create a pull
+     request, or rewrite the remote, protocol, or credentials. After committing
+     the implementation and completing allowed local validation, generate one
+     binary-safe `<issue-identifier>.patch` in the repository root from the
+     complete `origin/main...HEAD` diff. Record its root-relative path in the
+     workpad and final references with `需宿主 push`, then follow the existing
+     persistent blocking path when remote delivery is required.
+   - Continue with the normal push and pull-request flow only when no changed
+     path is under `.github/**`.
 2. Run local validation (`make -C elixir all`) before pushing.
 3. Push branch to `origin` with upstream tracking if needed, using whatever
    remote URL is already configured.
@@ -60,6 +73,16 @@ description:
 ```sh
 # Identify branch
 branch=$(git branch --show-current)
+
+# Mandatory delivery-diff preflight before any push or PR operation.
+git rev-parse --verify origin/main
+changed_paths=$(git diff --name-only origin/main...HEAD)
+if printf '%s\n' "$changed_paths" | grep -Eq '^\.github/'; then
+  patch_file="<issue-identifier>.patch"
+  git diff --binary origin/main...HEAD > "$patch_file"
+  echo "$patch_file — 需宿主 push" >&2
+  exit 1
+fi
 
 # Minimal validation gate
 make -C elixir all
