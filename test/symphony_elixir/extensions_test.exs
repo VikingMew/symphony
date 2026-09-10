@@ -1061,6 +1061,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     write_workflow_file!(Workflow.workflow_file_path(),
       server_host: "127.0.0.1",
       observability_enabled: true,
+      project_repository_url: "git@example.com:org/repo.git",
       workflow_policy: %{
         "states" => %{
           "Ready" => %{"profile" => "implementation"}

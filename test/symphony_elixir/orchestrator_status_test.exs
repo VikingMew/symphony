@@ -1181,6 +1181,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "orchestrator snapshot includes poll countdown and checking status" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     orchestrator_name = Module.concat(__MODULE__, :PollingSnapshotOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
@@ -1228,7 +1232,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   test "orchestrator starts with listening disabled" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
-      poll_interval_ms: 5_000
+      poll_interval_ms: 5_000,
+      project_repository_url: "git@example.com:org/repo.git"
     )
 
     orchestrator_name = Module.concat(__MODULE__, :ImmediateStartupOrchestrator)
@@ -1258,6 +1263,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "public snapshot, refresh, and listening controls preserve the live state type" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
     orchestrator_name = Module.concat(__MODULE__, :PublicControlStateOrchestrator)
     {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
@@ -1330,8 +1339,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   test "orchestrator restarts stalled workers with retry backoff" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
-      codex_stall_timeout_ms: 1_000
+      codex_stall_timeout_ms: 1_000,
+      project_repository_url: "git@example.com:org/repo.git"
     )
+
+    use_noop_linear_client()
 
     issue_id = "issue-stall"
     orchestrator_name = Module.concat(__MODULE__, :StallOrchestrator)
@@ -1462,8 +1474,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   test "stalled sessions consume the failure budget without inspecting protocol events" do
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_api_token: nil,
-      codex_stall_timeout_ms: 1_000
+      codex_stall_timeout_ms: 1_000,
+      project_repository_url: "git@example.com:org/repo.git"
     )
+
+    use_noop_linear_client()
 
     issue_id = "issue-stall-input-blocked"
     orchestrator_name = Module.concat(__MODULE__, :StallInputBlockedOrchestrator)
@@ -2153,6 +2168,15 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+
+  defp use_noop_linear_client do
+    previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
+
+    on_exit(fn ->
+      restore_app_env(:linear_client_module, previous_linear_client)
+    end)
+  end
 
   defp do_wait_for_snapshot(pid, predicate, deadline_ms) do
     snapshot = GenServer.call(pid, :snapshot)

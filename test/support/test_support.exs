@@ -139,15 +139,42 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.Workspace
 
       import SymphonyElixir.TestSupport,
-        only: [write_workflow_file!: 1, write_workflow_file!: 2, restore_env: 2, stop_default_http_server: 0]
+        only: [
+          ensure_panel_children_running!: 0,
+          panel_supervisor_running?: 0,
+          write_workflow_file!: 1,
+          write_workflow_file!: 2,
+          restore_env: 2,
+          stop_default_http_server: 0
+        ]
 
       setup do
+        if panel_supervisor_running?() do
+          ensure_panel_children_running!()
+        else
+          unless Process.whereis(SymphonyElixir.PubSub) do
+            start_supervised!({Phoenix.PubSub, name: SymphonyElixir.PubSub})
+          end
+
+          unless Process.whereis(SymphonyElixir.TaskSupervisor) do
+            start_supervised!({Task.Supervisor, name: SymphonyElixir.TaskSupervisor})
+          end
+
+          unless Process.whereis(SymphonyElixir.Linear.Health) do
+            start_supervised!(SymphonyElixir.Linear.Health)
+          end
+
+          unless Process.whereis(SymphonyElixir.WorkflowStore) do
+            start_supervised!(SymphonyElixir.WorkflowStore)
+          end
+
+          unless Process.whereis(SymphonyElixir.EnvironmentFailureCircuit) do
+            start_supervised!(SymphonyElixir.EnvironmentFailureCircuit)
+          end
+        end
+
         FakePersistence.reset!()
         Health.reset!()
-
-        unless Process.whereis(SymphonyElixir.EnvironmentFailureCircuit) do
-          start_supervised!(SymphonyElixir.EnvironmentFailureCircuit)
-        end
 
         SymphonyElixir.EnvironmentFailureCircuit.reset()
         previous_linear_api_key = System.get_env("LINEAR_API_KEY")
@@ -174,6 +201,29 @@ defmodule SymphonyElixir.TestSupport do
         end)
 
         :ok
+      end
+    end
+  end
+
+  def ensure_panel_children_running! do
+    ensure_supervised_child_running!(Phoenix.PubSub.Supervisor, SymphonyElixir.PubSub)
+    ensure_supervised_child_running!(SymphonyElixir.TaskSupervisor, SymphonyElixir.TaskSupervisor)
+    ensure_supervised_child_running!(SymphonyElixir.Linear.Health, SymphonyElixir.Linear.Health)
+    ensure_supervised_child_running!(SymphonyElixir.WorkflowStore, SymphonyElixir.WorkflowStore)
+    ensure_supervised_child_running!(SymphonyElixir.EnvironmentFailureCircuit, SymphonyElixir.EnvironmentFailureCircuit)
+    ensure_supervised_child_running!(SymphonyElixir.Orchestrator, SymphonyElixir.Orchestrator)
+    ensure_supervised_child_running!(SymphonyElixir.StatusDashboard, SymphonyElixir.StatusDashboard)
+  end
+
+  def panel_supervisor_running?, do: is_pid(Process.whereis(SymphonyElixir.Supervisor))
+
+  defp ensure_supervised_child_running!(child_id, registered_name) do
+    if Process.whereis(registered_name) do
+      :ok
+    else
+      case Supervisor.restart_child(SymphonyElixir.Supervisor, child_id) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
       end
     end
   end

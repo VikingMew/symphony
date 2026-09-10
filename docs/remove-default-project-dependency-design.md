@@ -12,7 +12,7 @@ design_status: landed
 
 ## 1. 背景
 
-Symphony 当前架构里存在一个「default project」的隐式强制依赖:只要数据库里没有 `slug="default"` 的 Project 记录,任何调用 `default_project()` 的地方都会**自动创建**一个 `{name: "Default", slug: "default", default_branch: "main", enabled: true}` 记录。当前运行库(`symphony.db`)里那个 `slug=default` 的 Default 记录就是这么来的。
+Symphony 曾存在一个「default project」的隐式强制依赖:只要数据库里没有 `slug="default"` 的 Project 记录,任何调用 `default_project()` 的地方都会**自动创建**一个 `{name: "Default", slug: "default", default_branch: "main", enabled: true}` 记录。当前运行库(`symphony.db`)里那个 `slug=default` 的 Default 记录就是这么来的；当前实现只允许空表引导创建 disabled 占位。
 
 这带来三个问题:
 
@@ -26,6 +26,8 @@ Symphony 当前架构里存在一个「default project」的隐式强制依赖:�
 
 - `default_project()` 不再自动创建记录,不存在就返回 `{:error, :not_found}`,由上层显式处理;
 - 无参 `current_workflow()` 按「显式配置的 default slug → 第一个 enabled project → `:no_active_workflow`」解析，不依赖自动创建的记录；
+- 若空表引导路径创建 `slug=default` 占位,该记录必须是 disabled,且缺少 `repository_url`
+  的 Default 占位即使旧数据中仍为 enabled,也不得发布为 runtime workflow；
 - worker_queue 的 task 必须显式带 project_id,不带就报错;
 - first_run 导入目标显式化,不再硬编码 default;
 - 存量 `slug=default` 记录清理,真实 project(Koroni、ccrr)成为唯一事实来源。
@@ -55,7 +57,7 @@ Symphony 当前架构里存在一个「default project」的隐式强制依赖:�
 
 ## 4. 设计方案
 
-### 4.1 `default_project/0` 改为纯查询
+### 4.1 `default_project/0` 不再创建 enabled runtime project
 
 ```elixir
 @spec default_project() :: {:ok, Project.t()} | {:error, :not_found | :repo_unavailable}
@@ -65,17 +67,18 @@ end
 
 defp default_project! do
   if repo_available?() do
-    case Repo.get_by(Project, slug: @default_project_slug) do
-      nil -> {:error, :not_found}
-      project -> {:ok, project}
-    end
+    Repo.transaction(fn ->
+      SQL.query!(Repo, "SELECT pg_advisory_xact_lock($1)", [1_928_374_651])
+      create_disabled_default_project_if_empty!()
+    end)
   else
     {:error, :repo_unavailable}
   end
 end
 ```
 
-不再自动 insert。语义:default project 是**可选配置**,不是必然存在。
+空 projects 表可创建 disabled Default 占位,用于 Settings 引导。它不是 runtime project；
+存在任何 project 时不会再创建 Default,缺少 `repository_url` 的历史 Default 占位也会被运行时过滤。
 
 ### 4.2 无参 `current_workflow/0` 改为显式解析链
 
@@ -97,7 +100,9 @@ def current_workflow do
 end
 ```
 
-解析链:**显式 default slug(DB 记录)→ 第一个 enabled project → `nil`(setup_required)**。与 `WorkflowStore.default_project_id/2` 的 fallback 语义对齐,去掉对自动创建记录的依赖。
+解析链:**显式且配置完整的 default slug(DB 记录)→ 第一个 enabled 且已加载 workflow 的 project → `nil`(setup_required)**。与 `WorkflowStore.default_project_id/2` 的 fallback 语义对齐,去掉对未配置 Default 占位的 runtime 依赖。
+
+缺少 `repository_url` 的 `slug=default` bootstrap placeholder 是 Settings 引导数据,不是可派发 project。运行时发布快照必须过滤该占位,同时仍保留真实 enabled project 缺少仓库地址时的配置错误。
 
 ### 4.3 worker_queue 强制 project_id
 
@@ -117,13 +122,13 @@ task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required
 
 ### 4.5 存量数据清理
 
-- `symphony.db` 里 `slug=default` 的 Default 记录删除(或标记 disabled);
+- `symphony.db` 里 `slug=default` 且未配置仓库地址的 Default 记录删除(或标记 disabled);
 - 确认 Koroni、ccrr 两个真实 project 的 workflow 正常加载,`current()` 解析到第一个 enabled project 的 workflow;
 - 若管理员想要显式 default,可通过新增/修改 project 记录实现(admin UI 或 DB 直改)。
 
 ## 5. 兼容性分析
 
-- **健康检查**：无 default 但有 enabled project 时，`current_workflow()` 解析到第一个 enabled project 的 workflow，健康检查仍报 configured，行为不变。
+- **健康检查**：无配置完整的 default 但有 enabled project 时，`current_workflow()` 解析到第一个 enabled project 的 workflow，健康检查仍报 configured，行为不变。
 - **orchestrator 回落**:issue 无显式 workflow 时回落第一个 enabled project 的 workflow,与当前 `default_project_id` 的 fallback 行为一致。
 - **admin UI**:selected_project 默认值从 default 改为第一个 enabled project。
 - **诊断**:setup 检查项不再要求 default project 存在,改为「至少一个 enabled project 配置完整」。
@@ -132,7 +137,7 @@ task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required
 ## 6. 影响文件清单
 
 - `lib/symphony_elixir/persistence/workflow_store.ex` — `default_project!/0`、`current_workflow/0`
-- `lib/symphony_elixir/workflow_store.ex` — `default_project_id/2`(语义保持,确认 fallback 不依赖自动创建)
+- `lib/symphony_elixir/workflow_store.ex` — `default_project_id/2`(fallback 不依赖未配置 Default 占位)
 - `lib/symphony_elixir/persistence/worker_queue.ex` — `enqueue_task/1`
 - `lib/symphony_elixir/first_run_defaults.ex` — `import_if_needed`
 - `lib/symphony_elixir_web/controllers/health_controller.ex` — 无参调用确认
@@ -143,8 +148,8 @@ task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required
 
 ## 7. 验收标准
 
-1. 空库首次启动:`default_project()` 返回 `{:error, :not_found}`,不再自动创建 Default 记录;
-2. 有 enabled projects 无 default：`current_workflow()` 解析到第一个 enabled project 的 workflow；
+1. 空库首次启动:`default_project()` 最多创建 disabled Default 占位,不会创建 enabled runtime Default;
+2. 有 enabled projects 无配置完整 default：`current_workflow()` 解析到第一个 enabled project 的 workflow；
 3. `enqueue_task` 不带 project_id 返回 `{:error, :project_id_required}`;
 4. first_run 导入支持选择目标 project;
 5. 存量 default 记录清理后,健康检查、orchestrator、admin UI 均正常;

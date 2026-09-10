@@ -211,7 +211,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       %{state | codex_rate_limits: %{"primary" => %{"window_duration_mins" => 300, "used_percent" => 99}}}
     end)
 
-    {snapshots, log} =
+    {snapshots, _log} =
       ExUnit.CaptureLog.with_log(fn ->
         for _ <- 1..3, do: GenServer.call(pid, :snapshot)
       end)
@@ -269,18 +269,6 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   defp workflow_markdown(base, prompt, threshold) do
     config = put_in(base.config, ["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
     Workflow.to_markdown(config, prompt)
-  end
-
-  defp assert_eventually(fun, attempts \\ 40)
-  defp assert_eventually(fun, 0), do: assert(fun.())
-
-  defp assert_eventually(fun, attempts) do
-    if fun.() do
-      :ok
-    else
-      Process.sleep(25)
-      assert_eventually(fun, attempts - 1)
-    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

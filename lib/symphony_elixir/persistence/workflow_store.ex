@@ -9,7 +9,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   alias Ecto.Adapters.SQL
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Persistence.{Project, WorkflowRecord}
-  alias SymphonyElixir.{Repo, Workflow}
+  alias SymphonyElixir.{Repo, Text, Workflow}
 
   @default_project_slug "default"
 
@@ -42,7 +42,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
            name: "Default",
            slug: @default_project_slug,
            default_branch: "main",
-           enabled: true
+           enabled: false
          }) do
       {:ok, project} -> project
       {:error, reason} -> Repo.rollback(reason)
@@ -96,17 +96,15 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, :missing_project_context}
+  @spec current_workflow() :: WorkflowRecord.t() | nil
   def current_workflow, do: current_workflow(nil)
 
   @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
   def current_workflow(nil) do
     query(:current_workflow, fn ->
-      case default_project() do
-        {:ok, project} -> current_workflow(project)
-        {:error, :not_found} -> {:error, :missing_project_context}
-        {:error, :repo_unavailable} -> nil
-        {:error, reason} -> raise_query_error(:current_workflow, reason)
+      if repo_available?() do
+        current_workflow_candidate_projects!()
+        |> Enum.find_value(&current_workflow/1)
       end
     end)
   end
@@ -163,13 +161,37 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   defp project_for_runtime(_project_id) do
     query(:project_for_runtime, fn ->
-      case default_project() do
-        {:ok, project} -> project
-        {:error, :not_found} -> {:error, :missing_project_context}
-        {:error, :repo_unavailable} -> nil
-        {:error, reason} -> raise_query_error(:project_for_runtime, reason)
+      if repo_available?() do
+        current_workflow_candidate_projects!()
+        |> List.first()
       end
     end)
+  end
+
+  defp current_workflow_candidate_projects! do
+    projects = Repo.all(from(p in Project, order_by: [asc: p.name]))
+
+    case Enum.find(projects, &configured_default_project?/1) do
+      %Project{} = default_project ->
+        [default_project | Enum.reject(projects, &(&1.id == default_project.id))]
+        |> Enum.filter(&runtime_project?/1)
+
+      nil ->
+        Enum.filter(projects, &runtime_project?/1)
+    end
+  end
+
+  defp configured_default_project?(%Project{slug: @default_project_slug} = project),
+    do: runtime_project?(project)
+
+  defp configured_default_project?(_project), do: false
+
+  defp runtime_project?(%Project{} = project) do
+    project.enabled == true and bootstrap_default_placeholder?(project) == false
+  end
+
+  defp bootstrap_default_placeholder?(%Project{} = project) do
+    project.slug == @default_project_slug and Text.blank?(project.repository_url)
   end
 
   defp repo_available?, do: Process.whereis(Repo) != nil
@@ -184,10 +206,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     kind, reason ->
       log_query_failure(operation, kind, reason)
       :erlang.raise(kind, reason, __STACKTRACE__)
-  end
-
-  defp raise_query_error(operation, reason) do
-    raise "Workflow persistence query failed operation=#{operation} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
   end
 
   defp log_query_failure(operation, kind, reason) do

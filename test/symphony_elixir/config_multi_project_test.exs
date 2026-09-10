@@ -55,7 +55,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     assert Config.workflow_prompt() == default_prompt
   end
 
-  test "current_workflow requires explicit context when real projects exist" do
+  test "current_workflow uses the published default when multiple projects exist" do
     {:ok, project} =
       FakePersistence.create_project(%{
         name: "Project B",
@@ -68,12 +68,8 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
-    assert {:error, :missing_project_context} = Config.current_workflow()
-    assert {:error, :missing_project_context} = Config.settings()
-
-    assert_raise ArgumentError, ~r/explicit project context is required/, fn ->
-      Config.settings!()
-    end
+    assert {:ok, %{project_id: "fake-project-id"}} = Config.current_workflow()
+    assert {:ok, _settings} = Config.settings()
 
     assert {:ok, _settings} = Config.with_workflow_context(loaded, fn -> Config.settings() end)
   end

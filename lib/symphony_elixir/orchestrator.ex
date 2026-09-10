@@ -3233,15 +3233,17 @@ defmodule SymphonyElixir.Orchestrator do
   defp listening_mode_atom(%State{listening_mode: mode}), do: mode
 
   defp runtime_config do
-    case Config.settings() do
-      {:error, :missing_project_context} -> aggregate_runtime_limits(WorkflowStore.list_enabled())
-      result -> result
+    case WorkflowStore.list_enabled() do
+      [] ->
+        Config.settings()
+
+      workflows ->
+        aggregate_runtime_limits(workflows)
     end
   end
 
   defp aggregate_runtime_limits(workflows) do
-    with true <- workflows != [] || {:error, :setup_required},
-         {:ok, settings} <- parse_runtime_settings(workflows) do
+    with {:ok, settings} <- parse_runtime_settings(workflows) do
       {:ok,
        %{
          polling: %{interval_ms: settings |> Enum.map(& &1.polling.interval_ms) |> Enum.min()},

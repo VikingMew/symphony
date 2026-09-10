@@ -12,10 +12,11 @@ defmodule SymphonyElixir.WorkflowStore do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{PersistenceProvider, Workflow}
+  alias SymphonyElixir.{PersistenceProvider, Text, Workflow}
 
   @poll_interval_ms 1_000
   @snapshot_key {__MODULE__, :published_snapshot}
+  @default_project_slug "default"
 
   @type current_error ::
           :missing_project_context | :no_active_workflow | :repo_unavailable | {:query_failed, term()}
@@ -249,10 +250,10 @@ defmodule SymphonyElixir.WorkflowStore do
   defp load_project_workflows do
     case persistence().list_projects() do
       projects when is_list(projects) ->
-        case projects
-             |> Enum.filter(&Map.get(&1, :enabled, true))
-             |> Enum.reduce_while({:ok, %{}}, &load_project_workflow/2) do
-          {:ok, workflows} -> {:ok, projects, workflows}
+        runtime_projects = Enum.filter(projects, &runtime_project?/1)
+
+        case Enum.reduce_while(runtime_projects, {:ok, %{}}, &load_project_workflow/2) do
+          {:ok, workflows} -> {:ok, runtime_projects, workflows}
           error -> error
         end
 
@@ -281,10 +282,23 @@ defmodule SymphonyElixir.WorkflowStore do
     end
   end
 
+  defp runtime_project?(project) do
+    Map.get(project, :enabled, true) == true and bootstrap_default_placeholder?(project) == false
+  end
+
+  defp bootstrap_default_placeholder?(project) do
+    Map.get(project, :slug) == @default_project_slug and Text.blank?(Map.get(project, :repository_url))
+  end
+
   defp default_project_id(workflows, projects, default_project) do
-    case {projects, default_project} do
-      {[_project], %{id: id}} when is_map_key(workflows, id) -> id
-      _ -> nil
+    default_id = if is_map(default_project), do: Map.get(default_project, :id)
+
+    if is_map_key(workflows, default_id) do
+      default_id
+    else
+      projects
+      |> Enum.map(&Map.fetch!(&1, :id))
+      |> Enum.find(&is_map_key(workflows, &1))
     end
   end
 

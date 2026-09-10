@@ -5,7 +5,7 @@ defmodule SymphonyElixir.LinearClientTest do
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.{Tracker, Workflow, WorkflowStore}
 
-  test "candidate fetch requires explicit project context when real projects exist" do
+  test "candidate fetch uses the configured default project when multiple projects exist" do
     {:ok, project} =
       FakePersistence.create_project(%{
         name: "Symphony",
@@ -20,8 +20,11 @@ defmodule SymphonyElixir.LinearClientTest do
     {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
-    assert {:error, :missing_project_context} = Client.fetch_candidate_issues()
-    assert {:error, :missing_project_context} = Tracker.fetch_candidate_issues()
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)
+    System.delete_env("LINEAR_API_KEY")
+
+    assert {:error, :missing_linear_api_token} = Client.fetch_candidate_issues()
+    assert {:error, :missing_linear_api_token} = Tracker.fetch_candidate_issues()
   end
 
   test "linear issue helpers" do
