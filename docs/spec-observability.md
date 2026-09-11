@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.Log
-updated: 2026-08-07
+updated: 2026-09-11
 ---
 
 # Logging and Observability Specification
@@ -59,6 +59,8 @@ SHOULD return:
 - `rate_limits` (latest coding-agent rate limit payload, if available)
 - `environment_failure_circuit` (environment failure circuit status, triggering fingerprint, and
   threshold/window counters)
+- `worker_api.heartbeat_failed_attempts` (worker heartbeat failures counted after worker identity
+  validation)
 
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
 Failed external writes remain visible and retryable without creating a new coding-agent run;
@@ -209,9 +211,18 @@ Minimum endpoints:
         "total_tokens": 7400,
         "seconds_running": 1834.2
       },
-      "rate_limits": null
+      "rate_limits": null,
+      "worker_api": {
+        "heartbeat_failed_attempts": 0
+      }
     }
     ```
+
+  - If worker-v1 endpoints are implemented, this payload MUST include
+    `worker_api.heartbeat_failed_attempts`. The counter is memory-backed current state. It increments
+    for failed heartbeat attempts after worker identity validation, including retryable heartbeat
+    timeout/overload responses. It MUST NOT increment for controller-level identity/protocol
+    rejections or for successful heartbeats that renew no lease.
 
 - `GET /api/v1/<issue_identifier>`
   - Returns issue-specific runtime/debug details for the identified issue, including any information

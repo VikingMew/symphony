@@ -5,6 +5,7 @@ defmodule SymphonyElixirWeb.Presenter do
 
   alias SymphonyElixir.Codex.MessageHumanizer
   alias SymphonyElixir.{Config, EnvironmentFailureCircuit, Linear.Health, Orchestrator}
+  alias SymphonyElixir.Worker.HeartbeatMetrics
   alias SymphonyElixirWeb.{LinearStatusSignal, RateLimitStatus}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
@@ -48,6 +49,7 @@ defmodule SymphonyElixirWeb.Presenter do
       rate_limits: snapshot.rate_limits,
       rate_limit_status: RateLimitStatus.from_snapshot(snapshot),
       environment_failure_circuit: Map.get(snapshot, :environment_failure_circuit, EnvironmentFailureCircuit.allow_snapshot()),
+      worker_api: HeartbeatMetrics.snapshot(),
       linear_status: Health.latest() |> LinearStatusSignal.from_health(),
       operator_tasks: Map.get(snapshot, :operator_tasks, %{}),
       polling: Map.get(snapshot, :polling, %{listening_mode: "not_listening"})
