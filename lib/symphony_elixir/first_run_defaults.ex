@@ -30,13 +30,17 @@ defmodule SymphonyElixir.FirstRunDefaults do
         deps.log.(:info, "Default YAML first-run prompt is disabled.")
         :ok
 
-      deps.current_workflow.() != nil ->
+      current_workflow_configured?(deps.current_workflow.()) ->
         :ok
 
       true ->
         maybe_import_for_projects(opts, deps, enabled_projects(deps.list_projects.()))
     end
   end
+
+  defp current_workflow_configured?(nil), do: false
+  defp current_workflow_configured?({:error, _reason}), do: false
+  defp current_workflow_configured?(_workflow), do: true
 
   defp maybe_import_for_projects(opts, deps, projects) do
     if projects == [] do

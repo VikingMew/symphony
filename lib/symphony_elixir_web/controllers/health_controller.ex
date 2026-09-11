@@ -52,6 +52,8 @@ defmodule SymphonyElixirWeb.HealthController do
     if function_exported?(persistence, :current_workflow, 0) do
       case persistence.current_workflow() do
         nil -> "setup_required"
+        {:error, :missing_project_context} -> "missing_project_context"
+        {:error, _reason} -> "unknown"
         _workflow -> "configured"
       end
     else

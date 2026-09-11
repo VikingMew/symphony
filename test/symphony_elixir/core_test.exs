@@ -935,7 +935,8 @@ defmodule SymphonyElixir.CoreTest do
         workspace_root: test_root,
         tracker_active_states: ["Todo", "In Progress"],
         tracker_terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"],
-        poll_interval_ms: 30_000
+        poll_interval_ms: 30_000,
+        project_repository_url: "git@example.com:org/repo.git"
       )
 
       Application.put_env(:symphony_elixir, :linear_client_module, EmptyIssueLinearClient)

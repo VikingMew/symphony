@@ -84,6 +84,21 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:unexpected_read, _}
   end
 
+  test "missing project context still allows first-run default import flow" do
+    parent = self()
+
+    assert :ok =
+             FirstRunDefaults.maybe_import(
+               [],
+               deps(parent, current_workflow: fn -> {:error, :missing_project_context} end)
+             )
+
+    assert_received {:prompt, prompt}
+    assert prompt =~ "1) Alpha (alpha)"
+    assert_received {:import_workflow, %{id: "project-beta"}, raw, "first_run_default_yaml"}
+    assert raw =~ "Default imported base prompt."
+  end
+
   test "missing package file does not crash or import partial defaults" do
     parent = self()
 

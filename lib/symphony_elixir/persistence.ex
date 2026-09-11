@@ -92,10 +92,11 @@ defmodule SymphonyElixir.Persistence do
     |> publish_runtime_snapshot()
   end
 
-  @spec current_workflow() :: WorkflowRecord.t() | nil
+  @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, WorkflowStore.current_workflow_error()}
   defdelegate current_workflow(), to: WorkflowStore
 
-  @spec current_workflow(Project.t() | nil) :: WorkflowRecord.t() | nil
+  @spec current_workflow(Project.t() | nil) ::
+          WorkflowRecord.t() | nil | {:error, WorkflowStore.current_workflow_error()}
   defdelegate current_workflow(project), to: WorkflowStore
 
   @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
