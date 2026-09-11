@@ -1592,6 +1592,10 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   end
 
   test "force stop reports an empty successful task cancellation result" do
+    :sys.replace_state(Orchestrator, fn state ->
+      %{state | running: %{}, claimed: MapSet.new(), retry_attempts: %{}}
+    end)
+
     cancellation = %{cancelled: 0, failed: [], status: :ok}
 
     assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()

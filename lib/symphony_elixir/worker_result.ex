@@ -46,8 +46,32 @@ defmodule SymphonyElixir.WorkerResult do
 
   def validate_event(_event_type, _payload), do: {:ok, nil}
 
+  @spec terminal_outcome(String.t(), map()) :: SymphonyElixir.Orchestrator.worker_terminal_outcome()
+  def terminal_outcome("task.completed", _summary), do: :success
+
+  def terminal_outcome(event_type, summary)
+      when event_type in ["task.failed", "task.cancelled"] and is_map(summary) do
+    reason = terminal_reason(summary)
+
+    case Map.get(summary, "outcome") do
+      outcome when outcome in ["succeeded", "success"] -> :success
+      "cancelled" -> :cancelled
+      "blocked" -> {:blocked, reason}
+      "failed" -> {:failed, reason}
+      _missing_or_unrecognized -> {:failed, reason}
+    end
+  end
+
   @spec limits() :: map()
   def limits, do: %{max_gates: @max_gates, max_text: @max_text, max_detail: @max_detail}
+
+  defp terminal_reason(%{"reason" => reason, "detail" => detail})
+       when is_binary(reason) and is_binary(detail),
+       do: reason <> "\n" <> detail
+
+  defp terminal_reason(%{"reason" => reason}) when is_binary(reason), do: reason
+  defp terminal_reason(%{"detail" => detail}) when is_binary(detail), do: detail
+  defp terminal_reason(_summary), do: "worker terminal outcome did not include a reason"
 
   defp runtime(value) when is_map(value) do
     value = stringify_keys(value)

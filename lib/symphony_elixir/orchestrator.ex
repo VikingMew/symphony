@@ -162,6 +162,18 @@ defmodule SymphonyElixir.Orchestrator do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @spec worker_task_started(map(), GenServer.server()) :: :ok
+  def worker_task_started(%{issue: %Issue{id: issue_id}} = assignment, server \\ __MODULE__)
+      when is_binary(issue_id) do
+    GenServer.cast(server, {:worker_task_started, assignment})
+  end
+
+  @spec worker_task_progress(String.t(), map(), GenServer.server()) :: :ok
+  def worker_task_progress(issue_id, payload, server \\ __MODULE__)
+      when is_binary(issue_id) and is_map(payload) do
+    GenServer.cast(server, {:worker_task_progress, issue_id, payload})
+  end
+
   @spec worker_task_finished(String.t(), worker_terminal_outcome(), GenServer.server()) :: :ok
   def worker_task_finished(issue_id, outcome, server \\ __MODULE__) when is_binary(issue_id) do
     GenServer.cast(server, {:worker_task_finished, issue_id, outcome})
@@ -213,6 +225,18 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
+  def handle_cast({:worker_task_started, %{issue: %Issue{id: issue_id}} = assignment}, state)
+      when is_binary(issue_id) do
+    state = handle_worker_task_started(state, assignment)
+    notify_dashboard()
+    {:noreply, state}
+  end
+
+  def handle_cast({:worker_task_progress, issue_id, payload}, state)
+      when is_binary(issue_id) and is_map(payload) do
+    {:noreply, handle_worker_task_progress(state, issue_id, payload)}
+  end
+
   def handle_cast({:worker_task_finished, issue_id, outcome}, state) when is_binary(issue_id) do
     {:noreply, handle_worker_task_finished(state, issue_id, outcome)}
   end
@@ -353,16 +377,7 @@ defmodule SymphonyElixir.Orchestrator do
         {:noreply, state}
 
       running_entry ->
-        {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
-        persist_codex_update(updated_running_entry, update)
-
-        state =
-          state
-          |> apply_codex_token_delta(token_delta)
-          |> apply_codex_rate_limits(update, running_entry.project_id)
-
-        notify_dashboard()
-        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+        {:noreply, handle_codex_worker_update(state, issue_id, running_entry, update)}
     end
   end
 
@@ -461,12 +476,19 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_worker_task_finished(state, issue_id, outcome)
-       when outcome in [:success, :cancelled],
-       do: complete_issue(state, issue_id)
+       when outcome in [:success, :cancelled] do
+    {running_entry, state} = pop_running_entry(state, issue_id)
+
+    state
+    |> record_session_completion_totals(running_entry)
+    |> complete_issue(issue_id)
+  end
 
   defp handle_worker_task_finished(state, issue_id, {:blocked, reason}) do
     case Map.get(state.running, issue_id) do
       %RunningIssue{} = running_entry ->
+        state = record_session_completion_totals(state, running_entry)
+
         references =
           running_entry
           |> run_references()
@@ -495,12 +517,14 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.warning("Worker task failed for issue_id=#{issue_id} session_id=#{running_entry.session_id} #{summary}")
 
         state
+        |> record_session_completion_totals(running_entry)
         |> fail_or_retry(
           issue_id,
           running_entry,
           summary,
           :failure_retries_exhausted,
-          reason
+          reason,
+          record_environment_failure: false
         )
         |> Map.update!(:running, &Map.delete(&1, issue_id))
 
@@ -772,10 +796,10 @@ defmodule SymphonyElixir.Orchestrator do
     |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
   end
 
-  defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail) do
+  defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, opts \\ []) do
     case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
       {:ok, settings} ->
-        do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings)
+        do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings, opts)
 
       {:error, reason} ->
         Logger.error("Run failure cannot be retried; workflow context unavailable issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} reason=#{inspect(reason)}")
@@ -783,8 +807,10 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings) do
-    record_environment_failure(issue_id, running_entry, detail)
+  defp do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings, opts) do
+    if Keyword.get(opts, :record_environment_failure, true) do
+      record_environment_failure(issue_id, running_entry, detail)
+    end
 
     decision =
       RetryPolicy.failure_decision(
@@ -2356,6 +2382,7 @@ defmodule SymphonyElixir.Orchestrator do
           issue_id: metadata.issue_id,
           identifier: metadata.identifier,
           state: metadata.state,
+          run_id: metadata.run_id,
           worker_host: Map.get(metadata, :worker_host),
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: metadata.session_id,
@@ -2377,7 +2404,7 @@ defmodule SymphonyElixir.Orchestrator do
        running: running,
        retrying: retrying,
        blocked: blocked,
-       codex_totals: state.codex_totals,
+       codex_totals: snapshot_codex_totals(state, now),
        rate_limits: Map.get(state, :codex_rate_limits),
        rate_limit_observation: Map.get(state, :codex_rate_limit_observation),
        rate_limit_gate: rate_limit_gate_snapshot(),
@@ -3235,6 +3262,164 @@ defmodule SymphonyElixir.Orchestrator do
     %{cancelled: if(assignment, do: 1, else: 0), failed: [], status: :ok}
   end
 
+  defp handle_worker_task_started(%State{} = state, %{issue: %Issue{id: issue_id} = issue} = assignment) do
+    worker_host = worker_host_from_assignment(assignment)
+    attempt = worker_assignment_attempt(assignment)
+
+    running_entry = %RunningIssue{
+      pid: nil,
+      ref: nil,
+      run_id: Map.get(assignment, :run_id),
+      identifier: issue.identifier,
+      issue: issue,
+      project_id: Map.get(assignment, :project_id),
+      worker_host: worker_host,
+      workspace_path: nil,
+      session_id: nil,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_app_server_pid: nil,
+      codex_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      turn_count: 0,
+      retry_attempt: attempt,
+      failure_count: Map.get(state.failure_counts, issue_id, 0),
+      started_at: worker_assignment_started_at(assignment),
+      session_history: initial_session_history(issue, attempt, worker_host),
+      session_history_total_count: 1
+    }
+
+    %{
+      state
+      | running: Map.put(state.running, issue_id, running_entry),
+        claimed: MapSet.put(state.claimed, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+    }
+  end
+
+  defp handle_worker_task_progress(%State{} = state, issue_id, payload) do
+    case worker_codex_update(payload) do
+      {:ok, update} ->
+        case Map.get(state.running, issue_id) do
+          %RunningIssue{} = running_entry -> handle_codex_worker_update(state, issue_id, running_entry, update)
+          _missing -> state
+        end
+
+      :ignore ->
+        state
+    end
+  end
+
+  defp handle_codex_worker_update(%State{running: running} = state, issue_id, running_entry, update) do
+    {updated_running_entry, token_delta} = integrate_codex_update(running_entry, update)
+    persist_codex_update(updated_running_entry, update)
+
+    state =
+      state
+      |> apply_codex_token_delta(token_delta)
+      |> apply_codex_rate_limits(update, running_entry.project_id)
+
+    notify_dashboard()
+    %{state | running: Map.put(running, issue_id, updated_running_entry)}
+  end
+
+  defp worker_codex_update(payload) do
+    case Payload.get_any(payload, ["codex", :codex, "message", :message]) do
+      %{} = message ->
+        {:ok, normalize_worker_codex_update(message, payload)}
+
+      _ ->
+        worker_session_started_update(payload)
+    end
+  end
+
+  defp worker_session_started_update(payload) do
+    if Payload.get_any(payload, ["phase", :phase]) in ["codex_session_started", :codex_session_started] do
+      message = %{
+        event: :session_started,
+        session_id: Payload.get_any(payload, ["session_id", :session_id])
+      }
+
+      {:ok, normalize_worker_codex_update(message, payload)}
+    else
+      :ignore
+    end
+  end
+
+  defp normalize_worker_codex_update(message, progress_payload) do
+    %{
+      event: normalize_worker_codex_event(Payload.get_any(message, ["event", :event])),
+      timestamp:
+        normalize_worker_timestamp(
+          Payload.get_any(message, ["timestamp", :timestamp]),
+          progress_payload
+        ),
+      payload: Payload.get_any(message, ["payload", :payload]),
+      raw: Payload.get_any(message, ["raw", :raw]),
+      session_id:
+        Payload.get_any(message, ["session_id", :session_id]) ||
+          Payload.get_any(progress_payload, ["session_id", :session_id]),
+      codex_app_server_pid: Payload.get_any(message, ["codex_app_server_pid", :codex_app_server_pid]),
+      rate_limits: Payload.get_any(message, ["rate_limits", :rate_limits, "rateLimits", :rateLimits]),
+      tokens: Payload.get_any(message, ["tokens", :tokens]),
+      total_token_usage: Payload.get_any(message, ["total_token_usage", :total_token_usage]),
+      usage: Payload.get_any(message, ["usage", :usage])
+    }
+  end
+
+  defp normalize_worker_codex_event(event) when is_atom(event), do: event
+  defp normalize_worker_codex_event("approval_required"), do: :approval_required
+  defp normalize_worker_codex_event("malformed"), do: :malformed
+  defp normalize_worker_codex_event("notification"), do: :notification
+  defp normalize_worker_codex_event("other_message"), do: :other_message
+  defp normalize_worker_codex_event("session_started"), do: :session_started
+  defp normalize_worker_codex_event("startup_failed"), do: :startup_failed
+  defp normalize_worker_codex_event("turn_cancelled"), do: :turn_cancelled
+  defp normalize_worker_codex_event("turn_completed"), do: :turn_completed
+  defp normalize_worker_codex_event("turn_ended_with_error"), do: :turn_ended_with_error
+  defp normalize_worker_codex_event("turn_failed"), do: :turn_failed
+  defp normalize_worker_codex_event("turn_input_required"), do: :turn_input_required
+  defp normalize_worker_codex_event(event), do: event
+
+  defp normalize_worker_timestamp(%DateTime{} = timestamp, _progress_payload), do: timestamp
+
+  defp normalize_worker_timestamp(timestamp, _progress_payload) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, datetime, _offset} -> datetime
+      _error -> DateTime.utc_now()
+    end
+  end
+
+  defp normalize_worker_timestamp(_timestamp, progress_payload) do
+    case Payload.get_any(progress_payload, ["occurred_at", :occurred_at]) do
+      %DateTime{} = occurred_at ->
+        occurred_at
+
+      occurred_at when is_binary(occurred_at) ->
+        normalize_worker_timestamp(occurred_at, %{})
+
+      _ ->
+        DateTime.utc_now()
+    end
+  end
+
+  defp worker_host_from_assignment(assignment) do
+    Map.get(assignment, :worker_name) || Map.get(assignment, :worker_id)
+  end
+
+  defp worker_assignment_attempt(%{correlation: correlation}) when is_map(correlation) do
+    RetryPolicy.normalize_attempt(Map.get(correlation, "run_attempt"))
+  end
+
+  defp worker_assignment_started_at(assignment) do
+    Map.get(assignment, :started_at) || DateTime.utc_now()
+  end
+
   defp integrate_codex_update(running_entry, %{event: _event, timestamp: _timestamp} = update) do
     SessionHistory.integrate_codex_update(running_entry, update)
   end
@@ -3301,6 +3486,20 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp record_session_completion_totals(state, _running_entry), do: state
+
+  defp snapshot_codex_totals(%State{} = state, %DateTime{} = now) do
+    active_seconds =
+      Enum.reduce(state.running, 0, fn {_id, running_entry}, seconds ->
+        seconds + running_seconds(Map.get(running_entry, :started_at), now)
+      end)
+
+    apply_token_delta(state.codex_totals, %{
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      seconds_running: active_seconds
+    })
+  end
 
   defp refresh_runtime_config(%State{} = state) do
     case runtime_config() do
@@ -3512,8 +3711,6 @@ defmodule SymphonyElixir.Orchestrator do
         end
     end
   end
-
-  defp apply_codex_rate_limits(state, _update, _project_id), do: state
 
   defp refresh_project_rate_limit_gate(state, project_id) do
     {:ok, workflow} = WorkflowStore.for_project(project_id)

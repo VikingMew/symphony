@@ -3,9 +3,11 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   alias SymphonyElixir.EnvironmentFailureCircuit
   alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixir.Workflow
+  alias SymphonyElixirWeb.Presenter
 
   defmodule Tracker do
     use Agent
@@ -148,6 +150,97 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert length(Enum.uniq(identifiers)) == 12
     assert AssignmentManager.current_assignment(context.manager) == nil
+  end
+
+  test "accepted worker assignment feeds current state until terminal completion", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, DateTime.add(DateTime.utc_now(), -5, :second))
+    ready = issue(99)
+    Tracker.put([ready])
+
+    assert {:ok, assignment} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, manager)
+
+    eventually(fn ->
+      payload = Presenter.state_payload(orchestrator, 100)
+
+      payload.counts.running == 1 and
+        match?(
+          [
+            %{
+              issue_id: "issue-99",
+              issue_identifier: "SYM-99",
+              run_id: run_id,
+              started_at: started_at,
+              runtime_seconds: runtime_seconds
+            }
+          ]
+          when run_id == assignment.run_id and is_binary(started_at) and runtime_seconds > 0,
+          payload.running
+        )
+    end)
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.progress",
+               %{
+                 "correlation" => assignment.correlation,
+                 "phase" => "codex_session_started",
+                 "session_id" => "codex-worker-session"
+               },
+               manager
+             )
+
+    eventually(fn ->
+      match?([%{session_id: "codex-worker-session"}], Presenter.state_payload(orchestrator, 100).running)
+    end)
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.completed",
+               %{"correlation" => assignment.correlation, "summary" => summary("succeeded")},
+               manager
+             )
+
+    eventually(fn ->
+      payload = Presenter.state_payload(orchestrator, 100)
+      payload.counts.running == 0 and payload.running == [] and payload.codex_totals.seconds_running > 0
+    end)
+  end
+
+  test "worker codex progress applies absolute token deltas to current state", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, DateTime.add(DateTime.utc_now(), -7, :second))
+    ready = issue(100)
+    Tracker.put([ready])
+
+    assert {:ok, assignment} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, manager)
+
+    send_codex_token_progress(context, manager, assignment, 5, 7, 12)
+    send_codex_token_progress(context, manager, assignment, 9, 11, 20)
+    send_codex_token_progress(context, manager, assignment, 9, 11, 20)
+
+    eventually(fn ->
+      payload = Presenter.state_payload(orchestrator, 100)
+
+      payload.codex_totals.input_tokens == 9 and
+        payload.codex_totals.output_tokens == 11 and
+        payload.codex_totals.total_tokens == 20 and
+        payload.codex_totals.seconds_running > 0 and
+        match?(
+          [
+            %{
+              tokens: %{input_tokens: 9, output_tokens: 11, total_tokens: 20}
+            }
+          ],
+          payload.running
+        )
+    end)
   end
 
   test "revalidation rejects a candidate moved to a terminal state", context do
@@ -606,6 +699,63 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, context.manager)
   end
 
+  defp start_orchestrator do
+    name = Module.concat(__MODULE__, "Orchestrator#{System.unique_integer([:positive])}")
+    start_supervised!({Orchestrator, name: name})
+    name
+  end
+
+  defp start_manager(context, orchestrator, now) do
+    name = Module.concat(__MODULE__, "ObservedManager#{System.unique_integer([:positive])}")
+
+    start_supervised!(
+      Supervisor.child_spec(
+        {AssignmentManager,
+         name: name,
+         tracker: Tracker,
+         persistence: FakePersistence,
+         workflows: Workflows,
+         orchestrator: orchestrator,
+         now: fn -> now end,
+         failure_circuit: context.circuit,
+         reconcile_interval_ms: :timer.hours(1)},
+        id: name
+      )
+    )
+  end
+
+  defp send_codex_token_progress(context, manager, assignment, input_tokens, output_tokens, total_tokens) do
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.progress",
+               %{
+                 "correlation" => assignment.correlation,
+                 "phase" => "codex_update",
+                 "codex" => %{
+                   "event" => "notification",
+                   "timestamp" => DateTime.utc_now() |> DateTime.to_iso8601(),
+                   "payload" => %{
+                     "method" => "thread/tokenUsage/updated",
+                     "params" => %{
+                       "tokenUsage" => %{
+                         "total" => %{
+                           "input_tokens" => input_tokens,
+                           "output_tokens" => output_tokens,
+                           "total_tokens" => total_tokens
+                         }
+                       }
+                     }
+                   },
+                   "session_id" => "codex-token-session"
+                 }
+               },
+               manager
+             )
+  end
+
   defp claim_after_circuit_reset(context, issue) do
     EnvironmentFailureCircuit.reset(context.circuit)
     Tracker.put([issue])
@@ -657,5 +807,17 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     "failed"
     |> summary()
     |> Map.put("detail", detail)
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, 0), do: assert(fun.())
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end

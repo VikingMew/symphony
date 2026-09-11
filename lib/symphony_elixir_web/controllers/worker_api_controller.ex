@@ -9,6 +9,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixir.Worker.{AssignmentManager, ExecutionPayload, HeartbeatMetrics}
+  alias SymphonyElixir.WorkerResult
 
   @spec register(Conn.t(), map()) :: Conn.t()
   def register(conn, params) do
@@ -87,8 +88,6 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, event} <-
            AssignmentManager.record_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
-      notify_terminal_task(event_type, event)
-
       conn
       |> put_status(202)
       |> json(%{event_id: event.id, accepted: true})
@@ -101,44 +100,9 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     error_response(conn, 422, "invalid_worker_event", "event_type is required")
   end
 
-  defp notify_terminal_task(
-         event_type,
-         %{payload: %{"correlation" => %{"issue_id" => issue_id}, "summary" => summary}}
-       )
-       when event_type in ["task.completed", "task.failed", "task.cancelled"] and is_binary(issue_id) do
-    Orchestrator.worker_task_finished(issue_id, terminal_outcome(event_type, summary))
-  end
-
-  defp notify_terminal_task(event_type, _event)
-       when event_type in ["task.completed", "task.failed", "task.cancelled"],
-       do: :ok
-
-  defp notify_terminal_task(_event_type, _event), do: :ok
-
   @doc false
   @spec terminal_outcome(String.t(), map()) :: Orchestrator.worker_terminal_outcome()
-  def terminal_outcome("task.completed", _summary), do: :success
-
-  def terminal_outcome(event_type, summary)
-      when event_type in ["task.failed", "task.cancelled"] and is_map(summary) do
-    reason = terminal_reason(summary)
-
-    case Map.get(summary, "outcome") do
-      outcome when outcome in ["succeeded", "success"] -> :success
-      "cancelled" -> :cancelled
-      "blocked" -> {:blocked, reason}
-      "failed" -> {:failed, reason}
-      _missing_or_unrecognized -> {:failed, reason}
-    end
-  end
-
-  defp terminal_reason(%{"reason" => reason, "detail" => detail})
-       when is_binary(reason) and is_binary(detail),
-       do: reason <> "\n" <> detail
-
-  defp terminal_reason(%{"reason" => reason}) when is_binary(reason), do: reason
-  defp terminal_reason(%{"detail" => detail}) when is_binary(detail), do: detail
-  defp terminal_reason(_summary), do: "worker terminal outcome did not include a reason"
+  def terminal_outcome(event_type, summary), do: WorkerResult.terminal_outcome(event_type, summary)
 
   defp verify_registration_token(conn) do
     token =
