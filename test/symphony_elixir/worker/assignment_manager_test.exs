@@ -62,21 +62,23 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
   end
 
-  defmodule EmptyWorkflows do
-    def list_enabled, do: []
-  end
-
-  defmodule BlockingReconcilePersistence do
-    defdelegate heartbeat_worker(worker_id, session_id), to: FakePersistence
-    defdelegate worker_lease_duration_seconds(), to: FakePersistence
-
-    def expire_stale_worker_sessions(_opts \\ []) do
+  defmodule BlockingReconcileTracker do
+    def fetch_issues_by_states(_states) do
       send(Application.fetch_env!(:symphony_elixir, :assignment_test_owner), {:reconcile_blocked, self()})
 
       receive do
-        :release_reconcile -> 0
+        :release_reconcile -> {:ok, []}
       end
     end
+  end
+
+  defmodule ZombieReconcilePersistence do
+    defdelegate list_runs_for_issue(identifier, opts), to: FakePersistence
+    defdelegate finish_run(run_id, status, summary), to: FakePersistence
+    defdelegate record_event(attrs), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+
+    def expire_stale_worker_sessions(_opts \\ []), do: raise("zombie reconciliation must not expire worker sessions")
   end
 
   defmodule BlockingHeartbeatPersistence do
@@ -318,9 +320,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
            [
              [
                name: name,
-               tracker: Tracker,
-               persistence: BlockingReconcilePersistence,
-               workflows: EmptyWorkflows,
+               tracker: BlockingReconcileTracker,
+               persistence: FakePersistence,
+               workflows: Workflows,
                now: fn -> context.now end,
                failure_circuit: context.circuit,
                reconcile_interval_ms: :timer.hours(1)
@@ -338,13 +340,41 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
           context.session.id,
           %{"active_leases" => []},
           manager,
-          BlockingReconcilePersistence
+          FakePersistence
         )
       end)
 
     assert {:ok, {:ok, %{lease_renewals: [], commands: []}}} = Task.yield(heartbeat, 500)
 
     send(blocked_pid, :release_reconcile)
+  end
+
+  test "zombie reconciliation uses run lease without expiring worker sessions", context do
+    ready = issue(1)
+    Tracker.put([ready])
+    assert {:ok, assignment} = claim(context)
+    Process.exit(context.manager, :normal)
+    Process.sleep(10)
+
+    run = FakePersistence.get_run(assignment.run_id)
+    {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
+
+    name = Module.concat(__MODULE__, "ZombieLease#{System.unique_integer([:positive])}")
+
+    {:ok, restarted} =
+      AssignmentManager.start_link(
+        name: name,
+        tracker: Tracker,
+        persistence: ZombieReconcilePersistence,
+        workflows: Workflows,
+        now: fn -> context.now end,
+        failure_circuit: context.circuit,
+        reconcile_interval_ms: :timer.hours(1)
+      )
+
+    AssignmentManager.reconcile(restarted)
+    eventually(fn -> List.last(Tracker.updates()) == {ready.id, "Ready"} end)
+    assert FakePersistence.get_run(assignment.run_id).status == "failed"
   end
 
   test "retryable heartbeat timeout is followed by a successful matching lease renewal", context do

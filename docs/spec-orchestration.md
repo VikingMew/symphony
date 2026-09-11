@@ -194,6 +194,13 @@ An empty claim includes structured admission evidence distinguishing an active a
 slot exhaustion, an absent/offline/stale session, and no eligible Linear candidate. Runs and events
 are audit history and never contribute queued or occupied capacity.
 
+Worker-mode restart recovery is governed by the current in-memory assignment and the latest run's
+lease age, not by `worker_sessions` heartbeat freshness or offline marking. After a Panel restart,
+an `In Progress` issue with a latest `running` worker run stays unavailable for dispatch until the
+worker lease duration has elapsed. A worker session that has not yet sent its next heartbeat or
+claim is unknown for recovery purposes rather than proof that the run is dead; session freshness
+still gates new claim admission.
+
 Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
 rejection emits `global_capacity` skip evidence and never falls back to a workflow field.
 
