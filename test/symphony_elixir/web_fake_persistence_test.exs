@@ -5,6 +5,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.AssignmentManager
+  alias SymphonyElixir.Worker.HeartbeatMetrics
 
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
@@ -18,6 +20,47 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
             {:ok, map()}
     def record_worker_task_event(_worker_id, _session_id, _task_id, _event_type, _payload) do
       {:ok, %{id: "event-without-correlation", payload: %{}}}
+    end
+  end
+
+  defmodule EmptyTracker do
+    @moduledoc false
+
+    def fetch_candidate_issues, do: {:ok, []}
+    def fetch_issue_states_by_ids(_ids), do: {:ok, []}
+    def fetch_issues_by_states(_states), do: {:ok, []}
+    def update_issue_state(_id, _state), do: :ok
+  end
+
+  defmodule EmptyWorkflows do
+    @moduledoc false
+
+    def list_enabled, do: []
+  end
+
+  defmodule SlowHeartbeatPersistence do
+    @moduledoc false
+
+    defdelegate worker_protocol_version(), to: FakePersistence
+    defdelegate worker_heartbeat_interval_seconds(), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+    defdelegate valid_worker_registration_token?(token), to: FakePersistence
+    defdelegate register_worker(attrs), to: FakePersistence
+    defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
+    defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
+    defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
+    defdelegate default_project(), to: FakePersistence
+    defdelegate list_projects(), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
+    defdelegate workflow_to_loaded(record), to: FakePersistence
+
+    @spec heartbeat_worker(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
+    def heartbeat_worker(worker_id, session_id) do
+      send(Application.fetch_env!(:symphony_elixir, :heartbeat_test_owner), {:slow_heartbeat_started, self()})
+
+      receive do
+        :release_heartbeat -> FakePersistence.heartbeat_worker(worker_id, session_id)
+      end
     end
   end
 
@@ -117,6 +160,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     previous_worker_api = Application.get_env(:symphony_elixir, :worker_api)
     previous_linear_client = Application.get_env(:symphony_elixir, :linear_diagnostics_client_module)
     previous_linear_fake = Application.get_env(:symphony_elixir, :linear_discovery_fake)
+    previous_heartbeat_owner = Application.get_env(:symphony_elixir, :heartbeat_test_owner)
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
@@ -124,6 +168,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     Application.put_env(:symphony_elixir, :linear_diagnostics_client_module, FakeLinearClient)
     System.put_env("LINEAR_API_KEY", "fake-linear-token")
     FakePersistence.reset!()
+    HeartbeatMetrics.reset!()
 
     on_exit(fn ->
       restore_app_env(:persistence_module, previous_persistence)
@@ -131,6 +176,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       restore_app_env(:worker_api, previous_worker_api)
       restore_app_env(:linear_diagnostics_client_module, previous_linear_client)
       restore_app_env(:linear_discovery_fake, previous_linear_fake)
+      restore_app_env(:heartbeat_test_owner, previous_heartbeat_owner)
       restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
@@ -181,6 +227,54 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            end)
   end
 
+  test "concurrent heartbeat HTTP requests under slow persistence return retryable 503 instead of 500" do
+    Application.put_env(:symphony_elixir, :persistence_module, SlowHeartbeatPersistence)
+    Application.put_env(:symphony_elixir, :heartbeat_test_owner, self())
+    start_test_endpoint()
+    start_assignment_manager(SlowHeartbeatPersistence)
+
+    %{"worker_id" => worker_id, "session_id" => session_id} =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{@worker_token}")
+      |> post("/api/worker/v1/register", worker_registration_payload())
+      |> json_response(200)
+
+    requests =
+      for _ <- 1..3 do
+        Task.async(fn ->
+          build_conn()
+          |> worker_headers(worker_id, session_id)
+          |> post("/api/worker/v1/heartbeat", %{"active_leases" => []})
+        end)
+      end
+
+    for _ <- requests do
+      assert_receive {:slow_heartbeat_started, _pid}, 500
+    end
+
+    conns = Task.await_many(requests, 2_500)
+    statuses = Enum.map(conns, & &1.status)
+
+    assert statuses == [503, 503, 503]
+    refute 500 in statuses
+
+    for conn <- conns do
+      assert Plug.Conn.get_resp_header(conn, "retry-after") == ["1"]
+
+      assert %{
+               "error" => %{
+                 "code" => "worker_heartbeat_unavailable",
+                 "message" => "Worker heartbeat could not complete before the server timeout"
+               },
+               "retry_after_seconds" => 1
+             } = json_response(conn, 503)
+
+      refute conn.resp_body =~ "GenServer.call"
+    end
+
+    assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 3}
+  end
+
   test "worker API returns controller-level errors before persistence work" do
     start_test_endpoint()
 
@@ -202,6 +296,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> put_req_header("x-symphony-worker-session", "session")
              |> post("/api/worker/v1/tasks/task-1/events", %{})
              |> json_response(422)
+
+    assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 0}
   end
 
   test "terminal worker event without a current assignment is rejected" do
@@ -231,6 +327,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
+  end
+
+  defp start_assignment_manager(persistence) do
+    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: EmptyTracker, persistence: persistence, workflows: EmptyWorkflows, reconcile_interval_ms: :timer.hours(1)})
   end
 
   defp worker_registration_payload do

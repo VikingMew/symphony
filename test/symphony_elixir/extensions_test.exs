@@ -468,6 +468,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "nap" => %{"status" => "idle"},
                "day_dreaming" => %{"status" => "idle"}
              },
+             "worker_api" => %{"heartbeat_failed_attempts" => 0},
              "polling" => %{"listening?" => false, "listening_mode" => "not_listening"}
            }
 

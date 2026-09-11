@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-08
+updated: 2026-09-11
 design_status: landed
 ---
 
@@ -30,6 +30,15 @@ worker sends a non-terminal `linear.tool_call` event with assignment correlation
 Panel persists it. Audit delivery failures are logged as degraded execution and do not change the
 tool response or assignment lifecycle. Centralized execution records the same audit locally in the
 Panel.
+
+Heartbeat is a freshness and active-lease renewal signal, not queued work. The Panel persists
+worker/session freshness outside the assignment manager queue. Heartbeats that report no active
+lease return after freshness persistence without entering the assignment manager. Heartbeats that
+report an active lease can renew only the current matching assignment, and a later successful
+heartbeat after a retryable timeout still uses that same rule. If freshness persistence or the
+bounded renewal section cannot complete in time, the Panel returns HTTP 503 with
+`worker_heartbeat_unavailable`, `retry_after_seconds`, and `Retry-After`; that failure does not
+create a task, assignment, run failure, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
 later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,

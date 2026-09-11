@@ -114,6 +114,7 @@ defmodule SymphonyElixir.TestSupport do
 
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
+  alias SymphonyElixir.Worker.HeartbeatMetrics
   alias SymphonyElixir.{Workflow, WorkflowStore}
 
   defmacro __using__(_opts) do
@@ -134,6 +135,7 @@ defmodule SymphonyElixir.TestSupport do
       alias SymphonyElixir.StatusDashboard
       alias SymphonyElixir.TestSupport.FakePersistence
       alias SymphonyElixir.Tracker
+      alias SymphonyElixir.Worker.HeartbeatMetrics
       alias SymphonyElixir.Workflow
       alias SymphonyElixir.WorkflowStore
       alias SymphonyElixir.Workspace
@@ -171,12 +173,17 @@ defmodule SymphonyElixir.TestSupport do
           unless Process.whereis(SymphonyElixir.EnvironmentFailureCircuit) do
             start_supervised!(SymphonyElixir.EnvironmentFailureCircuit)
           end
+
+          unless Process.whereis(HeartbeatMetrics) do
+            start_supervised!(HeartbeatMetrics)
+          end
         end
 
         FakePersistence.reset!()
         Health.reset!()
 
         SymphonyElixir.EnvironmentFailureCircuit.reset()
+        HeartbeatMetrics.reset!()
         previous_linear_api_key = System.get_env("LINEAR_API_KEY")
         System.put_env("LINEAR_API_KEY", "token")
 
@@ -211,6 +218,7 @@ defmodule SymphonyElixir.TestSupport do
     ensure_supervised_child_running!(SymphonyElixir.Linear.Health, SymphonyElixir.Linear.Health)
     ensure_supervised_child_running!(SymphonyElixir.WorkflowStore, SymphonyElixir.WorkflowStore)
     ensure_supervised_child_running!(SymphonyElixir.EnvironmentFailureCircuit, SymphonyElixir.EnvironmentFailureCircuit)
+    ensure_supervised_child_running!(HeartbeatMetrics, HeartbeatMetrics)
     ensure_supervised_child_running!(SymphonyElixir.Orchestrator, SymphonyElixir.Orchestrator)
     ensure_supervised_child_running!(SymphonyElixir.StatusDashboard, SymphonyElixir.StatusDashboard)
   end

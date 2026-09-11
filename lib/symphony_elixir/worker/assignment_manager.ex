@@ -26,6 +26,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @initial_poll_seconds 5
   @backoff_poll_seconds 30
   @max_poll_seconds 60
+  @heartbeat_timeout_ms 1_000
+  @heartbeat_retry_after_seconds 1
 
   @type assignment :: map()
 
@@ -52,9 +54,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled)}
   end
 
-  @spec heartbeat(String.t(), String.t(), map(), GenServer.server()) :: {:ok, map()} | {:error, term()}
-  def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__),
-    do: if(process_alive?(server), do: GenServer.call(server, {:heartbeat, worker_id, session_id, attrs}), else: inactive_heartbeat(worker_id, session_id))
+  @spec heartbeat(String.t(), String.t(), map(), GenServer.server(), module()) :: {:ok, map()} | {:error, term()}
+  def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__, persistence \\ PersistenceProvider.module()) do
+    active_ids = active_lease_ids(attrs)
+
+    with {:ok, base} <- persist_heartbeat(persistence, worker_id, session_id),
+         {:ok, renewals} <- heartbeat_renewals(worker_id, session_id, active_ids, server) do
+      {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}
+    end
+  end
 
   @spec record_event(String.t(), String.t(), String.t(), String.t(), map(), GenServer.server()) ::
           {:ok, map()} | {:error, term()}
@@ -168,19 +176,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:heartbeat, worker_id, session_id, attrs}, _from, state) do
-    state = expire_assignment(state)
-
-    case state.persistence.heartbeat_worker(worker_id, session_id) do
-      {:ok, base} ->
-        active_ids = map_get(attrs, "active_leases", :active_leases) || []
-        {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
-
-        reply = {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}
-        {:reply, reply, %{state | assignment: assignment}}
-
-      {:error, reason} ->
-        {:reply, {:error, reason}, state}
+  def handle_call({:heartbeat_renew, worker_id, session_id, active_ids, deadline_ms}, _from, state) do
+    if System.monotonic_time(:millisecond) > deadline_ms do
+      {:reply, heartbeat_unavailable(), state}
+    else
+      {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
+      {:reply, {:ok, renewals}, %{state | assignment: assignment}}
     end
   end
 
@@ -345,8 +346,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp renew_assignment(assignment, worker_id, session_id, active_ids, state) do
     owned? = assignment.worker_id == worker_id and assignment.session_id == session_id
+    live? = DateTime.compare(assignment.expires_at, state.now.()) in [:eq, :gt]
 
-    if owned? and assignment.lease_id in active_ids do
+    if owned? and live? and assignment.lease_id in active_ids do
       expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
       renewal = %{lease_id: assignment.lease_id, lease_expires_at: expires_at}
       {%{assignment | expires_at: expires_at}, [renewal]}
@@ -533,9 +535,35 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp process_alive?(server) when is_atom(server), do: Process.whereis(server) != nil
   defp process_alive?(server) when is_pid(server), do: Process.alive?(server)
 
-  defp inactive_heartbeat(worker_id, session_id) do
-    with {:ok, base} <- PersistenceProvider.module().heartbeat_worker(worker_id, session_id) do
-      {:ok, Map.merge(base, %{lease_renewals: [], commands: []})}
+  defp active_lease_ids(attrs), do: map_get(attrs, "active_leases", :active_leases) || []
+
+  defp persist_heartbeat(persistence, worker_id, session_id) do
+    task =
+      Task.Supervisor.async_nolink(SymphonyElixir.TaskSupervisor, fn ->
+        persistence.heartbeat_worker(worker_id, session_id)
+      end)
+
+    case Task.yield(task, @heartbeat_timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      nil -> heartbeat_unavailable()
     end
   end
+
+  defp heartbeat_renewals(_worker_id, _session_id, [], _server), do: {:ok, []}
+
+  defp heartbeat_renewals(worker_id, session_id, active_ids, server) do
+    if process_alive?(server) do
+      deadline_ms = System.monotonic_time(:millisecond) + @heartbeat_timeout_ms
+
+      try do
+        GenServer.call(server, {:heartbeat_renew, worker_id, session_id, active_ids, deadline_ms}, @heartbeat_timeout_ms)
+      catch
+        :exit, {:timeout, _call} -> heartbeat_unavailable()
+      end
+    else
+      {:ok, []}
+    end
+  end
+
+  defp heartbeat_unavailable, do: {:error, {:heartbeat_unavailable, @heartbeat_retry_after_seconds}}
 end

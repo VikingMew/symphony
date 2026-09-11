@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
   import Phoenix.ConnTest
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.HeartbeatMetrics
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -175,11 +176,21 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
 
     state_payload = json_response(get(build_conn(), "/api/v1/state"), 200)
     assert state_payload["counts"] == %{"running" => 0, "retrying" => 0, "blocked" => 0}
+    assert state_payload["worker_api"] == %{"heartbeat_failed_attempts" => 0}
 
     assert %{"error" => %{"code" => "database_timeout"}} =
              history_request |> Task.await(2_000) |> json_response(503)
 
     assert Process.alive?(blocked_pid) == false
+  end
+
+  test "state endpoint exposes worker heartbeat failure counts from memory" do
+    HeartbeatMetrics.record_failure(:worker_session_not_found)
+    HeartbeatMetrics.record_failure({:heartbeat_unavailable, 1})
+
+    payload = json_response(get(build_conn(), "/api/v1/state"), 200)
+
+    assert payload["worker_api"] == %{"heartbeat_failed_attempts" => 2}
   end
 
   test "state endpoint exposes environment failure circuit status and triggering fingerprint" do
