@@ -437,8 +437,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp reconcile_zombies(state) do
-    state.persistence.expire_stale_worker_sessions(now: state.now.())
-
     Enum.each(state.workflows.list_enabled(), fn workflow ->
       Config.with_workflow_context(workflow, fn -> reconcile_workflow_zombies(state) end)
     end)

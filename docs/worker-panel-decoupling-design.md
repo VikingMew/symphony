@@ -69,7 +69,11 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 
 Panel 重启不会恢复 assignment 或旧 payload。reconciliation 读取 Linear `In Progress` issue 和
 最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结
-旧 run。旧 worker 的迟到上报因不存在匹配 assignment 而被拒绝。
+旧 run。回收判据不调用 session heartbeat 过期扫描，也不以 `worker_sessions.status` 或
+`last_heartbeat_at` 作为僵尸回收准入。重启后到 worker 下一次 heartbeat/claim 前，Panel 将旧 session
+视为未知而非死亡；这个窗口按 worker heartbeat interval 预算通常不超过 10 秒。未知窗口内不重新派发，
+直到 run 级 lease 超时；worker 重新出现时由 heartbeat 刷新 session，新旧 assignment id 不匹配的迟到
+上报仍因不存在匹配 assignment 而被拒绝。
 
 数据库只保留 `workers`、`worker_sessions`、`runs` 和 `events` 等历史模型，不存在 `tasks` 或
 `task_leases`。Workers 页面展示 registry/session、当前内存 assignment 和 worker run 历史，
