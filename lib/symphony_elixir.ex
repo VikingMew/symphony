@@ -52,6 +52,7 @@ defmodule SymphonyElixir.Application do
         SymphonyElixir.Linear.Health,
         SymphonyElixir.WorkflowStore,
         SymphonyElixir.EnvironmentFailureCircuit,
+        SymphonyElixir.Worker.HeartbeatMetrics,
         assignment_manager_child(),
         SymphonyElixir.Orchestrator,
         review_queue_child(),

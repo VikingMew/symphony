@@ -8,8 +8,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   alias Plug.Conn
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
-  alias SymphonyElixir.Worker.AssignmentManager
-  alias SymphonyElixir.Worker.ExecutionPayload
+  alias SymphonyElixir.Worker.{AssignmentManager, ExecutionPayload, HeartbeatMetrics}
   alias SymphonyElixir.WorkerResult
 
   @spec register(Conn.t(), map()) :: Conn.t()
@@ -68,11 +67,19 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   @spec heartbeat(Conn.t(), map()) :: Conn.t()
   def heartbeat(conn, params) do
-    with {:ok, worker_id, session_id} <- worker_identity(conn, params),
-         {:ok, payload} <- AssignmentManager.heartbeat(worker_id, session_id, params) do
-      json(conn, payload)
-    else
-      {:error, reason} -> worker_error(conn, reason)
+    case worker_identity(conn, params) do
+      {:ok, worker_id, session_id} ->
+        case AssignmentManager.heartbeat(worker_id, session_id, params) do
+          {:ok, payload} ->
+            json(conn, payload)
+
+          {:error, reason} ->
+            HeartbeatMetrics.record_failure(reason)
+            worker_error(conn, reason)
+        end
+
+      {:error, reason} ->
+        worker_error(conn, reason)
     end
   end
 
@@ -156,6 +163,19 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   defp worker_error(conn, {:invalid_worker_summary, message}) do
     error_response(conn, 422, "invalid_worker_summary", message)
+  end
+
+  defp worker_error(conn, {:heartbeat_unavailable, retry_after_seconds}) do
+    conn
+    |> put_resp_header("retry-after", Integer.to_string(retry_after_seconds))
+    |> put_status(503)
+    |> json(%{
+      error: %{
+        code: "worker_heartbeat_unavailable",
+        message: "Worker heartbeat could not complete before the server timeout"
+      },
+      retry_after_seconds: retry_after_seconds
+    })
   end
 
   defp worker_error(conn, reason) do

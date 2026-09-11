@@ -62,6 +62,43 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
   end
 
+  defmodule EmptyWorkflows do
+    def list_enabled, do: []
+  end
+
+  defmodule BlockingReconcilePersistence do
+    defdelegate heartbeat_worker(worker_id, session_id), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+
+    def expire_stale_worker_sessions(_opts \\ []) do
+      send(Application.fetch_env!(:symphony_elixir, :assignment_test_owner), {:reconcile_blocked, self()})
+
+      receive do
+        :release_reconcile -> 0
+      end
+    end
+  end
+
+  defmodule BlockingHeartbeatPersistence do
+    defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
+    defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+
+    def heartbeat_worker(worker_id, session_id) do
+      case Application.get_env(:symphony_elixir, :assignment_test_heartbeat_mode, :fast) do
+        :blocked ->
+          send(Application.fetch_env!(:symphony_elixir, :assignment_test_owner), {:heartbeat_blocked, self()})
+
+          receive do
+            :release_heartbeat -> FakePersistence.heartbeat_worker(worker_id, session_id)
+          end
+
+        :fast ->
+          FakePersistence.heartbeat_worker(worker_id, session_id)
+      end
+    end
+  end
+
   setup do
     FakePersistence.reset!()
     start_supervised!(Tracker)
@@ -82,6 +119,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     on_exit(fn ->
       Application.delete_env(:symphony_elixir, :assignment_test_workflow)
       Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
+      Application.delete_env(:symphony_elixir, :assignment_test_owner)
+      Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
     end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
@@ -264,6 +303,94 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert {:error, :lease_not_active} =
              AssignmentManager.record_event(context.worker.id, context.session.id, "stale", "task.progress", %{}, context.manager)
+  end
+
+  test "idle heartbeat is not queued behind blocking reconciliation", context do
+    Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+
+    name = Module.concat(__MODULE__, "BlockingReconcile#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(%{
+        id: name,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: name,
+               tracker: Tracker,
+               persistence: BlockingReconcilePersistence,
+               workflows: EmptyWorkflows,
+               now: fn -> context.now end,
+               failure_circuit: context.circuit,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    AssignmentManager.reconcile(manager)
+    assert_receive {:reconcile_blocked, blocked_pid}, 500
+
+    heartbeat =
+      Task.async(fn ->
+        AssignmentManager.heartbeat(
+          context.worker.id,
+          context.session.id,
+          %{"active_leases" => []},
+          manager,
+          BlockingReconcilePersistence
+        )
+      end)
+
+    assert {:ok, {:ok, %{lease_renewals: [], commands: []}}} = Task.yield(heartbeat, 500)
+
+    send(blocked_pid, :release_reconcile)
+  end
+
+  test "retryable heartbeat timeout is followed by a successful matching lease renewal", context do
+    Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    Application.put_env(:symphony_elixir, :assignment_test_heartbeat_mode, :blocked)
+
+    timed_out =
+      Task.async(fn ->
+        AssignmentManager.heartbeat(
+          context.worker.id,
+          context.session.id,
+          %{"active_leases" => [assignment.id]},
+          context.manager,
+          BlockingHeartbeatPersistence
+        )
+      end)
+
+    assert_receive {:heartbeat_blocked, _blocked_pid}, 500
+    assert {:ok, {:error, {:heartbeat_unavailable, retry_after_seconds}}} = Task.yield(timed_out, 1_500)
+    assert retry_after_seconds > 0
+
+    Application.put_env(:symphony_elixir, :assignment_test_heartbeat_mode, :fast)
+
+    assert {:ok, %{lease_renewals: [renewal]}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               context.manager,
+               BlockingHeartbeatPersistence
+             )
+
+    assert renewal.lease_id == assignment.id
+
+    assert {:ok, %{lease_renewals: []}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => ["wrong"]},
+               context.manager,
+               BlockingHeartbeatPersistence
+             )
   end
 
   test "persists Linear audit events without releasing the assignment", context do

@@ -5,7 +5,7 @@ domain: [spec, reliability-security]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-08-07
+updated: 2026-09-11
 ---
 
 # Reliability and Security Specification
@@ -45,6 +45,11 @@ updated: 2026-08-07
    - Dashboard render errors
    - Log sink configuration failure
 
+6. `Worker Heartbeat Failures`
+   - Worker/session freshness persistence exceeds the heartbeat budget
+   - Active-lease renewal cannot enter the assignment manager critical section within the heartbeat
+     budget
+
 ### 14.2 Recovery Behavior
 
 - Dispatch validation failures:
@@ -58,6 +63,13 @@ updated: 2026-08-07
 - Tracker candidate-fetch failures:
   - Skip this tick.
   - Try again on next tick.
+
+- Worker heartbeat timeout/overload:
+  - Return HTTP 503 with stable error code `worker_heartbeat_unavailable`.
+  - Include a positive `retry_after_seconds` body hint and matching `Retry-After` header.
+  - Do not expose crash stacks in the response body.
+  - Do not create queued work, a new assignment, a failed run, a retry, or an automatic repair
+    action.
 
 - Reconciliation state-refresh failures:
   - Keep current workers.
