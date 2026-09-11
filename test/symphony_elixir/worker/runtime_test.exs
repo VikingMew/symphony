@@ -45,6 +45,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     def execute(_config, claim, progress) do
       test = Agent.get(FakeClient, & &1.test)
       progress.("codex_session_started", %{session_id: "codex-#{claim["task_id"]}"})
+      if tokens = claim["codex_tokens"], do: progress.("codex_update", %{codex: codex_token_update(claim, tokens)})
       send(test, {:executing, claim["task_id"], self()})
 
       if claim["crash"], do: raise("executor crashed")
@@ -64,6 +65,22 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       else
         %{status: :completed}
       end
+    end
+
+    defp codex_token_update(claim, tokens) do
+      %{
+        event: :notification,
+        timestamp: DateTime.utc_now(),
+        session_id: "codex-#{claim["task_id"]}",
+        payload: %{
+          "method" => "thread/tokenUsage/updated",
+          "params" => %{
+            "tokenUsage" => %{
+              "total" => tokens
+            }
+          }
+        }
+      }
     end
   end
 
@@ -120,6 +137,39 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert phases("task-1") == ["accepted", "execution_started", "codex_session_started"]
     assert phases("task-2") == ["accepted", "execution_started", "codex_session_started"]
+  end
+
+  test "codex token progress is delivered as task progress", %{config: config} do
+    put_claims([
+      Map.put(claim("task-1", false), "codex_tokens", %{
+        "input_tokens" => 4,
+        "output_tokens" => 6,
+        "total_tokens" => 10
+      })
+    ])
+
+    _runtime = start_runtime(config)
+    assert_receive {:executing, "task-1", _executor}, 1_000
+
+    eventually(fn ->
+      Enum.any?(state().events, fn
+        {"task-1", "task.progress",
+         %{
+           phase: "codex_update",
+           codex: %{
+             event: :notification,
+             payload: %{
+               "method" => "thread/tokenUsage/updated",
+               "params" => %{"tokenUsage" => %{"total" => %{"total_tokens" => 10}}}
+             }
+           }
+         }} ->
+          true
+
+        _event ->
+          false
+      end)
+    end)
   end
 
   test "terminal transport failure retains and renews the lease until retry succeeds", %{config: config} do

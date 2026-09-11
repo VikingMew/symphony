@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-08
+updated: 2026-09-11
 design_status: landed
 ---
 
@@ -30,6 +30,16 @@ worker sends a non-terminal `linear.tool_call` event with assignment correlation
 Panel persists it. Audit delivery failures are logged as degraded execution and do not change the
 tool response or assignment lifecycle. Centralized execution records the same audit locally in the
 Panel.
+
+The same assignment lifecycle feeds the Panel's live orchestrator snapshot. A successful claim that
+creates the worker run, moves the issue to `In Progress`, and returns the assignment enters
+`running`. Progress events can carry `codex_session_started` or a Codex app-server message under the
+task progress payload; the Panel uses those messages to update session identity, last event/message,
+rate limits, and absolute token totals with the same delta accounting as centralized execution.
+Terminal events, cancellation, expiry, and stale-run reconciliation leave `running`; successful or
+cancelled endings clear the current entry, failed endings either enter orchestrator retry state or,
+when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
+centralized blocked outcomes.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
 later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,

@@ -11,10 +11,34 @@ defmodule SymphonyElixirWeb.DashboardPresenterTest do
     assert DashboardPresenter.format_runtime_and_turns(started_at, 3, now) == "1m 5s / 3"
     assert DashboardPresenter.format_runtime_and_turns(DateTime.to_iso8601(started_at), nil, now) == "1m 5s"
     snapshot = %{codex_totals: %{seconds_running: 30}, running: [%{started_at: started_at}]}
-    assert DashboardPresenter.total_runtime_seconds(snapshot, now) == 95
+    assert DashboardPresenter.total_runtime_seconds(snapshot, now) == 30
     assert DashboardPresenter.format_int(1_234_567) == "1,234,567"
     assert DashboardPresenter.format_int(nil) == "n/a"
     assert DashboardPresenter.format_time(now) == "2026-05-21T10:01:05Z"
+  end
+
+  test "dashboard card values use presenter current-state payload fields" do
+    payload = %{
+      counts: %{running: 1},
+      codex_totals: %{input_tokens: 9, output_tokens: 11, total_tokens: 20, seconds_running: 17},
+      running: [
+        %{
+          issue_identifier: "SYM-WORKER",
+          runtime_seconds: 7,
+          tokens: %{input_tokens: 9, output_tokens: 11, total_tokens: 20}
+        }
+      ]
+    }
+
+    assert payload.counts.running == 1
+    assert DashboardPresenter.format_int(payload.codex_totals.total_tokens) == "20"
+
+    assert payload
+           |> DashboardPresenter.total_runtime_seconds(DateTime.utc_now())
+           |> DashboardPresenter.format_runtime_seconds() == "0m 17s"
+
+    assert hd(payload.running).tokens.total_tokens == 20
+    assert hd(payload.running).runtime_seconds == 7
   end
 
   test "returns dashboard badge classes and labels" do

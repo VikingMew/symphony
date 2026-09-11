@@ -6,11 +6,8 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
   alias SymphonyElixir.Payload
 
   @spec total_runtime_seconds(map(), DateTime.t()) :: non_neg_integer()
-  def total_runtime_seconds(payload, now) do
-    completed_runtime_seconds(payload) +
-      Enum.reduce(Map.get(payload, :running, []), 0, fn entry, total ->
-        total + runtime_seconds_from_started_at(entry.started_at, now)
-      end)
+  def total_runtime_seconds(payload, _now) do
+    completed_runtime_seconds(payload)
   end
 
   @spec format_runtime_and_turns(term(), term(), DateTime.t()) :: String.t()

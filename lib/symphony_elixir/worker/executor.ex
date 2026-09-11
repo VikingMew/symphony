@@ -126,11 +126,13 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp forward_codex_progress(%{event: :session_started, session_id: session_id}, progress) do
-    progress.("codex_session_started", %{session_id: session_id})
+  defp forward_codex_progress(%{event: :session_started, session_id: session_id} = message, progress) do
+    progress.("codex_session_started", %{session_id: session_id, codex: message})
   end
 
-  defp forward_codex_progress(_message, _progress), do: :ok
+  defp forward_codex_progress(%{event: _event} = message, progress) do
+    progress.("codex_update", %{codex: message})
+  end
 
   @doc false
   @spec codex_workflow(Config.t(), map(), Payload.t()) :: map()

@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   alias SymphonyElixir.{
     Config,
     EnvironmentFailureCircuit,
+    Orchestrator,
     PersistenceProvider,
     PromptBuilder,
     RunLifecycle,
@@ -81,6 +82,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       tracker: Keyword.get(opts, :tracker, Tracker),
       persistence: Keyword.get(opts, :persistence, PersistenceProvider.module()),
       workflows: Keyword.get(opts, :workflows, WorkflowStore),
+      orchestrator: Keyword.get(opts, :orchestrator, Orchestrator),
       now: Keyword.get(opts, :now, &DateTime.utc_now/0),
       failure_circuit: Keyword.get(opts, :failure_circuit, EnvironmentFailureCircuit),
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
@@ -109,8 +111,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     do: {:reply, :ok, state}
 
   def handle_call({:cancel_current, reason}, _from, state) do
-    _ = persist_event(state.persistence, state.assignment, "task.cancelled", %{"reason" => reason}, nil)
-    _ = transition_run(state.persistence, state.assignment.run_id, "task.cancelled", nil)
+    assignment = state.assignment
+
+    _ = persist_event(state.persistence, assignment, "task.cancelled", %{"reason" => reason}, nil)
+    _ = transition_run(state.persistence, assignment.run_id, "task.cancelled", nil)
+    notify_worker_terminal(state, assignment, :cancelled)
     {:reply, :ok, %{state | assignment: nil}}
   end
 
@@ -123,9 +128,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
         case claim_from_workflows(state, worker, session) do
-          {:ok, nil} -> {:ok, nil, admission_evidence(:no_eligible_candidate)}
-          {:ok, assignment} -> {:ok, assignment, admission_evidence(:assigned)}
-          error -> error
+          {:ok, nil} ->
+            {:ok, nil, admission_evidence(:no_eligible_candidate)}
+
+          {:ok, assignment} ->
+            Orchestrator.worker_task_started(assignment, state.orchestrator)
+            {:ok, assignment, admission_evidence(:assigned)}
+
+          error ->
+            error
         end
       else
         {:block, circuit} ->
@@ -193,6 +204,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
          {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
          :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
       record_environment_failure_circuit(state, assignment, event_type, summary)
+      notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), summary)
       assignment = if event_type in @terminal_events, do: nil, else: assignment
       {:reply, {:ok, event}, %{state | assignment: assignment}}
     else
@@ -279,8 +291,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
     with {:ok, issue_record} <-
            state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
-         {:ok, run} <- create_run(state.persistence, issue, workflow, issue_record.id, project_id),
+         {:ok, run} <- create_run(state.persistence, issue, workflow, issue_record.id, project_id, now),
          :ok <- move_to_in_progress(state.tracker, issue),
+         issue <- %{issue | state: "In Progress"},
          assignment <-
            build_assignment(assignment_id, issue, run, worker, session, workflow,
              prompt: prompt,
@@ -296,11 +309,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp create_run(persistence, issue, workflow, issue_id, project_id) do
+  defp create_run(persistence, issue, workflow, issue_id, project_id, started_at) do
     attrs =
       issue
       |> Events.run_attrs(workflow, "worker", nil)
-      |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running"})
+      |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running", started_at: started_at})
 
     persistence.create_run(attrs)
   end
@@ -331,7 +344,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       project_id: run.project_id,
       run_id: run.id,
       worker_id: worker.id,
+      worker_name: Map.get(worker, :name),
       session_id: session.id,
+      started_at: Map.get(run, :started_at),
       expires_at: opts[:expires_at],
       payload: payload,
       correlation: correlation
@@ -359,8 +374,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp expire_assignment(state) do
     if DateTime.compare(state.assignment.expires_at, state.now.()) == :lt do
-      _ = transition_run(state.persistence, state.assignment.run_id, "task.failed", nil)
-      _ = persist_event(state.persistence, state.assignment, "task.failed", %{"reason" => "assignment_expired"}, nil)
+      assignment = state.assignment
+
+      _ = transition_run(state.persistence, assignment.run_id, "task.failed", nil)
+      _ = persist_event(state.persistence, assignment, "task.failed", %{"reason" => "assignment_expired"}, nil)
+      notify_worker_terminal(state, assignment, {:failed, "assignment_expired"})
       %{state | assignment: nil}
     else
       state
@@ -532,6 +550,25 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
   defp process_alive?(server) when is_atom(server), do: Process.whereis(server) != nil
   defp process_alive?(server) when is_pid(server), do: Process.alive?(server)
+
+  defp notify_orchestrator(state, assignment, "task.progress", payload, _summary) do
+    Orchestrator.worker_task_progress(assignment.issue.id, payload, state.orchestrator)
+  end
+
+  defp notify_orchestrator(state, assignment, event_type, _payload, summary)
+       when event_type in @terminal_events do
+    notify_worker_terminal(state, assignment, WorkerResult.terminal_outcome(event_type, summary))
+  end
+
+  defp notify_orchestrator(_state, _assignment, _event_type, _payload, _summary), do: :ok
+
+  defp notify_worker_terminal(state, assignment, outcome) do
+    Orchestrator.worker_task_finished(assignment.issue.id, outcome, state.orchestrator)
+  end
+
+  defp event_payload_with_time(payload, event) do
+    Map.put(payload, "occurred_at", Map.get(event, :occurred_at))
+  end
 
   defp inactive_heartbeat(worker_id, session_id) do
     with {:ok, base} <- PersistenceProvider.module().heartbeat_worker(worker_id, session_id) do

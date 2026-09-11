@@ -85,6 +85,17 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert remaining_ms >= 9_500
     assert remaining_ms <= 10_500
 
+    assert [
+             %{
+               issue_id: ^issue_id,
+               identifier: ^identifier,
+               attempt: 1,
+               error: snapshot_error
+             }
+           ] = Orchestrator.snapshot(orchestrator, 100).retrying
+
+    assert snapshot_error =~ "transient worker failure"
+
     put_running(pid, issue_id, identifier,
       retry_attempt: 1,
       run_id: "run-worker-failed-2"
@@ -100,6 +111,18 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert exhausted.running == %{}
     assert exhausted.retry_attempts == %{}
     assert %{reason: "failure_retries_exhausted"} = exhausted.blocked[issue_id]
+
+    assert [
+             %{
+               issue_id: ^issue_id,
+               identifier: ^identifier,
+               run_id: "run-worker-failed-2",
+               reason: "failure_retries_exhausted",
+               detail: blocked_detail
+             }
+           ] = Orchestrator.snapshot(orchestrator, 100).blocked
+
+    assert blocked_detail =~ "persistent worker failure"
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
     assert persisted.state == "Blocked"
@@ -127,6 +150,16 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert state.failure_counts == %{}
     assert state.retry_attempts == %{}
     assert %{reason: ^reason, detail: ^reason} = state.blocked[issue_id]
+
+    assert [
+             %{
+               issue_id: ^issue_id,
+               identifier: ^identifier,
+               run_id: "run-worker-blocked",
+               reason: ^reason,
+               detail: ^reason
+             }
+           ] = Orchestrator.snapshot(orchestrator, 100).blocked
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
     assert persisted.state == "Blocked"

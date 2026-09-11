@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.Log
-updated: 2026-08-07
+updated: 2026-09-11
 ---
 
 # Logging and Observability Specification
@@ -60,6 +60,21 @@ SHOULD return:
 - `environment_failure_circuit` (environment failure circuit status, triggering fingerprint, and
   threshold/window counters)
 
+The synchronous snapshot is memory-backed in both execution modes. In centralized mode, local
+orchestrator dispatch creates, updates, and removes `running` entries. In worker mode, the Panel's
+assignment lifecycle feeds the same orchestrator snapshot: a successful worker claim enters
+`running` only after the run is created, the issue is moved to `In Progress`, and the assignment is
+returned; accepted progress updates session identity, last event/message, rate limits, and absolute
+token totals; terminal, cancellation, expiry, or stale-run reconciliation removes the active entry.
+Workers do not make `/api/v1/state` read persisted history for current state.
+
+`retrying` is orchestrator-owned retry state. Worker `failed` terminal outcomes with remaining
+failure budget appear there with the same issue identifier, attempt, delay, and error metadata as
+centralized retries. `blocked` is orchestrator-owned blocker state. Worker `blocked` terminal
+outcomes and exhausted worker failures create persistent blocker rows with issue/run context,
+typed reason, evidence/detail, and decision time. All-zero worker-mode counts are conformant only
+when the corresponding in-memory current-state lists are actually empty.
+
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
 Failed external writes remain visible and retryable without creating a new coding-agent run;
 human recovery emits a decision-cleared event with issue and run context where available.
@@ -101,6 +116,9 @@ Runtime accounting:
   snapshot/status view.
 - Add run duration seconds to the cumulative ended-session runtime when a session ends (normal exit
   or cancellation/termination).
+- Worker-mode progress uses the same absolute-token-delta rules as centralized mode. Active worker
+  runtime is added at snapshot time from the live `running` entry; ended worker runtime is added to
+  the cumulative total exactly once when the assignment leaves the live snapshot.
 - Continuous background ticking of runtime totals is not REQUIRED.
 
 Rate-limit tracking:
@@ -156,6 +174,9 @@ Enablement (extension):
   retry delays, token consumption, runtime totals, recent events, and health/error indicators).
 - It is up to the implementation whether this is server-generated HTML or a client-side app that
   consumes the JSON API below.
+- The dashboard current-state cards SHOULD consume the same `/api/v1/state` presentation payload as
+  automation, including worker-mode `running` rows and `codex_totals`, rather than deriving a
+  separate current-state source.
 
 #### 13.7.2 JSON REST API (`/api/v1/*`)
 
@@ -186,6 +207,7 @@ Minimum endpoints:
           "last_event": "turn_completed",
           "last_message": "",
           "started_at": "2026-02-24T20:10:12Z",
+          "runtime_seconds": 318.2,
           "last_event_at": "2026-02-24T20:14:59Z",
           "tokens": {
             "input_tokens": 1200,
@@ -212,6 +234,12 @@ Minimum endpoints:
       "rate_limits": null
     }
     ```
+
+  - Centralized and worker execution modes use the same response contract. In worker mode,
+    `running`, `retrying`, `blocked`, and `codex_totals` reflect orchestrator state populated by
+    worker assignment, progress, terminal, expiry, and reconciliation paths; persisted `runs` and
+    `events` remain history inputs for `/api/v1/runs`, not current-state fallbacks for this
+    endpoint.
 
 - `GET /api/v1/<issue_identifier>`
   - Returns issue-specific runtime/debug details for the identified issue, including any information

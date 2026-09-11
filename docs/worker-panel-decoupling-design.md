@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-08
+updated: 2026-09-11
 design_status: landed
 ---
 
@@ -19,6 +19,9 @@ claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每
 heartbeat 未超过 freshness cutoff 且调用方当次 `available_slots > 0`，再实时读取 Linear candidates，按 priority、created_at、identifier 排序，再按 issue id
 读取 Linear 并重新验证状态、依赖、routing/profile。Panel 创建新 run 和不可混淆 assignment id，
 将 issue 转为 `In Progress`；只有状态更新成功才返回当前 workflow 生成的 payload。
+同一成功 claim 同步把 assignment 注入 `Orchestrator` 当前态：`/api/v1/state` 的
+`running` 行来自该内存 entry，包含 issue、run、worker、开始时间、session 和 Codex token
+进度。该 feed 只是当前态投影，不创建队列或持久 lease；历史事实仍只写入 run/event。
 
 `total_slots` 是 session/deployment 的 advertised aggregate 观测值，不允许并行发放多个 assignment。
 有效 admission capacity 仅在存在 fresh online advertised slot、调用方有 slot 且无当前 assignment 时为
@@ -45,6 +48,11 @@ event 必须匹配当前未过期 assignment；不匹配、过期、Panel 重启
 accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `runs`。terminal event 终结
 当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、二次校验、新 run 和
 新 assignment。
+accepted/progress 路径同时更新 `Orchestrator` 当前态：`task.progress` 携带
+`codex_session_started` 或 Codex app-server 原始消息时，Panel 更新对应 running entry 的 session、
+last event/message 和绝对 token delta；terminal event、取消、expiry 或 reconciliation 失败旧 run 时
+移除 running entry，并将 ended runtime 计入聚合。`retrying` 与 `blocked` 仍由 Orchestrator
+拥有：worker `failed` 结果在预算内进入 retry，预算耗尽或 `blocked` 结果进入持久 blocker。
 
 terminal event 必须携带归一化的 `outcome`（`success` / `blocked` / `failed` / `cancelled`），由 worker 侧的
 Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段分流：`success` 与 `cancelled` 清理
