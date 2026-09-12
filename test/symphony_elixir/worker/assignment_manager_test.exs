@@ -131,7 +131,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     defdelegate list_runs_for_issue(identifier, opts), to: FakePersistence
     defdelegate finish_run(run_id, status, summary), to: FakePersistence
     defdelegate record_event(attrs), to: FakePersistence
+    defdelegate worker_heartbeat_interval_seconds(), to: FakePersistence
     defdelegate worker_lease_duration_seconds(), to: FakePersistence
+    defdelegate worker_session_identity(worker_id, session_id), to: FakePersistence
 
     def expire_stale_worker_sessions(_opts \\ []), do: raise("zombie reconciliation must not expire worker sessions")
   end
@@ -139,7 +141,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   defmodule BlockingHeartbeatPersistence do
     defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
     defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
+    defdelegate worker_heartbeat_interval_seconds(), to: FakePersistence
     defdelegate worker_lease_duration_seconds(), to: FakePersistence
+    defdelegate worker_session_identity(worker_id, session_id), to: FakePersistence
 
     def heartbeat_worker(worker_id, session_id) do
       case Application.get_env(:symphony_elixir, :assignment_test_heartbeat_mode, :fast) do
@@ -172,6 +176,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       start_supervised!(
         {AssignmentManager, name: name, tracker: Tracker, persistence: FakePersistence, workflows: Workflows, now: fn -> now end, failure_circuit: circuit, reconcile_interval_ms: :timer.hours(1)}
       )
+
+    :ok = AssignmentManager.observe_session(registration.worker, registration.session, pid)
 
     on_exit(fn ->
       Application.delete_env(:symphony_elixir, :assignment_test_workflow)
@@ -675,14 +681,34 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert :ok = AssignmentManager.cancel_current("operator", context.manager)
   end
 
-  test "stale online sessions have zero admission capacity", context do
+  test "stale persisted heartbeat state does not block fresh memory admission", context do
     Tracker.put([issue(1)])
 
     Agent.update(FakePersistence, fn state ->
       update_in(state.worker_sessions, fn sessions ->
-        Enum.map(sessions, &%{&1 | last_heartbeat_at: DateTime.add(context.now, -31, :second)})
+        Enum.map(sessions, &%{&1 | last_heartbeat_at: DateTime.add(context.now, -31, :second), status: "offline"})
       end)
     end)
+
+    assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 4},
+               context.manager
+             )
+
+    assert assignment.worker_id == context.worker.id
+    assert assignment.session_id == context.session.id
+    refute old_freshness_predicate_called?()
+  end
+
+  test "expired memory liveness has zero capacity and rejects claim before tracker reads", context do
+    Tracker.put([issue(1)])
+    expire_worker_liveness(context)
+    fetch_count = Tracker.fetch_count()
+
+    assert AssignmentManager.available_worker_slots(context.manager) == 0
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_stale}} =
              AssignmentManager.claim_with_evidence(
@@ -692,12 +718,44 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
-    assert Tracker.updates() == []
+    assert Tracker.fetch_count() == fetch_count
+    refute old_freshness_predicate_called?()
+
+    assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 4},
+               context.manager
+             )
+
+    assert assignment.issue_identifier == "SYM-1"
+  end
+
+  test "task events refresh liveness for the current memory assignment", context do
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+    expire_worker_liveness(context)
+
+    assert AssignmentManager.available_worker_slots(context.manager) == 0
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.progress",
+               %{"correlation" => assignment.correlation, "phase" => "codex"},
+               context.manager
+             )
+
+    assert AssignmentManager.available_worker_slots(context.manager) == 1
   end
 
   test "one assignment consumes capacity across sessions and advertised slot totals", context do
     Tracker.put([issue(1)])
     {:ok, other} = FakePersistence.register_worker(%{"worker_name" => "other", "total_slots" => 8})
+    :ok = AssignmentManager.observe_session(other.worker, other.session, context.manager)
     assert {:ok, first} = claim(context)
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :active_assignment}} =
@@ -803,6 +861,53 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert {:error, :lease_not_active} =
              AssignmentManager.record_event(context.worker.id, context.session.id, assignment.id, "task.completed", %{}, restarted)
+  end
+
+  test "restart leaves worker liveness empty until a later live request records it", context do
+    ready = issue(1)
+    Tracker.put([ready])
+    assert {:ok, assignment} = claim(context)
+    complete(context, assignment)
+    Process.exit(context.manager, :normal)
+    Process.sleep(10)
+
+    name = Module.concat(__MODULE__, "RestartedLiveness#{System.unique_integer([:positive])}")
+
+    {:ok, restarted} =
+      AssignmentManager.start_link(
+        name: name,
+        tracker: Tracker,
+        persistence: FakePersistence,
+        workflows: Workflows,
+        now: fn -> context.now end,
+        failure_circuit: context.circuit,
+        reconcile_interval_ms: :timer.hours(1)
+      )
+
+    Tracker.put([issue(2)])
+    fetch_count = Tracker.fetch_count()
+    assert AssignmentManager.available_worker_slots(restarted) == 0
+
+    assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               restarted
+             )
+
+    assert Tracker.fetch_count() == fetch_count
+    assert AssignmentManager.available_worker_slots(restarted) == 1
+
+    assert {:ok, next} =
+             AssignmentManager.claim(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               restarted
+             )
+
+    assert next.issue_identifier == "SYM-2"
   end
 
   test "empty claims follow the fixed schedule and stay below the hourly query quota", context do
@@ -927,6 +1032,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
         )
       )
 
+    :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+
     assert {:ok, assignment} =
              AssignmentManager.claim(
                context.worker.id,
@@ -1012,6 +1119,23 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, context.manager)
   end
 
+  defp expire_worker_liveness(context) do
+    key = {context.worker.id, context.session.id}
+
+    :sys.replace_state(context.manager, fn state ->
+      update_in(state.liveness[key].last_seen_at, fn _last_seen_at ->
+        DateTime.add(context.now, -31, :second)
+      end)
+    end)
+  end
+
+  defp old_freshness_predicate_called? do
+    Enum.any?(FakePersistence.calls(), fn
+      {:fresh_worker_session, _worker_id, _session_id, _opts} -> true
+      _call -> false
+    end)
+  end
+
   defp start_orchestrator do
     name = Module.concat(__MODULE__, "Orchestrator#{System.unique_integer([:positive])}")
     start_supervised!({Orchestrator, name: name})
@@ -1021,20 +1145,24 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   defp start_manager(context, orchestrator, now) do
     name = Module.concat(__MODULE__, "ObservedManager#{System.unique_integer([:positive])}")
 
-    start_supervised!(
-      Supervisor.child_spec(
-        {AssignmentManager,
-         name: name,
-         tracker: Tracker,
-         persistence: FakePersistence,
-         workflows: Workflows,
-         orchestrator: orchestrator,
-         now: fn -> now end,
-         failure_circuit: context.circuit,
-         reconcile_interval_ms: :timer.hours(1)},
-        id: name
+    manager =
+      start_supervised!(
+        Supervisor.child_spec(
+          {AssignmentManager,
+           name: name,
+           tracker: Tracker,
+           persistence: FakePersistence,
+           workflows: Workflows,
+           orchestrator: orchestrator,
+           now: fn -> now end,
+           failure_circuit: context.circuit,
+           reconcile_interval_ms: :timer.hours(1)},
+          id: name
+        )
       )
-    )
+
+    :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+    manager
   end
 
   defp send_codex_token_progress(context, manager, assignment, input_tokens, output_tokens, total_tokens) do

@@ -58,6 +58,15 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
     end
   end
 
+  @spec worker_session_identity(String.t(), String.t()) ::
+          {:ok, Worker.t(), WorkerSession.t()} | {:error, :worker_session_not_found}
+  def worker_session_identity(worker_id, session_id) do
+    case {Repo.get(Worker, worker_id), Repo.get(WorkerSession, session_id)} do
+      {%Worker{} = worker, %WorkerSession{worker_id: ^worker_id} = session} -> {:ok, worker, session}
+      _other -> {:error, :worker_session_not_found}
+    end
+  end
+
   @spec fresh_worker_session(String.t(), String.t(), keyword()) ::
           {:ok, Worker.t(), WorkerSession.t()}
           | {:error, :worker_session_not_found | :worker_session_offline | :worker_session_stale}

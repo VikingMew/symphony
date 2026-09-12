@@ -4,6 +4,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.AssignmentManager
 
   defmodule MultiProjectLinearClient do
     def fetch_issues_by_states(states) do
@@ -317,6 +318,44 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert FakePersistence.list_runs(project_id: project_b.id) == []
   end
 
+  test "worker mode deployment capacity comes from fresh assignment manager liveness" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: MultiProjectLinearClient, persistence: FakePersistence, workflows: WorkflowStore, reconcile_interval_ms: :timer.hours(1)})
+
+    {:ok, base} = Workflow.load()
+    {:ok, project} = FakePersistence.default_project()
+    FakePersistence.put_default_project_attrs!(%{repository_url: "git@example.test:a.git", linear_project_slug: "linear-a"})
+    {:ok, _workflow} = FakePersistence.import_workflow(project, workflow_markdown(base, "Prompt {{ issue.identifier }}", 5.0), "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    {:ok, registration} = FakePersistence.register_worker(%{"worker_name" => "worker-capacity", "total_slots" => 3})
+    :ok = AssignmentManager.observe_session(registration.worker, registration.session)
+
+    Agent.update(FakePersistence, fn state ->
+      update_in(state.worker_sessions, fn sessions ->
+        Enum.map(sessions, &%{&1 | last_heartbeat_at: DateTime.add(DateTime.utc_now(), -31, :second), status: "offline"})
+      end)
+    end)
+
+    orchestrator_name = Module.concat(__MODULE__, "MemoryCapacityOrchestrator#{System.unique_integer([:positive])}")
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+
+    send(pid, :run_poll_cycle)
+    eventually(fn -> :sys.get_state(pid).max_concurrent_agents == 3 end)
+    refute old_capacity_predicate_called?()
+
+    expire_worker_liveness(registration.worker.id, registration.session.id)
+
+    send(pid, :run_poll_cycle)
+    eventually(fn -> :sys.get_state(pid).max_concurrent_agents == 0 end)
+    refute old_capacity_predicate_called?()
+  end
+
   test "retry without project context does not crash when multiple projects require explicit context" do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
@@ -383,6 +422,35 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   defp workflow_markdown(base, prompt, threshold) do
     config = put_in(base.config, ["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
     Workflow.to_markdown(config, prompt)
+  end
+
+  defp expire_worker_liveness(worker_id, session_id) do
+    key = {worker_id, session_id}
+
+    :sys.replace_state(AssignmentManager, fn state ->
+      update_in(state.liveness[key].last_seen_at, fn _last_seen_at ->
+        DateTime.add(DateTime.utc_now(), -31, :second)
+      end)
+    end)
+  end
+
+  defp old_capacity_predicate_called? do
+    Enum.any?(FakePersistence.calls(), fn
+      {:available_worker_slots, _opts} -> true
+      _call -> false
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, 0), do: assert(fun.())
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

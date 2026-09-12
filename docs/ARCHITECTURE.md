@@ -192,7 +192,8 @@ concurrency, tracks active runs, handles retries, releases completed work, stops
 and publishes status information. In centralized mode it starts `AgentRunner` locally or over
 configured SSH hosts. In worker mode it exposes one ephemeral Panel assignment for external workers
 to claim through `/api/worker/v1/*`; persisted blocking decisions suppress those claims until
-explicitly cleared.
+explicitly cleared. Worker-mode deployment capacity and claim admission freshness come from
+`AssignmentManager` memory last-seen entries, not PostgreSQL heartbeat freshness.
 
 ### 6.6 Workspace Manager
 
@@ -277,8 +278,8 @@ Claimed assignments carry the rendered prompt and app-server settings as structu
 uses the same `Codex.AppServer` JSON-RPC stdio client as centralized execution for one session and
 turn, while hooks, required gates, and handoff remain shell-command phases. Executor startup and
 Codex session progress are distinct persisted facts. The worker retains a lease until Panel
-acknowledges its terminal event; periodic Panel reconciliation expires and requeues leases that
-stop renewing.
+acknowledges its terminal event; periodic Panel reconciliation uses run lease age to return stale
+`In Progress` issues without treating DB heartbeat age or offline marking as recovery authority.
 This is distinct from the SSH `worker` image target. Centralized execution remains the default.
 
 The observability boundary deliberately separates memory/current from persistence/history:

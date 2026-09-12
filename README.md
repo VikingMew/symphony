@@ -70,7 +70,7 @@ Linear's GitHub automation owns the final move to `Done`.
 | Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
 | Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One current workflow exists per enabled project. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
-| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, and worker assignments carry the originating `project_id`. |
+| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, worker sessions, blocking decisions, and worker assignment payloads carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
 | Worker mode | Optional HTTP mode where claims read and revalidate Linear, refuse uncleared persisted blockers, and return one ephemeral current-workflow assignment. |
 
@@ -80,9 +80,13 @@ observability pages (Runs, Events, Workers) are project-aware.
 
 Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
 bounded `SYMPHONY_PANEL_SLOTS` value (default `10`) across all projects. Worker mode admits work
-only against fresh online sessions advertising `SYMPHONY_WORKER_SLOTS`. Advertised totals are
+only against fresh Panel memory last-seen entries created by worker registration and refreshed by
+accepted worker traffic. Memory freshness uses the worker heartbeat timeout window; expired or
+restart-empty entries contribute no worker capacity and cannot admit claims. Advertised totals are
 deployment observability; the current scheduler's effective capacity is strictly 0/1, and one
-in-memory assignment blocks every other session regardless of advertised slot totals.
+in-memory assignment blocks every other session regardless of advertised slot totals. PostgreSQL
+worker heartbeat fields remain registry/history data, not the worker-mode capacity or admission
+freshness source.
 
 ### Execution worker image
 

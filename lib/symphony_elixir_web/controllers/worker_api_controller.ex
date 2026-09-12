@@ -15,6 +15,8 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def register(conn, params) do
     with :ok <- verify_registration_token(conn),
          {:ok, %{worker: worker, session: session}} <- persistence().register_worker(params) do
+      :ok = AssignmentManager.observe_session(worker, session)
+
       json(conn, %{
         worker_id: worker.id,
         session_id: session.id,
@@ -87,7 +89,14 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
          {:ok, event} <-
-           AssignmentManager.record_event(worker_id, session_id, task_id, event_type, event_payload(params)) do
+           AssignmentManager.record_event_with_liveness(
+             worker_id,
+             session_id,
+             task_id,
+             event_type,
+             event_payload(params),
+             params
+           ) do
       conn
       |> put_status(202)
       |> json(%{event_id: event.id, accepted: true})
