@@ -6,7 +6,11 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   alias SymphonyElixir.TestSupport.FakePersistence
 
   defmodule MultiProjectLinearClient do
-    def fetch_issues_by_states(_states), do: {:ok, []}
+    def fetch_issues_by_states(states) do
+      slug = Config.settings!().tracker.project_slug
+      send(test_pid(), {:states_fetch, slug, states})
+      {:ok, []}
+    end
 
     def fetch_candidate_issues do
       slug = Config.settings!().tracker.project_slug
@@ -43,6 +47,53 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     end)
 
     :ok
+  end
+
+  test "startup terminal workspace cleanup uses each enabled workflow context" do
+    raw = sample_workflow_markdown()
+    {:ok, fixture_project} = FakePersistence.default_project()
+    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
+
+    {:ok, project_a} =
+      FakePersistence.create_project(%{
+        name: "Project A",
+        slug: "project-a",
+        linear_project_slug: "linear-a",
+        repository_url: "git@example.test:a.git",
+        enabled: true
+      })
+
+    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@example.test:b.git",
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:error, :missing_project_context} = Config.settings()
+
+    orchestrator_name = Module.concat(__MODULE__, :StartupCleanupOrchestrator)
+
+    log =
+      capture_log(fn ->
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+        on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+        assert Process.alive?(pid)
+      end)
+
+    assert_receive {:states_fetch, "linear-a", terminal_states}, 2_000
+    assert_receive {:states_fetch, "linear-b", ^terminal_states}, 2_000
+    assert "Done" in terminal_states
+    refute log =~ "missing_project_context"
+    refute log =~ "Skipping startup terminal workspace cleanup"
   end
 
   defp sample_workflow_markdown do

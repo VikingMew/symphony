@@ -133,6 +133,34 @@ defmodule SymphonyElixir.BlockingDecision do
     end
   end
 
+  @spec fail_delivery(String.t(), term()) :: {:ok, map()} | {:error, term()}
+  def fail_delivery(identifier, reason) do
+    persistence = PersistenceProvider.module()
+
+    with issue when is_map(issue) <-
+           PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end),
+         %{} = decision <- Map.get(issue, :blocking_decision) do
+      comment_result = {:error, reason}
+      transition_result = {:error, reason}
+
+      updated =
+        decision
+        |> put_delivery_failure("comment_status", reason)
+        |> put_delivery_failure("transition_status", reason)
+
+      case persistence.update_issue(issue, %{blocking_decision: updated}) do
+        {:ok, _issue} ->
+          {:ok, %{decision: updated, comment: comment_result, transition: transition_result}}
+
+        {:error, reason} ->
+          {:error, {:delivery_evidence_persist_failed, reason}}
+      end
+    else
+      nil -> {:error, :issue_not_persisted}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp maybe_comment(_issue_id, _identifier, %{"comment_status" => "completed"}), do: :ok
 
   defp maybe_comment(issue_id, identifier, decision),
@@ -142,6 +170,13 @@ defmodule SymphonyElixir.BlockingDecision do
   defp maybe_transition(issue_id, _decision), do: Tracker.update_issue_state(issue_id, "Blocked")
   defp delivery_status(:ok), do: "completed"
   defp delivery_status({:error, reason}), do: %{"failed" => inspect(reason)}
+
+  defp put_delivery_failure(decision, status_key, reason) do
+    case Map.get(decision, status_key) do
+      "completed" -> decision
+      _status -> Map.put(decision, status_key, delivery_status({:error, reason}))
+    end
+  end
 
   defp comment(identifier, decision) do
     "Symphony blocked #{identifier}.\n\nReason: #{decision["reason"]}\nEvidence: #{decision["evidence"]}\nRun: #{decision["run_id"] || "n/a"}\nUTC: #{decision["decided_at"]}\nReferences: #{inspect(decision["references"] || %{})}"
