@@ -46,6 +46,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     defdelegate valid_worker_registration_token?(token), to: FakePersistence
     defdelegate register_worker(attrs), to: FakePersistence
     defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
+    defdelegate worker_session_identity(worker_id, session_id), to: FakePersistence
     defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
     defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
     defdelegate default_project(), to: FakePersistence
@@ -72,6 +73,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     defdelegate valid_worker_registration_token?(token), to: FakePersistence
     defdelegate register_worker(attrs), to: FakePersistence
     defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
+    defdelegate worker_session_identity(worker_id, session_id), to: FakePersistence
     defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
     defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
     defdelegate default_project(), to: FakePersistence
@@ -266,6 +268,9 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       |> post("/api/worker/v1/register", worker_registration_payload())
       |> json_response(200)
 
+    expire_worker_liveness(worker_id, session_id)
+    assert AssignmentManager.available_worker_slots() == 0
+
     requests =
       for _ <- 1..3 do
         Task.async(fn ->
@@ -287,9 +292,37 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     end
 
     assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 0}
+    eventually(fn -> AssignmentManager.available_worker_slots() == 1 end)
     assert_receive {:slow_heartbeat_started, blocked_pid}, 500
     refute_receive {:slow_heartbeat_started, _pid}, 50
     send(blocked_pid, :release_heartbeat)
+  end
+
+  test "claim observes expired liveness after admission so the following claim is fresh" do
+    start_test_endpoint()
+    start_assignment_manager(FakePersistence)
+
+    %{"worker_id" => worker_id, "session_id" => session_id} =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{@worker_token}")
+      |> post("/api/worker/v1/register", worker_registration_payload())
+      |> json_response(200)
+
+    expire_worker_liveness(worker_id, session_id)
+
+    assert %{"task" => nil, "admission" => %{"capacity" => 0, "reason" => "worker_session_stale"}} =
+             build_conn()
+             |> worker_headers(worker_id, session_id)
+             |> post("/api/worker/v1/tasks/claim", %{"available_slots" => 1})
+             |> json_response(200)
+
+    refute old_freshness_predicate_called?()
+
+    assert %{"task" => nil, "admission" => %{"capacity" => 0, "reason" => "no_eligible_candidate"}} =
+             build_conn()
+             |> worker_headers(worker_id, session_id)
+             |> post("/api/worker/v1/tasks/claim", %{"available_slots" => 1})
+             |> json_response(200)
   end
 
   test "failed heartbeat history writes do not change the heartbeat HTTP response" do
@@ -423,6 +456,23 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     Enum.count(FakePersistence.calls(), fn
       {:heartbeat_worker, ^worker_id, ^session_id} -> true
       _other -> false
+    end)
+  end
+
+  defp expire_worker_liveness(worker_id, session_id) do
+    key = {worker_id, session_id}
+
+    :sys.replace_state(AssignmentManager, fn state ->
+      update_in(state.liveness[key].last_seen_at, fn _last_seen_at ->
+        DateTime.add(DateTime.utc_now(), -31, :second)
+      end)
+    end)
+  end
+
+  defp old_freshness_predicate_called? do
+    Enum.any?(FakePersistence.calls(), fn
+      {:fresh_worker_session, _worker_id, _session_id, _opts} -> true
+      _call -> false
     end)
   end
 

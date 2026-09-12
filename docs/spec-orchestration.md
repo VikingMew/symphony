@@ -212,22 +212,28 @@ Sorting order (stable intent):
 
 Capacity is deployment topology and is shared by every enabled project. In centralized mode,
 `SYMPHONY_PANEL_SLOTS` is the bounded deployment limit and available capacity subtracts the
-orchestrator `running` count. In worker mode, aggregate `total_slots` from fresh online sessions is
-an advertised deployment observation, not assignment concurrency. The current scheduler owns one
-ephemeral assignment, so effective admission capacity is `1` only when a claim comes from a fresh
-online session, that claim reports positive `available_slots`, and no assignment exists; otherwise
-it is `0`. Serialized claims make a successful assignment visible to every later claimant.
+orchestrator `running` count. In worker mode, aggregate `total_slots` from fresh
+`AssignmentManager` memory liveness entries is an advertised deployment observation, not assignment
+concurrency. A worker/session entry is fresh only while its Panel memory `last_seen_at` is inside
+the `worker_heartbeat_interval_seconds() * 3` window; missing or expired entries contribute zero
+deployment capacity and cannot admit claims. The current scheduler owns one ephemeral assignment,
+so effective admission capacity is `1` only when a claim comes from a fresh memory entry, that
+claim reports positive `available_slots`, and no assignment exists; otherwise it is `0`. Serialized
+claims make a successful assignment visible to every later claimant.
 
 An empty claim includes structured admission evidence distinguishing an active assignment, caller
-slot exhaustion, an absent/offline/stale session, and no eligible Linear candidate. Runs and events
-are audit history and never contribute queued or occupied capacity.
+slot exhaustion, an absent/stale memory session, and no eligible Linear candidate. Runs and events
+are audit history and never contribute queued or occupied capacity. PostgreSQL
+`worker_sessions.last_heartbeat_at` and status derived from it are registry/history fields, not the
+worker-mode capacity or claim-admission freshness source.
 
 Worker-mode restart recovery is governed by the current in-memory assignment and the latest run's
 lease age, not by `worker_sessions` heartbeat freshness or offline marking. After a Panel restart,
 an `In Progress` issue with a latest `running` worker run stays unavailable for dispatch until the
 worker lease duration has elapsed. A worker session that has not yet sent its next heartbeat or
-claim is unknown for recovery purposes rather than proof that the run is dead; session freshness
-still gates new claim admission.
+claim is unknown for recovery purposes rather than proof that the run is dead; the restarted
+Panel's empty memory liveness contributes no capacity and admits no claim until a later live worker
+request records a fresh last-seen.
 
 Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
 rejection emits `global_capacity` skip evidence and never falls back to a workflow field.

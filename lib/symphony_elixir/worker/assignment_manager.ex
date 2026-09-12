@@ -33,6 +33,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @heartbeat_retry_after_seconds 1
 
   @type assignment :: map()
+  @type liveness_entry :: %{
+          required(:worker) => map(),
+          required(:session) => map(),
+          required(:total_slots) => pos_integer(),
+          required(:last_seen_at) => DateTime.t()
+        }
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -57,9 +63,26 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled)}
   end
 
+  @spec observe_session(map(), map(), GenServer.server()) :: :ok
+  def observe_session(%{id: worker_id} = worker, %{id: session_id} = session, server \\ __MODULE__)
+      when is_binary(worker_id) and is_binary(session_id) do
+    if process_alive?(server), do: GenServer.call(server, {:observe_session, worker, session}, :infinity), else: :ok
+  end
+
+  @spec observe_liveness(String.t(), String.t(), map(), GenServer.server()) :: :ok
+  def observe_liveness(worker_id, session_id, attrs, server \\ __MODULE__) do
+    if process_alive?(server), do: GenServer.cast(server, {:observe_liveness, worker_id, session_id, attrs}), else: :ok
+  end
+
+  @spec available_worker_slots(GenServer.server()) :: non_neg_integer()
+  def available_worker_slots(server \\ __MODULE__) do
+    if process_alive?(server), do: GenServer.call(server, :available_worker_slots), else: 0
+  end
+
   @spec heartbeat(String.t(), String.t(), map(), GenServer.server(), module()) :: {:ok, map()} | {:error, term()}
   def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__, persistence \\ PersistenceProvider.module()) do
     active_ids = active_lease_ids(attrs)
+    observe_liveness(worker_id, session_id, attrs, server)
     HeartbeatHistory.observe(worker_id, session_id, persistence)
 
     with {:ok, renewals} <- heartbeat_renewals(worker_id, session_id, active_ids, server) do
@@ -70,7 +93,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @spec record_event(String.t(), String.t(), String.t(), String.t(), map(), GenServer.server()) ::
           {:ok, map()} | {:error, term()}
   def record_event(worker_id, session_id, assignment_id, event_type, payload, server \\ __MODULE__),
-    do: if(process_alive?(server), do: GenServer.call(server, {:event, worker_id, session_id, assignment_id, event_type, payload}), else: {:error, :lease_not_active})
+    do: record_event_with_liveness(worker_id, session_id, assignment_id, event_type, payload, %{}, server)
+
+  @spec record_event_with_liveness(String.t(), String.t(), String.t(), String.t(), map(), map(), GenServer.server()) ::
+          {:ok, map()} | {:error, term()}
+  def record_event_with_liveness(worker_id, session_id, assignment_id, event_type, payload, attrs, server \\ __MODULE__) do
+    if process_alive?(server),
+      do: GenServer.call(server, {:event, worker_id, session_id, assignment_id, event_type, payload, attrs}),
+      else: {:error, :lease_not_active}
+  end
 
   @spec current_assignment(GenServer.server()) :: assignment() | nil
   def current_assignment(server \\ __MODULE__) do
@@ -97,7 +128,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       failure_circuit: Keyword.get(opts, :failure_circuit, EnvironmentFailureCircuit),
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
       empty_claim_streak: 0,
-      tracker_error_streak: 0
+      tracker_error_streak: 0,
+      liveness: %{}
     }
 
     schedule_reconciliation(state)
@@ -106,6 +138,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   @impl true
   def handle_cast(:reconcile, state), do: {:noreply, reconcile_zombies(state)}
+
+  def handle_cast({:observe_liveness, worker_id, session_id, attrs}, state) do
+    {:noreply, observe_request_liveness(state, worker_id, session_id, attrs)}
+  end
 
   @impl true
   def handle_info(:reconcile, state) do
@@ -116,6 +152,14 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   @impl true
   def handle_call(:current_assignment, _from, state), do: {:reply, state.assignment, state}
+
+  def handle_call(:available_worker_slots, _from, state) do
+    {:reply, fresh_liveness_capacity(state), state}
+  end
+
+  def handle_call({:observe_session, worker, session}, _from, state) do
+    {:reply, :ok, observe_session_liveness(state, worker, session)}
+  end
 
   def handle_call({:cancel_current, _reason}, _from, %{assignment: nil} = state),
     do: {:reply, :ok, state}
@@ -131,9 +175,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   def handle_call({:claim, worker_id, session_id, attrs}, _from, state) do
     state = expire_assignment(state)
+    liveness = worker_session_liveness(state, worker_id, session_id)
+    state = observe_request_liveness(state, worker_id, session_id, attrs)
 
     result =
-      with {:ok, worker, session} <- state.persistence.fresh_worker_session(worker_id, session_id, now: state.now.()),
+      with {:ok, worker, session} <- liveness,
            true <- available_slots(attrs) > 0,
            :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
@@ -158,7 +204,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
         false ->
           {:bypass, @initial_poll_seconds, admission_evidence(:no_available_slots)}
 
-        {:error, reason} when reason in [:worker_session_not_found, :worker_session_offline, :worker_session_stale] ->
+        {:error, reason} when reason in [:worker_session_not_found, :worker_session_stale] ->
           {:bypass, @initial_poll_seconds, admission_evidence(reason)}
 
         {:error, reason} ->
@@ -198,8 +244,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:event, worker_id, session_id, assignment_id, event_type, payload}, _from, state) do
+  def handle_call({:event, worker_id, session_id, assignment_id, event_type, payload, attrs}, _from, state) do
     state = expire_assignment(state)
+    state = observe_request_liveness(state, worker_id, session_id, attrs)
 
     with {:ok, assignment} <- matching_assignment(state.assignment, worker_id, session_id, assignment_id),
          :ok <- validate_correlation(payload, assignment.correlation),
@@ -515,6 +562,56 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp available_slots(attrs), do: map_get(attrs, "available_slots", :available_slots) || 0
+  defp total_slots(attrs), do: map_get(attrs, "total_slots", :total_slots)
+
+  defp worker_session_liveness(state, worker_id, session_id) do
+    case Map.get(state.liveness, {worker_id, session_id}) do
+      nil ->
+        {:error, :worker_session_not_found}
+
+      %{worker: worker, session: session} = entry ->
+        if fresh_liveness?(state, entry), do: {:ok, worker, session}, else: {:error, :worker_session_stale}
+    end
+  end
+
+  defp observe_request_liveness(state, worker_id, session_id, attrs) do
+    case Map.get(state.liveness, {worker_id, session_id}) do
+      nil -> observe_known_worker_session(state, worker_id, session_id, attrs)
+      %{worker: worker, session: session} -> observe_session_liveness(state, worker, session, attrs)
+    end
+  end
+
+  defp observe_known_worker_session(state, worker_id, session_id, attrs) do
+    case state.persistence.worker_session_identity(worker_id, session_id) do
+      {:ok, worker, session} -> observe_session_liveness(state, worker, session, attrs)
+      {:error, _reason} -> state
+    end
+  end
+
+  defp observe_session_liveness(state, worker, session, attrs \\ %{}) do
+    total_slots = total_slots(attrs) || Map.fetch!(session, :total_slots)
+    worker_id = Map.fetch!(worker, :id)
+    session_id = Map.fetch!(session, :id)
+    session = Map.put(session, :total_slots, total_slots)
+    entry = %{worker: worker, session: session, total_slots: total_slots, last_seen_at: state.now.()}
+    put_in(state.liveness[{worker_id, session_id}], entry)
+  end
+
+  defp fresh_liveness_capacity(state) do
+    state.liveness
+    |> Map.values()
+    |> Enum.filter(&fresh_liveness?(state, &1))
+    |> Enum.sum_by(& &1.total_slots)
+  end
+
+  defp fresh_liveness?(state, %{last_seen_at: last_seen_at}) do
+    cutoff = DateTime.add(state.now.(), -liveness_timeout_seconds(state), :second)
+    DateTime.compare(last_seen_at, cutoff) in [:eq, :gt]
+  end
+
+  defp liveness_timeout_seconds(state) do
+    state.persistence.worker_heartbeat_interval_seconds() * 3
+  end
 
   defp admission_evidence(reason) do
     %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason}

@@ -2278,7 +2278,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp refresh_deployment_capacity(%State{} = state) do
     capacity =
       case Config.execution_mode() do
-        :worker -> persistence().available_worker_slots()
+        :worker -> AssignmentManager.available_worker_slots()
         :centralized -> Config.panel_max_concurrent_agents()
       end
 

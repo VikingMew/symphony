@@ -32,8 +32,8 @@ runtime.
 - Run lifecycle hooks to prepare and clean workspaces.
 - Launch Codex App Server sessions with issue-specific prompts.
 - Keep runtime behavior configurable through each project's current PostgreSQL workflow.
-- Persist projects, workflows, issues, runs, agent turns, workspaces, worker tasks, leases,
-  and events in PostgreSQL when the Repo is available.
+- Persist projects, workflows, issues, runs, agent turns, workspaces, worker identities,
+  worker sessions, and events in PostgreSQL when the Repo is available.
 - Provide logs, JSON state APIs, Linear diagnostics, worker APIs, and a Phoenix LiveView dashboard.
 - Stop or clean up active runs when issue states become terminal.
 
@@ -190,8 +190,9 @@ Locations:
 The orchestrator owns the runtime loop. It polls the tracker, dispatches issues, enforces
 concurrency, tracks active runs, handles retries, releases completed work, stops ineligible work,
 and publishes status information. In centralized mode it starts `AgentRunner` locally or over
-configured SSH hosts. In worker mode it persists worker tasks and lets external workers claim them
-through `/api/worker/v1/*`.
+configured SSH hosts. In worker mode external workers claim one ephemeral Panel assignment through
+`/api/worker/v1/*`; worker-mode deployment capacity and claim admission freshness come from
+`AssignmentManager` memory last-seen entries, not PostgreSQL heartbeat freshness.
 
 ### 6.6 Workspace Manager
 
@@ -266,8 +267,8 @@ Locations:
 - `lib/symphony_elixir_web/controllers/worker_api_controller.ex`
 
 The persistence context owns PostgreSQL-backed records for projects, workflows, runs, agent
-turns, workspaces, worker identities, worker sessions, worker tasks, task leases, and events. The
-worker API supports registration, task claim, heartbeat/lease renewal, and task event reporting.
+turns, workspaces, worker identities, worker sessions, and events. The worker API supports
+registration, task claim, heartbeat/lease renewal, and task event reporting.
 Worker registration requires `SYMPHONY_WORKER_REGISTRATION_TOKEN`.
 The supported Compose deployment optionally runs the trusted HTTP runtime as `execution-worker`,
 on a control network shared with the Panel and a worker-only egress network. It has separate
@@ -276,8 +277,8 @@ Claimed tasks carry the rendered prompt and app-server settings as structured da
 uses the same `Codex.AppServer` JSON-RPC stdio client as centralized execution for one session and
 turn, while hooks, required gates, and handoff remain shell-command phases. Executor startup and
 Codex session progress are distinct persisted facts. The worker retains a lease until Panel
-acknowledges its terminal event; periodic Panel reconciliation expires and requeues leases that
-stop renewing.
+acknowledges its terminal event; periodic Panel reconciliation uses run lease age to return stale
+`In Progress` issues without treating DB heartbeat age or offline marking as recovery authority.
 This is distinct from the SSH `worker` image target. Centralized execution remains the default.
 
 The observability boundary deliberately separates memory/current from persistence/history:
