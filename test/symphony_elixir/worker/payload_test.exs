@@ -8,6 +8,8 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert payload.repository == "https://example.test/repo.git"
     assert payload.codex.prompt == "Implement the task."
     assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
+    assert payload.codex.config["thread_sandbox"] == "danger-full-access"
+    assert payload.codex.config["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert Enum.map(payload.gates, & &1.command) == ["scripts/check.sh"]
     assert Map.has_key?(Map.from_struct(payload), :workflow_version_id) == false
   end
@@ -52,8 +54,8 @@ defmodule SymphonyElixir.Worker.PayloadTest do
         "command" => "codex app-server",
         "pre_start_commands" => [],
         "approval_policy" => "never",
-        "thread_sandbox" => "workspace-write",
-        "turn_sandbox_policy" => nil,
+        "thread_sandbox" => "danger-full-access",
+        "turn_sandbox_policy" => %{"type" => "dangerFullAccess"},
         "turn_timeout_ms" => 60_000,
         "read_timeout_ms" => 5_000,
         "stall_timeout_ms" => 30_000,

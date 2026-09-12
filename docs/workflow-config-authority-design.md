@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-10
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -21,6 +21,11 @@ design_status: landed
   Settings、prompt builder、diagnostics 读取的都是由该记录发布的快照，不读取源码 checkout 里的配置文件。
 - `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 是示例与导入素材：它们记录 package
   格式、提供一次性导入的便利来源，永远不是同步源。
+- 示例作为导入素材时仍必须避免携带已知不可用的运行形态；当前 `docs/examples/workflow.yml`
+  的 Codex 配置显式使用 `thread_sandbox: "danger-full-access"` 与
+  `turn_sandbox_policy.type: "dangerFullAccess"`，使 Settings / Import 与空库冷启动素材不依赖
+  worker 容器内嵌套 bwrap/user namespace。既有 project 的运行时配置只通过 Settings / Import
+  或 Settings 保存流程改变。
 - 不存在 package 同步命令、不存在幂等的包覆盖流程、不存在仓库文件与数据库之间的 drift 契约。
   operator 在 Settings 里的改动就是最终改动；仓库示例文件不随之更新不是缺陷。
 - Settings / Import 是把 package 文件带进 project 的唯一受支持路径：解析文件、预览合并后的 draft、

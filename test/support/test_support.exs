@@ -31,7 +31,8 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
       "codex" => %{
         "command" => "codex app-server",
         "approval_policy" => "never",
-        "thread_sandbox" => "workspace-write"
+        "thread_sandbox" => "danger-full-access",
+        "turn_sandbox_policy" => %{"type" => "dangerFullAccess"}
       },
       "server" => %{"host" => "127.0.0.1", "port" => 4000},
       "workflow" => Schema.default_workflow_policy()

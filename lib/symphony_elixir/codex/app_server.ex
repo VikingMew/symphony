@@ -615,8 +615,21 @@ defmodule SymphonyElixir.Codex.AppServer do
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
 
       {:malformed_candidate, payload_string} ->
-        log_non_json_stream_line(payload_string, "turn stream")
+        handle_malformed_candidate(port, on_message, payload_string, timeout_ms, tool_executor, auto_approve_requests)
 
+      {:stream_line, payload_string} ->
+        handle_stream_line(port, on_message, payload_string, timeout_ms, tool_executor, auto_approve_requests)
+    end
+  end
+
+  defp handle_malformed_candidate(port, on_message, payload_string, timeout_ms, tool_executor, auto_approve_requests) do
+    log_non_json_stream_line(payload_string, "turn stream")
+
+    case execution_capability_failure(payload_string) do
+      {:error, reason} ->
+        {:error, reason}
+
+      :ok ->
         emit_message(
           on_message,
           :malformed,
@@ -628,11 +641,33 @@ defmodule SymphonyElixir.Codex.AppServer do
         )
 
         receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+    end
+  end
 
-      {:stream_line, payload_string} ->
-        log_non_json_stream_line(payload_string, "turn stream")
+  defp handle_stream_line(port, on_message, payload_string, timeout_ms, tool_executor, auto_approve_requests) do
+    log_non_json_stream_line(payload_string, "turn stream")
 
-        receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+    case execution_capability_failure(payload_string) do
+      {:error, reason} -> {:error, reason}
+      :ok -> receive_loop(port, on_message, timeout_ms, "", tool_executor, auto_approve_requests)
+    end
+  end
+
+  defp execution_capability_failure(payload_string) do
+    normalized = payload_string |> to_string() |> String.downcase()
+
+    cond do
+      String.contains?(normalized, "bwrap: no permissions to create a new namespace") ->
+        {:error, {:execution_capability_unavailable, payload_string}}
+
+      String.contains?(normalized, "clone_newuser") ->
+        {:error, {:execution_capability_unavailable, payload_string}}
+
+      String.contains?(normalized, "user namespace") and String.contains?(normalized, "operation not permitted") ->
+        {:error, {:execution_capability_unavailable, payload_string}}
+
+      true ->
+        :ok
     end
   end
 

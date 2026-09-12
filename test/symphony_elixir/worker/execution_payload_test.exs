@@ -13,6 +13,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert Map.has_key?(execution, "revision") == false
     assert execution["branch"] == "vikingmew-sym-45"
     assert execution["codex"]["command"] == "codex app-server"
+    assert execution["codex"]["thread_sandbox"] == "danger-full-access"
+    assert execution["codex"]["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
     assert execution["codex"]["issue"] == %{"identifier" => "SYM-45", "title" => "Align worker payloads"}
     assert execution["codex"]["prompt"] =~ "Workflow profile: implementation"
@@ -74,8 +76,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
         "command" => "codex app-server",
         "pre_start_commands" => [],
         "approval_policy" => "never",
-        "thread_sandbox" => "workspace-write",
-        "turn_sandbox_policy" => nil
+        "thread_sandbox" => "danger-full-access",
+        "turn_sandbox_policy" => %{"type" => "dangerFullAccess"}
       },
       "handoff" => %{"policy" => "push_pr_then_restricted_linear"}
     }

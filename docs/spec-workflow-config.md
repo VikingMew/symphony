@@ -223,6 +223,12 @@ hand-maintained enum in this spec. To inspect the installed Codex schema, run
 by `v2/ThreadStartParams.json` and `v2/TurnStartParams.json`. Implementations MAY validate these
 fields locally if they want stricter startup checks.
 
+The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
+Codex block carries explicit `thread_sandbox: "danger-full-access"` and
+`turn_sandbox_policy.type: "dangerFullAccess"` so new Settings / Import or cold-start imports do not
+omit the worker non-bwrap policy. This does not change the implementation-defined behavior for a
+runtime workflow that omits an explicit `turn_sandbox_policy`.
+
 - `command` (string shell command)
   - Default: `codex app-server`
   - The runtime launches this command via `bash -lc` in the workspace directory.
