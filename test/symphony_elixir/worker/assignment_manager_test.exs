@@ -315,6 +315,70 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert AssignmentManager.current_assignment(context.manager) == nil
   end
 
+  test "claims Todo refinement issues into Refining and returns refinement payload state", context do
+    todo = %{issue(2) | state: "Todo"}
+    Tracker.put([todo])
+
+    assert {:ok, assignment} = claim(context)
+
+    assert Tracker.updates() == [{todo.id, "Refining"}]
+    assert assignment.issue.state == "Refining"
+    assert assignment.payload["issue"]["state"] == "Refining"
+    assert assignment.payload["workflow_profile"] == "refinement"
+    assert assignment.payload["handoff"]["allowed_updates"]["target_states"] == ["Needs Refinement Review"]
+    assert assignment.payload["prompt"] =~ "Current status: Refining"
+    assert assignment.payload["prompt"] =~ "Needs Refinement Review"
+  end
+
+  test "claims Ready implementation issues into In Progress and returns implementation payload state", context do
+    ready = issue(3)
+    Tracker.put([ready])
+
+    assert {:ok, assignment} = claim(context)
+
+    assert Tracker.updates() == [{ready.id, "In Progress"}]
+    assert assignment.issue.state == "In Progress"
+    assert assignment.payload["issue"]["state"] == "In Progress"
+    assert assignment.payload["workflow_profile"] == "implementation"
+    assert assignment.payload["handoff"]["allowed_updates"]["target_states"] == ["In Progress", "Ready to Merge"]
+    assert assignment.payload["prompt"] =~ "Current status: In Progress"
+    assert assignment.payload["prompt"] =~ "Ready to Merge"
+  end
+
+  test "fails Todo refinement claim visibly when Linear rejects Refining transition", context do
+    todo = %{issue(4) | state: "Todo"}
+    Tracker.put([todo])
+    Tracker.fail_update(:transition_rejected)
+
+    assert {:error, :transition_rejected} = claim(context)
+    assert Tracker.updates() == []
+    assert [%{status: "failed"}] = FakePersistence.list_runs_for_issue(todo.identifier)
+    assert AssignmentManager.current_assignment(context.manager) == nil
+  end
+
+  test "Refining latest running worker run blocks duplicate assignment", context do
+    enable_active_state("Refining")
+    refining = %{issue(5) | state: "Refining"}
+    Tracker.put([refining])
+    {:ok, _run} = FakePersistence.create_run(%{issue_identifier: refining.identifier, status: "running", started_at: context.now})
+
+    assert {:ok, {:empty, 5}} = claim(context)
+    assert Tracker.updates() == []
+  end
+
+  test "Refining latest terminal worker run can be assigned without another state update", context do
+    enable_active_state("Refining")
+    refining = %{issue(6) | state: "Refining"}
+    Tracker.put([refining])
+    {:ok, _run} = FakePersistence.create_run(%{issue_identifier: refining.identifier, status: "succeeded", started_at: context.now})
+
+    assert {:ok, assignment} = claim(context)
+
+    assert assignment.issue.state == "Refining"
+    assert assignment.payload["issue"]["state"] == "Refining"
+    assert Tracker.updates() == []
+  end
+
   test "failure ends the assignment and the next claim rereads Linear", context do
     ready = issue(1)
     Tracker.put([ready])
@@ -966,6 +1030,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   defp workflow_markdown(base, prompt), do: Workflow.to_markdown(base.config, prompt)
+
+  defp enable_active_state(state_name) do
+    workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
+    active_states = workflow.config["tracker"]["active_states"] ++ [state_name]
+    Application.put_env(:symphony_elixir, :assignment_test_workflow, put_in(workflow.config["tracker"]["active_states"], active_states))
+  end
 
   defp eventually(fun, attempts \\ 50)
   defp eventually(fun, 0), do: assert(fun.())
