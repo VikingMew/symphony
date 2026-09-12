@@ -7,6 +7,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixir.Workflow
+  alias SymphonyElixir.WorkflowStore
   alias SymphonyElixirWeb.Presenter
 
   defmodule Tracker do
@@ -59,6 +60,52 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     def list_enabled do
       workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
       List.duplicate(workflow, Application.get_env(:symphony_elixir, :assignment_test_workflow_count, 1))
+    end
+  end
+
+  defmodule ProjectTracker do
+    use Agent
+
+    def start_link(_opts) do
+      Agent.start_link(fn -> %{candidates: %{}, current: %{}, fetches: [], updates: []} end, name: __MODULE__)
+    end
+
+    def put(candidates_by_slug) do
+      current =
+        candidates_by_slug
+        |> Map.values()
+        |> List.flatten()
+        |> Map.new(fn issue -> {issue.id, issue} end)
+
+      Agent.update(__MODULE__, &%{&1 | candidates: candidates_by_slug, current: current})
+    end
+
+    def fetches, do: Agent.get(__MODULE__, & &1.fetches)
+
+    def fetch_candidate_issues do
+      slug = SymphonyElixir.Config.settings!().tracker.project_slug
+
+      Agent.get_and_update(__MODULE__, fn state ->
+        {{:ok, Map.get(state.candidates, slug, [])}, %{state | fetches: state.fetches ++ [slug]}}
+      end)
+    end
+
+    def fetch_issue_states_by_ids(ids) do
+      {:ok,
+       Agent.get(__MODULE__, fn data ->
+         ids |> Enum.map(&data.current[&1]) |> Enum.reject(&is_nil/1)
+       end)}
+    end
+
+    def fetch_issues_by_states(states), do: {:ok, Agent.get(__MODULE__, &(&1.current |> Map.values() |> Enum.filter(fn issue -> issue.state in states end)))}
+
+    def update_issue_state(id, state) do
+      Agent.update(__MODULE__, fn data ->
+        current = Map.update!(data.current, id, &%{&1 | state: state})
+        %{data | current: current, updates: [{id, state} | data.updates]}
+      end)
+
+      :ok
     end
   end
 
@@ -657,6 +704,95 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, {:empty, 5}} = claim(context)
   end
 
+  test "claim uses persisted project workflow context for prompt and correlation", context do
+    start_supervised!(ProjectTracker)
+    {:ok, base} = Workflow.load()
+    {:ok, default_project} = FakePersistence.default_project()
+
+    {:ok, project_b} =
+      FakePersistence.update_project(default_project.id, %{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@example.test:b.git",
+        default_branch: "main",
+        checkout_depth: 1,
+        source_strategy: "clone",
+        worktree_fetch: true,
+        worktree_cleanup: true,
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} =
+      FakePersistence.import_workflow(
+        project_b,
+        workflow_markdown(base, "Prompt B {{ issue.identifier }}"),
+        "test"
+      )
+
+    {:ok, project_a} =
+      FakePersistence.create_project(%{
+        name: "Project A",
+        slug: "project-a",
+        linear_project_slug: "linear-a",
+        repository_url: "git@example.test:a.git",
+        enabled: true
+      })
+
+    {:ok, _project_a_workflow} =
+      FakePersistence.import_workflow(
+        project_a,
+        workflow_markdown(base, "Prompt A {{ issue.identifier }}"),
+        "test"
+      )
+
+    assert :ok = WorkflowStore.force_reload()
+    assert Enum.map(WorkflowStore.list_enabled(), & &1.project_id) == [project_a.id, project_b.id]
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+
+    issue_b = issue(78)
+    ProjectTracker.put(%{"linear-a" => [], "linear-b" => [issue_b]})
+
+    manager_name = Module.concat(__MODULE__, "PersistedManager#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(
+        Supervisor.child_spec(
+          {AssignmentManager,
+           name: manager_name,
+           tracker: ProjectTracker,
+           persistence: FakePersistence,
+           workflows: WorkflowStore,
+           now: fn -> context.now end,
+           failure_circuit: context.circuit,
+           reconcile_interval_ms: :timer.hours(1)},
+          id: manager_name
+        )
+      )
+
+    assert {:ok, assignment} =
+             AssignmentManager.claim(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               manager
+             )
+
+    assert ProjectTracker.fetches() == ["linear-a", "linear-b"]
+    assert assignment.project_id == project_b.id
+    assert assignment.correlation["project_id"] == project_b.id
+    assert assignment.payload["repository"]["project_id"] == project_b.id
+    assert assignment.payload["prompt"] =~ "Prompt B SYM-78"
+    refute assignment.payload["prompt"] =~ "Prompt A"
+    refute assignment.payload["prompt"] =~ "You are an agent for this repository."
+
+    run = FakePersistence.get_run(assignment.run_id)
+    assert run.project_id == project_b.id
+
+    persisted_issue = FakePersistence.get_issue_by_identifier(issue_b.identifier)
+    assert persisted_issue.project_id == project_b.id
+  end
+
   test "docs/spec-reliability-security.md §14.5 and docs/spec-observability.md §13.8: stub worker failures open the circuit once",
        context do
     for number <- 1..EnvironmentFailureCircuit.threshold() do
@@ -828,6 +964,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     |> summary()
     |> Map.put("detail", detail)
   end
+
+  defp workflow_markdown(base, prompt), do: Workflow.to_markdown(base.config, prompt)
 
   defp eventually(fun, attempts \\ 50)
   defp eventually(fun, 0), do: assert(fun.())
