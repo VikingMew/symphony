@@ -11,6 +11,8 @@ defmodule SymphonyElixir.WorkflowFixturesTest do
     assert {:ok, {:workflow, workflow_part}} = Workflow.parse_settings_yaml(workflow_yaml)
     assert {:ok, {:profiles, profiles_part}} = Workflow.parse_settings_yaml(profiles_yaml)
 
+    assert get_in(workflow_part, ["codex", "thread_sandbox"]) == "danger-full-access"
+    assert get_in(workflow_part, ["codex", "turn_sandbox_policy", "type"]) == "dangerFullAccess"
     assert get_in(workflow_part, ["workflow", "states", "Ready", "profile"]) == "implementation"
     assert get_in(profiles_part, [:profiles, "implementation", "name"]) == "Implementation"
     assert profiles_part[:base_prompt] == "Imported base prompt.\n"

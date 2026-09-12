@@ -15,6 +15,13 @@ Linear access, workflow/profile selection, prompt construction, dispatch, and th
 in-memory assignment. The worker owns checkout, hooks, one Codex app-server turn, required gates,
 PR handoff, bounded evidence, and cleanup.
 
+In the current containerized worker deployment, the worker container is the execution isolation
+boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the
+checked-in import package therefore carries `thread_sandbox: "danger-full-access"` and
+`turn_sandbox_policy.type: "dangerFullAccess"` for that deployment shape. The container boundary is
+kept by Compose and image policy, not by relaxing host seccomp or adding container-engine access
+inside the worker.
+
 A claim is created from a live Linear candidate read and a second state/dependency/routing check.
 The Panel derives the worker started state from the single `AgentRunner.Policy`
 profile-to-started-state contract: refinement claims validate and apply `Todo -> Refining`, while
@@ -51,6 +58,10 @@ Terminal events, cancellation, expiry, and stale-run reconciliation leave `runni
 cancelled endings clear the current entry, failed endings either enter orchestrator retry state or,
 when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
 centralized blocked outcomes.
+
+If the Codex command-execution capability is unavailable inside the worker, including the known
+bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
+reason instead of leaving the assignment `In Progress` until a stall or turn timeout.
 
 Heartbeat is a success/renewal signal, not queued work and not a synchronous worker/session
 database-write gate. After controller identity/protocol parsing, the Panel records worker/session

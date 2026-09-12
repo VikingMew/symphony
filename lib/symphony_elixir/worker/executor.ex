@@ -49,6 +49,9 @@ defmodule SymphonyElixir.Worker.Executor do
       {:error, reason} ->
         %{status: :failed, reason: inspect(reason)}
 
+      %{status: :failed, reason: reason, detail: detail} ->
+        %{status: :failed, reason: reason, detail: detail}
+
       %{status: :cancelled} = result ->
         Map.put(cancelled_result(), :detail, result.detail)
 
@@ -121,10 +124,14 @@ defmodule SymphonyElixir.Worker.Executor do
             detail: detail
           }
         else
-          %{status: :failed, duration_ms: duration_ms, detail: detail}
+          %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: detail}
         end
     end
   end
+
+  defp codex_failure_reason({:execution_capability_unavailable, _detail}), do: :execution_capability_unavailable
+  defp codex_failure_reason(:execution_capability_unavailable), do: :execution_capability_unavailable
+  defp codex_failure_reason(_reason), do: :failed
 
   defp forward_codex_progress(%{event: :session_started, session_id: session_id} = message, progress) do
     progress.("codex_session_started", %{session_id: session_id, codex: message})
