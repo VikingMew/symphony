@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.Log
-updated: 2026-09-11
+updated: 2026-09-12
 ---
 
 # Logging and Observability Specification
@@ -345,11 +345,61 @@ Minimum endpoints:
   - Clears the open environment failure circuit described in
     [spec-reliability-security §14.5](spec-reliability-security.md).
   - Returns the cleared circuit snapshot from the configured orchestrator.
+- `POST /api/v1/control/force-stop`
+  - Request body is empty or `{}`.
+  - Calls the configured orchestrator's stop-all control. The response turns listening off, keeps the
+    existing Symphony-owned rollback result contract, emits `orchestrator.force_stop_all`, and
+    returns the top-level keys `listening?`, `listening_mode`, `stopped_agents`,
+    `cancelled_tasks`, `rollback_results`, and `changed_at`.
+- `POST /api/v1/control/tasks/cancel`
+  - Cancels only the current in-memory worker assignment and does not change listening mode.
+  - `project_id` is optional; when present it MUST be a non-empty string and the current assignment
+    matches only when it belongs to that project. A project mismatch returns the same
+    `no_active_assignment` result as no current assignment.
+  - The response returns `listening?`, `listening_mode`, `cancelled_tasks`, and `changed_at`.
 - `POST /api/v1/control/nap`
   - Requests a nap operator task. `project_id` is optional; when present it MUST be a non-empty
     string and is forwarded unchanged.
 - `POST /api/v1/control/daydream`
   - Requests a day-dreaming operator task with the same optional `project_id` contract as nap.
+
+Worker cancellation results are returned in `cancelled_tasks` for both force-stop and cancel-current:
+
+```json
+{
+  "status": "cancelled",
+  "cancelled": 1,
+  "failed": [],
+  "tasks": [
+    {
+      "assignment_id": "task-1",
+      "task_id": "task-1",
+      "lease_id": "lease-1",
+      "project_id": "project-1",
+      "run_id": "run-1",
+      "issue_id": "issue-1",
+      "issue_identifier": "MT-649",
+      "worker_id": "worker-1",
+      "worker_session_id": "session-1"
+    }
+  ],
+  "project_id": "project-1"
+}
+```
+
+The `status` values are mutually distinct:
+
+- `cancelled`: exactly one matching current assignment reached terminal `task.cancelled`, the event
+  was persisted, the run transitioned to `cancelled`, the orchestrator was notified with
+  `:cancelled`, and the worker-side Codex app-server session/process for that assignment has
+  stopped.
+- `no_active_assignment`: no current in-memory assignment matched the request, so no worker stop was
+  requested. This value makes no claim about stale worker-local processes detached from the current
+  Panel assignment.
+- `failed`: the required server-side event persistence/run transition, worker cancel-command
+  delivery, or worker-side executor/Codex app-server termination did not complete or could not be
+  verified within the cancellation window. Failed entries are reported under `failed`; successful
+  entries are reported under `tasks`.
 
 Control endpoint responses:
 
@@ -361,6 +411,10 @@ Control endpoint responses:
 - The controls use the same optional dashboard-session authentication boundary as the other
   `/api/v1/*` endpoints. Each defined control path returns `405 method_not_allowed` for non-POST
   methods.
+- Control-side cancellation observability uses the existing `orchestrator.*` and `task.*`
+  namespaces: `orchestrator.force_stop_all` for force-stop, `task.progress` with phase
+  `cancelling` for worker-side cancel delivery evidence, and terminal `task.cancelled` for the
+  assignment result.
 
 API design notes:
 

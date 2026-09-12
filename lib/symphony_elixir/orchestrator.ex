@@ -38,6 +38,7 @@ defmodule SymphonyElixir.Orchestrator do
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @mergeability_checks_per_poll 20
+  @control_stop_timeout_ms 35_000
   @empty_codex_totals %{
     input_tokens: 0,
     output_tokens: 0,
@@ -2372,8 +2373,27 @@ defmodule SymphonyElixir.Orchestrator do
 
   @spec force_stop_all(GenServer.server()) :: map() | :unavailable
   def force_stop_all(server) do
-    if Process.whereis(server),
-      do: GenServer.call(server, :force_stop_all, 30_000),
+    if GenServer.whereis(server),
+      do: GenServer.call(server, :force_stop_all, @control_stop_timeout_ms),
+      else: :unavailable
+  end
+
+  @spec cancel_current_task() :: map() | :unavailable
+  def cancel_current_task, do: cancel_current_task(nil, __MODULE__)
+
+  @spec cancel_current_task(GenServer.server() | String.t() | nil) :: map() | :unavailable
+  def cancel_current_task(server) when is_atom(server) or is_pid(server) or is_tuple(server) do
+    cancel_current_task(nil, server)
+  end
+
+  def cancel_current_task(project_id) when is_binary(project_id) or is_nil(project_id) do
+    cancel_current_task(project_id, __MODULE__)
+  end
+
+  @spec cancel_current_task(String.t() | nil, GenServer.server()) :: map() | :unavailable
+  def cancel_current_task(project_id, server) when is_binary(project_id) or is_nil(project_id) do
+    if GenServer.whereis(server),
+      do: GenServer.call(server, {:cancel_current_task, project_id}, @control_stop_timeout_ms),
       else: :unavailable
   end
 
@@ -2629,6 +2649,18 @@ defmodule SymphonyElixir.Orchestrator do
        stopped_agents: length(rollback_results),
        cancelled_tasks: cancelled_tasks,
        rollback_results: rollback_results,
+       changed_at: DateTime.utc_now()
+     }, state}
+  end
+
+  def handle_call({:cancel_current_task, project_id}, _from, state) do
+    cancelled_tasks = AssignmentManager.cancel_current("cancel_current", project_id)
+
+    {:reply,
+     %{
+       listening?: listening?(state),
+       listening_mode: listening_mode_string(state),
+       cancelled_tasks: cancelled_tasks,
        changed_at: DateTime.utc_now()
      }, state}
   end
@@ -3331,9 +3363,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp cancel_active_worker_tasks do
-    assignment = AssignmentManager.current_assignment()
-    :ok = AssignmentManager.cancel_current("force_stop_all")
-    %{cancelled: if(assignment, do: 1, else: 0), failed: [], status: :ok}
+    AssignmentManager.cancel_current("force_stop_all")
   end
 
   defp handle_worker_task_started(%State{} = state, %{issue: %Issue{id: issue_id} = issue} = assignment) do

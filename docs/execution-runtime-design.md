@@ -64,6 +64,30 @@ If the Codex command-execution capability is unavailable inside the worker, incl
 bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
 reason instead of leaving the assignment `In Progress` until a stall or turn timeout.
 
+Listening off only stops future dispatch. It does not alter an existing assignment or running Codex
+turn. Force-stop and cancel-current are explicit cancellation controls. Force-stop turns listening
+off, keeps the existing centralized rollback/force-stop behavior, and cancels the current worker
+assignment through the same assignment-scoped path used by cancel-current. Cancel-current targets
+only the current in-memory worker assignment and does not change listening mode; when `project_id`
+is supplied, it matches only that project and reports no active assignment on mismatch.
+
+Worker cancellation is a synchronous control result backed by an in-band worker handshake. The
+Panel records a pending cancellation on the current assignment and returns a `cancel_task` command
+only to the owning worker/session heartbeat that still reports the matching active lease. That lease
+is not renewed after the cancel command is delivered. The worker logs the command, emits
+`task.progress` with phase `cancelling`, stops the executor, closes the active Codex app-server
+session, terminates the recorded app-server process, and then reports terminal `task.cancelled`.
+The Panel accepts the result as `cancelled` only after that terminal event is persisted, the run is
+transitioned to `cancelled`, and the orchestrator has been notified of `:cancelled`.
+
+The shared cancellation result has three meanings. `cancelled` means one matching assignment was
+terminally cancelled and the worker-side Codex execution for that assignment has stopped.
+`no_active_assignment` means no current in-memory assignment matched the request, so no worker stop
+was requested and the response says nothing about stale worker-local processes. `failed` means the
+required server-side event/run transition, worker cancel delivery, or worker-side termination did
+not complete or could not be verified within the cancellation window. Force-stop returns this typed
+shape in `cancelled_tasks` while preserving its existing top-level keys.
+
 Heartbeat is a success/renewal signal, not queued work and not a synchronous worker/session
 database-write gate. After controller identity/protocol parsing, the Panel records worker/session
 freshness through a coalesced asynchronous history observer whose result is ignored by the worker-v1

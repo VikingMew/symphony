@@ -201,6 +201,93 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert result.detail =~ "bwrap: No permissions to create a new namespace"
   end
 
+  test "shutdown during Codex execution terminates the app-server process" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    pid_file = Path.join(fixture.root, "fake-codex.pid")
+    codex_binary = Path.join(fixture.root, "fake-codex")
+
+    File.write!(codex_binary, """
+    #!/bin/sh
+    printf '%s\\n' "$$" > #{pid_file}
+    trap 'exit 0' TERM INT HUP
+
+    count=0
+    while IFS= read -r line; do
+      count=$((count + 1))
+
+      case "$count" in
+        1)
+          printf '%s\\n' '{"id":1,"result":{}}'
+          ;;
+        2)
+          printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-worker-cancel"}}}'
+          ;;
+        3)
+          printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-worker-cancel"}}}'
+          while true; do sleep 1; done
+          ;;
+        *)
+          exit 0
+          ;;
+      esac
+    done
+    """)
+
+    File.chmod!(codex_binary, 0o755)
+
+    execution =
+      panel_payload()
+      |> put_in(["repository", "url"], fixture.remote)
+      |> put_in(["repository", "source_ref"], "trunk")
+      |> put_in(["repository", "implementation_branch"], "feature/sym-107")
+      |> put_in(["codex", "command"], "#{codex_binary} app-server")
+      |> put_in(["codex", "thread_sandbox"], "danger-full-access")
+      |> put_in(["codex", "turn_sandbox_policy"], %{"type" => "dangerFullAccess"})
+      |> put_in(["limits", "turn_timeout_ms"], 60_000)
+      |> ExecutionPayload.from_task_payload()
+
+    config = %Config{
+      panel_url: "http://panel.test",
+      registration_token: "worker-token",
+      worker_name: "worker-test",
+      workspace_root: Path.join(fixture.root, "workspaces"),
+      cache_root: Path.join(fixture.root, "cache"),
+      log_root: Path.join(fixture.root, "logs")
+    }
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => "task-1",
+      "lease_id" => "lease-1",
+      "run_id" => "run-1",
+      "run_attempt" => 1,
+      "lease_attempt" => 1,
+      "issue_id" => "issue-1",
+      "issue_identifier" => "SYM-107",
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "execution" => execution
+    }
+
+    owner = self()
+
+    task =
+      Task.async(fn ->
+        Executor.execute(config, claim, fn phase, payload -> send(owner, {:progress, phase, payload}) end)
+      end)
+
+    assert_receive {:progress, "codex_session_started", %{session_id: "thread-worker-cancel-turn-worker-cancel"}}, 5_000
+    codex_pid = pid_file |> File.read!() |> String.trim()
+
+    assert os_process_alive?(codex_pid)
+    Process.exit(task.pid, :shutdown)
+
+    assert %{status: :cancelled, detail: "cancelled during codex app-server run"} = Task.await(task, 10_000)
+    eventually(fn -> os_process_alive?(codex_pid) == false end)
+  end
+
   defp payload(remote) do
     assert {:ok, payload} =
              panel_payload()
@@ -239,6 +326,25 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
       {output, 0} -> String.trim(output)
       # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       {output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
+    end
+  end
+
+  defp os_process_alive?(pid) do
+    case System.cmd("sh", ["-c", "kill -0 #{pid}"], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      {_output, _status} -> false
+    end
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, 0), do: assert(fun.())
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      eventually(fun, attempts - 1)
     end
   end
 

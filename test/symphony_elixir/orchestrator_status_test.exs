@@ -1591,16 +1591,37 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert Map.has_key?(state.retry_attempts, issue_id) == false
   end
 
-  test "force stop reports an empty successful task cancellation result" do
+  test "force stop reports a typed no-active task cancellation result" do
     :sys.replace_state(Orchestrator, fn state ->
       %{state | running: %{}, claimed: MapSet.new(), retry_attempts: %{}}
     end)
 
-    cancellation = %{cancelled: 0, failed: [], status: :ok}
+    cancellation = %{cancelled: 0, failed: [], project_id: nil, status: "no_active_assignment", tasks: []}
 
     assert %{cancelled_tasks: ^cancellation} = Orchestrator.force_stop_all()
     assert [event] = FakePersistence.list_events(event_type: "orchestrator.force_stop_all")
     assert event.payload.cancelled_tasks == cancellation
+  end
+
+  test "cancel current facade leaves listening mode unchanged" do
+    orchestrator_name = Module.concat(__MODULE__, :CancelCurrentNoActiveOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    :sys.replace_state(pid, fn state -> %{state | listening_mode: :listening_all} end)
+
+    assert %{
+             listening?: true,
+             listening_mode: "listening_all",
+             cancelled_tasks: %{status: "no_active_assignment", cancelled: 0, failed: [], tasks: [], project_id: nil}
+           } = Orchestrator.cancel_current_task(orchestrator_name)
+
+    assert :sys.get_state(pid).listening_mode == :listening_all
   end
 
   test "force stop all agents disables listening and rolls back symphony-owned state when unchanged" do

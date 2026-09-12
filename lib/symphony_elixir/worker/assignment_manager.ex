@@ -33,6 +33,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @max_poll_seconds 60
   @heartbeat_timeout_ms 1_000
   @heartbeat_retry_after_seconds 1
+  @cancel_timeout_ms 30_000
+  @cancel_call_timeout_ms @cancel_timeout_ms + 1_000
 
   @type assignment :: map()
   @type liveness_entry :: %{
@@ -40,6 +42,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
           required(:session) => map(),
           required(:total_slots) => pos_integer(),
           required(:last_seen_at) => DateTime.t()
+        }
+  @type cancellation_result :: %{
+          required(:status) => String.t(),
+          required(:cancelled) => non_neg_integer(),
+          required(:failed) => [map()],
+          required(:tasks) => [map()],
+          optional(:project_id) => String.t() | nil
         }
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -87,8 +96,14 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     observe_liveness(worker_id, session_id, attrs, server)
     HeartbeatHistory.observe(worker_id, session_id, persistence)
 
-    with {:ok, renewals} <- heartbeat_renewals(worker_id, session_id, active_ids, server) do
-      {:ok, %{ok: true, server_time: DateTime.utc_now(), lease_renewals: renewals, commands: []}}
+    with {:ok, heartbeat} <- heartbeat_assignment(worker_id, session_id, active_ids, server) do
+      {:ok,
+       %{
+         ok: true,
+         server_time: DateTime.utc_now(),
+         lease_renewals: Map.fetch!(heartbeat, :lease_renewals),
+         commands: Map.fetch!(heartbeat, :commands)
+       }}
     end
   end
 
@@ -110,9 +125,23 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     if process_alive?(server), do: GenServer.call(server, :current_assignment), else: nil
   end
 
-  @spec cancel_current(String.t(), GenServer.server()) :: :ok
-  def cancel_current(reason, server \\ __MODULE__) do
-    if process_alive?(server), do: GenServer.call(server, {:cancel_current, reason}), else: :ok
+  @spec cancel_current(String.t()) :: cancellation_result()
+  def cancel_current(reason), do: cancel_current(reason, nil, __MODULE__)
+
+  @spec cancel_current(String.t(), GenServer.server() | String.t() | nil) :: cancellation_result()
+  def cancel_current(reason, server) when is_atom(server) or is_pid(server) or is_tuple(server) do
+    cancel_current(reason, nil, server)
+  end
+
+  def cancel_current(reason, project_id) when is_binary(project_id) or is_nil(project_id) do
+    cancel_current(reason, project_id, __MODULE__)
+  end
+
+  @spec cancel_current(String.t(), String.t() | nil, GenServer.server()) :: cancellation_result()
+  def cancel_current(reason, project_id, server) when is_binary(project_id) or is_nil(project_id) do
+    if process_alive?(server),
+      do: GenServer.call(server, {:cancel_current, reason, project_id}, @cancel_call_timeout_ms),
+      else: no_active_assignment(project_id)
   end
 
   @spec reconcile(GenServer.server()) :: :ok
@@ -152,6 +181,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     {:noreply, state}
   end
 
+  def handle_info({:cancel_timeout, ref}, %{assignment: %{cancellation: %{ref: ref} = cancellation} = assignment} = state) do
+    result = failed_cancellation(assignment, cancellation_timeout_reason(cancellation), cancellation.project_id)
+    reply_cancel_waiters(cancellation, result)
+    cancellation = %{cancellation | waiters: [], timer: nil}
+    {:noreply, %{state | assignment: %{assignment | cancellation: cancellation}}}
+  end
+
+  def handle_info({:cancel_timeout, _ref}, state), do: {:noreply, state}
+
   @impl true
   def handle_call(:current_assignment, _from, state), do: {:reply, state.assignment, state}
 
@@ -163,16 +201,19 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     {:reply, :ok, observe_session_liveness(state, worker, session)}
   end
 
-  def handle_call({:cancel_current, _reason}, _from, %{assignment: nil} = state),
-    do: {:reply, :ok, state}
+  def handle_call({:cancel_current, reason, project_id}, from, state) do
+    state = expire_assignment(state)
 
-  def handle_call({:cancel_current, reason}, _from, state) do
-    assignment = state.assignment
+    case matching_project_assignment(state.assignment, project_id) do
+      {:ok, %{cancellation: cancellation} = assignment} ->
+        {:noreply, %{state | assignment: %{assignment | cancellation: add_cancel_waiter(cancellation, from)}}}
 
-    _ = persist_event(state.persistence, assignment, "task.cancelled", %{"reason" => reason}, nil)
-    _ = transition_run(state.persistence, assignment.run_id, "task.cancelled", nil)
-    notify_worker_terminal(state, assignment, :cancelled)
-    {:reply, :ok, %{state | assignment: nil}}
+      {:ok, assignment} ->
+        {:noreply, %{state | assignment: Map.put(assignment, :cancellation, new_cancellation(reason, project_id, from))}}
+
+      :error ->
+        {:reply, no_active_assignment(project_id), state}
+    end
   end
 
   def handle_call({:claim, worker_id, session_id, attrs}, _from, state) do
@@ -237,12 +278,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:heartbeat_renew, worker_id, session_id, active_ids, deadline_ms}, _from, state) do
+  def handle_call({:heartbeat, worker_id, session_id, active_ids, deadline_ms}, _from, state) do
     if System.monotonic_time(:millisecond) > deadline_ms do
       {:reply, heartbeat_unavailable(), state}
     else
-      {assignment, renewals} = renew_assignment(state.assignment, worker_id, session_id, active_ids, state)
-      {:reply, {:ok, renewals}, %{state | assignment: assignment}}
+      {assignment, heartbeat} = assignment_heartbeat(state.assignment, worker_id, session_id, active_ids, state)
+      {:reply, {:ok, heartbeat}, %{state | assignment: assignment}}
     end
   end
 
@@ -250,17 +291,24 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     state = expire_assignment(state)
     state = observe_request_liveness(state, worker_id, session_id, attrs)
 
-    with {:ok, assignment} <- matching_assignment(state.assignment, worker_id, session_id, assignment_id),
-         :ok <- validate_correlation(payload, assignment.correlation),
-         {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
-         {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
-         :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
-      record_environment_failure_circuit(state, assignment, event_type, summary)
-      notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), summary)
-      assignment = if event_type in @terminal_events, do: nil, else: assignment
-      {:reply, {:ok, event}, %{state | assignment: assignment}}
-    else
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    case matching_assignment(state.assignment, worker_id, session_id, assignment_id) do
+      {:ok, assignment} ->
+        with :ok <- validate_correlation(payload, assignment.correlation),
+             {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
+             {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
+             :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
+          record_environment_failure_circuit(state, assignment, event_type, summary)
+          notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), summary)
+          state = complete_pending_cancellation(state, assignment, event_type, :ok)
+          {:reply, {:ok, event}, %{state | assignment: assignment_after_event(state, event_type)}}
+        else
+          {:error, reason} ->
+            state = complete_pending_cancellation(state, assignment, event_type, {:error, reason})
+            {:reply, {:error, reason}, state}
+        end
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -486,19 +534,31 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     SymphonyElixir.StateName.normalize(left) == SymphonyElixir.StateName.normalize(right)
   end
 
-  defp renew_assignment(nil, _worker_id, _session_id, _active_ids, _state), do: {nil, []}
+  defp assignment_heartbeat(nil, _worker_id, _session_id, _active_ids, _state),
+    do: {nil, %{lease_renewals: [], commands: []}}
 
-  defp renew_assignment(assignment, worker_id, session_id, active_ids, state) do
-    owned? = assignment.worker_id == worker_id and assignment.session_id == session_id
-    live? = DateTime.compare(assignment.expires_at, state.now.()) in [:eq, :gt]
-
-    if owned? and live? and assignment.lease_id in active_ids do
-      expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
-      renewal = %{lease_id: assignment.lease_id, lease_expires_at: expires_at}
-      {%{assignment | expires_at: expires_at}, [renewal]}
+  defp assignment_heartbeat(assignment, worker_id, session_id, active_ids, state) do
+    if active_heartbeat_assignment?(assignment, worker_id, session_id, active_ids, state) do
+      heartbeat_active_assignment(assignment, state)
     else
-      {assignment, []}
+      {assignment, %{lease_renewals: [], commands: []}}
     end
+  end
+
+  defp active_heartbeat_assignment?(assignment, worker_id, session_id, active_ids, state) do
+    assignment.worker_id == worker_id and assignment.session_id == session_id and
+      DateTime.compare(assignment.expires_at, state.now.()) in [:eq, :gt] and assignment.lease_id in active_ids
+  end
+
+  defp heartbeat_active_assignment(%{cancellation: _cancellation} = assignment, _state) do
+    assignment = mark_cancel_delivered(assignment)
+    {assignment, %{lease_renewals: [], commands: [cancel_command(assignment)]}}
+  end
+
+  defp heartbeat_active_assignment(assignment, state) do
+    expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
+    renewal = %{lease_id: assignment.lease_id, lease_expires_at: expires_at}
+    {%{assignment | expires_at: expires_at}, %{lease_renewals: [renewal], commands: []}}
   end
 
   defp expire_assignment(%{assignment: nil} = state), do: state
@@ -752,28 +812,147 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp maybe_put_summary(payload, nil), do: payload
   defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
   defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
-  defp process_alive?(server) when is_atom(server), do: Process.whereis(server) != nil
-  defp process_alive?(server) when is_pid(server), do: Process.alive?(server)
+  defp process_alive?(server), do: GenServer.whereis(server) != nil
 
   defp active_lease_ids(attrs), do: map_get(attrs, "active_leases", :active_leases) || []
 
-  defp heartbeat_renewals(_worker_id, _session_id, [], _server), do: {:ok, []}
+  defp heartbeat_assignment(_worker_id, _session_id, [], _server), do: {:ok, %{lease_renewals: [], commands: []}}
 
-  defp heartbeat_renewals(worker_id, session_id, active_ids, server) do
+  defp heartbeat_assignment(worker_id, session_id, active_ids, server) do
     if process_alive?(server) do
       deadline_ms = System.monotonic_time(:millisecond) + @heartbeat_timeout_ms
 
       try do
-        GenServer.call(server, {:heartbeat_renew, worker_id, session_id, active_ids, deadline_ms}, @heartbeat_timeout_ms)
+        GenServer.call(server, {:heartbeat, worker_id, session_id, active_ids, deadline_ms}, @heartbeat_timeout_ms)
       catch
         :exit, {:timeout, _call} -> heartbeat_unavailable()
       end
     else
-      {:ok, []}
+      {:ok, %{lease_renewals: [], commands: []}}
     end
   end
 
   defp heartbeat_unavailable, do: {:error, {:heartbeat_unavailable, @heartbeat_retry_after_seconds}}
+
+  defp matching_project_assignment(nil, _project_id), do: :error
+  defp matching_project_assignment(assignment, nil), do: {:ok, assignment}
+  defp matching_project_assignment(%{project_id: project_id} = assignment, project_id), do: {:ok, assignment}
+  defp matching_project_assignment(_assignment, _project_id), do: :error
+
+  defp new_cancellation(reason, project_id, from) do
+    ref = make_ref()
+
+    %{
+      reason: reason,
+      project_id: project_id,
+      ref: ref,
+      timer: Process.send_after(self(), {:cancel_timeout, ref}, @cancel_timeout_ms),
+      waiters: [from],
+      delivered?: false
+    }
+  end
+
+  defp add_cancel_waiter(%{timer: nil} = cancellation, from) do
+    ref = make_ref()
+
+    %{
+      cancellation
+      | ref: ref,
+        timer: Process.send_after(self(), {:cancel_timeout, ref}, @cancel_timeout_ms),
+        waiters: [from]
+    }
+  end
+
+  defp add_cancel_waiter(cancellation, from), do: %{cancellation | waiters: [from | cancellation.waiters]}
+
+  defp mark_cancel_delivered(%{cancellation: cancellation} = assignment) do
+    %{assignment | cancellation: %{cancellation | delivered?: true}}
+  end
+
+  defp cancel_command(%{id: task_id, cancellation: cancellation}) do
+    %{"type" => "cancel_task", "task_id" => task_id, "reason" => cancellation.reason}
+  end
+
+  defp complete_pending_cancellation(state, %{cancellation: cancellation} = assignment, "task.cancelled", :ok) do
+    cancel_timer(cancellation)
+    reply_cancel_waiters(cancellation, cancelled_assignment(assignment, cancellation.project_id))
+    state
+  end
+
+  defp complete_pending_cancellation(state, %{cancellation: cancellation} = assignment, event_type, :ok)
+       when event_type in @terminal_events do
+    cancel_timer(cancellation)
+    result = failed_cancellation(assignment, :worker_terminal_not_cancelled, cancellation.project_id)
+    reply_cancel_waiters(cancellation, result)
+    state
+  end
+
+  defp complete_pending_cancellation(state, %{cancellation: cancellation} = assignment, event_type, {:error, reason})
+       when event_type in @terminal_events do
+    cancel_timer(cancellation)
+    result = failed_cancellation(assignment, {:terminal_event_failed, reason}, cancellation.project_id)
+    reply_cancel_waiters(cancellation, result)
+    %{state | assignment: %{assignment | cancellation: %{cancellation | waiters: [], timer: nil}}}
+  end
+
+  defp complete_pending_cancellation(state, _assignment, _event_type, _result), do: state
+
+  defp assignment_after_event(_state, event_type) when event_type in @terminal_events, do: nil
+  defp assignment_after_event(state, _event_type), do: state.assignment
+
+  defp cancel_timer(%{timer: nil}), do: :ok
+  defp cancel_timer(%{timer: timer}), do: Process.cancel_timer(timer)
+
+  defp reply_cancel_waiters(%{waiters: waiters}, result) do
+    Enum.each(waiters, &GenServer.reply(&1, result))
+  end
+
+  defp cancellation_timeout_reason(%{delivered?: true}), do: :worker_termination_timeout
+  defp cancellation_timeout_reason(%{delivered?: false}), do: :worker_cancel_delivery_timeout
+
+  defp no_active_assignment(project_id) do
+    %{
+      status: "no_active_assignment",
+      cancelled: 0,
+      failed: [],
+      tasks: [],
+      project_id: project_id
+    }
+  end
+
+  defp cancelled_assignment(assignment, project_id) do
+    %{
+      status: "cancelled",
+      cancelled: 1,
+      failed: [],
+      tasks: [assignment_result(assignment)],
+      project_id: project_id
+    }
+  end
+
+  defp failed_cancellation(assignment, reason, project_id) do
+    %{
+      status: "failed",
+      cancelled: 0,
+      failed: [Map.put(assignment_result(assignment), :reason, inspect(reason))],
+      tasks: [],
+      project_id: project_id
+    }
+  end
+
+  defp assignment_result(assignment) do
+    %{
+      assignment_id: assignment.id,
+      task_id: assignment.task_id,
+      lease_id: assignment.lease_id,
+      project_id: assignment.project_id,
+      run_id: assignment.run_id,
+      issue_id: assignment.issue.id,
+      issue_identifier: assignment.issue_identifier,
+      worker_id: assignment.worker_id,
+      worker_session_id: assignment.session_id
+    }
+  end
 
   defp notify_orchestrator(state, assignment, "task.progress", payload, _summary) do
     Orchestrator.worker_task_progress(assignment.issue.id, payload, state.orchestrator)
