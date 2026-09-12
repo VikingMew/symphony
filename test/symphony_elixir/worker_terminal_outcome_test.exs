@@ -15,7 +15,11 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       cond do
         query =~ "SymphonyCreateComment" ->
           send(test_pid(), {:linear_comment, variables.issueId, variables.body})
-          {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+
+          case Application.get_env(:symphony_elixir, :worker_terminal_linear_failure) do
+            :comment -> {:error, :comment_down}
+            _ -> {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+          end
 
         query =~ "SymphonyResolveStateId" ->
           send(test_pid(), {:linear_state_lookup, variables.issueId, variables.stateName})
@@ -33,7 +37,11 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
         query =~ "SymphonyUpdateIssueState" ->
           send(test_pid(), {:linear_state_update, variables.issueId, variables.stateId})
-          {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+
+          case Application.get_env(:symphony_elixir, :worker_terminal_linear_failure) do
+            :transition -> {:error, :transition_down}
+            _ -> {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
+          end
       end
     end
 
@@ -50,9 +58,168 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     on_exit(fn ->
       restore_app_env(:linear_client_module, previous_linear_client)
       Application.delete_env(:symphony_elixir, :worker_terminal_outcome_test_pid)
+      Application.delete_env(:symphony_elixir, :worker_terminal_linear_failure)
     end)
 
     :ok
+  end
+
+  test "exhausted worker failures deliver blocker with the running issue project context" do
+    {orchestrator, pid} = start_orchestrator(max_failure_retries: 1)
+    {project_a, _project_b} = setup_multi_project_without_default()
+    project_id = project_a.id
+    assert {:error, :missing_project_context} = WorkflowStore.current()
+    assert {:error, :missing_project_context} = Config.settings()
+
+    issue_id = "issue-worker-failed-multi-project"
+    identifier = "SYM-WORKER-FAILED-MULTI"
+    put_persisted_issue(issue_id, identifier)
+
+    put_running(pid, issue_id, identifier,
+      retry_attempt: 0,
+      run_id: "run-worker-failed-multi-1",
+      project_id: project_id
+    )
+
+    Orchestrator.worker_task_finished(
+      issue_id,
+      {:failed, "transient worker failure"},
+      orchestrator
+    )
+
+    first = :sys.get_state(pid)
+    assert first.failure_counts == %{issue_id => 1}
+    assert first.retry_attempts[issue_id].project_id == project_id
+
+    put_running(pid, issue_id, identifier,
+      retry_attempt: 1,
+      run_id: "run-worker-failed-multi-2",
+      project_id: project_id
+    )
+
+    Orchestrator.worker_task_finished(
+      issue_id,
+      {:failed, "persistent worker failure"},
+      orchestrator
+    )
+
+    exhausted = :sys.get_state(pid)
+    assert Process.alive?(pid)
+    assert exhausted.running == %{}
+    assert exhausted.retry_attempts == %{}
+    assert %{reason: "failure_retries_exhausted", project_id: ^project_id} = exhausted.blocked[issue_id]
+
+    persisted = FakePersistence.get_issue_by_identifier(identifier)
+    assert persisted.state == "Blocked"
+    assert persisted.blocking_decision["comment_status"] == "completed"
+    assert persisted.blocking_decision["transition_status"] == "completed"
+
+    assert_receive {:linear_comment, ^issue_id, comment}
+    assert comment =~ "failure_retries_exhausted"
+    assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
+    assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
+  end
+
+  test "blocking delivery comment failures persist failed evidence without killing orchestrator" do
+    {orchestrator, pid} = start_orchestrator(max_failure_retries: 0)
+    {project_a, _project_b} = setup_multi_project_without_default()
+    project_id = project_a.id
+    Application.put_env(:symphony_elixir, :worker_terminal_linear_failure, :comment)
+    assert {:error, :missing_project_context} = Config.settings()
+
+    issue_id = "issue-worker-comment-failure"
+    identifier = "SYM-WORKER-COMMENT-FAILURE"
+    put_persisted_issue(issue_id, identifier)
+
+    put_running(pid, issue_id, identifier,
+      retry_attempt: 0,
+      run_id: "run-worker-comment-failure",
+      project_id: project_id
+    )
+
+    log =
+      capture_log(fn ->
+        Orchestrator.worker_task_finished(issue_id, {:failed, "persistent worker failure"}, orchestrator)
+        state = :sys.get_state(pid)
+        assert %{reason: "failure_retries_exhausted", project_id: ^project_id} = state.blocked[issue_id]
+      end)
+
+    assert Process.alive?(pid)
+    persisted = FakePersistence.get_issue_by_identifier(identifier)
+    assert persisted.state == "Blocked"
+    assert persisted.blocking_decision["comment_status"] == %{"failed" => ":comment_down"}
+    assert persisted.blocking_decision["transition_status"] == "completed"
+    assert log =~ "Blocking decision delivery step failed"
+    assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
+  end
+
+  test "blocking delivery transition failures persist failed evidence without killing orchestrator" do
+    {orchestrator, pid} = start_orchestrator(max_failure_retries: 0)
+    {project_a, _project_b} = setup_multi_project_without_default()
+    project_id = project_a.id
+    Application.put_env(:symphony_elixir, :worker_terminal_linear_failure, :transition)
+    assert {:error, :missing_project_context} = Config.settings()
+
+    issue_id = "issue-worker-transition-failure"
+    identifier = "SYM-WORKER-TRANSITION-FAILURE"
+    put_persisted_issue(issue_id, identifier)
+
+    put_running(pid, issue_id, identifier,
+      retry_attempt: 0,
+      run_id: "run-worker-transition-failure",
+      project_id: project_id
+    )
+
+    log =
+      capture_log(fn ->
+        Orchestrator.worker_task_finished(issue_id, {:failed, "persistent worker failure"}, orchestrator)
+        state = :sys.get_state(pid)
+
+        assert %{reason: "failure_retries_exhausted", state: "In Progress", project_id: ^project_id} =
+                 state.blocked[issue_id]
+      end)
+
+    assert Process.alive?(pid)
+    persisted = FakePersistence.get_issue_by_identifier(identifier)
+    assert persisted.state == "In Progress"
+    assert persisted.blocking_decision["comment_status"] == "completed"
+    assert persisted.blocking_decision["transition_status"] == %{"failed" => ":transition_down"}
+    assert log =~ "Blocking decision delivery step failed"
+    assert_receive {:linear_comment, ^issue_id, _comment}
+  end
+
+  test "blocking delivery workflow lookup failures persist failed evidence without killing orchestrator" do
+    {orchestrator, pid} = start_orchestrator()
+    setup_multi_project_without_default()
+    assert {:error, :missing_project_context} = Config.settings()
+
+    issue_id = "issue-worker-workflow-failure"
+    identifier = "SYM-WORKER-WORKFLOW-FAILURE"
+    put_persisted_issue(issue_id, identifier)
+
+    put_running(pid, issue_id, identifier,
+      retry_attempt: 0,
+      run_id: "run-worker-workflow-failure",
+      project_id: "missing-project"
+    )
+
+    log =
+      capture_log(fn ->
+        Orchestrator.worker_task_finished(issue_id, {:blocked, "operator blocker"}, orchestrator)
+        state = :sys.get_state(pid)
+        assert %{reason: "operator blocker", state: "In Progress", project_id: "missing-project"} = state.blocked[issue_id]
+      end)
+
+    assert Process.alive?(pid)
+    persisted = FakePersistence.get_issue_by_identifier(identifier)
+    assert persisted.state == "In Progress"
+    assert %{"failed" => comment_failure} = persisted.blocking_decision["comment_status"]
+    assert %{"failed" => transition_failure} = persisted.blocking_decision["transition_status"]
+    assert comment_failure =~ "workflow_context_unavailable"
+    assert transition_failure =~ "workflow_context_unavailable"
+    assert log =~ "Blocking decision delivery step failed"
+    refute_receive {:linear_comment, ^issue_id, _comment}, 100
+    refute_receive {:linear_state_update, ^issue_id, _state_id}, 100
   end
 
   test "failed worker outcomes back off and exhaust the shared failure budget" do
@@ -311,6 +478,33 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     {name, pid}
   end
 
+  defp setup_multi_project_without_default do
+    {:ok, loaded} = Workflow.load()
+    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    {:ok, project_a} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      linear_project_slug: "linear-a",
+      repository_url: "git@example.test:a.git"
+    })
+
+    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "linear-b",
+        repository_url: "git@example.test:b.git",
+        enabled: true
+      })
+
+    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+    assert MapSet.new(Enum.map(WorkflowStore.list_enabled(), & &1.project_id)) == MapSet.new([project_a.id, project_b.id])
+    {project_a, project_b}
+  end
+
   defp put_persisted_issue(issue_id, identifier) do
     current = FakePersistence.list_analytics_issues()
 
@@ -334,12 +528,15 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       state: "In Progress"
     }
 
+    project_id = Keyword.get(opts, :project_id) || current_project_id()
+
     entry = %Orchestrator.RunningIssue{
       pid: self(),
       ref: make_ref(),
       run_id: Keyword.fetch!(opts, :run_id),
       identifier: identifier,
       issue: issue,
+      project_id: project_id,
       session_id: "worker-session",
       retry_attempt: Keyword.get(opts, :retry_attempt, 0),
       started_at: DateTime.utc_now()
@@ -352,6 +549,11 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
           claimed: MapSet.put(state.claimed, issue_id)
       }
     end)
+  end
+
+  defp current_project_id do
+    {:ok, %{project_id: project_id}} = WorkflowStore.current()
+    project_id
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

@@ -661,7 +661,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp block_from_decision(state, issue_id, running_entry, decision) do
-    delivery = BlockingDecision.deliver(issue_id, running_entry.identifier)
+    delivery = deliver_blocking_decision(issue_id, running_entry)
 
     persist_event(
       "run.blocked",
@@ -689,6 +689,7 @@ defmodule SymphonyElixir.Orchestrator do
       worker_host: running_entry.worker_host,
       workspace_path: running_entry.workspace_path,
       session_id: running_entry.session_id,
+      project_id: running_entry.project_id,
       session_history: [],
       session_history_total_count: 0
     }
@@ -698,6 +699,48 @@ defmodule SymphonyElixir.Orchestrator do
     |> Map.update!(:blocked, &Map.put(&1, issue_id, blocked_entry))
     |> Map.update!(:claimed, &MapSet.put(&1, issue_id))
     |> clear_failure_count(issue_id)
+  end
+
+  defp deliver_blocking_decision(issue_id, %RunningIssue{} = running_entry) do
+    case blocking_delivery_workflow(running_entry) do
+      {:ok, workflow} ->
+        delivery =
+          Config.with_workflow_context(workflow, fn ->
+            BlockingDecision.deliver(issue_id, running_entry.identifier)
+          end)
+
+        log_blocking_delivery_errors(issue_id, running_entry.identifier, delivery)
+        delivery
+
+      {:error, reason} ->
+        delivery_reason = {:workflow_context_unavailable, reason}
+        delivery = BlockingDecision.fail_delivery(running_entry.identifier, delivery_reason)
+        log_blocking_delivery_errors(issue_id, running_entry.identifier, delivery)
+        delivery
+    end
+  end
+
+  defp blocking_delivery_workflow(%{project_id: project_id}) when is_binary(project_id) do
+    WorkflowStore.for_project(project_id)
+  end
+
+  defp blocking_delivery_workflow(_running_entry), do: {:error, :missing_project_context}
+
+  defp log_blocking_delivery_errors(issue_id, identifier, {:ok, delivery}) when is_map(delivery) do
+    [:comment, :transition]
+    |> Enum.each(fn step ->
+      case Map.get(delivery, step) do
+        {:error, reason} ->
+          Logger.error("Blocking decision delivery step failed issue_id=#{issue_id} issue_identifier=#{identifier} step=#{step} reason=#{inspect(reason)}")
+
+        _result ->
+          :ok
+      end
+    end)
+  end
+
+  defp log_blocking_delivery_errors(issue_id, identifier, {:error, reason}) do
+    Logger.error("Blocking decision delivery failed issue_id=#{issue_id} issue_identifier=#{identifier} reason=#{inspect(reason)}")
   end
 
   defp delivery_transition_completed?({:ok, %{transition: :ok}}), do: true
@@ -2094,21 +2137,52 @@ defmodule SymphonyElixir.Orchestrator do
   defp cleanup_issue_workspace(_identifier, _worker_host), do: :ok
 
   defp run_terminal_workspace_cleanup do
-    with :ok <- Config.validate!(),
-         {:ok, issues} <-
-           Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
-      issues
-      |> Enum.each(fn
-        %Issue{identifier: identifier} when is_binary(identifier) ->
-          cleanup_issue_workspace(identifier)
+    case WorkflowStore.list_enabled() do
+      [] ->
+        run_terminal_workspace_cleanup_without_workflow()
 
-        _ ->
-          :ok
-      end)
+      workflows ->
+        Enum.each(workflows, &run_terminal_workspace_cleanup_for_workflow/1)
+    end
+  end
+
+  defp run_terminal_workspace_cleanup_without_workflow do
+    with :ok <- Config.validate!(),
+         {:ok, settings} <- Config.settings(),
+         {:ok, issues} <- Tracker.fetch_issues_by_states(settings.tracker.terminal_states) do
+      cleanup_terminal_issue_workspaces(issues)
     else
       {:error, reason} ->
-        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{config_validation_error_message(reason)}")
+        log_terminal_workspace_cleanup_skip(reason)
     end
+  end
+
+  defp run_terminal_workspace_cleanup_for_workflow(workflow) do
+    Config.with_workflow_context(workflow, fn ->
+      with {:ok, settings} <- Config.settings(),
+           :ok <- Config.validate_settings(settings),
+           {:ok, issues} <- Tracker.fetch_issues_by_states(settings.tracker.terminal_states) do
+        cleanup_terminal_issue_workspaces(issues)
+      else
+        {:error, reason} ->
+          log_terminal_workspace_cleanup_skip(reason)
+      end
+    end)
+  end
+
+  defp cleanup_terminal_issue_workspaces(issues) when is_list(issues) do
+    issues
+    |> Enum.each(fn
+      %Issue{identifier: identifier} when is_binary(identifier) ->
+        cleanup_issue_workspace(identifier)
+
+      _issue ->
+        :ok
+    end)
+  end
+
+  defp log_terminal_workspace_cleanup_skip(reason) do
+    Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{config_validation_error_message(reason)}")
   end
 
   defp notify_dashboard do
