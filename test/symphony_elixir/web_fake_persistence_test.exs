@@ -5,8 +5,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   import Plug.Conn, only: [put_req_header: 3]
 
   alias SymphonyElixir.TestSupport.FakePersistence
-  alias SymphonyElixir.Worker.AssignmentManager
-  alias SymphonyElixir.Worker.HeartbeatMetrics
+  alias SymphonyElixir.Worker.{AssignmentManager, HeartbeatHistory, HeartbeatMetrics}
 
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
@@ -61,6 +60,33 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       receive do
         :release_heartbeat -> FakePersistence.heartbeat_worker(worker_id, session_id)
       end
+    end
+  end
+
+  defmodule FailingHeartbeatPersistence do
+    @moduledoc false
+
+    defdelegate worker_protocol_version(), to: FakePersistence
+    defdelegate worker_heartbeat_interval_seconds(), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+    defdelegate valid_worker_registration_token?(token), to: FakePersistence
+    defdelegate register_worker(attrs), to: FakePersistence
+    defdelegate active_worker_session(worker_id, session_id), to: FakePersistence
+    defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
+    defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
+    defdelegate default_project(), to: FakePersistence
+    defdelegate list_projects(), to: FakePersistence
+    defdelegate current_workflow(project), to: FakePersistence
+    defdelegate workflow_to_loaded(record), to: FakePersistence
+
+    @spec heartbeat_worker(String.t(), String.t()) :: {:error, :heartbeat_history_failed}
+    def heartbeat_worker(worker_id, session_id) do
+      send(
+        Application.fetch_env!(:symphony_elixir, :heartbeat_test_owner),
+        {:failed_heartbeat_history, worker_id, session_id}
+      )
+
+      {:error, :heartbeat_history_failed}
     end
   end
 
@@ -227,11 +253,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
            end)
   end
 
-  test "concurrent heartbeat HTTP requests under slow persistence return retryable 503 instead of 500" do
+  test "concurrent heartbeat HTTP requests under slow history persistence return 200 without retry advice" do
     Application.put_env(:symphony_elixir, :persistence_module, SlowHeartbeatPersistence)
     Application.put_env(:symphony_elixir, :heartbeat_test_owner, self())
     start_test_endpoint()
     start_assignment_manager(SlowHeartbeatPersistence)
+    start_heartbeat_history(coalesce_ms: 20)
 
     %{"worker_id" => worker_id, "session_id" => session_id} =
       build_conn()
@@ -248,31 +275,58 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
         end)
       end
 
-    for _ <- requests do
-      assert_receive {:slow_heartbeat_started, _pid}, 500
-    end
-
-    conns = Task.await_many(requests, 2_500)
+    conns = Task.await_many(requests, 500)
     statuses = Enum.map(conns, & &1.status)
 
-    assert statuses == [503, 503, 503]
+    assert statuses == [200, 200, 200]
     refute 500 in statuses
 
     for conn <- conns do
-      assert Plug.Conn.get_resp_header(conn, "retry-after") == ["1"]
-
-      assert %{
-               "error" => %{
-                 "code" => "worker_heartbeat_unavailable",
-                 "message" => "Worker heartbeat could not complete before the server timeout"
-               },
-               "retry_after_seconds" => 1
-             } = json_response(conn, 503)
-
-      refute conn.resp_body =~ "GenServer.call"
+      assert Plug.Conn.get_resp_header(conn, "retry-after") == []
+      assert %{"ok" => true, "lease_renewals" => [], "commands" => []} = json_response(conn, 200)
     end
 
-    assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 3}
+    assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 0}
+    assert_receive {:slow_heartbeat_started, blocked_pid}, 500
+    refute_receive {:slow_heartbeat_started, _pid}, 50
+    send(blocked_pid, :release_heartbeat)
+  end
+
+  test "failed heartbeat history writes do not change the heartbeat HTTP response" do
+    Application.put_env(:symphony_elixir, :persistence_module, FailingHeartbeatPersistence)
+    Application.put_env(:symphony_elixir, :heartbeat_test_owner, self())
+    start_test_endpoint()
+    start_assignment_manager(FailingHeartbeatPersistence)
+    start_heartbeat_history(coalesce_ms: 0)
+
+    %{"worker_id" => worker_id, "session_id" => session_id} =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{@worker_token}")
+      |> post("/api/worker/v1/register", worker_registration_payload())
+      |> json_response(200)
+
+    conn =
+      build_conn()
+      |> worker_headers(worker_id, session_id)
+      |> post("/api/worker/v1/heartbeat", %{"active_leases" => []})
+
+    assert Plug.Conn.get_resp_header(conn, "retry-after") == []
+    assert %{"ok" => true, "lease_renewals" => [], "commands" => []} = json_response(conn, 200)
+    assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 0}
+    assert_receive {:failed_heartbeat_history, ^worker_id, ^session_id}, 500
+  end
+
+  test "heartbeat history observer coalesces repeated idle observations" do
+    start_heartbeat_history(coalesce_ms: 20)
+    {:ok, %{worker: worker, session: session}} = FakePersistence.register_worker(worker_registration_payload())
+
+    for _ <- 1..3 do
+      HeartbeatHistory.observe(worker.id, session.id, FakePersistence)
+    end
+
+    eventually(fn -> heartbeat_worker_calls(worker.id, session.id) == 1 end)
+    Process.sleep(30)
+    assert heartbeat_worker_calls(worker.id, session.id) == 1
   end
 
   test "worker API returns controller-level errors before persistence work" do
@@ -287,6 +341,17 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              build_conn()
              |> put_req_header("x-symphony-worker-protocol", "worker-api-v0")
              |> post("/api/worker/v1/tasks/claim", %{"worker_id" => "worker", "session_id" => "session"})
+             |> json_response(426)
+
+    assert %{"error" => %{"code" => "worker_session_not_found"}} =
+             build_conn()
+             |> post("/api/worker/v1/heartbeat", %{})
+             |> json_response(401)
+
+    assert %{"error" => %{"code" => "unsupported_worker_protocol"}} =
+             build_conn()
+             |> put_req_header("x-symphony-worker-protocol", "worker-api-v0")
+             |> post("/api/worker/v1/heartbeat", %{"worker_id" => "worker", "session_id" => "session"})
              |> json_response(426)
 
     assert %{"error" => %{"code" => "invalid_worker_event"}} =
@@ -333,6 +398,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     start_supervised!({AssignmentManager, name: AssignmentManager, tracker: EmptyTracker, persistence: persistence, workflows: EmptyWorkflows, reconcile_interval_ms: :timer.hours(1)})
   end
 
+  defp start_heartbeat_history(opts) do
+    start_supervised!({HeartbeatHistory, opts})
+  end
+
   defp worker_registration_payload do
     %{
       "worker_name" => "fake-worker",
@@ -348,6 +417,25 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     |> put_req_header("x-symphony-worker-protocol", "worker-api-v1")
     |> put_req_header("x-symphony-worker-id", worker_id)
     |> put_req_header("x-symphony-worker-session", session_id)
+  end
+
+  defp heartbeat_worker_calls(worker_id, session_id) do
+    Enum.count(FakePersistence.calls(), fn
+      {:heartbeat_worker, ^worker_id, ^session_id} -> true
+      _other -> false
+    end)
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, 0), do: assert(fun.())
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

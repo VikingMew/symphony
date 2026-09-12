@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-11
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -43,14 +43,17 @@ streak；401 仍执行既有 session recovery。
 迁移；correlation 同时包含 project、issue、run、worker/session 和 assignment id。
 
 Assignment 只存在于 Panel 内存，包含当前 payload、worker/session、run、issue 和 expiry。
-heartbeat 先在请求进程的有界任务中持久化 worker/session freshness；这一步不进入
-`AssignmentManager` 队列。没有提交 active lease 的 idle heartbeat 在持久化成功后直接返回，不会排在
-assignment expiry、慢 heartbeat persistence 或周期性 reconciliation 后面。提交 active lease 的
-heartbeat 仅在持久化成功后进入 `AssignmentManager` 的短临界区尝试续期；只有调用 session 持有当前
-assignment、提交匹配 id 且 lease 未过期时才续期。persistence 或续期临界区未在 heartbeat 预算内完成
-时，worker-v1 API 返回 retryable 503，稳定错误码为 `worker_heartbeat_unavailable`，响应包含正数
-`retry_after_seconds` 和 `Retry-After` header，且不包含 crash stack。该失败只计入内存
-`worker_api.heartbeat_failed_attempts`，不创建 queued work、新 assignment、failed run 或自动修复动作。
+heartbeat 响应路径不等待 worker/session freshness 持久化。controller 完成 identity/protocol
+解析后，`AssignmentManager.heartbeat/5` 先把 worker/session observation 交给
+`Worker.HeartbeatHistory`；该进程按 worker/session 合并后异步调用 `heartbeat_worker/2`，其结果只服务
+`/workers` freshness/audit history，失败只写日志，不改变本次 heartbeat 的 HTTP status、`Retry-After`、
+`worker_api.heartbeat_failed_attempts` 或任何调度/repair 决策。没有提交 active lease 的 idle heartbeat
+不进入 `AssignmentManager` 队列，直接返回成功和空续期列表。提交 active lease 的 heartbeat 只进入
+`AssignmentManager` 的短临界区尝试续期；只有调用 session 持有当前 assignment、提交匹配 id 且 lease
+未过期时才续期。该内存续期临界区未在 heartbeat 预算内完成时，worker-v1 API 返回 retryable 503，
+稳定错误码为 `worker_heartbeat_unavailable`，响应包含正数 `retry_after_seconds` 和 `Retry-After`
+header，且不包含 crash stack。该失败只计入内存 `worker_api.heartbeat_failed_attempts`，不创建 queued
+work、新 assignment、failed run 或自动修复动作。
 progress 或 terminal event 必须匹配当前未过期 assignment；不匹配、过期、Panel 重启前的旧 id 都返回明确冲突。
 accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `runs`。terminal event 终结
 当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、二次校验、新 run 和
@@ -72,8 +75,8 @@ Panel 重启不会恢复 assignment 或旧 payload。reconciliation 读取 Linea
 旧 run。回收判据不调用 session heartbeat 过期扫描，也不以 `worker_sessions.status` 或
 `last_heartbeat_at` 作为僵尸回收准入。重启后到 worker 下一次 heartbeat/claim 前，Panel 将旧 session
 视为未知而非死亡；这个窗口按 worker heartbeat interval 预算通常不超过 10 秒。未知窗口内不重新派发，
-直到 run 级 lease 超时；worker 重新出现时由 heartbeat 刷新 session，新旧 assignment id 不匹配的迟到
-上报仍因不存在匹配 assignment 而被拒绝。
+直到 run 级 lease 超时；worker 重新出现时由 coalesced heartbeat history 刷新 session 观测，新旧
+assignment id 不匹配的迟到上报仍因不存在匹配 assignment 而被拒绝。
 
 数据库只保留 `workers`、`worker_sessions`、`runs` 和 `events` 等历史模型，不存在 `tasks` 或
 `task_leases`。Workers 页面展示 registry/session、当前内存 assignment 和 worker run 历史，

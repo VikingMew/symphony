@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-11
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -41,14 +41,15 @@ cancelled endings clear the current entry, failed endings either enter orchestra
 when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
 centralized blocked outcomes.
 
-Heartbeat is a freshness and active-lease renewal signal, not queued work. The Panel persists
-worker/session freshness outside the assignment manager queue. Heartbeats that report no active
-lease return after freshness persistence without entering the assignment manager. Heartbeats that
-report an active lease can renew only the current matching assignment, and a later successful
-heartbeat after a retryable timeout still uses that same rule. If freshness persistence or the
-bounded renewal section cannot complete in time, the Panel returns HTTP 503 with
-`worker_heartbeat_unavailable`, `retry_after_seconds`, and `Retry-After`; that failure does not
-create a task, assignment, run failure, or repair action.
+Heartbeat is a success/renewal signal, not queued work and not a synchronous worker/session
+database-write gate. After controller identity/protocol parsing, the Panel records worker/session
+freshness through a coalesced asynchronous history observer whose result is ignored by the worker-v1
+protocol. Heartbeats that report no active lease return success with an empty renewal list without
+entering the assignment manager queue. Heartbeats that report an active lease can renew only the
+current matching in-memory assignment. If that bounded renewal section cannot complete in time, the
+Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds`, and
+`Retry-After`; worker/session history-write delay or failure cannot produce that response and does
+not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
 later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,
