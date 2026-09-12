@@ -46,9 +46,10 @@ updated: 2026-09-11
    - Log sink configuration failure
 
 6. `Worker Heartbeat Failures`
-   - Worker/session freshness persistence exceeds the heartbeat budget
    - Active-lease renewal cannot enter the assignment manager critical section within the heartbeat
      budget
+   - Worker/session history persistence runs outside the response path; its delay or failure is not a
+     worker heartbeat failure
 
 ### 14.2 Recovery Behavior
 
@@ -64,7 +65,7 @@ updated: 2026-09-11
   - Skip this tick.
   - Try again on next tick.
 
-- Worker heartbeat timeout/overload:
+- Worker active-lease heartbeat renewal timeout/overload:
   - Return HTTP 503 with stable error code `worker_heartbeat_unavailable`.
   - Include a positive `retry_after_seconds` body hint and matching `Retry-After` header.
   - Do not expose crash stacks in the response body.

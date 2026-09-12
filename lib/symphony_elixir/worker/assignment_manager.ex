@@ -22,6 +22,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
+  alias SymphonyElixir.Worker.HeartbeatHistory
 
   @terminal_events ["task.completed", "task.failed", "task.cancelled"]
   @initial_poll_seconds 5
@@ -58,10 +59,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @spec heartbeat(String.t(), String.t(), map(), GenServer.server(), module()) :: {:ok, map()} | {:error, term()}
   def heartbeat(worker_id, session_id, attrs, server \\ __MODULE__, persistence \\ PersistenceProvider.module()) do
     active_ids = active_lease_ids(attrs)
+    HeartbeatHistory.observe(worker_id, session_id, persistence)
 
-    with {:ok, base} <- persist_heartbeat(persistence, worker_id, session_id),
-         {:ok, renewals} <- heartbeat_renewals(worker_id, session_id, active_ids, server) do
-      {:ok, Map.merge(base, %{lease_renewals: renewals, commands: []})}
+    with {:ok, renewals} <- heartbeat_renewals(worker_id, session_id, active_ids, server) do
+      {:ok, %{ok: true, server_time: DateTime.utc_now(), lease_renewals: renewals, commands: []}}
     end
   end
 
@@ -552,18 +553,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp process_alive?(server) when is_pid(server), do: Process.alive?(server)
 
   defp active_lease_ids(attrs), do: map_get(attrs, "active_leases", :active_leases) || []
-
-  defp persist_heartbeat(persistence, worker_id, session_id) do
-    task =
-      Task.Supervisor.async_nolink(SymphonyElixir.TaskSupervisor, fn ->
-        persistence.heartbeat_worker(worker_id, session_id)
-      end)
-
-    case Task.yield(task, @heartbeat_timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      nil -> heartbeat_unavailable()
-    end
-  end
 
   defp heartbeat_renewals(_worker_id, _session_id, [], _server), do: {:ok, []}
 

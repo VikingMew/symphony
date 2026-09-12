@@ -53,6 +53,7 @@ defmodule SymphonyElixir.Application do
         SymphonyElixir.WorkflowStore,
         SymphonyElixir.EnvironmentFailureCircuit,
         SymphonyElixir.Worker.HeartbeatMetrics,
+        heartbeat_history_child(),
         assignment_manager_child(),
         SymphonyElixir.Orchestrator,
         review_queue_child(),
@@ -83,6 +84,12 @@ defmodule SymphonyElixir.Application do
   defp assignment_manager_child do
     if SymphonyElixir.Config.execution_mode() == :worker do
       SymphonyElixir.Worker.AssignmentManager
+    end
+  end
+
+  defp heartbeat_history_child do
+    if SymphonyElixir.Config.execution_mode() == :worker do
+      SymphonyElixir.Worker.HeartbeatHistory
     end
   end
 

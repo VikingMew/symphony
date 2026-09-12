@@ -59,8 +59,8 @@ SHOULD return:
 - `rate_limits` (latest coding-agent rate limit payload, if available)
 - `environment_failure_circuit` (environment failure circuit status, triggering fingerprint, and
   threshold/window counters)
-- `worker_api.heartbeat_failed_attempts` (worker heartbeat failures counted after worker identity
-  validation)
+- `worker_api.heartbeat_failed_attempts` (worker heartbeat renewal failures counted after worker
+  identity validation)
 
 The synchronous snapshot is memory-backed in both execution modes. In centralized mode, local
 orchestrator dispatch creates, updates, and removes `running` entries. In worker mode, the Panel's
@@ -247,9 +247,10 @@ Minimum endpoints:
     endpoint.
   - If worker-v1 endpoints are implemented, this payload MUST include
     `worker_api.heartbeat_failed_attempts`. The counter is memory-backed current state. It increments
-    for failed heartbeat attempts after worker identity validation, including retryable heartbeat
-    timeout/overload responses. It MUST NOT increment for controller-level identity/protocol
-    rejections or for successful heartbeats that renew no lease.
+    for failed heartbeat attempts after worker identity validation, including retryable active-lease
+    renewal timeout/overload responses. It MUST NOT increment for controller-level identity/protocol
+    rejections, successful heartbeats that renew no lease, or delayed/failed coalesced worker/session
+    history writes.
 
 - `GET /api/v1/<issue_identifier>`
   - Returns issue-specific runtime/debug details for the identified issue, including any information

@@ -333,18 +333,24 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     AssignmentManager.reconcile(manager)
     assert_receive {:reconcile_blocked, blocked_pid}, 500
 
+    calls_before = FakePersistence.calls()
+
     heartbeat =
       Task.async(fn ->
-        AssignmentManager.heartbeat(
-          context.worker.id,
-          context.session.id,
-          %{"active_leases" => []},
-          manager,
-          FakePersistence
-        )
+        for _ <- 1..3 do
+          AssignmentManager.heartbeat(
+            context.worker.id,
+            context.session.id,
+            %{"active_leases" => []},
+            manager,
+            FakePersistence
+          )
+        end
       end)
 
-    assert {:ok, {:ok, %{lease_renewals: [], commands: []}}} = Task.yield(heartbeat, 500)
+    assert {:ok, heartbeats} = Task.yield(heartbeat, 500)
+    assert Enum.all?(heartbeats, &match?({:ok, %{lease_renewals: [], commands: []}}, &1))
+    assert FakePersistence.calls() == calls_before
 
     send(blocked_pid, :release_reconcile)
   end
@@ -377,30 +383,13 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert FakePersistence.get_run(assignment.run_id).status == "failed"
   end
 
-  test "retryable heartbeat timeout is followed by a successful matching lease renewal", context do
+  test "blocked heartbeat history does not delay matching lease renewal", context do
     Application.put_env(:symphony_elixir, :assignment_test_owner, self())
 
     Tracker.put([issue(1)])
     assert {:ok, assignment} = claim(context)
 
     Application.put_env(:symphony_elixir, :assignment_test_heartbeat_mode, :blocked)
-
-    timed_out =
-      Task.async(fn ->
-        AssignmentManager.heartbeat(
-          context.worker.id,
-          context.session.id,
-          %{"active_leases" => [assignment.id]},
-          context.manager,
-          BlockingHeartbeatPersistence
-        )
-      end)
-
-    assert_receive {:heartbeat_blocked, _blocked_pid}, 500
-    assert {:ok, {:error, {:heartbeat_unavailable, retry_after_seconds}}} = Task.yield(timed_out, 1_500)
-    assert retry_after_seconds > 0
-
-    Application.put_env(:symphony_elixir, :assignment_test_heartbeat_mode, :fast)
 
     assert {:ok, %{lease_renewals: [renewal]}} =
              AssignmentManager.heartbeat(
@@ -412,6 +401,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert renewal.lease_id == assignment.id
+    refute_receive {:heartbeat_blocked, _blocked_pid}, 50
 
     assert {:ok, %{lease_renewals: []}} =
              AssignmentManager.heartbeat(
@@ -453,7 +443,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
              AssignmentManager.claim_with_evidence("wrong", "wrong", %{"available_slots" => 1}, context.manager)
 
-    assert {:error, :worker_session_not_found} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
+    assert {:ok, %{lease_renewals: []}} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
     assert {:ok, assignment} = claim(context)
 
     assert {:error, {:correlation_mismatch, "run_id"}} =

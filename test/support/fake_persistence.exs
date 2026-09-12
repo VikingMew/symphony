@@ -412,7 +412,10 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   end
 
   def heartbeat_worker(worker_id, session_id) do
+    ensure_started()
+
     with {:ok, _worker, _session} <- active_worker_session(worker_id, session_id) do
+      Agent.update(@name, &record_call(&1, {:heartbeat_worker, worker_id, session_id}))
       {:ok, %{ok: true, server_time: DateTime.utc_now()}}
     end
   end
