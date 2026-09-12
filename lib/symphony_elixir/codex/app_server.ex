@@ -24,6 +24,8 @@ defmodule SymphonyElixir.Codex.AppServer do
   @thread_start_id 2
   @turn_start_id 3
   @port_line_bytes 1_048_576
+  @os_process_shutdown_grace_ms 5_000
+  @os_process_shutdown_poll_ms 50
 
   @type session :: %{
           port: port(),
@@ -201,8 +203,9 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   @spec stop_session(session()) :: :ok
-  def stop_session(%{port: port}) when is_port(port) do
+  def stop_session(%{port: port, metadata: metadata}) when is_port(port) do
     stop_port(port)
+    terminate_os_process(Map.get(metadata, :codex_app_server_pid))
   end
 
   defp validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
@@ -495,6 +498,9 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       {^port, {:exit_status, status}} ->
         {:error, Startup.failure({:port_exit, status}, stage, context, output, timeout_ms)}
+
+      {:EXIT, from, :shutdown} when is_pid(from) ->
+        {:error, :cancelled}
     after
       timeout_ms ->
         output = append_startup_output(output, pending_line)
@@ -553,6 +559,9 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       {^port, {:exit_status, status}} ->
         {:error, {:port_exit, status}}
+
+      {:EXIT, from, :shutdown} when is_pid(from) ->
+        {:error, :cancelled}
     after
       timeout_ms ->
         {:error, :turn_timeout}
@@ -801,6 +810,9 @@ defmodule SymphonyElixir.Codex.AppServer do
 
       {^port, {:exit_status, status}} ->
         {:error, {:port_exit, status}}
+
+      {:EXIT, from, :shutdown} when is_pid(from) ->
+        {:error, :cancelled}
     after
       timeout_ms ->
         {:error, :response_timeout}
@@ -856,6 +868,41 @@ defmodule SymphonyElixir.Codex.AppServer do
           ArgumentError ->
             :ok
         end
+    end
+  end
+
+  defp terminate_os_process(nil), do: :ok
+
+  defp terminate_os_process(pid) when is_binary(pid) do
+    signal_os_process(pid, "TERM")
+    await_os_process_exit(pid, @os_process_shutdown_grace_ms)
+  end
+
+  defp await_os_process_exit(pid, remaining_ms) when remaining_ms <= 0 do
+    if os_process_alive?(pid) do
+      signal_os_process(pid, "KILL")
+    end
+
+    :ok
+  end
+
+  defp await_os_process_exit(pid, remaining_ms) do
+    if os_process_alive?(pid) do
+      Process.sleep(@os_process_shutdown_poll_ms)
+      await_os_process_exit(pid, remaining_ms - @os_process_shutdown_poll_ms)
+    else
+      :ok
+    end
+  end
+
+  defp signal_os_process(pid, signal) do
+    System.cmd("sh", ["-c", "kill -#{signal} \"$1\"", "kill", pid], stderr_to_stdout: true)
+  end
+
+  defp os_process_alive?(pid) do
+    case System.cmd("sh", ["-c", "kill -0 \"$1\"", "kill", pid], stderr_to_stdout: true) do
+      {_output, 0} -> true
+      {_output, _status} -> false
     end
   end
 

@@ -86,6 +86,16 @@ last event/message 和绝对 token delta；terminal event、取消、expiry 或 
 移除 running entry，并将 ended runtime 计入聚合。`retrying` 与 `blocked` 仍由 Orchestrator
 拥有：worker `failed` 结果在预算内进入 retry，预算耗尽或 `blocked` 结果进入持久 blocker。
 
+手动 `cancel-current` 是当前内存 assignment 的控制动作，不是持久任务状态。Panel 在当前
+assignment 上记录 pending cancellation；只有持有同一 worker/session 且 heartbeat 提交匹配 active
+lease 时，heartbeat 响应才返回内存态 `cancel_task` command。发送 cancel command 后不再续期该 lease。
+worker 收到 command 后记录可观察日志/`task.progress`，停止 executor 和当前 Codex app-server
+session/process，再上报 terminal `task.cancelled`。Panel 只有在该 terminal event 持久化、run 转为
+`cancelled` 且通知 Orchestrator `:cancelled` 后，才向控制 API 报告 `cancelled`。没有当前 assignment
+或 `project_id` 不匹配时返回 `no_active_assignment`，不请求 worker stop，也不暗示旧 worker 本地进程
+状态。持久化/transition、cancel delivery 或 worker 终止无法完成时返回 `failed`。该路径不增加
+persisted task queue、persisted cancel record、cancel-by-run/issue 或 requeue 语义。
+
 terminal event 必须携带归一化的 `outcome`（`success` / `blocked` / `failed` / `cancelled`），由 worker 侧的
 Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段分流：`success` 与 `cancelled` 清理
 该 issue 的失败链；`blocked` 立即持久化 blocking decision 并投递 Linear 评论与 `Blocked` 状态；

@@ -13,8 +13,11 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     def claim(_config, request), do: Agent.get_and_update(__MODULE__, &pop_claim(&1, request))
 
     def heartbeat(_config, _identity, payload) do
-      Agent.update(__MODULE__, &update_in(&1.heartbeats, fn values -> [payload | values] end))
-      {:ok, %{"commands" => []}}
+      Agent.get_and_update(__MODULE__, fn state ->
+        response = {:ok, %{"commands" => state.commands}}
+        state = %{state | commands: [], heartbeats: [payload | state.heartbeats]}
+        {response, state}
+      end)
     end
 
     def event(_config, _identity, task_id, type, payload) do
@@ -50,30 +53,50 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
       if claim["crash"], do: raise("executor crashed")
 
-      if claim["block"] do
-        receive do
-          :finish -> :ok
-        end
-      end
+      wait_for_claim_mode(claim, test)
+      claim_result(claim)
+    end
 
-      if Map.has_key?(claim, "failed_reason") do
-        %{
-          status: :failed,
-          reason: claim["failed_reason"],
-          detail: Map.fetch!(claim, "failed_detail")
-        }
-      else
-        if claim["blocked"] do
-          %{
-            status: :blocked,
-            reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
-            detail: "workflow scope"
-          }
-        else
-          %{status: :completed}
-        end
+    defp wait_for_claim_mode(%{"trap_shutdown" => true} = claim, test) do
+      Process.flag(:trap_exit, true)
+
+      receive do
+        {:EXIT, _from, :shutdown} ->
+          send(test, {:shutdown_received, claim["task_id"], self()})
+
+          receive do
+            :finish -> :ok
+          end
       end
     end
+
+    defp wait_for_claim_mode(%{"block" => true}, _test) do
+      receive do
+        :finish -> :ok
+      end
+    end
+
+    defp wait_for_claim_mode(_claim, _test), do: :ok
+
+    defp claim_result(%{"trap_shutdown" => true}), do: %{status: :cancelled}
+
+    defp claim_result(%{"failed_reason" => reason, "failed_detail" => detail}) do
+      %{
+        status: :failed,
+        reason: reason,
+        detail: detail
+      }
+    end
+
+    defp claim_result(%{"blocked" => true}) do
+      %{
+        status: :blocked,
+        reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
+        detail: "workflow scope"
+      }
+    end
+
+    defp claim_result(_claim), do: %{status: :completed}
 
     defp codex_token_update(claim, tokens) do
       %{
@@ -94,7 +117,11 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
   setup do
     test_pid = self()
-    initial = fn -> %{test: test_pid, claims: [], claims_seen: [], events: [], heartbeats: [], outcomes: %{}} end
+
+    initial = fn ->
+      %{test: test_pid, claims: [], claims_seen: [], commands: [], events: [], heartbeats: [], outcomes: %{}}
+    end
+
     start_supervised!(%{id: FakeClient, start: {Agent, :start_link, [initial, [name: FakeClient]]}})
 
     if is_nil(Process.whereis(SymphonyElixir.Worker.TaskSupervisor)) do
@@ -245,6 +272,28 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert summary["detail"] =~ "bwrap: No permissions to create a new namespace"
   end
 
+  test "cancel command stops executor, emits evidence, and stops renewing the lease", %{config: config} do
+    put_claims([claim("task-1", false) |> Map.put("trap_shutdown", true)])
+    runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", executor}, 1_000
+    put_commands([%{"type" => "cancel_task", "task_id" => "task-1", "reason" => "operator"}])
+    send(runtime, :heartbeat)
+
+    assert_receive {:shutdown_received, "task-1", ^executor}, 1_000
+    eventually(fn -> "cancelling" in phases("task-1") end)
+
+    send(runtime, :heartbeat)
+    eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == [])) end)
+
+    send(executor, :finish)
+    eventually(fn -> terminal_count("task-1", "task.cancelled") == 1 end)
+
+    send(runtime, {:retry_terminal, "task-1"})
+    Process.sleep(20)
+    assert terminal_count("task-1", "task.cancelled") == 1
+  end
+
   test "executor task startup failure is delivered as task.failed", %{config: config} do
     put_claims([claim("task-1", false)])
     config = %{config | task_supervisor: SymphonyElixir.Worker.MissingTaskSupervisor}
@@ -304,6 +353,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
   end
 
   defp put_claims(claims), do: Agent.update(FakeClient, &%{&1 | claims: claims})
+  defp put_commands(commands), do: Agent.update(FakeClient, &%{&1 | commands: commands})
 
   defp state, do: Agent.get(FakeClient, & &1)
   defp terminal_count(task_id), do: terminal_count(task_id, "task.completed")

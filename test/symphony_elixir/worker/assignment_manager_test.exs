@@ -160,6 +160,15 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
   end
 
+  defmodule FailingCancelPersistence do
+    defdelegate get_run(id), to: FakePersistence
+    defdelegate update_run(run, attrs), to: FakePersistence
+    defdelegate worker_lease_duration_seconds(), to: FakePersistence
+
+    def record_event(%{event_type: "task.cancelled"}), do: {:error, :repo_unavailable}
+    def record_event(attrs), do: FakePersistence.record_event(attrs)
+  end
+
   setup do
     FakePersistence.reset!()
     start_supervised!(Tracker)
@@ -517,6 +526,113 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              AssignmentManager.record_event(context.worker.id, context.session.id, "stale", "task.progress", %{}, context.manager)
   end
 
+  test "cancel current reports cancelled only after worker terminal cancellation", context do
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    cancellation = Task.async(fn -> AssignmentManager.cancel_current("operator", context.manager) end)
+    assert Task.yield(cancellation, 20) == nil
+
+    assert {:ok,
+            %{
+              lease_renewals: [],
+              commands: [%{"type" => "cancel_task", "task_id" => task_id, "reason" => "operator"}]
+            }} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               context.manager
+             )
+
+    assert task_id == assignment.id
+    assert FakePersistence.get_run(assignment.run_id).status == "running"
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.cancelled",
+               %{"correlation" => assignment.correlation, "summary" => summary("cancelled")},
+               context.manager
+             )
+
+    assert %{
+             status: "cancelled",
+             cancelled: 1,
+             failed: [],
+             project_id: nil,
+             tasks: [%{assignment_id: assignment_id, run_id: run_id}]
+           } = Task.await(cancellation)
+
+    assert assignment_id == assignment.id
+    assert run_id == assignment.run_id
+    assert AssignmentManager.current_assignment(context.manager) == nil
+    assert FakePersistence.get_run(assignment.run_id).status == "cancelled"
+    assert [_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.cancelled")
+  end
+
+  test "cancel current distinguishes no active assignment and project mismatch", context do
+    assert %{status: "no_active_assignment", cancelled: 0, failed: [], project_id: nil, tasks: []} =
+             AssignmentManager.cancel_current("operator", context.manager)
+
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    assert %{status: "no_active_assignment", cancelled: 0, failed: [], project_id: "other-project", tasks: []} =
+             AssignmentManager.cancel_current("operator", "other-project", context.manager)
+
+    assert {:ok, %{lease_renewals: [_renewal], commands: []}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               context.manager
+             )
+  end
+
+  test "cancel current reports failed when terminal cancellation persistence fails", context do
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    :sys.replace_state(context.manager, &%{&1 | persistence: FailingCancelPersistence})
+
+    cancellation = Task.async(fn -> AssignmentManager.cancel_current("operator", context.manager) end)
+    assert Task.yield(cancellation, 20) == nil
+
+    assert {:ok, %{lease_renewals: [], commands: [%{"type" => "cancel_task"}]}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               context.manager
+             )
+
+    assert {:error, :repo_unavailable} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.cancelled",
+               %{"correlation" => assignment.correlation, "summary" => summary("cancelled")},
+               context.manager
+             )
+
+    assert %{
+             status: "failed",
+             cancelled: 0,
+             failed: [%{assignment_id: assignment_id, reason: reason}],
+             project_id: nil,
+             tasks: []
+           } = Task.await(cancellation)
+
+    assert assignment_id == assignment.id
+    assert reason =~ "terminal_event_failed"
+    assert reason =~ "repo_unavailable"
+    assert AssignmentManager.current_assignment(context.manager).id == assignment.id
+  end
+
   test "idle heartbeat is not queued behind blocking reconciliation", context do
     Application.put_env(:symphony_elixir, :assignment_test_owner, self())
 
@@ -676,9 +792,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
-    assert :ok = AssignmentManager.cancel_current("operator", context.manager)
+    assert %{status: "cancelled"} = cancel_assignment(context, assignment)
     assert AssignmentManager.current_assignment(context.manager) == nil
-    assert :ok = AssignmentManager.cancel_current("operator", context.manager)
+
+    assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("operator", context.manager)
   end
 
   test "stale persisted heartbeat state does not block fresh memory admission", context do
@@ -824,7 +941,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert AssignmentManager.current_assignment(context.manager) == nil
-    assert :ok = AssignmentManager.cancel_current("disabled", context.manager)
+    assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("disabled", context.manager)
   end
 
   test "restart reconciliation preserves a recent run and resets an expired zombie", context do
@@ -1215,6 +1332,33 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
   end
 
+  defp cancel_assignment(context, assignment) do
+    cancellation = Task.async(fn -> AssignmentManager.cancel_current("operator", context.manager) end)
+    assert Task.yield(cancellation, 20) == nil
+
+    assert {:ok, %{lease_renewals: [], commands: [%{"type" => "cancel_task", "task_id" => task_id}]}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               context.manager
+             )
+
+    assert task_id == assignment.id
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.cancelled",
+               %{"correlation" => assignment.correlation, "summary" => summary("cancelled")},
+               context.manager
+             )
+
+    Task.await(cancellation)
+  end
+
   defp issue(number) do
     %Issue{
       id: "issue-#{number}",
@@ -1250,16 +1394,24 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   defp summary(outcome) do
     %{
-      "phase" => "complete",
+      "phase" => if(outcome == "succeeded", do: "complete", else: "validation"),
       "outcome" => outcome,
-      "reason" => if(outcome == "succeeded", do: "completed", else: "worker_error"),
+      "reason" => summary_reason(outcome),
       "occurred_at" => "2026-09-06T10:00:00Z",
       "source_revision" => "abc123",
       "runtime" => %{"image_tag" => "worker:test", "worker_source_revision" => "abc123"},
-      "validation_status" => if(outcome == "succeeded", do: "passed", else: "failed"),
+      "validation_status" => summary_validation_status(outcome),
       "gates" => []
     }
   end
+
+  defp summary_reason("succeeded"), do: "completed"
+  defp summary_reason("cancelled"), do: "cancelled"
+  defp summary_reason(_outcome), do: "worker_error"
+
+  defp summary_validation_status("succeeded"), do: "passed"
+  defp summary_validation_status("cancelled"), do: "cancelled"
+  defp summary_validation_status(_outcome), do: "failed"
 
   defp failure_summary(detail) do
     "failed"

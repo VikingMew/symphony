@@ -26,6 +26,21 @@ defmodule SymphonyElixirWeb.ControlApiController do
   def reset_environment_failure_circuit(conn, _params),
     do: control_response(conn, Orchestrator.reset_environment_failure_circuit(WebRuntime.orchestrator()))
 
+  @spec force_stop(Conn.t(), map()) :: Conn.t()
+  def force_stop(conn, _params),
+    do: control_response(conn, Orchestrator.force_stop_all(WebRuntime.orchestrator()))
+
+  @spec cancel_task(Conn.t(), map()) :: Conn.t()
+  def cancel_task(conn, params) do
+    case optional_project_id(params) do
+      {:ok, project_id} ->
+        control_response(conn, Orchestrator.cancel_current_task(project_id, WebRuntime.orchestrator()))
+
+      :error ->
+        invalid_project_id(conn)
+    end
+  end
+
   @spec nap(Conn.t(), map()) :: Conn.t()
   def nap(conn, params) do
     case optional_project_id(params) do

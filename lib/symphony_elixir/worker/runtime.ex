@@ -78,7 +78,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   def handle_info(:poll, state), do: {:noreply, state}
 
   def handle_info(:heartbeat, %{identity: identity} = state) when not is_nil(identity) do
-    leases = Enum.map(state.active, fn {_task_id, active} -> active.claim["lease_id"] end)
+    leases = active_lease_ids(state)
 
     next =
       case client(state).heartbeat(state.config, identity, %{
@@ -289,18 +289,35 @@ defmodule SymphonyElixir.Worker.Runtime do
     end
   end
 
-  defp cancel(%{"task_id" => task_id}, state) do
+  defp active_lease_ids(state) do
+    state.active
+    |> Enum.reject(fn {_task_id, active} -> Map.get(active, :cancelling, false) end)
+    |> Enum.map(fn {_task_id, active} -> active.claim["lease_id"] end)
+  end
+
+  defp cancel(%{"task_id" => task_id} = command, state) do
     case Map.get(state.active, task_id) do
       nil ->
         state
 
       %{pid: pid} = lease ->
+        reason = Map.get(command, "reason", "operator_requested")
+        Logger.info("Worker cancellation command received task_id=#{task_id} lease_id=#{lease.claim["lease_id"]} reason=#{reason}")
+        record_cancellation_progress(state, task_id, lease, reason)
         Process.exit(pid, :shutdown)
         put_active(state, task_id, Map.put(lease, :cancelling, true))
     end
   end
 
   defp cancel(_, state), do: state
+
+  defp record_cancellation_progress(state, task_id, lease, reason) do
+    case event(state, task_id, "task.progress", %{phase: "cancelling", reason: reason}) do
+      {:ok, _event} -> :ok
+      {:error, error} -> log_delivery_failure(lease.claim, "task.progress", error, 1)
+    end
+  end
+
   defp terminal_type(%{status: :completed}), do: "task.completed"
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"

@@ -9,6 +9,7 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Worker.{Command, Config, LinearToolAuditRecorder, Paths, Payload, Validation}
 
   @linear_endpoint "https://api.linear.app/graphql"
+  @codex_shutdown_grace_ms 5_000
 
   @spec execute(Config.t(), map()) :: map()
   def execute(config, claim), do: execute(config, claim, fn _phase, _payload -> :ok end)
@@ -69,39 +70,46 @@ defmodule SymphonyElixir.Worker.Executor do
     proof_secret = :crypto.strong_rand_bytes(32)
 
     result =
-      RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
-        issue = %Issue{
-          id: Map.fetch!(claim, "issue_id"),
-          identifier: codex.issue.identifier,
-          title: codex.issue.title,
-          branch_name: payload.branch,
-          url: Map.get(payload.handoff, "issue_url")
-        }
+      run_cancellable_codex(fn session_observer ->
+        RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
+          issue = %Issue{
+            id: Map.fetch!(claim, "issue_id"),
+            identifier: codex.issue.identifier,
+            title: codex.issue.title,
+            branch_name: payload.branch,
+            url: Map.get(payload.handoff, "issue_url")
+          }
 
-        progress.("codex_starting", %{})
+          progress.("codex_starting", %{})
 
-        audit_recorder = audit_recorder(config, claim)
+          audit_recorder = audit_recorder(config, claim)
 
-        AppServer.run(workspace, codex.prompt, issue,
-          profile: codex.profile,
-          run_id: Map.fetch!(claim, "run_id"),
-          on_message: &forward_codex_progress(&1, progress),
-          dynamic_tool_opts: [
-            allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
-            audit_recorder: audit_recorder,
-            task_id: Map.fetch!(claim, "task_id"),
-            graphql: &worker_graphql/2,
-            pull_request_proof_secret: proof_secret,
-            pull_request_creator: fn issue, rendered, _opts ->
-              PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
-            end
+          app_server_opts = [
+            profile: codex.profile,
+            run_id: Map.fetch!(claim, "run_id"),
+            on_message: &forward_codex_progress(&1, progress),
+            dynamic_tool_opts: [
+              allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
+              audit_recorder: audit_recorder,
+              task_id: Map.fetch!(claim, "task_id"),
+              graphql: &worker_graphql/2,
+              pull_request_proof_secret: proof_secret,
+              pull_request_creator: fn issue, rendered, _opts ->
+                PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
+              end
+            ]
           ]
-        )
+
+          run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
+        end)
       end)
 
     duration_ms = System.monotonic_time(:millisecond) - started
 
     case result do
+      :cancelled ->
+        %{status: :cancelled, duration_ms: duration_ms, detail: "cancelled during codex app-server run"}
+
       {:ok, app_server_result} ->
         %{
           status: :passed,
@@ -125,6 +133,77 @@ defmodule SymphonyElixir.Worker.Executor do
           }
         else
           %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: detail}
+        end
+    end
+  end
+
+  defp run_app_server(workspace, prompt, issue, opts, session_observer) do
+    with {:ok, session} <- AppServer.start_session(workspace, opts) do
+      session_observer.(session)
+
+      try do
+        AppServer.run_turn(session, prompt, issue, opts)
+      after
+        AppServer.stop_session(session)
+      end
+    end
+  end
+
+  defp run_cancellable_codex(fun) do
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        Process.flag(:trap_exit, true)
+
+        result =
+          fun.(fn session ->
+            send(parent, {:codex_app_server_session, self(), session})
+          end)
+
+        send(parent, {:codex_app_server_result, self(), result})
+      end)
+
+    await_cancellable_codex(pid, ref, nil)
+  end
+
+  defp await_cancellable_codex(pid, ref, session) do
+    receive do
+      {:codex_app_server_session, ^pid, session} ->
+        await_cancellable_codex(pid, ref, session)
+
+      {:codex_app_server_result, ^pid, result} ->
+        Process.demonitor(ref, [:flush])
+        result
+
+      {:DOWN, ^ref, :process, ^pid, reason} ->
+        {:error, {:codex_app_server_process_down, reason}}
+
+      {:EXIT, from, :shutdown} when is_pid(from) ->
+        Process.put(:worker_cancelled, true)
+        stop_app_server(session)
+        Process.exit(pid, :shutdown)
+        await_codex_shutdown(pid, ref)
+    end
+  end
+
+  defp stop_app_server(nil), do: :ok
+  defp stop_app_server(session), do: AppServer.stop_session(session)
+
+  defp await_codex_shutdown(pid, ref) do
+    receive do
+      {:codex_app_server_result, ^pid, _result} ->
+        Process.demonitor(ref, [:flush])
+        :cancelled
+
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        :cancelled
+    after
+      @codex_shutdown_grace_ms ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} -> :cancelled
         end
     end
   end
