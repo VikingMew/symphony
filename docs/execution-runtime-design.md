@@ -22,17 +22,18 @@ checked-in import package therefore carries `thread_sandbox: "danger-full-access
 kept by Compose and image policy, not by relaxing host seccomp or adding container-engine access
 inside the worker.
 
-A claim is created from a live Linear candidate read and a second state/dependency/routing check.
-The Panel derives the worker started state from the single `AgentRunner.Policy`
-profile-to-started-state contract: refinement claims validate and apply `Todo -> Refining`, while
-implementation claims validate and apply `Ready -> In Progress`. The assignment is returned only
-after that Linear state update succeeds. The assignment issue, payload issue, and rendered prompt
-current state use the started state, so refinement worker completions operate from `Refining ->
-Needs Refinement Review` and implementation handoff still operates from `In Progress -> Ready to
-Merge`. The assignment ID is carried in the existing `task_id` and `lease_id` JSON fields; it is not
-a database task. The payload contains the issue, exact branch, source ref, rendered profile prompt,
-hooks, Codex settings, limits, ordered required gates, and allowed handoff updates. The worker has
-neither a Linear client nor a Linear credential.
+A claim is created from a live Linear candidate read, absence of an uncleared persisted
+`blocking_decision`, and a second state/dependency/routing/blocking-decision check. The Panel
+derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
+contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
+validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state
+update succeeds. The assignment issue, payload issue, and rendered prompt current state use the
+started state, so refinement worker completions operate from `Refining -> Needs Refinement Review`
+and implementation handoff still operates from `In Progress -> Ready to Merge`. The assignment ID
+is carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The
+payload contains the issue, exact branch, source ref, rendered profile prompt, hooks, Codex
+settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
+Linear client nor a Linear credential.
 
 History-based duplicate-run gating treats only `Refining` and `In Progress` as worker started
 states. A candidate in either state can be claimed only when the latest worker run is terminal
@@ -74,8 +75,12 @@ Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds
 not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
-later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,
-Done, or review-state changes therefore take effect at the next check.
+later run can start only after a new live Linear claim proves the issue eligible and no uncleared
+`blocking_decision` exists. Manual Blocked, Done, review-state changes, and persisted blocker clears
+therefore take effect at the next check. When a persisted blocker exists, empty claim evidence uses
+`reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
+context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
+routing, and run-history gates pass.
 
 Panel restart deliberately loses the assignment and payload. Reconciliation uses Linear `In
 Progress` state plus latest persisted run/event time: no duplicate is dispatched before timeout,

@@ -25,7 +25,7 @@ entry 会拒绝当前 claim，但该请求可刷新下一次 claim 的 last-seen
 `worker_sessions.last_heartbeat_at`，也不把由该列派生的 persisted offline/stale 状态作为热路径
 准入依据。每次 fresh claim 还要求调用方当次 `available_slots > 0`，再实时读取 Linear candidates，
 按 priority、created_at、identifier 排序，再按 issue id 读取 Linear 并重新验证状态、依赖、
-routing/profile。Panel 创建新 run 和不可混淆 assignment id，并从 `AgentRunner.Policy` 的唯一
+routing/profile 和未清除的持久 `blocking_decision`。Panel 创建新 run 和不可混淆 assignment id，并从 `AgentRunner.Policy` 的唯一
 profile-to-started-state 映射推导 worker 起始态：
 `refinement` 使用 `Refining`，`implementation` 使用 `In Progress`。非 started issue 必须先按当前
 workflow contract 验证并执行 `Todo -> Refining` 或 `Ready -> In Progress`；只有状态更新成功才返回当前
@@ -43,10 +43,13 @@ worker run 仍是非终态时不得重复派发。默认 `tracker.active_states`
 汇总为 worker-mode deployment capacity，不允许并行发放多个 assignment。有效 admission capacity
 仅在存在 fresh 内存 entry、调用方有 slot 且无当前 assignment 时为 1，否则为 0。没有合格 issue、
 已有 assignment、内存 session 缺失/过期或没有 slot 时返回 `{task: null}`，并附带可测试的 structured
-admission reason（capacity 0/1 与拒绝原因）。真正访问 tracker 后的连续空 claim 由
-`AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次为 30 秒，
-第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧 Panel，字段缺失时
-回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+admission reason（capacity 0/1 与拒绝原因）。若候选 issue 已有未清除的
+`blocking_decision`，claim 返回 `admission.reason = blocking_decision`，并记录包含 issue、worker/session
+和 blocking reason 的 `event=worker_claim_skip` 日志；这不同于状态不匹配、依赖阻塞、human review、run
+history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的连续空 claim 由
+`AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
+为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
+Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
 
 Linear 429、5xx 或 request failure 会立即停止 workflow 遍历，不能被后续 workflow 的空结果
 覆盖。首次连续错误建议 30 秒，后续错误建议 60 秒并封顶；HTTP 分别映射为 429 和 503，响应
@@ -65,7 +68,7 @@ heartbeat 响应路径不等待 worker/session history 持久化。controller �
 解析后，successful registration 同步建立新的内存 liveness entry；heartbeat、claim 和匹配当前
 assignment 的 task event 都记录 worker/session last-seen。heartbeat 同时把 worker/session
 observation 交给 `Worker.HeartbeatHistory`；该进程按 worker/session 合并后异步调用
-`heartbeat_worker/2`，其结果只服务 `/workers` registry/audit history，失败只写日志，不改变本次
+`heartbeat_worker/2`，其结果只服务 `/workers` registry/session history，失败只写日志，不改变本次
 heartbeat 的 HTTP status、`Retry-After`、`worker_api.heartbeat_failed_attempts` 或任何调度/repair
 决策。没有提交 active lease 的 idle heartbeat 不等待 `AssignmentManager` 临界区，直接返回成功和空续期列表。提交 active lease 的 heartbeat 只进入
 `AssignmentManager` 的短临界区尝试续期；只有调用 session 持有当前 assignment、提交匹配 id 且 lease
@@ -75,8 +78,8 @@ header，且不包含 crash stack。该失败只计入内存 `worker_api.heartbe
 work、新 assignment、failed run 或自动修复动作。
 progress 或 terminal event 必须匹配当前未过期 assignment；不匹配、过期、Panel 重启前的旧 id 都返回明确冲突。
 accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `runs`。terminal event 终结
-当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、二次校验、新 run 和
-新 assignment。
+当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、未清除 blocking decision
+检查、二次校验、新 run 和新 assignment。
 accepted/progress 路径同时更新 `Orchestrator` 当前态：`task.progress` 携带
 `codex_session_started` 或 Codex app-server 原始消息时，Panel 更新对应 running entry 的 session、
 last event/message 和绝对 token delta；terminal event、取消、expiry 或 reconciliation 失败旧 run 时
@@ -88,6 +91,9 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 该 issue 的失败链；`blocked` 立即持久化 blocking decision 并投递 Linear 评论与 `Blocked` 状态；
 `failed` 消耗一次 `agent.max_failure_retries` 预算，耗尽后同样持久化 blocking decision。outcome
 缺失或不在上述取值内按 `failed` 处理，协议异常不得绕过失败预算。
+持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
+claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
+才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。
 当 worker 内 Codex 命令执行能力不可用（例如 bwrap/user namespace 创建被拒）时，worker/Codex
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。

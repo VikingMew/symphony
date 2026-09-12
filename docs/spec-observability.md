@@ -79,6 +79,8 @@ when the corresponding in-memory current-state lists are actually empty.
 
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
 Failed external writes remain visible and retryable without creating a new coding-agent run;
+worker claim admission reports `admission.reason = blocking_decision` and logs
+`event=worker_claim_skip` with issue and worker/session context while the decision remains uncleared;
 human recovery emits a decision-cleared event with issue and run context where available.
 
 RECOMMENDED snapshot error modes:
