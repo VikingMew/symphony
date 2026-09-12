@@ -6,8 +6,9 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 - Elixir: `1.19.x` (OTP 28) via `mise`.
 - Install deps: `mix setup`.
-- Main quality checks: `scripts/check.sh`, `scripts/unit.sh`, `scripts/e2e.sh`, and
-  `scripts/dialyzer.sh`; Make is reserved for build/image targets.
+- Main quality checks: `scripts/check.sh`, `scripts/unit.sh`, and `scripts/dialyzer.sh`;
+  Make is reserved for build/image targets. `scripts/e2e.sh` is a credentialed manual live E2E suite,
+  not a CI gate.
 
 
 ## Codebase-Specific Conventions

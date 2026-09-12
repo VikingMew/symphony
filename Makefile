@@ -6,7 +6,8 @@ WORKER_SOURCE_REVISION ?= $(shell git rev-parse HEAD)
 
 help:
 	@echo "Targets: all, setup, deps, build, worker-image, worker-image-check"
-	@echo "Quality checks: scripts/check.sh, scripts/unit.sh, scripts/e2e.sh, scripts/dialyzer.sh"
+	@echo "Quality checks: scripts/check.sh, scripts/unit.sh, scripts/dialyzer.sh"
+	@echo "Manual live E2E: scripts/e2e.sh with credentials"
 
 all: build
 

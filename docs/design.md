@@ -97,7 +97,7 @@ implementation lives under the repository root.
 | `docs/examples/workflow.yml` | Example package for shared workflow routing and runtime settings (import material, not a configuration source). |
 | `docs/examples/profiles.yml` | Example package for the shared base prompt and agent profiles (import material, not a configuration source). |
 | `AGENTS.md` | Agent-facing repository guidance. |
-| `Makefile` | Common development targets such as `test`, `lint`, `coverage`, `ci`, and `e2e`. |
+| `Makefile` | Common build and image targets; quality checks are run through the scripts documented in repository guidance. |
 | `mise.toml` | Required runtime tool versions: Erlang 28 and Elixir 1.19.5 OTP 28. |
 | `mix.exs` | Mix project definition, dependencies, aliases, and escript build config. |
 | `config/config.exs` | Compile-time Phoenix/Bandit, repository, and JSON configuration. |
@@ -346,7 +346,7 @@ test/
 | `test/symphony_elixir/web_fake_persistence_test.exs` | Web and worker API behavior through fake persistence. |
 | `test/symphony_elixir/linear_diagnostics_test.exs` | Linear diagnostics behavior and route protection. |
 | `test/symphony_elixir/ssh_test.exs` | SSH worker behavior. |
-| `test/symphony_elixir/live_e2e_test.exs` | Live external end-to-end test with Linear and Codex. |
+| `test/symphony_elixir/live_e2e_test.exs` | Manual live external end-to-end test with Linear and Codex. |
 | `test/mix/tasks/*_test.exs` | Tests for custom Mix tasks. |
 | `test/support/*` | Shared test helpers. |
 
@@ -418,5 +418,5 @@ Live external end-to-end test:
 
 ```bash
 export LINEAR_API_KEY=...
-mise exec -- make e2e
+mise exec -- env SYMPHONY_RUN_LIVE_E2E=1 mix test --only live_e2e
 ```
