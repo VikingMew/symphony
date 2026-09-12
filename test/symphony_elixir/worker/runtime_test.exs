@@ -56,14 +56,22 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
         end
       end
 
-      if claim["blocked"] do
+      if Map.has_key?(claim, "failed_reason") do
         %{
-          status: :blocked,
-          reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
-          detail: "workflow scope"
+          status: :failed,
+          reason: claim["failed_reason"],
+          detail: Map.fetch!(claim, "failed_detail")
         }
       else
-        %{status: :completed}
+        if claim["blocked"] do
+          %{
+            status: :blocked,
+            reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
+            detail: "workflow scope"
+          }
+        else
+          %{status: :completed}
+        end
       end
     end
 
@@ -213,6 +221,28 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert summary["outcome"] == "blocked"
     assert summary["reason"] == "handoff_failed"
     assert summary["detail"] =~ "push_permission_blocked"
+  end
+
+  test "execution capability failures are delivered as task.failed with a typed summary reason", %{config: config} do
+    put_claims([
+      claim("task-1", false)
+      |> Map.put("failed_reason", :execution_capability_unavailable)
+      |> Map.put("failed_detail", "bwrap: No permissions to create a new namespace")
+    ])
+
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    assert [{"task-1", "task.failed", %{summary: summary}}] =
+             Enum.filter(state().events, fn {id, type, _payload} ->
+               id == "task-1" and type == "task.failed"
+             end)
+
+    assert summary["outcome"] == "failed"
+    assert summary["reason"] == "execution_capability_unavailable"
+    assert summary["detail"] =~ "bwrap: No permissions to create a new namespace"
   end
 
   test "executor task startup failure is delivered as task.failed", %{config: config} do

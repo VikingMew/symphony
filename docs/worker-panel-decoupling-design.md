@@ -69,6 +69,9 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 该 issue 的失败链；`blocked` 立即持久化 blocking decision 并投递 Linear 评论与 `Blocked` 状态；
 `failed` 消耗一次 `agent.max_failure_retries` 预算，耗尽后同样持久化 blocking decision。outcome
 缺失或不在上述取值内按 `failed` 处理，协议异常不得绕过失败预算。
+当 worker 内 Codex 命令执行能力不可用（例如 bwrap/user namespace 创建被拒）时，worker/Codex
+adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
+仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
 Panel 重启不会恢复 assignment 或旧 payload。reconciliation 读取 Linear `In Progress` issue 和
 最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结
