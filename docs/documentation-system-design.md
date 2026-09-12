@@ -4,7 +4,7 @@ genre: design
 domain: [meta, documentation]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -14,7 +14,7 @@ design_status: landed
 
 1. **无分类结构**:设计/规范/参考/指南/路线图 5 种体裁混在一个目录,找文档靠文件名记忆。
 2. **语言双轨混乱**:规范用 EN、设计用 zh-CN,无成文规则;CODE_STRUCTURE 是唯一 EN+zh 双份,同步维护成本高。
-3. **无权威分层**:SPEC(2184 行)与设计文档冲突时谁赢没有规则;documentation_alignment 是历史补丁不是持续机制。
+3. **无权威分层**:SPEC(2184 行)与设计文档冲突时谁赢没有规则;`docs/documentation-alignment.md` 是历史补丁不是持续机制。
 4. **无验证钩子**:文档漂移只能靠人工 grep。
 
 ## 2. 参考模型

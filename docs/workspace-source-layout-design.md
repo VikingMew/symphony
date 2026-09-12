@@ -4,7 +4,7 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -129,6 +129,31 @@ Set Settings / Workflow / Workspace / Worktree base root under an allowed root,
 or add that root to Settings / Workflow / Codex / Sandbox allowed roots.
 ```
 
+## 启动前磁盘检查
+
+`WorkspaceDiskGuard` 是本地 agent 启动前的准入检查。Orchestrator 在本地
+agent spawn / workspace preparation 之前调用它；远端 worker 的磁盘状况不由该模块探测。
+
+检查输入来自当前 workflow snapshot 的 runtime settings。`workspace.min_free_bytes` 是最低可用空间阈值，
+未配置时默认为 `1_073_741_824` bytes（1 GiB）；值小于或等于 `0` 时跳过磁盘检查并返回
+`free_bytes: :unchecked`。阈值只控制准入，不触发清理或其它磁盘修改。
+
+检查范围是去重后的三个 root：
+
+- `workspace.root`
+- `SourcePreparation.repository_base_root(settings)`
+- `SourcePreparation.worktree_base_root(settings)`
+
+每个 root 先展开为绝对路径；如果路径还不存在，检查最近的既有祖先目录。实际可用空间通过
+`df -Pk <existing_ancestor>` 读取并按 KiB 转 bytes。所有 root 都达到阈值时，启动继续。任一 root
+低于阈值时返回 typed reason `:low_disk_space`，包含 root、free bytes、min bytes 和可操作的
+Settings 字段。`df` 失败或输出不可解析时返回 `:disk_space_unavailable`，包含失败 detail 和相同
+Settings 字段。
+
+Orchestrator 把任一拒绝或检查异常视为本次启动拒绝：它记录 `run.blocked`，在 blocked entry 的
+session history 写入 `workspace_disk_guard.blocked`，并保留 typed reason 供状态/API 展示。该路径不创建、
+删除或修改 workspace。
+
 ## 运行时顺序
 
 Worktree strategy 的顺序是：
@@ -146,6 +171,31 @@ Worktree strategy 的顺序是：
 11. 启动 Codex，cwd 为 issue worktree path。
 
 `repository_base_root` 只用于 base repo cache，是共享运行配置，不是 project 字段。Codex 不应以 base repo path 作为 cwd。`worktree_base_root` 只用于 issue worktree，也是共享运行配置。git clone/fetch 进度、worktree add 进度和 hook 输出应继续写入 session history 的 system progress。
+
+## 破坏性清理护栏
+
+`WorkspaceCleanupPolicy` 是 `Workspace` 执行 destructive cleanup 前的共享准入策略。调用方包括本地
+workspace 删除、远端 workspace 删除、以及 worktree strategy 下的 `git worktree remove --force`
+前置判断。policy 只回答目标路径是否允许删除；它不派生 workspace 路径，不执行 `rm_rf`、远端命令或
+`git worktree` 命令。
+
+本地删除使用 `validate_local_delete(path, roots: roots, protected_paths: protected_paths)`：
+
+- 非 binary path 拒绝为 `:invalid_path`；canonicalization 失败拒绝为
+  `{:path_canonicalize_failed, path, reason}`。
+- delete path、roots、protected paths 都先展开并通过 `PathSafety.canonicalize/1` 解析真实路径，
+  因此 symlink 逃逸会被识别为 root 外路径。
+- delete path 必须是某个 root 的 strict descendant；root 本身拒绝为
+  `{:cleanup_path_equals_root, root}`，root 外路径拒绝为
+  `{:cleanup_path_outside_roots, delete_path, roots}`。
+- delete path 等于 protected path 时拒绝为 `{:cleanup_path_equals_protected_path, delete_path}`。
+  delete path 是 protected path 的父目录、会把 protected path 一并删除时，拒绝为
+  `{:cleanup_path_contains_protected_path, delete_path, protected_path}`。
+
+远端删除使用 `validate_remote_delete(path, root)`，只能在控制面做字符串级边界判断。它拒绝空 path/root、
+包含换行、回车或 NUL 的 path、root 本身、以及 root 外路径；允许值必须是规范化后的 strict
+descendant。远端 policy 不在控制面执行 filesystem canonicalization，也不宣称与本地 symlink/protected-path
+防护等价。
 
 ## 不做什么
 

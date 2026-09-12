@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-08-28
+updated: 2026-09-12
 ---
 
 # Orchestration Specification
@@ -173,6 +173,34 @@ post-handoff review job, keyed by project, issue, PR URL, and backend-resolved i
 Review jobs have their own positive concurrency limit, remain queued across restarts, and still
 count against the process-wide safety ceiling. Reconciliation examines a bounded number of
 pre-transition intents per poll to close the successful-Linear-write/enqueue crash gap.
+
+#### 8.2.1 Ready-to-Merge Merge Conflict Reconciliation
+
+`MergeConflictReconciler` is the control-plane guard for exact handed-off pull requests in
+`Ready to Merge`. On each poll tick, the orchestrator fetches only a bounded set of
+`Ready to Merge` issues for this reconciliation path; those issues do not enter the ordinary
+dispatch route and no coding-agent worker is started for them.
+
+For each issue, the reconciler reads the latest completed `implementation_handoff` event for that
+issue identifier and uses the recorded PR URL plus any repository/base/head identity as the only
+handoff evidence eligible for blocking. It queries GitHub mergeability for the current issue and
+project. A missing handoff PR, a non-definitive mergeability result, unknown/behind/CI states, or a
+PR that does not exactly match the handoff identity leaves the issue `:unchanged` or `:stale`
+without a blocker. Tracker, GitHub, or persistence read failures return explicit `{:error, reason}`
+and remain retryable on a later tick.
+
+Before persisting a blocker, the reconciler re-fetches the Linear issue state and re-queries
+mergeability. The blocker is valid only when the issue is still `Ready to Merge`, the fresh PR has
+the same URL/repository/base/head identity as the first lookup, and the fresh status is still a
+definitive conflict. If the issue state or PR identity changed, the result is `:stale`. If the PR is
+fresh and still conflicting, the reconciler persists a `:merge_conflict` blocking decision, records
+an idempotent `issue.merge_conflict_detected` event keyed by PR URL, and delivers the configured
+Linear comment/state transition. Event read or write failure is an explicit error, not a silent
+skip.
+
+This path is separate from the post-handoff review job. It does not run review, approve, merge,
+update PR branches, or move an issue to `Done`; human GitHub review/merge plus Linear automation
+retain ownership of `Ready to Merge -> Done`.
 
 Sorting order (stable intent):
 
