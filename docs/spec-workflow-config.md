@@ -159,7 +159,9 @@ Fields:
 Worker execution snapshots resolve `project.required_gates` from the current PostgreSQL workflow
 when a task is queued. Each entry requires a stable non-blank `name`, non-blank `command`, and
 positive `timeout_ms`. Declaration order is execution and result order. The repository package
-declares independent `check`, `unit`, and `dialyzer` script gates; live E2E is orchestrated by its separate workflow.
+declares independent `check`, `unit`, and `dialyzer` script gates plus PR description lint. Live
+E2E is a credentialed manual suite run with `SYMPHONY_RUN_LIVE_E2E=1 mix test --only live_e2e` or
+`scripts/e2e.sh`; it is not currently connected to CI.
 
 #### 5.3.3 `workspace` (object)
 

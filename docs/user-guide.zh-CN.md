@@ -563,8 +563,10 @@ mise exec -- make pg-smoke
 
 ```bash
 export LINEAR_API_KEY="..."
-mise exec -- make e2e
+mise exec -- env SYMPHONY_RUN_LIVE_E2E=1 mix test --only live_e2e
 ```
+
+这套 live E2E 目前保留为手动能力，也可以通过 `scripts/e2e.sh` 运行；它没有接入 CI workflow。
 
 ## 13. 常见问题
 

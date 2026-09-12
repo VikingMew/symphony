@@ -335,9 +335,9 @@ mise exec -- mix symphony.postgres_smoke
 
 Make is reserved for build and image targets. Run quality checks independently with
 `scripts/check.sh` (format, lint, compile), `scripts/unit.sh` (85% coverage-bearing unit suite),
-`scripts/e2e.sh` (credentialed live integration suite), and `scripts/dialyzer.sh` (static analysis).
-CI orchestrates these scripts into fast, unit, E2E, and static jobs; publication uses only the fast
-check gate.
+and `scripts/dialyzer.sh` (static analysis). CI runs the fast, unit, static, and PR description
+lint gates; publication uses only the fast check gate. `scripts/e2e.sh` remains a credentialed
+manual live integration suite and is not currently connected to CI.
 
 The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
 run it only with explicit credentials:
