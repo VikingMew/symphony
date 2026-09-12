@@ -356,6 +356,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
         write_workflow_file!(Workflow.workflow_file_path(),
           workspace_root: workspace_root,
           codex_command: "#{codex_binary} app-server",
+          codex_thread_sandbox: "danger-full-access",
           turn_sandbox_policy: configured_policy
         )
 
@@ -363,6 +364,20 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
 
         trace = File.read!(trace_file)
         lines = String.split(trace, "\n", trim: true)
+
+        assert Enum.any?(lines, fn line ->
+                 if String.starts_with?(line, "JSON:") do
+                   line
+                   |> String.trim_leading("JSON:")
+                   |> Jason.decode!()
+                   |> then(fn payload ->
+                     payload["method"] == "thread/start" &&
+                       get_in(payload, ["params", "sandbox"]) == "danger-full-access"
+                   end)
+                 else
+                   false
+                 end
+               end)
 
         assert Enum.any?(lines, fn line ->
                  if String.starts_with?(line, "JSON:") do

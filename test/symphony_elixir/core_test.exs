@@ -173,6 +173,11 @@ defmodule SymphonyElixir.CoreTest do
 
     assert get_in(config.workflow, ["tool_policy", "github", "profiles"]) == ["implementation"]
     assert get_in(config.profiles, ["implementation", "name"]) == "Implementation"
+
+    transitions = get_in(config.workflow, ["allowed_transitions"])
+    assert Enum.any?(transitions, &(&1["from"] == "Todo" and &1["to"] == "Refining" and &1["profile"] == "refinement"))
+    assert Enum.any?(transitions, &(&1["from"] == "Refining" and &1["to"] == "Needs Refinement Review" and &1["profile"] == "refinement"))
+    refute Enum.any?(transitions, &(&1["from"] == "In Progress" and &1["to"] == "Needs Refinement Review"))
   end
 
   test "persisted workflow policy is ignored while profiles remain project-specific" do

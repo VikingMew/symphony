@@ -18,10 +18,18 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每次 claim 都验证 session 为 online、
 heartbeat 未超过 freshness cutoff 且调用方当次 `available_slots > 0`，再实时读取 Linear candidates，按 priority、created_at、identifier 排序，再按 issue id
 读取 Linear 并重新验证状态、依赖、routing/profile 和未清除的持久 `blocking_decision`。Panel 创建新 run 和不可混淆 assignment id，
-将 issue 转为 `In Progress`；只有状态更新成功才返回当前 workflow 生成的 payload。
+并从 `AgentRunner.Policy` 的唯一 profile-to-started-state 映射推导 worker 起始态：
+`refinement` 使用 `Refining`，`implementation` 使用 `In Progress`。非 started issue 必须先按当前
+workflow contract 验证并执行 `Todo -> Refining` 或 `Ready -> In Progress`；只有状态更新成功才返回当前
+workflow 生成的 payload，返回的 assignment issue、payload issue 和 prompt 当前状态都使用该 started state。
 同一成功 claim 同步把 assignment 注入 `Orchestrator` 当前态：`/api/v1/state` 的
 `running` 行来自该内存 entry，包含 issue、run、worker、开始时间、session 和 Codex token
 进度。该 feed 只是当前态投影，不创建队列或持久 lease；历史事实仍只写入 run/event。
+
+历史去重门只把 worker started states 当作已启动态：`Refining` 和 `In Progress`。候选 issue 处于
+这两个状态之一时，最新 worker run 必须是 `succeeded`、`failed` 或 `cancelled` 才能重新 claim；最新
+worker run 仍是非终态时不得重复派发。默认 `tracker.active_states` 仍是 `Todo`、`Ready` 和
+`In Progress`，不默认派发 `Refining`。
 
 `total_slots` 是 session/deployment 的 advertised aggregate 观测值，不允许并行发放多个 assignment。
 有效 admission capacity 仅在存在 fresh online advertised slot、调用方有 slot 且无当前 assignment 时为
@@ -75,6 +83,9 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
 claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
 才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。
+当 worker 内 Codex 命令执行能力不可用（例如 bwrap/user namespace 创建被拒）时，worker/Codex
+adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
+仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
 Panel 重启不会恢复 assignment 或旧 payload。reconciliation 读取 Linear `In Progress` issue 和
 最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结

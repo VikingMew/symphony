@@ -28,6 +28,8 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
     assert draft["prompt_body"] == "Keep current prompt"
     assert draft["profiles"]["implementation"]["prompt_template"] == "Keep current profile"
     assert draft["active_states"] =~ "Ready"
+    assert draft["codex_thread_sandbox"] == "danger-full-access"
+    assert draft["codex_turn_sandbox_preset"] == "danger_full_access"
   end
 
   test "imports profiles yaml without replacing workflow routing" do
@@ -113,6 +115,9 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
              "rework_rate_max" => 0.5,
              "per_issue_total_tokens_max" => 1_000_000
            }
+
+    assert get_in(config, ["codex", "thread_sandbox"]) == "danger-full-access"
+    assert get_in(config, ["codex", "turn_sandbox_policy"]) == %{"type" => "dangerFullAccess"}
   end
 
   defp workflow_raw!(draft) do

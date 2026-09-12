@@ -22,6 +22,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     WorkflowStore
   }
 
+  alias SymphonyElixir.AgentRunner.Policy
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
   alias SymphonyElixir.Worker.HeartbeatHistory
@@ -279,15 +280,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp dispatchable_from_history?(%Issue{state: state}, _persistence)
-       when state not in ["In Progress", "in progress"],
-       do: true
-
   defp dispatchable_from_history?(%Issue{} = issue, persistence) do
-    case persistence.list_runs_for_issue(issue.identifier, limit: 1) do
-      [%{status: status} | _] -> status in ["succeeded", "failed", "cancelled"]
-      [] -> false
-      {:error, _reason} -> false
+    if worker_started_state?(issue.state) do
+      case persistence.list_runs_for_issue(issue.identifier, limit: 1) do
+        [%{status: status} | _] -> status in ["succeeded", "failed", "cancelled"]
+        [] -> false
+        {:error, _reason} -> false
+      end
+    else
+      true
     end
   end
 
@@ -335,18 +336,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     project_id = workflow.project_id
     profile = Config.workflow_profile_for_state(issue.state)
 
-    prompt =
-      PromptBuilder.build_prompt(issue,
-        profile: profile,
-        profile_policy: Config.workflow_profile(profile),
-        allowed_updates: Config.workflow_allowed_updates(profile)
-      )
-
     with {:ok, issue_record} <-
            state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
          {:ok, run} <- create_run(state.persistence, issue, workflow, issue_record.id, project_id, now),
-         :ok <- move_to_in_progress(state.tracker, issue),
-         issue <- %{issue | state: "In Progress"},
+         {:ok, issue} <- move_to_worker_started(state.tracker, issue, profile),
+         prompt <-
+           PromptBuilder.build_prompt(issue,
+             profile: profile,
+             profile_policy: Config.workflow_profile(profile),
+             allowed_updates: Config.workflow_allowed_updates(profile)
+           ),
          assignment <-
            build_assignment(assignment_id, issue, run, worker, session, workflow,
              prompt: prompt,
@@ -369,6 +368,29 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running", started_at: started_at})
 
     persistence.create_run(attrs)
+  end
+
+  defp move_to_worker_started(tracker, %Issue{} = issue, profile) do
+    with {:ok, started_state} <- Policy.worker_started_state(profile) do
+      maybe_transition_to_worker_started(tracker, issue, profile, started_state)
+    end
+  end
+
+  defp maybe_transition_to_worker_started(tracker, %Issue{} = issue, profile, started_state) do
+    if same_issue_state?(issue.state, started_state) do
+      {:ok, %{issue | state: started_state}}
+    else
+      transition_to_worker_started(tracker, issue, profile, started_state)
+    end
+  end
+
+  defp transition_to_worker_started(tracker, %Issue{} = issue, profile, started_state) do
+    transitions = Config.settings!().workflow |> Map.get("allowed_transitions", [])
+
+    with :ok <- Policy.validate_worker_start_transition(transitions, issue.state, profile),
+         :ok <- tracker.update_issue_state(issue.id, started_state) do
+      {:ok, %{issue | state: started_state}}
+    end
   end
 
   defp build_assignment(id, issue, run, worker, session, workflow, opts) do
@@ -406,8 +428,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     }
   end
 
-  defp move_to_in_progress(_tracker, %Issue{state: state}) when state in ["In Progress", "in progress"], do: :ok
-  defp move_to_in_progress(tracker, %Issue{id: issue_id}), do: tracker.update_issue_state(issue_id, "In Progress")
+  defp worker_started_state?(state) when is_binary(state) do
+    started_states = Policy.worker_started_states() |> DispatchPolicy.normalized_state_set()
+    MapSet.member?(started_states, SymphonyElixir.StateName.normalize(state))
+  end
+
+  defp worker_started_state?(_state), do: false
+
+  defp same_issue_state?(left, right) when is_binary(left) and is_binary(right) do
+    SymphonyElixir.StateName.normalize(left) == SymphonyElixir.StateName.normalize(right)
+  end
 
   defp renew_assignment(nil, _worker_id, _session_id, _active_ids, _state), do: {nil, []}
 

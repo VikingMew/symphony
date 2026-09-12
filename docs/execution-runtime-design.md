@@ -15,13 +15,31 @@ Linear access, workflow/profile selection, prompt construction, dispatch, and th
 in-memory assignment. The worker owns checkout, hooks, one Codex app-server turn, required gates,
 PR handoff, bounded evidence, and cleanup.
 
+In the current containerized worker deployment, the worker container is the execution isolation
+boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the
+checked-in import package therefore carries `thread_sandbox: "danger-full-access"` and
+`turn_sandbox_policy.type: "dangerFullAccess"` for that deployment shape. The container boundary is
+kept by Compose and image policy, not by relaxing host seccomp or adding container-engine access
+inside the worker.
+
 A claim is created from a live Linear candidate read, absence of an uncleared persisted
-`blocking_decision`, and a second state/dependency/routing/blocking-decision check. The Panel moves
-the issue to `In Progress` before returning the current-workflow payload. The assignment ID is
-carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The payload
-contains the issue, exact branch, source ref, rendered profile prompt, hooks, Codex settings, limits,
-ordered required gates, and allowed handoff updates. The worker has neither a Linear client nor a
-Linear credential.
+`blocking_decision`, and a second state/dependency/routing/blocking-decision check. The Panel
+derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
+contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
+validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state
+update succeeds. The assignment issue, payload issue, and rendered prompt current state use the
+started state, so refinement worker completions operate from `Refining -> Needs Refinement Review`
+and implementation handoff still operates from `In Progress -> Ready to Merge`. The assignment ID
+is carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The
+payload contains the issue, exact branch, source ref, rendered profile prompt, hooks, Codex
+settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
+Linear client nor a Linear credential.
+
+History-based duplicate-run gating treats only `Refining` and `In Progress` as worker started
+states. A candidate in either state can be claimed only when the latest worker run is terminal
+(`succeeded`, `failed`, or `cancelled`); a non-terminal latest worker run prevents duplicate
+assignment. Repository defaults still leave `tracker.active_states` at `Todo`, `Ready`, and
+`In Progress`, so `Refining` is not a default dispatch state.
 
 One supervised process group owns checkout, hooks, Codex, validation, and handoff for an assignment.
 It renews only that assignment and emits accepted/progress/completed/failed/cancelled events with
@@ -33,7 +51,7 @@ tool response or assignment lifecycle. Centralized execution records the same au
 Panel.
 
 The same assignment lifecycle feeds the Panel's live orchestrator snapshot. A successful claim that
-creates the worker run, moves the issue to `In Progress`, and returns the assignment enters
+creates the worker run, applies the profile-derived started state, and returns the assignment enters
 `running`. Progress events can carry `codex_session_started` or a Codex app-server message under the
 task progress payload; the Panel uses those messages to update session identity, last event/message,
 rate limits, and absolute token totals with the same delta accounting as centralized execution.
@@ -41,6 +59,10 @@ Terminal events, cancellation, expiry, and stale-run reconciliation leave `runni
 cancelled endings clear the current entry, failed endings either enter orchestrator retry state or,
 when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
 centralized blocked outcomes.
+
+If the Codex command-execution capability is unavailable inside the worker, including the known
+bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
+reason instead of leaving the assignment `In Progress` until a stall or turn timeout.
 
 Heartbeat is a success/renewal signal, not queued work and not a synchronous worker/session
 database-write gate. After controller identity/protocol parsing, the Panel records worker/session

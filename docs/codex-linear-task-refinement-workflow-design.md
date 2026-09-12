@@ -74,6 +74,12 @@ Ready -> Refining
 `Refining` 是执行中状态，也是人工从 review 明确打回后再次细化时使用的状态，不属于默认
 `tracker.active_states`。
 
+Worker 模式的 refinement claim 也使用同一 profile-derived 起始态契约：`refinement` claim 从
+`Todo` 验证并转换到 `Refining`，返回的 assignment issue、payload issue 和 prompt 当前状态都以
+`Refining` 为准，之后完成路径仍是 `Refining -> Needs Refinement Review`。默认
+`tracker.active_states` 仍不包含 `Refining`；只有运行时配置显式把 `Refining` 纳入 active states
+时，已经处于 `Refining` 且最新 worker run 为 terminal 的 issue 才能重新被 claim。
+
 进入条件：
 
 - 新候选 task 的 Linear 状态是 `Todo`；人工打回任务的状态是 `Refining`。

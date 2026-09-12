@@ -126,6 +126,81 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert File.exists?(marker) == false
   end
 
+  test "preserves typed Codex execution capability failures" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    codex_binary = Path.join(fixture.root, "fake-codex")
+
+    File.write!(codex_binary, """
+    #!/bin/sh
+    count=0
+    while IFS= read -r line; do
+      count=$((count + 1))
+
+      case "$count" in
+        1)
+          printf '%s\\n' '{"id":1,"result":{}}'
+          ;;
+        2)
+          printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-worker-bwrap"}}}'
+          ;;
+        3)
+          printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-worker-bwrap"}}}'
+          printf '%s\\n' 'bwrap: No permissions to create a new namespace' >&2
+          sleep 5
+          exit 0
+          ;;
+        *)
+          exit 0
+          ;;
+      esac
+    done
+    """)
+
+    File.chmod!(codex_binary, 0o755)
+
+    execution =
+      panel_payload()
+      |> put_in(["repository", "url"], fixture.remote)
+      |> put_in(["repository", "source_ref"], "trunk")
+      |> put_in(["repository", "implementation_branch"], "feature/sym-95")
+      |> put_in(["codex", "command"], "#{codex_binary} app-server")
+      |> put_in(["codex", "thread_sandbox"], "danger-full-access")
+      |> put_in(["codex", "turn_sandbox_policy"], %{"type" => "dangerFullAccess"})
+      |> put_in(["limits", "turn_timeout_ms"], 10_000)
+      |> ExecutionPayload.from_task_payload()
+
+    config = %Config{
+      panel_url: "http://panel.test",
+      registration_token: "worker-token",
+      worker_name: "worker-test",
+      workspace_root: Path.join(fixture.root, "workspaces"),
+      cache_root: Path.join(fixture.root, "cache"),
+      log_root: Path.join(fixture.root, "logs")
+    }
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => "task-1",
+      "lease_id" => "lease-1",
+      "run_id" => "run-1",
+      "run_attempt" => 1,
+      "lease_attempt" => 1,
+      "issue_id" => "issue-1",
+      "issue_identifier" => "SYM-95",
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "execution" => execution
+    }
+
+    result = Executor.execute(config, claim)
+
+    assert result.status == :failed
+    assert result.reason == :execution_capability_unavailable
+    assert result.detail =~ "bwrap: No permissions to create a new namespace"
+  end
+
   defp payload(remote) do
     assert {:ok, payload} =
              panel_payload()

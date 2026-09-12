@@ -5,7 +5,7 @@ domain: [spec, reliability-security]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-11
+updated: 2026-09-12
 ---
 
 # Reliability and Security Specification
@@ -30,6 +30,8 @@ updated: 2026-09-11
    - Startup handshake failure
    - Turn failed/cancelled
    - Turn timeout
+   - Command-execution capability unavailable inside the agent runtime, including bwrap/user
+     namespace failures when the deployment does not provide nested user namespaces
    - User input requested and handled as failure by the implementation's documented policy
    - Subprocess exit
    - Stalled session (no activity)
@@ -60,6 +62,9 @@ updated: 2026-09-11
 
 - Worker failures:
   - Convert to retries with exponential backoff.
+  - Worker/Codex command-execution capability failures MUST produce a terminal failed outcome with
+    a distinguishable reason and observable detail in logs or run/event history; they must not leave
+    the assignment active until stall or turn timeout.
 
 - Tracker candidate-fetch failures:
   - Skip this tick.
