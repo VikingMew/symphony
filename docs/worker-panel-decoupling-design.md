@@ -18,10 +18,18 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。每次 claim 都验证 session 为 online、
 heartbeat 未超过 freshness cutoff 且调用方当次 `available_slots > 0`，再实时读取 Linear candidates，按 priority、created_at、identifier 排序，再按 issue id
 读取 Linear 并重新验证状态、依赖、routing/profile。Panel 创建新 run 和不可混淆 assignment id，
-将 issue 转为 `In Progress`；只有状态更新成功才返回当前 workflow 生成的 payload。
+并从 `AgentRunner.Policy` 的唯一 profile-to-started-state 映射推导 worker 起始态：
+`refinement` 使用 `Refining`，`implementation` 使用 `In Progress`。非 started issue 必须先按当前
+workflow contract 验证并执行 `Todo -> Refining` 或 `Ready -> In Progress`；只有状态更新成功才返回当前
+workflow 生成的 payload，返回的 assignment issue、payload issue 和 prompt 当前状态都使用该 started state。
 同一成功 claim 同步把 assignment 注入 `Orchestrator` 当前态：`/api/v1/state` 的
 `running` 行来自该内存 entry，包含 issue、run、worker、开始时间、session 和 Codex token
 进度。该 feed 只是当前态投影，不创建队列或持久 lease；历史事实仍只写入 run/event。
+
+历史去重门只把 worker started states 当作已启动态：`Refining` 和 `In Progress`。候选 issue 处于
+这两个状态之一时，最新 worker run 必须是 `succeeded`、`failed` 或 `cancelled` 才能重新 claim；最新
+worker run 仍是非终态时不得重复派发。默认 `tracker.active_states` 仍是 `Todo`、`Ready` 和
+`In Progress`，不默认派发 `Refining`。
 
 `total_slots` 是 session/deployment 的 advertised aggregate 观测值，不允许并行发放多个 assignment。
 有效 admission capacity 仅在存在 fresh online advertised slot、调用方有 slot 且无当前 assignment 时为

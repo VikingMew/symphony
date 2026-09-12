@@ -25,9 +25,7 @@ defmodule SymphonyElixir.AgentRunner do
 
   @implementation_profile "implementation"
   @implementation_start_state "Ready"
-  @implementation_started_state "In Progress"
   @refinement_start_state "Todo"
-  @refinement_started_state "Refining"
 
   @type worker_host :: String.t() | nil
   @type operator_kind :: :nap | :day_dreaming
@@ -329,13 +327,15 @@ defmodule SymphonyElixir.AgentRunner do
        when is_binary(issue_id) and issue_id != "" do
     transitions = Config.settings!().workflow |> Map.get("allowed_transitions", [])
 
+    started_state = worker_started_state!(profile)
+
     with :ok <- Policy.validate_refinement_start_transition(transitions, issue.state, profile),
-         :ok <- call_refinement_start_transitioner(issue, @refinement_started_state, opts),
+         :ok <- call_refinement_start_transitioner(issue, started_state, opts),
          {:ok, started_issue} <-
            refresh_refinement_started_issue(issue, issue_state_fetcher) do
-      Logger.info("Moved issue to refinement start state for #{issue_context(issue)} state=#{@refinement_started_state}")
+      Logger.info("Moved issue to refinement start state for #{issue_context(issue)} state=#{started_state}")
 
-      notify_backend_transition(issue, @refinement_start_state, @refinement_started_state, opts)
+      notify_backend_transition(issue, @refinement_start_state, started_state, opts)
       {:ok, started_issue}
     else
       {:error, reason} -> {:error, {:refinement_start_transition_failed, reason}}
@@ -363,8 +363,10 @@ defmodule SymphonyElixir.AgentRunner do
   end
 
   defp refresh_refinement_started_issue(%Issue{id: issue_id}, issue_state_fetcher) do
+    started_state = worker_started_state!("refinement")
+
     case issue_state_fetcher.([issue_id]) do
-      {:ok, [%Issue{state: @refinement_started_state} = issue | _]} ->
+      {:ok, [%Issue{state: ^started_state} = issue | _]} ->
         {:ok, issue}
 
       {:ok, [%Issue{state: state} | _]} ->
@@ -380,23 +382,25 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp transition_implementation_start(%Issue{id: issue_id} = issue, profile, opts)
        when is_binary(issue_id) and issue_id != "" do
+    started_state = worker_started_state!(profile)
+
     with :ok <-
            validate_implementation_start_transition(
              issue.state,
-             @implementation_started_state,
+             started_state,
              profile
            ),
-         :ok <- call_implementation_start_transitioner(issue, @implementation_started_state, opts) do
-      Logger.info("Moved issue to implementation start state for #{issue_context(issue)} state=#{@implementation_started_state}")
+         :ok <- call_implementation_start_transitioner(issue, started_state, opts) do
+      Logger.info("Moved issue to implementation start state for #{issue_context(issue)} state=#{started_state}")
 
       notify_backend_transition(
         issue,
         @implementation_start_state,
-        @implementation_started_state,
+        started_state,
         opts
       )
 
-      {:ok, %{issue | state: @implementation_started_state}}
+      {:ok, %{issue | state: started_state}}
     else
       {:error, reason} -> {:error, {:implementation_start_transition_failed, reason}}
     end
@@ -462,8 +466,21 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp notify_backend_transition(_issue, _from_state, _to_state, _opts), do: :ok
 
-  defp transition_reason(@implementation_started_state), do: :implementation_started
-  defp transition_reason(@refinement_started_state), do: :refinement_started
+  defp transition_reason(to_state) do
+    cond do
+      same_issue_state?(to_state, worker_started_state!("implementation")) -> :implementation_started
+      same_issue_state?(to_state, worker_started_state!("refinement")) -> :refinement_started
+    end
+  end
+
+  defp worker_started_state!(profile) do
+    {:ok, started_state} = Policy.worker_started_state(profile)
+    started_state
+  end
+
+  defp same_issue_state?(left, right) do
+    SymphonyElixir.StateName.normalize(left) == SymphonyElixir.StateName.normalize(right)
+  end
 
   defp do_run_codex_turns(
          app_session,
