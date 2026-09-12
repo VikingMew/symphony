@@ -1,9 +1,13 @@
 defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
+  alias SymphonyElixir.BlockingDecision
   alias SymphonyElixir.EnvironmentFailureCircuit
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator
+  alias SymphonyElixir.Orchestrator.Events
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixir.Workflow
@@ -36,6 +40,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
 
     def fetch_issue_states_by_ids(ids) do
+      if hook = Application.get_env(:symphony_elixir, :assignment_test_revalidate_hook) do
+        hook.()
+      end
+
       {:ok,
        Agent.get(__MODULE__, fn data ->
          ids |> Enum.map(&data.current[&1]) |> Enum.reject(&is_nil/1)
@@ -170,6 +178,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
       Application.delete_env(:symphony_elixir, :assignment_test_owner)
       Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
+      Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
     end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
@@ -300,6 +309,90 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, {:empty, 5}} = claim(context)
     assert FakePersistence.list_runs_for_issue(ready.identifier) == []
     assert Tracker.updates() == []
+  end
+
+  test "claim admission skips active issues with uncleared blocking decisions", context do
+    ready = issue(101)
+    persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    Tracker.put([ready])
+
+    log =
+      capture_log(fn ->
+        assert {:ok, {:empty, 5}, evidence} =
+                 AssignmentManager.claim_with_evidence(
+                   context.worker.id,
+                   context.session.id,
+                   %{"available_slots" => 1},
+                   context.manager
+                 )
+
+        assert evidence == %{
+                 capacity: 0,
+                 reason: :blocking_decision,
+                 issue_id: ready.id,
+                 issue_identifier: ready.identifier,
+                 blocking_decision: %{
+                   "decided_at" => "2026-09-12T04:15:33Z",
+                   "reason" => "failure_retries_exhausted",
+                   "run_id" => "run-blocked"
+                 }
+               }
+      end)
+
+    assert log =~ "event=worker_claim_skip"
+    assert log =~ "skip_reason=blocking_decision"
+    assert log =~ "issue_identifier=#{ready.identifier}"
+    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert Tracker.updates() == []
+  end
+
+  test "revalidation skips candidates when a blocking decision appears after selection", context do
+    ready = issue(102)
+    persist_issue(ready)
+    Tracker.put([ready])
+
+    Application.put_env(:symphony_elixir, :assignment_test_revalidate_hook, fn ->
+      persist_issue(ready, %{blocking_decision: blocking_decision("human_blocked")})
+    end)
+
+    assert {:ok, {:empty, 5}, %{reason: :blocking_decision, issue_identifier: "SYM-102"}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               context.manager
+             )
+
+    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert Tracker.updates() == []
+  end
+
+  test "cleared blocking decisions restore normal claim admission", context do
+    ready = issue(103)
+    persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    Tracker.put([ready])
+
+    assert {:ok, {:empty, 5}, %{reason: :blocking_decision}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               context.manager
+             )
+
+    assert :ok = BlockingDecision.clear(ready.identifier)
+
+    assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
+             AssignmentManager.claim_with_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               context.manager
+             )
+
+    assert assignment.issue_identifier == ready.identifier
+    assert [_run] = FakePersistence.list_runs_for_issue(ready.identifier)
+    assert Tracker.updates() == [{ready.id, "In Progress"}]
   end
 
   test "surfaces tracker fetch and state transition failures", context do
@@ -943,6 +1036,23 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       labels: [],
       assigned_to_worker: true,
       created_at: DateTime.add(~U[2026-09-01 00:00:00Z], number, :second)
+    }
+  end
+
+  defp persist_issue(issue, attrs \\ %{}) do
+    issue
+    |> Events.issue_attrs()
+    |> Map.put(:project_id, "fake-project-id")
+    |> Map.merge(attrs)
+    |> FakePersistence.upsert_issue()
+  end
+
+  defp blocking_decision(reason) do
+    %{
+      "decided_at" => "2026-09-12T04:15:33Z",
+      "evidence" => "test",
+      "reason" => reason,
+      "run_id" => "run-blocked"
     }
   end
 

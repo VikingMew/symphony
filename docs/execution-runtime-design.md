@@ -15,12 +15,13 @@ Linear access, workflow/profile selection, prompt construction, dispatch, and th
 in-memory assignment. The worker owns checkout, hooks, one Codex app-server turn, required gates,
 PR handoff, bounded evidence, and cleanup.
 
-A claim is created from a live Linear candidate read and a second state/dependency/routing check.
-The Panel moves the issue to `In Progress` before returning the current-workflow payload. The
-assignment ID is carried in the existing `task_id` and `lease_id` JSON fields; it is not a database
-task. The payload contains the issue, exact branch, source ref, rendered profile prompt, hooks,
-Codex settings, limits, ordered required gates, and allowed handoff updates. The worker has neither
-a Linear client nor a Linear credential.
+A claim is created from a live Linear candidate read, absence of an uncleared persisted
+`blocking_decision`, and a second state/dependency/routing/blocking-decision check. The Panel moves
+the issue to `In Progress` before returning the current-workflow payload. The assignment ID is
+carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The payload
+contains the issue, exact branch, source ref, rendered profile prompt, hooks, Codex settings, limits,
+ordered required gates, and allowed handoff updates. The worker has neither a Linear client nor a
+Linear credential.
 
 One supervised process group owns checkout, hooks, Codex, validation, and handoff for an assignment.
 It renews only that assignment and emits accepted/progress/completed/failed/cancelled events with
@@ -52,8 +53,12 @@ Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds
 not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
-later run can start only after a new live Linear claim proves the issue eligible. Manual Blocked,
-Done, or review-state changes therefore take effect at the next check.
+later run can start only after a new live Linear claim proves the issue eligible and no uncleared
+`blocking_decision` exists. Manual Blocked, Done, review-state changes, and persisted blocker clears
+therefore take effect at the next check. When a persisted blocker exists, empty claim evidence uses
+`reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
+context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
+routing, and run-history gates pass.
 
 Panel restart deliberately loses the assignment and payload. Reconciliation uses Linear `In
 Progress` state plus latest persisted run/event time: no duplicate is dispatched before timeout,

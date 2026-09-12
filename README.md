@@ -70,9 +70,9 @@ Linear's GitHub automation owns the final move to `Done`.
 | Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
 | Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One current workflow exists per enabled project. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
-| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, and worker tasks carry the originating `project_id`. |
+| Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, and worker assignments carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
-| Worker mode | Optional HTTP mode where claims read and revalidate Linear before returning one ephemeral current-workflow assignment. |
+| Worker mode | Optional HTTP mode where claims read and revalidate Linear, refuse uncleared persisted blockers, and return one ephemeral current-workflow assignment. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
 sharing a single Linear user, with per-project workflows and hooks. Settings and the

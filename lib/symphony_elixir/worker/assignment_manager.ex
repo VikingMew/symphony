@@ -8,6 +8,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   use GenServer
 
+  require Logger
+
   alias SymphonyElixir.{
     Config,
     EnvironmentFailureCircuit,
@@ -137,8 +139,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
         case claim_from_workflows(state, worker, session) do
-          {:ok, nil} ->
-            {:ok, nil, admission_evidence(:no_eligible_candidate)}
+          {:ok, nil, evidence} ->
+            {:ok, nil, evidence}
 
           {:ok, assignment} ->
             Orchestrator.worker_task_started(assignment, state.orchestrator)
@@ -215,9 +217,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp claim_from_workflows(state, worker, session) do
-    Enum.reduce_while(state.workflows.list_enabled(), {:ok, nil}, fn workflow, _acc ->
+    empty = {:ok, nil, admission_evidence(:no_eligible_candidate)}
+
+    Enum.reduce_while(state.workflows.list_enabled(), empty, fn workflow, {:ok, nil, evidence} ->
       result = Config.with_workflow_context(workflow, fn -> claim_from_workflow(state, worker, session, workflow) end)
-      if match?({:ok, nil}, result), do: {:cont, result}, else: {:halt, result}
+
+      case result do
+        {:ok, nil, next_evidence} -> {:cont, {:ok, nil, merge_empty_evidence(evidence, next_evidence)}}
+        {:ok, %{} = assignment} -> {:halt, {:ok, assignment}}
+        {:error, _reason} = error -> {:halt, error}
+      end
     end)
   end
 
@@ -234,21 +243,40 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp claim_from_workflow(state, worker, session, workflow) do
     with {:ok, candidates} <- state.tracker.fetch_candidate_issues(),
-         %Issue{} = candidate <- select_candidate(candidates, state.persistence),
-         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker),
+         {:ok, %Issue{} = candidate} <- select_candidate(candidates, state.persistence),
+         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker, state.persistence),
          {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue) do
       {:ok, assignment}
     else
-      nil -> {:ok, nil}
-      {:skip, _reason} -> {:ok, nil}
-      {:error, reason} -> {:error, reason}
+      {:skip, reason, evidence} ->
+        log_admission_skip(reason, worker, session, evidence)
+        {:ok, nil, evidence}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
   defp select_candidate(candidates, persistence) do
     candidates
     |> DispatchPolicy.sort_issues_for_dispatch()
-    |> Enum.find(&(eligible_issue?(&1) and dispatchable_from_history?(&1, persistence)))
+    |> Enum.reduce_while({:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate)}, fn issue, skip ->
+      case candidate_admission(issue, persistence) do
+        :ok -> {:halt, {:ok, issue}}
+        {:skip, :blocking_decision, _evidence} = blocking -> {:cont, merge_candidate_skip(skip, blocking)}
+        {:skip, _reason, _evidence} -> {:cont, skip}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp candidate_admission(%Issue{} = issue, persistence) do
+    with :ok <- live_issue_admission(issue),
+         :ok <- blocking_decision_admission(issue, persistence) do
+      if dispatchable_from_history?(issue, persistence),
+        do: :ok,
+        else: {:skip, :run_history, admission_evidence(:run_history)}
+    end
   end
 
   defp dispatchable_from_history?(%Issue{state: state}, _persistence)
@@ -263,17 +291,40 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp eligible_issue?(%Issue{} = issue) do
+  defp live_issue_admission(%Issue{} = issue) do
     normalized = SymphonyElixir.StateName.normalize(issue.state)
     active = Config.settings!().tracker.active_states |> DispatchPolicy.normalized_state_set()
-    MapSet.member?(active, normalized) and issue.blocked_by == [] and !Config.human_review_state?(issue.state)
+
+    cond do
+      not MapSet.member?(active, normalized) -> {:skip, :stale, admission_evidence(:stale)}
+      issue.blocked_by != [] -> {:skip, :dependency, admission_evidence(:dependency)}
+      Config.human_review_state?(issue.state) -> {:skip, :human_review, admission_evidence(:human_review)}
+      true -> :ok
+    end
   end
 
-  defp revalidate(%Issue{id: issue_id}, tracker) do
-    case tracker.fetch_issue_states_by_ids([issue_id]) do
-      {:ok, [%Issue{} = issue | _]} -> if eligible_issue?(issue), do: {:ok, issue}, else: {:skip, :stale}
-      {:ok, []} -> {:skip, :missing}
+  defp blocking_decision_admission(%Issue{} = issue, persistence) do
+    case persistence.get_issue_by_identifier(issue.identifier) do
+      %{blocking_decision: %{} = decision} -> {:skip, :blocking_decision, blocking_decision_evidence(issue, decision)}
+      %{} -> :ok
+      nil -> :ok
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp revalidate(%Issue{id: issue_id}, tracker, persistence) do
+    case tracker.fetch_issue_states_by_ids([issue_id]) do
+      {:ok, [%Issue{} = issue | _]} ->
+        with :ok <- live_issue_admission(issue),
+             :ok <- blocking_decision_admission(issue, persistence) do
+          {:ok, issue}
+        end
+
+      {:ok, []} ->
+        {:skip, :missing, admission_evidence(:missing)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -489,6 +540,31 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp admission_evidence(reason) do
     %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason}
   end
+
+  defp blocking_decision_evidence(issue, decision) do
+    :blocking_decision
+    |> admission_evidence()
+    |> Map.merge(%{
+      issue_id: issue.id,
+      issue_identifier: issue.identifier,
+      blocking_decision: Map.take(decision, ["decided_at", "reason", "run_id"])
+    })
+  end
+
+  defp merge_candidate_skip(_current, {:skip, :blocking_decision, evidence}), do: {:skip, :blocking_decision, evidence}
+
+  defp merge_empty_evidence(%{reason: :no_eligible_candidate}, %{reason: :blocking_decision} = evidence), do: evidence
+  defp merge_empty_evidence(evidence, _next_evidence), do: evidence
+
+  defp log_admission_skip(:blocking_decision, worker, session, evidence) do
+    blocking_reason = get_in(evidence, [:blocking_decision, "reason"])
+
+    Logger.info(
+      "event=worker_claim_skip issue_id=#{evidence.issue_id} issue_identifier=#{evidence.issue_identifier} worker_id=#{worker.id} session_id=#{session.id} skip_reason=blocking_decision blocking_reason=#{inspect(blocking_reason)}"
+    )
+  end
+
+  defp log_admission_skip(_reason, _worker, _session, _evidence), do: :ok
 
   defp environment_failure_circuit_evidence(circuit) do
     :environment_failure_circuit_open
