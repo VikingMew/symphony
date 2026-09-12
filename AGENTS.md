@@ -140,6 +140,6 @@ If behavior/config changes, update docs in the same PR:
 - `docs/examples/workflow.yml` and `docs/examples/profiles.yml` when the example package format
   changes. The PostgreSQL current workflow is the runtime authority; local split package files are
   examples/import artifacts, not the live runtime source.
-- `docs/documentation_alignment.md` when a change affects runtime source,
+- `docs/documentation-alignment.md` when a change affects runtime source,
   Settings ownership, worker modes, observability/analytics, Linear
   integration, deployment ownership, or other long-lived documentation claims.

@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-08-27
+updated: 2026-09-12
 design_status: landed
 ---
 
@@ -156,6 +156,33 @@ redact token。
 
 handoff 只依赖配置的 repository identity 和 GitHub remote state，不依赖 Symphony host 上存在
 worker workspace，因此本地与 SSH worker 使用相同边界。
+
+## 运行时出站代理
+
+`RuntimeProxy` 统一管理 Symphony 进程对 Codex、Linear 和 GitHub 的出站 proxy 配置。它只读取当前
+process environment 中的 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及对应小写变量；
+空值会被 trim 后忽略。该模块不管理 nginx/reverse proxy、TLS 终止、网络可达性，也不启动或健康检查
+proxy 进程。
+
+调用面有三类：
+
+- Codex 本地 app-server port 启动时，`RuntimeProxy.port_env/0` 把非空 proxy env 转成 Port env。
+- SSH/remote app-server 启动时，`RuntimeProxy.remote_exports/0` 生成 `export NAME=<escaped>` 片段，
+  value 经 shell escaping 后拼入远端 launch command。
+- Linear GraphQL client 和 GitHub PR REST fallback 使用 `RuntimeProxy.connect_options/2` 合并 Req
+  connect options。
+
+Req proxy 选择按请求 URL scheme 决定。`https` 请求优先 `HTTPS_PROXY`，再小写 `https_proxy`，
+再 `ALL_PROXY` / `all_proxy`；`http` 请求优先 `HTTP_PROXY`，再小写 `http_proxy`，再
+`ALL_PROXY` / `all_proxy`；其它 scheme 只使用 `ALL_PROXY` / `all_proxy`。proxy URL 仅接受
+`http` 和 `https` scheme，缺少 host 或无法确定 port 时视为无效。无适用 proxy、proxy URL 无效、
+或 `NO_PROXY` 命中时，`connect_options/2` 原样返回 caller 传入的 base options。
+
+`NO_PROXY` / `no_proxy` 是逗号分隔列表；`*` 跳过所有 proxy，host 会大小写归一化并支持精确 host
+或 domain suffix 命中。entry 前导 `.` 会被忽略，普通 `host:port` entry 会去掉 port 后比较；
+复杂 bracket IPv6 entry 不扩展成额外 suffix 规则。proxy URL 带 userinfo 时，Req options 生成
+`proxy-authorization: Basic <base64(userinfo)>`；诊断用 `redacted_proxy_env/0` 会把 userinfo 替换为
+`[REDACTED]`，保留公开 proxy URL 不变。
 
 ## 审计与错误
 
