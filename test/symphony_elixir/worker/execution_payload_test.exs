@@ -29,6 +29,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
              "scripts/dialyzer.sh"
            ]
 
+    assert Enum.map(execution["required_gates"], & &1["name"]) == ["check", "unit", "dialyzer"]
+
     assert execution["handoff"]["policy"] == panel_payload["handoff"]["policy"]
     assert Map.has_key?(execution["handoff"], "command") == false
     assert {:ok, parsed} = Payload.parse(execution)

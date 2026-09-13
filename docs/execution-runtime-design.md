@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-12
+updated: 2026-09-13
 design_status: landed
 ---
 
@@ -70,6 +70,16 @@ centralized blocked outcomes.
 If the Codex command-execution capability is unavailable inside the worker, including the known
 bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
 reason instead of leaving the assignment `In Progress` until a stall or turn timeout.
+
+Terminal summaries report validation evidence from the executor result rather than inferring it
+from the terminal event type. When validation ran, `validation_status` reflects its overall result
+and `gates` contains the ordered gate results that actually ran. When execution ends before
+validation, `validation_status` is `pending` and every required gate from the assignment is emitted
+as `not_run`; the list is empty only when the assignment declared no required gates. In particular,
+a missing implementation handoff fails before validation with reason `handoff_failed`, preserves
+`missing_handoff` in deterministic JSON detail, and marks the assignment's required gates
+`not_run`. Failure detail is serialized from structured executor terms and never uses Elixir
+`inspect/1` syntax.
 
 Listening off only stops future dispatch. It does not alter an existing assignment or running Codex
 turn. Force-stop and cancel-current are explicit cancellation controls. Force-stop turns listening

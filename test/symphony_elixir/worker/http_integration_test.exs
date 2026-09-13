@@ -223,8 +223,10 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
     result = execute_implementation(root, codex_binary, "push-permission-task")
     assert result.status == :blocked
-    assert result.reason =~ "push_permission_blocked"
-    assert result.reason =~ "workflow scope"
+
+    assert {:handoff_failed, {:push_permission_blocked, detail}} = result.reason
+
+    assert detail =~ "workflow scope"
   end
 
   test "fails a true missing implementation handoff", %{
@@ -233,8 +235,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
   } do
     result = execute_implementation(root, codex_binary, "missing-handoff-task")
     assert result.status == :failed
-    assert result.reason =~ "handoff_failed"
-    assert result.reason =~ "missing_handoff"
+    assert result.reason == {:handoff_failed, :missing_handoff}
   end
 
   defp execute_implementation(root, codex_binary, task_id) do

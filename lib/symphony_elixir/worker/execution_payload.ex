@@ -71,8 +71,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
     end
   end
 
-  defp command(%{"command" => command, "timeout_ms" => timeout}) do
-    %{"command" => command, "timeout_seconds" => seconds(timeout)}
+  defp command(%{"name" => name, "command" => command, "timeout_ms" => timeout}) do
+    %{"name" => name, "command" => command, "timeout_seconds" => seconds(timeout)}
   end
 
   defp seconds(milliseconds), do: div(milliseconds + 999, 1_000)

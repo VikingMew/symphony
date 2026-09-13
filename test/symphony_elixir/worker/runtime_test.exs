@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
   use ExUnit.Case, async: false
 
   alias SymphonyElixir.Worker.{Config, Runtime}
+  alias SymphonyElixir.WorkerResult
 
   defmodule FakeClient do
     def protocol_version, do: "worker-api-v1"
@@ -80,6 +81,10 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     defp claim_result(%{"trap_shutdown" => true}), do: %{status: :cancelled}
 
+    defp claim_result(%{"validation_result" => validation}) do
+      %{status: :failed, phase: :validation, validation: validation}
+    end
+
     defp claim_result(%{"failed_reason" => reason, "failed_detail" => detail}) do
       %{
         status: :failed,
@@ -88,15 +93,17 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       }
     end
 
+    defp claim_result(%{"failed_reason" => reason}), do: %{status: :failed, reason: reason}
+
     defp claim_result(%{"blocked" => true}) do
       %{
         status: :blocked,
-        reason: "{:handoff_failed, {:push_permission_blocked, \"workflow scope\"}}",
+        reason: {:handoff_failed, {:push_permission_blocked, "workflow scope"}},
         detail: "workflow scope"
       }
     end
 
-    defp claim_result(_claim), do: %{status: :completed}
+    defp claim_result(_claim), do: %{status: :completed, validation: %{overall_status: :passed, gates: []}}
 
     defp codex_token_update(claim, tokens) do
       %{
@@ -233,8 +240,99 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
   end
 
+  test "generic executor failure reports pending validation and required gates as not run", %{config: config} do
+    failed_claim =
+      claim("task-1", false)
+      |> Map.put("failed_reason", :failed)
+      |> Map.put("failed_detail", "executor failed")
+      |> put_required_gates([
+        %{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120},
+        %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_seconds" => 300}
+      ])
+
+    put_claims([failed_claim])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["outcome"] == "failed"
+    assert summary["reason"] == "worker_error"
+    assert summary["validation_status"] == "pending"
+    assert Enum.map(summary["gates"], & &1["status"]) == ["not_run", "not_run"]
+    assert Enum.map(summary["gates"], & &1["name"]) == ["check", "unit"]
+    assert Jason.decode!(summary["detail"]) == %{"detail" => "executor failed", "reason" => "failed", "status" => "failed"}
+    assert {:ok, _validated} = WorkerResult.validate(summary)
+  end
+
+  test "validation failure preserves executed gate evidence", %{config: config} do
+    gate = %{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}
+
+    validation = %{
+      overall_status: :failed,
+      gates: [%{command: gate["command"], status: :failed, exit_code: 1, duration_ms: 42, detail: "format error"}]
+    }
+
+    failed_claim = claim("task-1", false) |> Map.put("validation_result", validation) |> put_required_gates([gate])
+    put_claims([failed_claim])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["reason"] == "non_zero"
+    assert summary["validation_status"] == "failed"
+
+    assert summary["gates"] == [
+             %{
+               "name" => "check",
+               "status" => "failed",
+               "exit_code" => 1,
+               "duration_ms" => 42,
+               "timeout_ms" => 120_000,
+               "failure_detail" => "format error"
+             }
+           ]
+
+    assert {:ok, _validated} = WorkerResult.validate(summary)
+  end
+
+  test "missing implementation handoff reports pre-validation gate evidence and JSON detail", %{config: config} do
+    failed_claim =
+      claim("task-1", false)
+      |> Map.put("failed_reason", {:handoff_failed, :missing_handoff})
+      |> put_required_gates([%{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}])
+
+    put_claims([failed_claim])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["reason"] == "handoff_failed"
+    assert summary["validation_status"] == "pending"
+    assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
+
+    assert Jason.decode!(summary["detail"]) == %{
+             "reason" => ["handoff_failed", "missing_handoff"],
+             "status" => "failed"
+           }
+
+    refute summary["detail"] =~ "%{"
+    refute summary["detail"] =~ "status: :failed"
+    assert {:ok, _validated} = WorkerResult.validate(summary)
+  end
+
   test "blocked executor outcome is delivered as task.failed with an explicit blocked summary", %{config: config} do
-    put_claims([Map.put(claim("task-1", false), "blocked", true)])
+    blocked_claim =
+      claim("task-1", false)
+      |> Map.put("blocked", true)
+      |> put_required_gates([%{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}])
+
+    put_claims([blocked_claim])
     _runtime = start_runtime(config)
 
     assert_receive {:executing, "task-1", _executor}, 1_000
@@ -247,6 +345,8 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert summary["outcome"] == "blocked"
     assert summary["reason"] == "handoff_failed"
+    assert summary["validation_status"] == "pending"
+    assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
     assert summary["detail"] =~ "push_permission_blocked"
   end
 
@@ -273,7 +373,12 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
   end
 
   test "cancel command stops executor, emits evidence, and stops renewing the lease", %{config: config} do
-    put_claims([claim("task-1", false) |> Map.put("trap_shutdown", true)])
+    cancelled_claim =
+      claim("task-1", false)
+      |> Map.put("trap_shutdown", true)
+      |> put_required_gates([%{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}])
+
+    put_claims([cancelled_claim])
     runtime = start_runtime(config)
 
     assert_receive {:executing, "task-1", executor}, 1_000
@@ -288,6 +393,10 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     send(executor, :finish)
     eventually(fn -> terminal_count("task-1", "task.cancelled") == 1 end)
+
+    summary = terminal_summary("task-1", "task.cancelled")
+    assert summary["validation_status"] == "pending"
+    assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
 
     send(runtime, {:retry_terminal, "task-1"})
     Process.sleep(20)
@@ -341,9 +450,11 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       "issue_id" => "issue-1",
       "run_id" => "run-1",
       "block" => block,
-      "execution" => %{"issue" => %{"identifier" => "SYM-75"}}
+      "execution" => %{"issue" => %{"identifier" => "SYM-75"}, "required_gates" => []}
     }
   end
+
+  defp put_required_gates(claim, gates), do: put_in(claim, ["execution", "required_gates"], gates)
 
   defp start_runtime(config) do
     start_supervised!(%{
@@ -360,6 +471,13 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
   defp terminal_count(task_id, terminal_type) do
     Enum.count(state().events, fn {id, type, _} -> id == task_id and type == terminal_type end)
+  end
+
+  defp terminal_summary(task_id, terminal_type) do
+    [{^task_id, ^terminal_type, %{summary: summary}}] =
+      Enum.filter(state().events, fn {id, type, _payload} -> id == task_id and type == terminal_type end)
+
+    summary
   end
 
   defp phases(task_id) do
