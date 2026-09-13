@@ -4,22 +4,68 @@ defmodule SymphonyElixir.Codex.ModelCatalogTest do
   alias SymphonyElixir.Codex.ModelCatalog
 
   test "catalog records the Codex implementation evidence and visible model rows" do
-    assert ModelCatalog.source_evidence().codex_version == "codex-cli 0.150.1"
-    assert ModelCatalog.source_evidence().model_list_request == %{"includeHidden" => false, "limit" => 100}
+    assert ModelCatalog.source_evidence() == %{
+             codex_version: "codex-cli 0.154.0",
+             generated_schema_command: "codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913",
+             model_list_request: %{"includeHidden" => false, "limit" => 100},
+             captured_at: "2026-09-13"
+           }
 
-    assert ModelCatalog.model_ids() == [
-             "gpt-5.6-sol",
-             "gpt-5.6-terra",
-             "gpt-5.6-luna",
-             "gpt-5.5",
-             "gpt-5.3-codex-spark"
+    rows =
+      Enum.map(ModelCatalog.models(), fn row ->
+        %{
+          id: row.id,
+          model: row.model,
+          display_name: row.display_name,
+          default_reasoning_effort: row.default_reasoning_effort,
+          supported_reasoning_efforts: Enum.map(row.supported_reasoning_efforts, & &1.reasoning_effort)
+        }
+      end)
+
+    assert rows == [
+             %{
+               id: "gpt-6-astra",
+               model: "gpt-6-astra",
+               display_name: "GPT-6-Astra",
+               default_reasoning_effort: "medium",
+               supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+             },
+             %{
+               id: "gpt-5.6-sol",
+               model: "gpt-5.6-sol",
+               display_name: "GPT-5.6-Sol",
+               default_reasoning_effort: "low",
+               supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+             },
+             %{
+               id: "gpt-5.6-terra",
+               model: "gpt-5.6-terra",
+               display_name: "GPT-5.6-Terra",
+               default_reasoning_effort: "medium",
+               supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+             },
+             %{
+               id: "gpt-5.6-luna",
+               model: "gpt-5.6-luna",
+               display_name: "GPT-5.6-Luna",
+               default_reasoning_effort: "medium",
+               supported_reasoning_efforts: ~w(low medium high xhigh max)
+             },
+             %{
+               id: "gpt-5.5",
+               model: "gpt-5.5",
+               display_name: "GPT-5.5",
+               default_reasoning_effort: "medium",
+               supported_reasoning_efforts: ~w(low medium high xhigh)
+             },
+             %{
+               id: "gpt-5.3-codex-spark",
+               model: "gpt-5.3-codex-spark",
+               display_name: "GPT-5.3-Codex-Spark",
+               default_reasoning_effort: "high",
+               supported_reasoning_efforts: ~w(low medium high xhigh)
+             }
            ]
-
-    gpt_55 = Enum.find(ModelCatalog.models(), &(&1.model == "gpt-5.5"))
-    assert gpt_55.id == "gpt-5.5"
-    assert gpt_55.display_name == "GPT-5.5"
-    assert gpt_55.default_reasoning_effort == "medium"
-    assert Enum.map(gpt_55.supported_reasoning_efforts, & &1.reasoning_effort) == ~w(low medium high xhigh)
   end
 
   test "settings selector options and validators read the same catalog snapshot" do
@@ -30,7 +76,13 @@ defmodule SymphonyElixir.Codex.ModelCatalogTest do
     assert ModelCatalog.reasoning_effort_options("gpt-5.5") |> Enum.map(fn {_label, value} -> value end) == ~w(low medium high xhigh)
     assert ModelCatalog.reasoning_effort_options(nil) |> Enum.map(fn {_label, value} -> value end) == ModelCatalog.reasoning_efforts()
     assert ModelCatalog.model?("gpt-5.5")
+    assert ModelCatalog.model?("gpt-6-astra")
     assert ModelCatalog.reasoning_effort?("ultra")
+
+    assert ModelCatalog.reasoning_effort_options("gpt-6-astra") |> Enum.map(fn {_label, value} -> value end) ==
+             ~w(low medium high xhigh max ultra)
+
+    assert ModelCatalog.supports_reasoning_effort?("gpt-6-astra", "ultra")
     assert ModelCatalog.supports_reasoning_effort?("gpt-5.6-sol", "ultra")
     assert ModelCatalog.supports_reasoning_effort?("gpt-5.5", "ultra") == false
   end

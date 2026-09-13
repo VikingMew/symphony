@@ -141,7 +141,7 @@ printed. Never use `git credential fill` as a display command because its output
 resolved credential.
 
 The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact supported Codex
-CLI release, `0.150.1`. The default `symphony` build, SSH `worker`, and `execution-worker` targets
+CLI release, `0.154.0`. The default `symphony` build, SSH `worker`, and `execution-worker` targets
 copy the same installation from that stage. `SYMPHONY_EMBED_CODEX` defaults to `true` so local
 centralized builds retain their local-worker toolchain; only the published worker Panel sets it to
 `false`. Override either argument only as an explicit, validated image change; builds never follow
@@ -293,7 +293,8 @@ docker compose build --pull
 When the upgrade changes `Dockerfile:5` `ARG CODEX_VERSION`, complete this checklist before
 starting the upgraded services. `CODEX_IMAGE` must be the Codex-capable image built from that
 change: `symphony:local` for the centralized local build, or the immutable execution-worker image
-for a published deployment.
+for a published deployment. This is the pin/catalog consistency checklist established by SYM-114;
+the capture, catalog re-derivation, static comparison, and selector checks remain one upgrade unit.
 
 1. Record the CLI version from the target image and retain the output with the upgrade evidence:
 
@@ -323,7 +324,8 @@ docker run --rm --entrypoint codex "$CODEX_IMAGE" --version \
    model x effort pair that remains in the catalog. Remove every pair that returns an app-server
    rejection; do not leave an unaccepted pair available to Settings.
 5. In the same pull request, update the catalog evidence in `docs/spec-workflow-config.md` with the
-   recorded `codex-cli` version and schema-generation command.
+   recorded `codex-cli` version and schema-generation command. Run the deployment source test that
+   extracts `ARG CODEX_VERSION` and compares it with `ModelCatalog.source_evidence().codex_version`.
 
 After the catalog checks pass, start the upgraded services:
 

@@ -110,15 +110,15 @@ defmodule SymphonyElixir.Config.SchemaTest do
              Schema.parse(%{
                "codex" => %{
                  "command" => "codex app-server",
-                 "model" => " gpt-5.5 ",
-                 "reasoning_effort" => " xhigh "
+                 "model" => " gpt-6-astra ",
+                 "reasoning_effort" => " ultra "
                }
              })
 
-    assert settings.codex.model == "gpt-5.5"
-    assert settings.codex.reasoning_effort == "xhigh"
-    assert Schema.to_external_config(settings)["codex"]["model"] == "gpt-5.5"
-    assert Schema.to_external_config(settings)["codex"]["reasoning_effort"] == "xhigh"
+    assert settings.codex.model == "gpt-6-astra"
+    assert settings.codex.reasoning_effort == "ultra"
+    assert Schema.to_external_config(settings)["codex"]["model"] == "gpt-6-astra"
+    assert Schema.to_external_config(settings)["codex"]["reasoning_effort"] == "ultra"
 
     assert {:ok, settings} =
              Schema.parse(%{

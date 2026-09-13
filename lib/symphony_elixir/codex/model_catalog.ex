@@ -4,8 +4,8 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
 
   Snapshot evidence:
 
-  - `codex --version`: `codex-cli 0.150.1`
-  - `codex app-server generate-json-schema --out tmp/codex-schema-sym-108-20260913`
+  - `codex --version`: `codex-cli 0.154.0`
+  - `codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913`
     shows `TurnStartParams.model` as nullable string, `TurnStartParams.effort`
     as nullable `ReasoningEffort`, `ReasoningEffort` as a non-empty string,
     and `model/list` returning `ModelListResponse`.
@@ -30,8 +30,8 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
   @type option :: {String.t(), String.t()}
 
   @snapshot %{
-    codex_version: "codex-cli 0.150.1",
-    generated_schema_command: "codex app-server generate-json-schema --out tmp/codex-schema-sym-108-20260913",
+    codex_version: "codex-cli 0.154.0",
+    generated_schema_command: "codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913",
     model_list_request: %{"includeHidden" => false, "limit" => 100},
     captured_at: "2026-09-13"
   }
@@ -46,6 +46,13 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
   }
 
   @models [
+    %{
+      id: "gpt-6-astra",
+      model: "gpt-6-astra",
+      display_name: "GPT-6-Astra",
+      default_reasoning_effort: "medium",
+      supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+    },
     %{
       id: "gpt-5.6-sol",
       model: "gpt-5.6-sol",
