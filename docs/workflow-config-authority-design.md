@@ -34,6 +34,10 @@ design_status: landed
 - Settings / Import 是把 package 文件带进 project 的唯一受支持路径：解析文件、预览合并后的 draft、
   保存时写入该 project 的 current workflow。空库冷启动可以一次性提供同样的导入；拒绝导入则保持
   setup-required。
+- 修改 split package 中的 implementation prompt 时，worker 交付只验证 rendered prompt 与 package
+  artifact。release record 记录 merge 后宿主访问 `/settings/import`、导入 package 并 Save；预期结果是
+  import validation 成功，且保存后的 project current workflow 包含新 prompt。worker 不执行该发布，
+  不把宿主路径不可用视为 blocker/retry，也不把 checked-in YAML 报告为 live runtime effect。
 - 运行时代码 MUST NOT 从源码 checkout 读取配置。
 
 ## 为何不再同步

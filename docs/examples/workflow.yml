@@ -56,6 +56,9 @@ workflow:
     Refining:
       profile: "refinement"
   tool_policy:
+    # These code-owned policy arrays are import documentation, not a runtime
+    # dynamic-tool allowlist. Implementation completion uses the `handoff`
+    # dynamic tool after `create_pull_request`; the worker writes Linear later.
     linear:
       exposed_tools: ["linear_task_read", "linear_task_update"]
       raw_graphql: false

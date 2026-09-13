@@ -73,11 +73,13 @@ rejection before updating the task again.
 1. Call `linear_task_read` with activity.
 2. Treat comments as authoritative review feedback.
 3. Pull/sync, prepare the worktree, implement, test, verify, push the branch, and
-   attach references through the allowed project workflow.
-4. Call `linear_task_update` with a concise comment, structured `result`, and
-   relevant `references`.
-5. Request `target_state: "Needs Implementation Review"` only when validation and
-   handoff are complete.
+   call `create_pull_request` through the allowed project workflow.
+4. Call the `handoff` dynamic tool with the final comment, structured `result`,
+   and references containing the returned PR URL and completion proof.
+5. Treat accepted `handoff` submission as payload capture only. The worker runs
+   required gates and writes `Ready to Merge` through the restricted Linear
+   backend after they pass; implementation Codex does not request that state
+   through `linear_task_update`.
 
 If a human moved the task back to `Ready` or `In Progress`, read comments first
 and address the requested changes before continuing.

@@ -72,24 +72,70 @@ defmodule SymphonyElixir.PromptBuilderTest do
 
     assert prompt =~ "Workflow profile: implementation"
     assert prompt =~ "`linear_task_read`"
-    assert prompt =~ "`linear_task_update`"
+    assert prompt =~ "`handoff` dynamic tool"
+    assert prompt =~ "does not update Linear immediately"
     assert prompt =~ "Ready to Merge"
     assert prompt =~ "Ticket S-2"
   end
 
-  test "implementation profile directs Codex to the handoff skill contract" do
+  test "implementation instruction sources require handoff completion" do
     profiles = File.read!(Path.expand("../../docs/examples/profiles.yml", __DIR__))
-    skill = File.read!(Path.expand("../../.codex/skills/handoff/SKILL.md", __DIR__))
+    workflow = File.read!(Path.expand("../../docs/examples/workflow.yml", __DIR__))
+    handoff_skill = File.read!(Path.expand("../../.codex/skills/handoff/SKILL.md", __DIR__))
+    linear_skill = File.read!(Path.expand("../../.codex/skills/linear/SKILL.md", __DIR__))
+    defaults = Config.Schema.default_profiles()
 
-    assert profiles =~ "## Related skills"
-    assert profiles =~ "`handoff`:"
-    assert skill =~ "target_state: \"Ready to Merge\""
-    assert skill =~ "`comment`"
-    assert skill =~ "`result`"
-    assert skill =~ "`references`"
-    assert skill =~ "pr_url"
-    assert skill =~ "pull_request_completion_proof"
-    assert skill =~ "\"blockers\": \"\""
+    issue = %Issue{
+      identifier: "S-HANDOFF",
+      title: "Render completion contract",
+      state: "In Progress",
+      branch_name: "feature/s-handoff",
+      labels: []
+    }
+
+    rendered =
+      PromptBuilder.build_prompt(issue,
+        profile: "implementation",
+        profile_policy: defaults["implementation"],
+        allowed_updates: %{"target_states" => ["Ready to Merge"]}
+      )
+
+    sources = %{
+      "profiles package" => profiles,
+      "workflow package" => workflow,
+      "handoff skill" => handoff_skill,
+      "linear skill" => linear_skill,
+      "default implementation profile" => defaults["implementation"]["prompt"]["template"],
+      "rendered implementation prompt" => rendered
+    }
+
+    anchors = %{
+      "profiles package" => "call `handoff`",
+      "workflow package" => "Implementation completion uses the `handoff`",
+      "handoff skill" => "calling the `handoff` dynamic tool",
+      "linear skill" => "Call the `handoff` dynamic tool",
+      "default implementation profile" => "call the handoff dynamic tool",
+      "rendered implementation prompt" => "call the handoff dynamic tool"
+    }
+
+    Enum.each(sources, fn {name, source} ->
+      assert source =~ Map.fetch!(anchors, name), "#{name} does not name handoff as the completion tool"
+
+      refute source =~ ~s(linear_task_update(target_state: "Ready to Merge"),
+             "#{name} teaches direct Linear completion"
+
+      refute Regex.match?(~r/linear_task_update[^\n]*(target_state|request)[^\n]*Ready to Merge/i, source),
+             "#{name} teaches direct Linear completion"
+    end)
+
+    assert handoff_skill =~ "does not update Linear immediately"
+    assert handoff_skill =~ "runs the required gates"
+    assert handoff_skill =~ "`comment`"
+    assert handoff_skill =~ "`result`"
+    assert handoff_skill =~ "`references`"
+    assert handoff_skill =~ "pr_url"
+    assert handoff_skill =~ "pr_proof"
+    assert handoff_skill =~ "\"blockers\": \"\""
   end
 
   test "default nap and day dreaming profiles are issue-only prompts" do
