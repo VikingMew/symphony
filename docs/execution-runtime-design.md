@@ -54,17 +54,19 @@ redacted before persistence. Failure payloads retain stable class/message and av
 fields. Audit delivery failures are logged as degraded execution and do not change the tool
 response or assignment lifecycle. Centralized execution records the same audit locally in the
 Panel. For one Codex session, the worker also retains only the successful `create_pull_request` and
-exact `linear_task_update(target_state: "Ready to Merge")` audit fields needed to classify a missing
-final handoff. When both calls succeeded but no `handoff` was submitted, the executor reports
-`blocked` / `handoff_failed` with bounded PR URL, branch, commit, and Linear target-state evidence.
-Without that pair or the host-push predicate below, a missing `handoff` remains
-`{:handoff_failed, :missing_handoff}`.
+state-name-normalized `linear_task_update(target_state: "Ready to Merge")` audit fields needed to
+classify a missing final handoff. The successful PR event must provide its URL; branch and commit are
+included when present. When both calls succeeded but no `handoff` was submitted, the executor
+reports `blocked` / `handoff_failed` with that bounded PR and Linear target-state evidence. Without
+that pair or the host-push predicate below, a missing `handoff` remains
+`{:handoff_failed, :missing_handoff}` and its bounded detail names the missing event or PR URL.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
-comment/result/references in the Codex turn and reports `linear_updated: false`. The executor requires
-that payload before invoking `Validation.run/3`; once every required gate passes, it adds the fixed
-`Ready to Merge` target and performs the restricted Linear writeback. No Codex-side
-`linear_task_update` completion request is part of this worker path.
+comment/result/references in the Codex turn and reports `linear_updated: false`. Except for the two
+structured blocker predicates, the executor requires that payload before invoking
+`Validation.run/3`; once every required gate passes, it adds the fixed `Ready to Merge` target and
+performs the restricted Linear writeback. No Codex-side `linear_task_update` completion request is
+part of this worker path.
 
 The same assignment lifecycle feeds the Panel's live orchestrator snapshot. A successful claim that
 creates the worker run, applies the profile-derived started state, and returns the assignment enters
@@ -91,9 +93,10 @@ validation, `validation_status` is `pending` and every required gate from the as
 as `not_run`; the list is empty only when the assignment declared no required gates. In particular,
 a missing implementation handoff fails before validation with reason `handoff_failed`, preserves
 `missing_handoff` in deterministic JSON detail, and marks the assignment's required gates
-`not_run`. The two structured missing-final-handoff blockers run validation first and preserve its
-actual result in the terminal summary. Failure detail is serialized from structured executor terms
-and never uses Elixir `inspect/1` syntax.
+`not_run`; its bounded detail also names the missing completed-delivery event or PR URL. The two
+structured missing-final-handoff blockers run validation first, remain `blocked` when a gate fails,
+and preserve the actual result in the terminal summary. Failure detail is serialized from structured
+executor terms and never uses Elixir `inspect/1` syntax.
 
 `agent.max_retry_backoff_ms` caps only orchestrator failure-retry scheduling. A worker claim request
 contains no issue identifier for a prospective assignment and the worker keeps no per-issue retry or

@@ -256,6 +256,33 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.detail == %{"marker" => "需宿主 push", "patch_path" => "SYM-12.patch"}
   end
 
+  test "exact host-push evidence remains blocked when validation fails", %{
+    root: root,
+    codex_trace: codex_trace
+  } do
+    codex_binary =
+      fake_codex!(
+        root,
+        codex_trace,
+        ~s({"method":"turn/completed"}),
+        "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
+      )
+
+    result =
+      execute_implementation(
+        root,
+        codex_binary,
+        "host-push-validation-failed-task",
+        "交付路径:宿主 push\nImplement the task.",
+        "printf validation-failed >&2; exit 7"
+      )
+
+    assert result.status == :blocked
+    assert result.validation.overall_status == :failed
+    assert [%{status: :failed, exit_code: 7, detail: "validation-failed"}] = result.validation.gates
+    assert {:handoff_failed, {:host_push_required, _evidence}} = result.reason
+  end
+
   test "fails a true missing implementation handoff", %{
     root: root,
     codex_binary: codex_binary
@@ -263,9 +290,19 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     result = execute_implementation(root, codex_binary, "missing-handoff-task")
     assert result.status == :failed
     assert result.reason == {:handoff_failed, :missing_handoff}
+
+    assert result.detail == %{
+             "missing" => ["create_pull_request", "linear_task_update"]
+           }
   end
 
-  defp execute_implementation(root, codex_binary, task_id, description \\ "Run the fixture.") do
+  defp execute_implementation(
+         root,
+         codex_binary,
+         task_id,
+         description \\ "Run the fixture.",
+         gate_command \\ "git status --porcelain"
+       ) do
     source = Path.join(root, "source")
 
     claim = %{
@@ -283,6 +320,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "execution" =>
         panel_payload(source, codex_binary, "implementation")
         |> put_in(["issue", "description"], description)
+        |> put_in(["required_gates", Access.at(0), "command"], gate_command)
         |> ExecutionPayload.from_task_payload()
     }
 

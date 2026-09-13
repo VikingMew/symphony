@@ -311,7 +311,17 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     put_persisted_issue(issue_id, identifier)
     put_running(pid, issue_id, identifier, run_id: "run-worker-blocked")
 
-    Orchestrator.worker_task_finished(issue_id, {:blocked, reason}, orchestrator)
+    outcome =
+      WorkerApiController.terminal_outcome("task.failed", %{
+        "outcome" => "blocked",
+        "reason" => "handoff_failed",
+        "detail" => ~s({"marker":"需宿主 push","patch_path":"SYM-110.patch"}),
+        "validation_status" => "failed",
+        "gates" => [%{"name" => "check", "status" => "failed"}]
+      })
+
+    assert outcome == {:blocked, reason}
+    Orchestrator.worker_task_finished(issue_id, outcome, orchestrator)
 
     state = :sys.get_state(pid)
     assert state.failure_counts == %{}

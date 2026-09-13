@@ -266,11 +266,13 @@ orchestrator has no blocked-reason or protocol-method whitelist.
 The worker executor emits an explicit `blocked` / `handoff_failed` outcome after validation when an
 implementation has no final handoff and either: the payload description's first non-empty line is
 exactly `交付路径:宿主 push` and the workspace root contains `<issue-identifier>.patch`; or the same
-Codex session successfully recorded `create_pull_request` and
-`linear_task_update(target_state: "Ready to Merge")`. The first form carries only the root-relative
-patch path and `需宿主 push`; the second carries bounded PR URL, branch, commit, and target-state
-evidence. Without either structured form, missing handoff remains `failed` and consumes the normal
-failure budget. Permission-detail text alone never selects the blocked path.
+Codex session successfully recorded `create_pull_request` with a PR URL and a `linear_task_update`
+whose target state normalizes to `Ready to Merge`. The first form carries only the root-relative
+patch path and `需宿主 push`; the second carries the PR URL, normalized target state, and any provided
+branch and commit. Either remains blocked when validation fails and carries the actual gate evidence.
+Without either structured form, missing handoff remains `failed`, names the missing event or PR URL
+in bounded detail, and consumes the normal failure budget. Permission-detail text alone never
+selects the blocked path.
 
 External worker terminal events carry the same normalized outcome vocabulary at the assignment
 boundary. `task.completed` reports `success`, `task.cancelled` reports `cancelled`, and

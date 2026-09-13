@@ -95,6 +95,20 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     defp claim_result(%{"failed_reason" => reason}), do: %{status: :failed, reason: reason}
 
+    defp claim_result(%{"blocked_validation_failed" => true}) do
+      evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
+
+      %{
+        status: :blocked,
+        reason: {:handoff_failed, {:host_push_required, evidence}},
+        detail: evidence,
+        validation: %{
+          overall_status: :failed,
+          gates: [%{status: :failed, exit_code: 7, duration_ms: 42, detail: "validation failed"}]
+        }
+      }
+    end
+
     defp claim_result(%{"blocked" => true}) do
       evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
 
@@ -477,6 +491,29 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       "block" => block,
       "execution" => %{"issue" => %{"identifier" => "SYM-75"}, "required_gates" => []}
     }
+  end
+
+  test "blocked host-push outcome preserves failed validation evidence", %{config: config} do
+    blocked_claim =
+      claim("task-1", false)
+      |> Map.put("blocked_validation_failed", true)
+      |> put_required_gates([%{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}])
+
+    put_claims([blocked_claim])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["outcome"] == "blocked"
+    assert summary["reason"] == "handoff_failed"
+    assert summary["validation_status"] == "failed"
+
+    assert [%{"name" => "check", "status" => "failed", "exit_code" => 7, "failure_detail" => "validation failed"}] =
+             summary["gates"]
+
+    assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
   defp put_required_gates(claim, gates), do: put_in(claim, ["execution", "required_gates"], gates)

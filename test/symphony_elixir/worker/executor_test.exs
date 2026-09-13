@@ -32,14 +32,19 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     on_exit(fn -> File.rm_rf(workspace) end)
 
     payload = implementation_payload("\n\n交付路径:宿主 push\nImplement the task.")
-    missing_handoff = %{handoff: nil}
+
+    missing_handoff = %{
+      handoff: nil,
+      detail: nil,
+      delivery_evidence: {:incomplete, %{"missing" => ["create_pull_request", "linear_task_update"]}}
+    }
 
     for codex <- [
-          %{handoff: nil, detail: "需宿主 push"},
-          %{handoff: nil, detail: "permission denied with 403 workflow scope"},
-          %{handoff: nil, detail: %{status: "blocked", marker: "需宿主 push"}}
+          %{missing_handoff | detail: "需宿主 push"},
+          %{missing_handoff | detail: "permission denied with 403 workflow scope"},
+          %{missing_handoff | detail: %{status: "blocked", marker: "需宿主 push"}}
         ] do
-      assert {:error, {:handoff_failed, :missing_handoff}} =
+      assert {:error, {:handoff_failed, :missing_handoff}, _evidence} =
                Executor.handoff_requirement(payload, codex, workspace)
     end
 
@@ -49,7 +54,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
              Executor.handoff_requirement(payload, missing_handoff, workspace)
 
     for description <- ["交付路径:宿主 push ", "Implement the task."] do
-      assert {:error, {:handoff_failed, :missing_handoff}} =
+      assert {:error, {:handoff_failed, :missing_handoff}, _evidence} =
                payload
                |> put_in([Access.key!(:codex), Access.key!(:issue), Access.key!(:description)], description)
                |> Executor.handoff_requirement(missing_handoff, workspace)
@@ -61,42 +66,86 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
       %{
         tool: "linear_task_update",
         status: "success",
-        profile: "implementation",
-        arguments: %{"target_state" => "Ready to Merge"},
+        arguments: %{"comment" => "done", "target_state" => "  READY TO MERGE  "},
         result: %{"requested_state" => "Ready to Merge"}
       },
       %{
         tool: "create_pull_request",
         status: "success",
-        profile: "implementation",
         arguments: %{},
-        result: %{
-          "url" => "https://github.com/VikingMew/symphony/pull/105",
-          "head" => "vikingmew-sym-108",
-          "head_oid" => "abc123"
-        }
+        result: %{"url" => "https://github.com/VikingMew/symphony/pull/105"}
       }
     ]
 
     evidence = %{
       "pr_url" => "https://github.com/VikingMew/symphony/pull/105",
-      "branch" => "vikingmew-sym-108",
-      "commit" => "abc123",
       "linear_state" => "Ready to Merge"
     }
 
-    assert Executor.completed_delivery_evidence(events) == evidence
+    assert Executor.completed_delivery_evidence(events) == {:complete, evidence}
 
-    codex = %{handoff: nil, delivery_evidence: evidence}
+    full_pr =
+      put_in(List.last(events), [:result], %{
+        "url" => evidence["pr_url"],
+        "head" => "vikingmew-sym-108",
+        "head_oid" => "abc123"
+      })
+
+    assert {:complete,
+            %{
+              "pr_url" => "https://github.com/VikingMew/symphony/pull/105",
+              "branch" => "vikingmew-sym-108",
+              "commit" => "abc123",
+              "linear_state" => "Ready to Merge"
+            }} = Executor.completed_delivery_evidence([hd(events), full_pr])
+
+    codex = %{handoff: nil, delivery_evidence: {:complete, evidence}}
 
     assert {:ok, {:blocked, {:handoff_failed, {:completed_delivery_missing_handoff, ^evidence}}, ^evidence}} =
              Executor.handoff_requirement(implementation_payload("Implement the task."), codex, "/tmp")
 
-    assert Executor.completed_delivery_evidence(tl(events)) == nil
-    assert Executor.completed_delivery_evidence([hd(events)]) == nil
+    assert Executor.completed_delivery_evidence(tl(events)) ==
+             {:incomplete, %{"missing" => ["linear_task_update"]}}
+
+    assert Executor.completed_delivery_evidence([hd(events)]) ==
+             {:incomplete, %{"missing" => ["create_pull_request"]}}
 
     failed_pr = put_in(List.last(events), [:status], "failure")
-    assert Executor.completed_delivery_evidence([hd(events), failed_pr]) == nil
+
+    assert Executor.completed_delivery_evidence([hd(events), failed_pr]) ==
+             {:incomplete, %{"missing" => ["create_pull_request"]}}
+
+    incomplete =
+      Executor.completed_delivery_evidence([
+        hd(events),
+        %{tool: "create_pull_request", status: "success", result: %{}}
+      ])
+
+    assert incomplete == {:incomplete, %{"missing" => ["create_pull_request.result.url"]}}
+
+    wrong_state = put_in(hd(events), [:arguments, "target_state"], "Blocked")
+
+    assert Executor.completed_delivery_evidence([wrong_state, List.last(events)]) ==
+             {:incomplete, %{"missing" => ["linear_task_update.arguments.target_state"]}}
+
+    assert Executor.completed_delivery_evidence([
+             wrong_state,
+             %{tool: "create_pull_request", status: "success", result: %{}}
+           ]) ==
+             {:incomplete,
+              %{
+                "missing" => [
+                  "create_pull_request.result.url",
+                  "linear_task_update.arguments.target_state"
+                ]
+              }}
+
+    assert {:error, {:handoff_failed, :missing_handoff}, %{"missing" => ["create_pull_request.result.url"]}} =
+             Executor.handoff_requirement(
+               implementation_payload("Implement the task."),
+               %{handoff: nil, delivery_evidence: incomplete},
+               "/tmp"
+             )
   end
 
   test "prepares a new task branch from the latest configured default branch" do

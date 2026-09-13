@@ -107,11 +107,13 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 缺失或不在上述取值内按 `failed` 处理，协议异常不得绕过失败预算。
 worker executor 对两种无 final handoff 的结构化证据直接产生 `blocked` / `handoff_failed`：一是 payload
 issue description 首个非空行精确为 `交付路径:宿主 push` 且 workspace 根存在
-`<issue-identifier>.patch`；二是同一 Codex session 的 `create_pull_request` 与精确
-`linear_task_update(target_state: "Ready to Merge")` 均成功。前者在 validation 后保留 root-relative
-patch path 与 `需宿主 push`，后者保留 PR URL、branch、commit 与 target state。self-reported blocked、
-marker-only、patch-only、permission-detail-only 均不满足 host-push 判据；两种结构化证据都不存在时，
-missing handoff 仍是 `failed` 并消耗普通预算。
+`<issue-identifier>.patch`；二是同一 Codex session 的 `create_pull_request` 成功并带 PR URL，且
+`linear_task_update` 的 target state 经现有 state-name 规范化后为 `Ready to Merge`。前者保留
+root-relative patch path 与 `需宿主 push`，后者保留 PR URL、规范化 target state 及已提供的 branch、
+commit。两者均在 validation 后落 `blocked`，gate 失败时仍保留 blocked 与实际 gate 结果。
+self-reported blocked、marker-only、patch-only、permission-detail-only 均不满足 host-push 判据；两种
+结构化证据都不存在时，missing handoff 仍是 `failed` 并消耗普通预算，bounded detail 指明缺失事件或
+PR URL。
 持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
 claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
 才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。
