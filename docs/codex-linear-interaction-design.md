@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-12
+updated: 2026-09-13
 design_status: landed
 ---
 
@@ -188,6 +188,14 @@ Req proxy 选择按请求 URL scheme 决定。`https` 请求优先 `HTTPS_PROXY`
 
 - `implementation_handoff` 记录 `started`、`completed`、`failed` phase event。
 - event 包含 issue identifier/id、session id、run id；completed event 包含 PR URL、repo、base、head。
+- 每次 Codex-side `linear_task_read`、`linear_task_update`、`linear_issue_create`、
+  `create_pull_request` 和 `handoff` dynamic tool call 都写一个 `linear.tool_call` event，成功和
+  失败都保留；中心化和 worker 路径使用同一 payload 与 audit delivery contract。
+- `create_pull_request` 成功 audit result 只保留 bounded PR evidence（URL、repository、base、head、
+  head OID 和 source）；`handoff` 成功 result 只保留 accepted/linear_updated。arguments、result 和
+  error 经过统一 redaction，credential、token、secret 和 PR completion proof 永不进入 persisted payload。
+- 失败 audit payload 保留稳定的 `error.class`、`error.message` 及可用的 `error.reason`，可区分
+  policy rejection、validation、PR proof mismatch、不可用 backend 和 backend failure。
 - profile-policy rejection、GitHub typed error、Linear GraphQL/update failure和 persistence degradation
   都必须可见，不能静默转换成成功。
 - attachment、comment 和 state update 仍写 task-tool audit；Linear state update 永远是 handoff 最后一步。

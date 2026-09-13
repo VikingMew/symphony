@@ -46,9 +46,16 @@ It renews only that assignment and emits accepted/progress/completed/failed/canc
 project, issue, run, worker/session, and assignment correlation. The Panel rejects expired or
 mismatched events. Restricted Linear tool audits use the same worker task-event endpoint: the
 worker sends a non-terminal `linear.tool_call` event with assignment correlation, and only the
-Panel persists it. Audit delivery failures are logged as degraded execution and do not change the
-tool response or assignment lifecycle. Centralized execution records the same audit locally in the
-Panel.
+Panel persists it. The forwarded audit surface includes every `linear_task_read`,
+`linear_task_update`, `linear_issue_create`, `create_pull_request`, and `handoff` call, with one
+event for each success or failure. PR success evidence is bounded to URL and repository/base/head
+metadata; accepted handoff results are bounded, and credentials, tokens, and completion proofs are
+redacted before persistence. Failure payloads retain stable class/message and available reason
+fields. Audit delivery failures are logged as degraded execution and do not change the tool
+response or assignment lifecycle. Centralized execution records the same audit locally in the
+Panel. A missing `handoff` event remains distinct from a failed `handoff` event, so
+`require_handoff/2` continues to report `{:handoff_failed, :missing_handoff}` only when no handoff
+was submitted.
 
 The same assignment lifecycle feeds the Panel's live orchestrator snapshot. A successful claim that
 creates the worker run, applies the profile-derived started state, and returns the assignment enters
