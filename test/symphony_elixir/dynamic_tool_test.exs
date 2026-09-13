@@ -57,10 +57,21 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         issue: issue,
         profile: "implementation",
         session_id: "thread-1-turn-1",
+        run_id: "run-pull-request-success",
+        audit_recorder: &PanelRecorder.record/2,
         pull_request_proof_secret: "proof-secret",
         pull_request_creator: fn ^issue, rendered, _opts ->
           assert rendered == %{title: payload["title"], body: payload["body"]}
-          {:ok, %{url: "https://github.com/acme/app/pull/1"}}
+
+          {:ok,
+           %{
+             url: "https://github.com/acme/app/pull/1",
+             repository: "acme/app",
+             base: "main",
+             head: "feature/sym-1",
+             head_oid: String.duplicate("a", 40),
+             source: :gh
+           }}
         end
       )
 
@@ -73,11 +84,28 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
         issue: issue,
         profile: "refinement",
         session_id: "thread-1-turn-2",
+        run_id: "run-pull-request-policy",
+        audit_recorder: &PanelRecorder.record/2,
         pull_request_proof_secret: "proof-secret"
       )
 
     assert rejected["success"] == false
     assert rejected["output"] =~ "not allowed"
+
+    events = FakePersistence.list_events(event_type: "linear.tool_call")
+    assert Enum.count(events, &(&1.payload.tool == "create_pull_request")) == 2
+
+    success_event = Enum.find(events, &(&1.run_id == "run-pull-request-success"))
+    assert success_event.payload.status == "success"
+    assert success_event.payload.result["url"] == "https://github.com/acme/app/pull/1"
+    assert success_event.payload.result["repository"] == "acme/app"
+    assert success_event.payload.result["head"] == "feature/sym-1"
+    refute inspect(success_event.payload) =~ "completion_proof"
+    refute inspect(success_event.payload) =~ "proof-secret"
+
+    failure_event = Enum.find(events, &(&1.run_id == "run-pull-request-policy"))
+    assert failure_event.payload.status == "failure"
+    assert failure_event.payload.error.class == "pull_request_not_allowed"
   end
 
   test "handoff accepts only the pull request created by the current session" do
@@ -97,6 +125,9 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     response =
       DynamicTool.execute("handoff", payload,
         profile: "implementation",
+        run_id: "run-handoff-success",
+        session_id: "thread-1-turn-3",
+        audit_recorder: &PanelRecorder.record/2,
         pull_request_result: fn -> created end,
         handoff_submitter: fn submitted ->
           send(self(), {:handoff, submitted})
@@ -111,10 +142,33 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert submitted["references"]["branch"] == "feature/sym-1"
     assert submitted["references"]["commit"] == "abc123"
 
+    success_events = FakePersistence.list_events(event_type: "linear.tool_call")
+    [success_event] = Enum.filter(success_events, &(&1.payload.tool == "handoff"))
+    assert success_event.payload.status == "success"
+    assert success_event.payload.result == %{"accepted" => true, "linear_updated" => false}
+    refute inspect(success_event.payload) =~ "session-proof"
+
     mismatched = put_in(payload, ["references", "pr_proof"], "other-proof")
-    rejected = DynamicTool.execute("handoff", mismatched, profile: "implementation", pull_request_result: fn -> created end)
+
+    rejected =
+      DynamicTool.execute("handoff", mismatched,
+        profile: "implementation",
+        run_id: "run-handoff-proof-mismatch",
+        session_id: "thread-1-turn-4",
+        audit_recorder: &PanelRecorder.record/2,
+        pull_request_result: fn -> created end
+      )
+
     assert rejected["success"] == false
     assert rejected["output"] =~ "create_pull_request"
+
+    [failure_event] =
+      FakePersistence.list_events(event_type: "linear.tool_call")
+      |> Enum.filter(&(&1.run_id == "run-handoff-proof-mismatch"))
+
+    assert failure_event.payload.status == "failure"
+    assert failure_event.payload.error.class == "pull_request_proof_mismatch"
+    refute inspect(failure_event.payload) =~ "other-proof"
   end
 
   test "handoff reports stable field paths for missing and empty values" do

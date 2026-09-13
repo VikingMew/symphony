@@ -1059,9 +1059,11 @@ defmodule SymphonyElixir.AgentRunnerTest do
       assert Enum.all?(events, &(&1.payload.session_id == "thread-handoff-turn-handoff"))
       assert List.first(events).payload.url == "https://github.com/acme/app/pull/12"
 
-      [audit] = FakePersistence.list_events(issue_identifier: "SYM-1", event_type: "linear.tool_call")
+      audits = FakePersistence.list_events(issue_identifier: "SYM-1", event_type: "linear.tool_call")
+      assert Enum.map(audits, & &1.payload.tool) |> Enum.sort() == ["create_pull_request", "linear_task_update"]
+
+      audit = Enum.find(audits, &(&1.payload.tool == "linear_task_update"))
       assert audit.run_id == "run-handoff"
-      assert audit.payload.tool == "linear_task_update"
       assert audit.payload.status == "success"
     after
       File.rm_rf(test_root)

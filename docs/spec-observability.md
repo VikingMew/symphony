@@ -41,6 +41,21 @@ Requirements:
 - If a configured log sink fails, the service SHOULD continue running when possible and emit an
   operator-visible warning through any remaining sink.
 
+### 13.2.1 Restricted Tool Audit History
+
+Persisted run history MUST include one `linear.tool_call` event for every Codex-side
+`linear_task_read`, `linear_task_update`, `linear_issue_create`, `create_pull_request`, and `handoff`
+dynamic tool call, including successful and failed calls. The event payload retains the tool,
+status, session/run correlation, bounded arguments, and either a normalized result or structured
+`error.class`, `error.message`, and available `error.reason`.
+
+For `create_pull_request`, normalized success evidence is limited to the PR URL and available
+repository, base, head, head OID, and source metadata. A successful `handoff` exposes only its
+accepted result. Credentials, tokens, secrets, and PR completion proof values MUST be redacted or
+omitted from persisted arguments and results. Worker delivery uses the existing task-event path;
+delivery degradation is observable and does not replace the original tool response. A missing
+`handoff` event remains distinct from a persisted failed `handoff` event.
+
 ### 13.3 Runtime Snapshot / Monitoring Interface (OPTIONAL but RECOMMENDED)
 
 If the implementation exposes a synchronous runtime snapshot (for dashboards or monitoring), it

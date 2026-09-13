@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Worker.LinearToolAuditRecorderTest do
   import ExUnit.CaptureLog
 
   alias SymphonyElixir.Codex.DynamicTool
+  alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Worker.{Config, LinearToolAuditRecorder}
 
   defmodule Client do
@@ -64,6 +65,70 @@ defmodule SymphonyElixir.Worker.LinearToolAuditRecorderTest do
     assert log =~ "run_id=\"run-1\""
     assert log =~ "session_id=\"codex-session-1\""
     assert log =~ "transport_error"
+  end
+
+  test "forwards pull request and handoff audits with bounded proof evidence" do
+    context = context({:ok, %{}})
+    recorder = &LinearToolAuditRecorder.record(context, &1, &2)
+    issue = %Issue{id: "issue-1", identifier: "SYM-87", branch_name: "feature/sym-87"}
+
+    create_response =
+      DynamicTool.execute("create_pull_request", %{"title" => "SYM-87: Ship", "body" => "body"},
+        issue: issue,
+        profile: "implementation",
+        run_id: "run-create",
+        session_id: "codex-session-1",
+        pull_request_proof_secret: "proof-secret",
+        audit_recorder: recorder,
+        pull_request_creator: fn _issue, _rendered, _opts ->
+          {:ok,
+           %{
+             url: "https://github.com/acme/app/pull/87",
+             repository: "acme/app",
+             base: "main",
+             head: "feature/sym-87",
+             head_oid: String.duplicate("b", 40),
+             source: :gh
+           }}
+        end
+      )
+
+    assert create_response["success"]
+    create_output = Jason.decode!(create_response["output"])
+    assert_receive {:event, _identity, "task-1", "linear.tool_call", create_payload}
+    assert create_payload.tool == "create_pull_request"
+    assert create_payload.status == "success"
+    assert create_payload.result["repository"] == "acme/app"
+    refute inspect(create_payload) =~ "proof-secret"
+    refute inspect(create_payload) =~ "completion_proof"
+
+    handoff_payload = %{
+      "comment" => "done",
+      "result" => %{"validation" => "green"},
+      "references" => %{
+        "branch" => "feature/sym-87",
+        "commit" => "abc123",
+        "pr_url" => create_output["url"],
+        "pr_proof" => create_output["completion_proof"]
+      }
+    }
+
+    handoff_response =
+      DynamicTool.execute("handoff", handoff_payload,
+        profile: "implementation",
+        run_id: "run-handoff",
+        session_id: "codex-session-1",
+        audit_recorder: recorder,
+        pull_request_result: fn -> %{url: create_output["url"], completion_proof: create_output["completion_proof"]} end,
+        handoff_submitter: fn _payload -> :ok end
+      )
+
+    assert handoff_response["success"]
+    assert_receive {:event, _identity, "task-1", "linear.tool_call", handoff_audit}
+    assert handoff_audit.tool == "handoff"
+    assert handoff_audit.status == "success"
+    assert handoff_audit.result == %{"accepted" => true, "linear_updated" => false}
+    refute inspect(handoff_audit) =~ create_output["completion_proof"]
   end
 
   defp context(outcome) do

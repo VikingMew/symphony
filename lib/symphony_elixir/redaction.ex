@@ -124,5 +124,5 @@ defmodule SymphonyElixir.Redaction do
       key
       |> to_string()
       |> String.downcase()
-      |> String.contains?(["token", "secret", "password", "credential", "authorization", "api_key", "cookie"])
+      |> String.contains?(["token", "secret", "password", "credential", "authorization", "api_key", "cookie", "proof"])
 end

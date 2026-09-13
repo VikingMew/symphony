@@ -288,8 +288,51 @@ docker compose exec -T postgres sh -lc \
   > "symphony-$(date +%Y%m%d-%H%M%S).dump"
 docker image tag symphony:local symphony:rollback
 docker compose build --pull
+```
+
+When the upgrade changes `Dockerfile:5` `ARG CODEX_VERSION`, complete this checklist before
+starting the upgraded services. `CODEX_IMAGE` must be the Codex-capable image built from that
+change: `symphony:local` for the centralized local build, or the immutable execution-worker image
+for a published deployment.
+
+1. Record the CLI version from the target image and retain the output with the upgrade evidence:
+
+```bash
+export CODEX_IMAGE=symphony:local
+mkdir -p tmp/codex-catalog
+docker run --rm --entrypoint codex "$CODEX_IMAGE" --version \
+  | tee tmp/codex-catalog/version.txt
+```
+
+2. Use that same image to initialize `codex app-server`, request the complete visible model list,
+   and retain its raw JSON-lines response:
+
+```bash
+{
+  printf '%s\n' '{"id":1,"method":"initialize","params":{"capabilities":{"experimentalApi":true},"clientInfo":{"name":"symphony-model-catalog","title":"Symphony Model Catalog","version":"0.1.0"}}}'
+  printf '%s\n' '{"method":"initialized","params":{}}'
+  printf '%s\n' '{"id":2,"method":"model/list","params":{"includeHidden":false,"limit":100}}'
+} | docker run --rm -i --entrypoint codex "$CODEX_IMAGE" app-server \
+  | tee tmp/codex-catalog/model-list.jsonl
+```
+
+3. Update `SymphonyElixir.Codex.ModelCatalog` from the captured evidence: set `codex_version` to
+   the recorded `codex --version`, replace the model rows with the `model/list` rows, and replace
+   each row's `supported_reasoning_efforts` with `supportedReasoningEfforts` from that response.
+4. Against the same initialized target app-server, submit and retain one accepted turn for every
+   model x effort pair that remains in the catalog. Remove every pair that returns an app-server
+   rejection; do not leave an unaccepted pair available to Settings.
+5. In the same pull request, update the catalog evidence in `docs/spec-workflow-config.md` with the
+   recorded `codex-cli` version and schema-generation command.
+
+After the catalog checks pass, start the upgraded services:
+
+```bash
 docker compose up -d
 ```
+
+6. Open `/settings/runtime`, save one non-default model and reasoning-effort pair, trigger the next
+   issue turn, and confirm its `turn/start.params` contains that exact `model` and `effort`.
 
 The migration job runs before the new service. Verify both health endpoints and recent
 project/run/event state. To roll application code back, restore the prior image tag in Compose (or
