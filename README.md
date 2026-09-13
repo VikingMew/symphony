@@ -21,7 +21,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Optional HTTP worker mode with live Linear-backed claims and ephemeral Panel assignments.
 - Per-issue workspaces and Git worktrees.
 - PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, sessions, and workspace records.
-- Settings pages for Projects, Workflow, Agents, Runtime, and package import.
+- Settings pages for Projects, Agents, Runtime, and package import.
 - Dashboard, Runs, Run Detail, Issues, Events, Workers, Linear diagnostics, and Analytics pages, including persisted issue-flow quality proxies and non-blocking warnings.
 - Structured logs, JSON observability APIs, worker APIs, and health probes.
 
@@ -138,11 +138,10 @@ mise exec -- ./bin/symphony --port 4000
 Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 1. Settings / Projects: Linear project slug and repository URL.
-2. Settings / Workflow: active states, bootstrap, hooks, and polling. Routing and transitions are
-   an immutable code contract.
-3. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
-4. Settings / Runtime: Codex command, sandbox, approval policy, workspace paths, and worker settings.
-5. Settings / Import: optional workflow/profile package import with preview before applying.
+2. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
+3. Settings / Runtime: execution mode, runtime checklist, and Codex model/reasoning effort selectors.
+4. Settings / Import: optional workflow/profile package import with preview before applying, including
+   bootstrap, hooks, polling, and state lists. Routing and transitions are an immutable code contract.
 
 If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
 

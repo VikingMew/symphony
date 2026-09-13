@@ -289,7 +289,8 @@ profiles:
 `project.repository_url` 指向的仓库 clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
 workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动 agent。
 `workspace.initialize_timeout_ms` 控制项目初始化阶段的超时，包括 clone/worktree 准备和
-`project.setup_commands`；它在 Settings / Workflow / Bootstrap 中编辑。`hooks.timeout_ms` 只控制
+`project.setup_commands`；这些 workflow-only 字段可通过 Settings / Import 导入 workflow package。
+`hooks.timeout_ms` 只控制
 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 
 如果同一个本地机器会同时处理很多同仓库任务，可以在 Project Settings 里把 source strategy 设为
@@ -305,7 +306,9 @@ default branch、checkout depth、source strategy 等项目自身信息。Sympho
 如果 Codex 不在默认 PATH 中，使用 `codex.pre_start_commands`，不要把这些命令写进 lifecycle hook。
 这些命令和最终 `codex.command` 在同一个 shell 里执行，因此 `source ~/.nvs/nvs.sh`、
 `nvs use 22 >/dev/null`、`export PATH="$HOME/.local/bin:$PATH"` 这类环境准备会影响后续
-`codex app-server`：
+`codex app-server`。`codex.command` 只负责启动 app-server；Codex model 与 reasoning effort
+可以在 Settings / Runtime 用枚举 selector 保存，也可以通过 `workflow.yml` 的
+`codex.model` / `codex.reasoning_effort` 导入，保存后只影响后续 turn/session：
 
 ```yaml
 codex:
@@ -313,6 +316,8 @@ codex:
     - source ~/.nvs/nvs.sh
     - nvs use 22 >/dev/null
   command: codex app-server
+  model: gpt-5.5
+  reasoning_effort: xhigh
 ```
 
 Rust 项目可以这样写 bootstrap：
@@ -351,9 +356,10 @@ hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认�
 
 Web UI 不提供独立的 workflow/routing 编辑 tab；这些配置通过 split workflow package 导入，
 PostgreSQL current workflow 仍是运行时权威。`/settings/agents` tab 管理 base prompt 和
-profiles。Settings 顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时
-保持默认 project 行为）；`/settings/projects` tab 始终列出全部 project 用于 enable/disable
-编辑。后续导入/导出 split package 时，`profiles.yml` 的 `base_prompt` 是共享
+profiles，`/settings/runtime` tab 管理 Codex model 与 reasoning effort selector。Settings
+顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时保持默认 project 行为）；
+`/settings/projects` tab 始终列出全部 project 用于 enable/disable 编辑。后续导入/导出
+split package 时，`profiles.yml` 的 `base_prompt` 是共享
 prompt 来源。
 
 `codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
@@ -475,7 +481,7 @@ mise exec -- ./bin/symphony \
 /settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
 /settings/import workflow package 导入（顶部 project 选择器限定到指定 project）
 /settings/agents agent profile、base prompt、profile prompt、allowed updates 配置（project 选择器限定）
-/settings/runtime tracker/config 摘要（project 选择器限定）
+/settings/runtime runtime 摘要与 Codex model/reasoning effort selector（project 选择器限定）
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
 /api/v1/:issue_identifier 当前 live 状态；inactive issue 会回退到持久化状态和最近结果

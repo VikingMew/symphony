@@ -4,7 +4,7 @@ genre: design
 domain: [hot-update, runtime]
 status: current
 language: zh-CN
-updated: 2026-08-07
+updated: 2026-09-13
 design_status: landed
 ---
 
@@ -26,12 +26,14 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 导入 package 或保存 Agents 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
+Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 导入 package、保存 Agents 或保存 Runtime 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
 
 关键路径：
 
 - `/settings/import` 导入 workflow/routing/runtime 共享配置。
 - `/settings/agents` 保存 base prompt、profiles、allowed updates 和 executor policy。
+- `/settings/runtime` 保存 Codex runtime selector，例如 `codex.model` 与
+  `codex.reasoning_effort`。
 - 保存成功后，持久化边界在返回成功前发布完整的内存 snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
@@ -48,7 +50,7 @@ Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记�
 - executor type。
 - workspace root。
 - hook commands。
-- Codex command 和部分 Codex runtime policy。
+- Codex command、`codex.model`、`codex.reasoning_effort` 和部分 Codex runtime policy。
 - polling interval 等 workflow contract 字段。
 
 保存后如果配置能解析但语义不完整，Settings 会显示 `Configuration check failed`。这类错误不会阻止保存，但会让 runtime 保持不可监听或不可调度，直到配置修好。
@@ -71,8 +73,9 @@ http://127.0.0.1:4000/settings
 修改配置后点击对应页面的保存按钮：
 
 - Projects 页面：保存 project 字段，例如 Linear project slug、repository URL、default branch。
-- Workflow 页面：保存 workflow state model、hooks、workspace、codex 等共享 workflow 字段。
 - Agents 页面：保存 prompt 和 profile 设置。
+- Runtime 页面：保存 Codex model 与 reasoning effort selector。
+- Import 页面：导入 workflow state model、hooks、workspace、codex 等共享 workflow 字段。
 
 保存成功后，页面会显示 saved 反馈；Linear 相关配置建议再打开 `/diagnostics/linear` 验证。
 
@@ -84,8 +87,12 @@ http://127.0.0.1:4000/settings
 
 - 新保存的 workflow 影响后续读取配置、后续 dispatch、retry、resumed turn 和 operator task。
 - 已执行中的 turn 可使用已接收的输入完成；下一安全执行边界重新解析当前 workflow。
+- `codex.model` 与 `codex.reasoning_effort` 是 Codex `turn/start` override。未配置时不发送
+  override，继续由 `codex.command` 启动的 app-server 默认配置决定；显式配置时只影响后续
+  turn/session，不改写已经启动的 turn。
 - worker claim 每次从最新 workflow 构造 ephemeral payload；不存在尚未 claim 的 persisted task，
-  已发放的当前 assignment 不在保存时改写。
+  payload 会携带当次 snapshot 中的 Codex model/effort selector；已发放的当前 assignment
+  不在保存时改写。
 - 已经启动的 Codex turn 不应被中途替换 prompt；下一次调度或下一次 run 才应使用新配置。
 - 如果新配置不通过 runtime validation，orchestrator 应停止监听或调度，而不是继续用旧配置假装成功。
 

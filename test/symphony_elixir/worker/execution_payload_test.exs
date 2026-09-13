@@ -13,6 +13,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert Map.has_key?(execution, "revision") == false
     assert execution["branch"] == "vikingmew-sym-45"
     assert execution["codex"]["command"] == "codex app-server"
+    assert execution["codex"]["model"] == "gpt-5.5"
+    assert execution["codex"]["reasoning_effort"] == "xhigh"
     assert execution["codex"]["thread_sandbox"] == "danger-full-access"
     assert execution["codex"]["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
@@ -74,6 +76,8 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
       },
       "codex" => %{
         "command" => "codex app-server",
+        "model" => "gpt-5.5",
+        "reasoning_effort" => "xhigh",
         "pre_start_commands" => [],
         "approval_policy" => "never",
         "thread_sandbox" => "danger-full-access",

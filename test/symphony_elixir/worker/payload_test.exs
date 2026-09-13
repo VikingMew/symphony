@@ -8,6 +8,8 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert payload.repository == "https://example.test/repo.git"
     assert payload.codex.prompt == "Implement the task."
     assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
+    assert payload.codex.config["model"] == "gpt-5.5"
+    assert payload.codex.config["reasoning_effort"] == "xhigh"
     assert payload.codex.config["thread_sandbox"] == "danger-full-access"
     assert payload.codex.config["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert Enum.map(payload.gates, & &1.command) == ["scripts/check.sh"]
@@ -28,6 +30,18 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     invalid = Map.put(valid_payload(), "required_gates", [%{"command" => "", "timeout_seconds" => 600}])
 
     assert {:error, {:invalid_execution_payload, _}} = Payload.parse(invalid)
+  end
+
+  test "validates codex model and reasoning effort in the config slice" do
+    invalid =
+      valid_payload()
+      |> put_in(["codex", "model"], "gpt-5.5")
+      |> put_in(["codex", "reasoning_effort"], "ultra")
+
+    assert {:error, {:invalid_execution_payload, message}} = Payload.parse(invalid)
+    assert message =~ "codex config invalid:"
+    assert message =~ "codex.reasoning_effort"
+    assert message =~ "for model gpt-5.5"
   end
 
   test "rejects credentials and workflow version fields anywhere in the payload" do
@@ -52,6 +66,8 @@ defmodule SymphonyElixir.Worker.PayloadTest do
       "hooks" => [],
       "codex" => %{
         "command" => "codex app-server",
+        "model" => "gpt-5.5",
+        "reasoning_effort" => "xhigh",
         "pre_start_commands" => [],
         "approval_policy" => "never",
         "thread_sandbox" => "danger-full-access",

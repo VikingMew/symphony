@@ -120,7 +120,109 @@ defmodule SymphonyElixir.AppServerStartupTest do
                    payload["method"] == "turn/start" &&
                      get_in(payload, ["params", "cwd"]) == canonical_workspace &&
                      get_in(payload, ["params", "approvalPolicy"]) == "never" &&
-                     get_in(payload, ["params", "sandboxPolicy"]) == expected_turn_sandbox_policy
+                     get_in(payload, ["params", "sandboxPolicy"]) == expected_turn_sandbox_policy &&
+                     Map.has_key?(payload["params"], "model") == false &&
+                     Map.has_key?(payload["params"], "effort") == false
+                 end)
+               else
+                 false
+               end
+             end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server sends configured model and reasoning effort as turn overrides" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-model-effort-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-108")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-model-effort.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODex_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODex_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODex_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODex_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODex_TRACE:-/tmp/codex-model-effort.trace}"
+      count=0
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+        printf 'JSON:%s\\n' "$line" >> "$trace_file"
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-108"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-108"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_model: "gpt-5.5",
+        codex_reasoning_effort: "xhigh"
+      )
+
+      issue = %Issue{
+        id: "issue-model-effort",
+        identifier: "MT-108",
+        title: "Validate codex model effort",
+        description: "Check structured turn overrides",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-108",
+        labels: ["backend"]
+      }
+
+      assert {:ok, _result} = AppServer.run(workspace, "Fix workspace start args", issue)
+
+      lines = File.read!(trace_file) |> String.split("\n", trim: true)
+      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert String.contains?(argv_line, "app-server")
+      assert String.contains?(argv_line, "--config") == false
+
+      assert Enum.any?(lines, fn line ->
+               if String.starts_with?(line, "JSON:") do
+                 line
+                 |> String.trim_leading("JSON:")
+                 |> Jason.decode!()
+                 |> then(fn payload ->
+                   payload["method"] == "turn/start" &&
+                     get_in(payload, ["params", "model"]) == "gpt-5.5" &&
+                     get_in(payload, ["params", "effort"]) == "xhigh"
                  end)
                else
                  false

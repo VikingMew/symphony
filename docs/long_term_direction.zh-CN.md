@@ -252,7 +252,8 @@ events
 ### 阶段 2：Web UI 管理配置
 
 当前 Settings 是 tabbed configuration：`/settings/projects` 承载 project 设置，`/settings/import`
-承载 split workflow package 导入，`/settings/agents` 承载 profile 设置，`/settings/runtime` 承载运行时摘要。
+承载 split workflow package 导入，`/settings/agents` 承载 profile 设置，`/settings/runtime`
+承载运行时摘要以及已明确建模的 Codex model / reasoning effort selector。
 Settings 顶部提供 project 选择器；Projects tab 仍列出全部 project 用于 enable/disable 编辑。workflow
 states/transitions 不提供第二套 UI 编辑入口，导入保存后的 PostgreSQL current workflow 是运行时权威。
 
@@ -275,7 +276,7 @@ Settings 页面提供几个互相一致的 tab/入口：
 
 - `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
 - `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy（project 选择器限定到指定 project）。
-- `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
+- `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；保存已明确建模的 Codex model / reasoning effort selector。除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
 - Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，根据 YAML 字段自动识别 package 类型，显示 staged diff 和校验结果。确认导入只修改 editable draft；字段可解析时可以保存为 current workflow；语义校验失败时保存 configuration check failure 并阻止运行时监听。
 
 这些入口必须写入同一个 current workflow 模型。导入文件写入 DB workflow；导出文件来自 DB workflow；运行时只读取 DB current workflow，避免 UI 配置、文件配置和运行时配置分裂。

@@ -6,6 +6,8 @@ defmodule SymphonyElixir.Worker.Payload do
   @codex_config_fields ~w(
     command
     pre_start_commands
+    model
+    reasoning_effort
     approval_policy
     thread_sandbox
     turn_sandbox_policy
@@ -123,8 +125,8 @@ defmodule SymphonyElixir.Worker.Payload do
         config = settings |> Schema.to_external_config() |> Map.fetch!("codex")
         {:ok, Map.take(config, @codex_config_fields)}
 
-      {:error, _reason} ->
-        invalid_codex()
+      {:error, {:invalid_workflow_config, message}} ->
+        error("codex config invalid: #{message}")
     end
   end
 

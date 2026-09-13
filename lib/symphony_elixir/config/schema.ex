@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   import Ecto.Changeset
 
+  alias SymphonyElixir.Codex.ModelCatalog
   alias SymphonyElixir.Config.{ProjectCommands, RuntimeResolver, WorkflowContract}
 
   @primary_key false
@@ -278,6 +279,8 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:command, :string, default: "codex app-server")
+      field(:model, :string)
+      field(:reasoning_effort, :string)
       field(:pre_start_commands, {:array, :string}, default: [])
 
       field(:approval_policy, StringOrMap, default: "never")
@@ -300,6 +303,8 @@ defmodule SymphonyElixir.Config.Schema do
         attrs,
         [
           :command,
+          :model,
+          :reasoning_effort,
           :pre_start_commands,
           :approval_policy,
           :thread_sandbox,
@@ -315,6 +320,9 @@ defmodule SymphonyElixir.Config.Schema do
         empty_values: []
       )
       |> validate_required([:command])
+      |> normalize_optional_selector(:model)
+      |> normalize_optional_selector(:reasoning_effort)
+      |> validate_model_and_reasoning_effort()
       |> validate_command_list(:pre_start_commands)
       |> normalize_approval_policy()
       |> validate_inclusion(
@@ -342,6 +350,59 @@ defmodule SymphonyElixir.Config.Schema do
         |> SymphonyElixir.Config.Schema.normalize_codex_approval_policy()
 
       put_change(changeset, :approval_policy, approval_policy)
+    end
+
+    defp normalize_optional_selector(changeset, field) do
+      case get_field(changeset, field) do
+        value when is_binary(value) ->
+          value = String.trim(value)
+          put_change(changeset, field, if(value == "", do: nil, else: value))
+
+        _value ->
+          changeset
+      end
+    end
+
+    defp validate_model_and_reasoning_effort(changeset) do
+      model = get_field(changeset, :model)
+      effort = get_field(changeset, :reasoning_effort)
+
+      changeset
+      |> validate_model(model)
+      |> validate_reasoning_effort(model, effort)
+    end
+
+    defp validate_model(changeset, nil), do: changeset
+
+    defp validate_model(changeset, model) do
+      if ModelCatalog.model?(model),
+        do: changeset,
+        else: add_error(changeset, :model, "must be one of: #{Enum.join(ModelCatalog.model_ids(), ", ")}")
+    end
+
+    defp validate_reasoning_effort(changeset, _model, nil), do: changeset
+
+    defp validate_reasoning_effort(changeset, nil, effort) do
+      if ModelCatalog.reasoning_effort?(effort),
+        do: changeset,
+        else: add_error(changeset, :reasoning_effort, "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}")
+    end
+
+    defp validate_reasoning_effort(changeset, model, effort) do
+      cond do
+        not ModelCatalog.reasoning_effort?(effort) ->
+          add_error(changeset, :reasoning_effort, "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}")
+
+        ModelCatalog.model?(model) and not ModelCatalog.supports_reasoning_effort?(model, effort) ->
+          add_error(
+            changeset,
+            :reasoning_effort,
+            "must be one of #{Enum.join(ModelCatalog.reasoning_efforts_for_model(model), ", ")} for model #{model}"
+          )
+
+        true ->
+          changeset
+      end
     end
 
     defp validate_command_list(changeset, field) do
