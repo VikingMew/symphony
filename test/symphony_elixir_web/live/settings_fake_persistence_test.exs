@@ -497,6 +497,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "Codex Runtime"
     assert html =~ ~s(id="workflow-codex-model")
     assert html =~ ~s(name="workflow[codex_model]")
+    assert html =~ "GPT-6-Astra (default medium)"
     assert html =~ "GPT-5.5"
     assert html =~ "Use command default"
     assert html =~ ~s(id="workflow-codex-reasoning-effort")
@@ -505,16 +506,15 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     scoped_html =
       view
-      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-5.5", "codex_reasoning_effort" => ""})
+      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-6-astra", "codex_reasoning_effort" => ""})
       |> render_change()
 
-    assert scoped_html =~ "xhigh - Extra high reasoning depth for complex problems"
-    assert String.contains?(scoped_html, "ultra - Maximum reasoning with automatic task delegation") == false
+    assert reasoning_effort_values(scoped_html) == ["", "low", "medium", "high", "xhigh", "max", "ultra"]
 
     saved_html =
       view
       |> form(".runtime-settings-form",
-        workflow: %{"codex_model" => "gpt-5.5", "codex_reasoning_effort" => "xhigh"}
+        workflow: %{"codex_model" => "gpt-6-astra", "codex_reasoning_effort" => "ultra"}
       )
       |> render_submit()
 
@@ -528,11 +528,15 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
                _ -> false
              end)
 
-    assert raw =~ ~s(model: "gpt-5.5")
-    assert raw =~ ~s(reasoning_effort: "xhigh")
+    assert raw =~ ~s(model: "gpt-6-astra")
+    assert raw =~ ~s(reasoning_effort: "ultra")
     assert {:ok, %{workflow: workflow}} = WorkflowStore.current_with_source()
-    assert get_in(workflow.config, ["codex", "model"]) == "gpt-5.5"
-    assert get_in(workflow.config, ["codex", "reasoning_effort"]) == "xhigh"
+    assert get_in(workflow.config, ["codex", "model"]) == "gpt-6-astra"
+    assert get_in(workflow.config, ["codex", "reasoning_effort"]) == "ultra"
+
+    {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
+    assert selected_option_values(reloaded_html, "#workflow-codex-model") == ["gpt-6-astra"]
+    assert selected_option_values(reloaded_html, "#workflow-codex-reasoning-effort") == ["ultra"]
   end
 
   test "project settings page creates and updates projects" do
@@ -883,6 +887,20 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
   defp split_profiles_yaml do
     WorkflowFixtures.settings_profiles_yaml()
+  end
+
+  defp reasoning_effort_values(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#workflow-codex-reasoning-effort option")
+    |> Floki.attribute("value")
+  end
+
+  defp selected_option_values(html, selector) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#{selector} option[selected]")
+    |> Floki.attribute("value")
   end
 
   defp workflow_raw!(params) do

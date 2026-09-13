@@ -308,7 +308,10 @@ default branch、checkout depth、source strategy 等项目自身信息。Sympho
 `nvs use 22 >/dev/null`、`export PATH="$HOME/.local/bin:$PATH"` 这类环境准备会影响后续
 `codex app-server`。`codex.command` 只负责启动 app-server；Codex model 与 reasoning effort
 可以在 Settings / Runtime 用枚举 selector 保存，也可以通过 `workflow.yml` 的
-`codex.model` / `codex.reasoning_effort` 导入，保存后只影响后续 turn/session：
+`codex.model` / `codex.reasoning_effort` 导入，保存后只影响后续 turn/session。selector 与
+workflow validation 共用随 bundled `codex-cli 0.154.0` pin 派生的 code-owned catalog；当前六行
+依次为 `gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` 和
+`gpt-5.3-codex-spark`：
 
 ```yaml
 codex:
@@ -316,8 +319,8 @@ codex:
     - source ~/.nvs/nvs.sh
     - nvs use 22 >/dev/null
   command: codex app-server
-  model: gpt-5.5
-  reasoning_effort: xhigh
+  model: gpt-6-astra
+  reasoning_effort: ultra
 ```
 
 Rust 项目可以这样写 bootstrap：
@@ -356,7 +359,8 @@ hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认�
 
 Web UI 不提供独立的 workflow/routing 编辑 tab；这些配置通过 split workflow package 导入，
 PostgreSQL current workflow 仍是运行时权威。`/settings/agents` tab 管理 base prompt 和
-profiles，`/settings/runtime` tab 管理 Codex model 与 reasoning effort selector。Settings
+profiles，`/settings/runtime` tab 管理与 bundled CLI catalog 同源的 Codex model 与 reasoning
+effort selector。Settings
 顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时保持默认 project 行为）；
 `/settings/projects` tab 始终列出全部 project 用于 enable/disable 编辑。后续导入/导出
 split package 时，`profiles.yml` 的 `base_prompt` 是共享

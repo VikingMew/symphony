@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   use ExUnit.Case, async: true
 
+  alias SymphonyElixir.Codex.ModelCatalog
+
   @compose Path.expand("../../compose.yaml", __DIR__)
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
@@ -10,8 +12,10 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   test "shared Codex stage installs the exact supported version" do
     dockerfile = File.read!(@dockerfile)
+    [_, codex_version] = Regex.run(~r/^ARG CODEX_VERSION=(\S+)$/m, dockerfile)
 
-    assert dockerfile =~ "ARG CODEX_VERSION=0.150.1"
+    assert codex_version == "0.154.0"
+    assert "codex-cli #{codex_version}" == ModelCatalog.source_evidence().codex_version
     assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
     assert dockerfile =~ "FROM toolchain AS worker"
     assert dockerfile =~ "ARG SYMPHONY_EMBED_CODEX=true"

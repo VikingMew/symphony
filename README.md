@@ -288,12 +288,14 @@ The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, Postg
 SQLite cutover tooling, and the repository-pinned Elixir quality-gate toolchain. The separate
 `worker` target remains available for SSH-reachable Codex workers.
 
-Builds pin Codex CLI to `0.150.1` through the shared `CODEX_VERSION` build argument, so the
+Builds pin Codex CLI to `0.154.0` through the shared `CODEX_VERSION` build argument, so the
 `symphony`, SSH `worker`, and `execution-worker` targets use the same release. All three targets
 also inherit mise `2025.8.16`, Erlang `28`, Elixir `1.19.5-otp-28`, Mix, Make, and native build
 dependencies from one build-time stage. The language versions match `mise.toml`; mise links the
 preinstalled runtimes during the image build, so `mise exec` does not install them in an issue
-workspace. Mutable Mix, Hex, mise, and XDG-aware build-tool caches live under each target's
+workspace. The matching six-row code-owned catalog exposes `gpt-6-astra`, `gpt-5.6-sol`,
+`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, and `gpt-5.3-codex-spark` to workflow validation and
+Settings / Runtime. Mutable Mix, Hex, mise, and XDG-aware build-tool caches live under each target's
 existing writable workspace/cache volume and remain usable with the read-only root filesystem.
 Builds also accept
 `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`, `NPM_REGISTRY`, and

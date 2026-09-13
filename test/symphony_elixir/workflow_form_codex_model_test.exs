@@ -6,20 +6,20 @@ defmodule SymphonyElixir.WorkflowFormCodexModelTest do
   test "round-trips codex model and reasoning effort through workflow raw content" do
     draft =
       WorkflowForm.empty()
-      |> Map.put("codex_model", "gpt-5.5")
-      |> Map.put("codex_reasoning_effort", "xhigh")
+      |> Map.put("codex_model", "gpt-6-astra")
+      |> Map.put("codex_reasoning_effort", "ultra")
 
     assert {:ok, config} = WorkflowForm.to_config(draft)
-    assert get_in(config, ["codex", "model"]) == "gpt-5.5"
-    assert get_in(config, ["codex", "reasoning_effort"]) == "xhigh"
+    assert get_in(config, ["codex", "model"]) == "gpt-6-astra"
+    assert get_in(config, ["codex", "reasoning_effort"]) == "ultra"
 
     assert {:ok, raw} = WorkflowForm.to_raw(draft)
-    assert raw =~ ~s(model: "gpt-5.5")
-    assert raw =~ ~s(reasoning_effort: "xhigh")
+    assert raw =~ ~s(model: "gpt-6-astra")
+    assert raw =~ ~s(reasoning_effort: "ultra")
 
     assert {:ok, round_tripped} = WorkflowForm.from_raw(raw)
-    assert round_tripped["codex_model"] == "gpt-5.5"
-    assert round_tripped["codex_reasoning_effort"] == "xhigh"
+    assert round_tripped["codex_model"] == "gpt-6-astra"
+    assert round_tripped["codex_reasoning_effort"] == "ultra"
   end
 
   test "blank selectors clear model and reasoning effort instead of preserving base values" do

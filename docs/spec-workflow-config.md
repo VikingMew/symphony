@@ -227,8 +227,8 @@ fields locally if they want stricter startup checks.
 
 `codex.model` and `codex.reasoning_effort` are Symphony-owned workflow selectors backed by one
 code-owned Codex catalog snapshot. The app-server protocol field shape comes from
-`codex-cli 0.150.1` generated schema evidence captured with
-`codex app-server generate-json-schema --out tmp/codex-schema-sym-108-20260913`:
+`codex-cli 0.154.0` generated schema evidence captured with
+`codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913`:
 
 - `TurnStartParams.model` is nullable string and overrides the model for the current and
   subsequent turns.
@@ -251,6 +251,7 @@ and schema-generation command in the evidence above. Follow the Codex version-bu
 
 | model | label | default effort | supported efforts |
 | --- | --- | --- | --- |
+| `gpt-6-astra` | GPT-6-Astra | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `gpt-5.6-sol` | GPT-5.6-Sol | `low` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `gpt-5.6-terra` | GPT-5.6-Terra | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `gpt-5.6-luna` | GPT-5.6-Luna | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
