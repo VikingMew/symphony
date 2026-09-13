@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-12
+updated: 2026-09-13
 design_status: landed
 ---
 
@@ -26,6 +26,9 @@ design_status: landed
   `turn_sandbox_policy.type: "dangerFullAccess"`，使 Settings / Import 与空库冷启动素材不依赖
   worker 容器内嵌套 bwrap/user namespace。既有 project 的运行时配置只通过 Settings / Import
   或 Settings 保存流程改变。
+- 示例中的 `codex.model` 与 `codex.reasoning_effort` 是基于当前代码内 Codex catalog snapshot
+  的导入默认值。它们不会反向同步到任何 project，也不会覆盖 operator 已经保存的 PostgreSQL
+  current workflow。
 - 不存在 package 同步命令、不存在幂等的包覆盖流程、不存在仓库文件与数据库之间的 drift 契约。
   operator 在 Settings 里的改动就是最终改动；仓库示例文件不随之更新不是缺陷。
 - Settings / Import 是把 package 文件带进 project 的唯一受支持路径：解析文件、预览合并后的 draft、

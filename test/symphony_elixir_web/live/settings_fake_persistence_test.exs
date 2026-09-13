@@ -262,7 +262,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
-    {:ok, _agents_view, agents_html} = live(build_conn(), "/settings/agents")
+    {:ok, _agents_view, _agents_html} = live(build_conn(), "/settings/agents")
 
     {:ok, view, html} = live(build_conn(), "/settings/import")
     assert html =~ "Import Settings Package"
@@ -383,7 +383,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "profiles.yml staged"
     assert render_click(view, "cancel_settings_import") =~ "Import cancelled"
 
-    agents_html = render_patch(view, "/settings/agents")
+    _agents_html = render_patch(view, "/settings/agents")
   end
 
   test "settings configuration checklists stay on their owning pages" do
@@ -485,6 +485,54 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     {:ok, _view, runtime_html} = live(build_conn(), "/settings/runtime")
     assert runtime_html =~ "Execution mode:"
+    assert runtime_html =~ "Codex Runtime"
+  end
+
+  test "runtime settings page saves codex model and reasoning effort through workflow draft" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/runtime")
+    assert html =~ "Codex Runtime"
+    assert html =~ ~s(id="workflow-codex-model")
+    assert html =~ ~s(name="workflow[codex_model]")
+    assert html =~ "GPT-5.5"
+    assert html =~ "Use command default"
+    assert html =~ ~s(id="workflow-codex-reasoning-effort")
+    assert html =~ ~s(name="workflow[codex_reasoning_effort]")
+    assert html =~ "ultra - Maximum reasoning with automatic task delegation"
+
+    scoped_html =
+      view
+      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-5.5", "codex_reasoning_effort" => ""})
+      |> render_change()
+
+    assert scoped_html =~ "xhigh - Extra high reasoning depth for complex problems"
+    assert String.contains?(scoped_html, "ultra - Maximum reasoning with automatic task delegation") == false
+
+    saved_html =
+      view
+      |> form(".runtime-settings-form",
+        workflow: %{"codex_model" => "gpt-5.5", "codex_reasoning_effort" => "xhigh"}
+      )
+      |> render_submit()
+
+    assert saved_html =~ "workflow-save-toast-success"
+    assert saved_html =~ "Workflow settings saved"
+    assert saved_html =~ "Runtime workflow refreshed"
+
+    assert {:import_workflow, %{id: "fake-project-id"}, raw, "web_workflow_settings"} =
+             Enum.find(FakePersistence.calls(), fn
+               {:import_workflow, %{id: "fake-project-id"}, _raw, "web_workflow_settings"} -> true
+               _ -> false
+             end)
+
+    assert raw =~ ~s(model: "gpt-5.5")
+    assert raw =~ ~s(reasoning_effort: "xhigh")
+    assert {:ok, %{workflow: workflow}} = WorkflowStore.current_with_source()
+    assert get_in(workflow.config, ["codex", "model"]) == "gpt-5.5"
+    assert get_in(workflow.config, ["codex", "reasoning_effort"]) == "xhigh"
   end
 
   test "project settings page creates and updates projects" do
@@ -637,7 +685,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert agent_saved_html =~ "workflow-save-toast-success"
     assert agent_saved_html =~ "Agent settings saved"
 
-    {:ok, _runtime_view, runtime_html} = live(build_conn(), "/settings/runtime")
+    {:ok, _runtime_view, _runtime_html} = live(build_conn(), "/settings/runtime")
   end
 
   test "settings no-op saves show unchanged notices without persistence" do
@@ -704,7 +752,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     start_test_endpoint()
 
     for path <- ["/settings/agents"] do
-      {:ok, _view, html} = live(build_conn(), path)
+      {:ok, _view, _html} = live(build_conn(), path)
     end
   end
 

@@ -10,7 +10,9 @@ analytics:
   per_issue_total_tokens_max: 1000000
 codex:
   approval_policy: "never"
-  command: "codex --config 'model=\"gpt-5.5\"' --config model_reasoning_effort=xhigh app-server"
+  command: "codex app-server"
+  model: "gpt-5.5"
+  reasoning_effort: "xhigh"
   thread_sandbox: "danger-full-access"
   turn_sandbox_policy:
     type: "dangerFullAccess"

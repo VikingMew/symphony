@@ -344,6 +344,8 @@ defmodule SymphonyElixir.TestSupport do
           max_retry_backoff_ms: 300_000,
           max_failure_retries: 3,
           codex_command: "codex app-server",
+          codex_model: nil,
+          codex_reasoning_effort: nil,
           codex_pre_start_commands: [],
           codex_approval_policy: "never",
           codex_thread_sandbox: "workspace-write",
@@ -391,6 +393,8 @@ defmodule SymphonyElixir.TestSupport do
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     max_failure_retries = Keyword.get(config, :max_failure_retries, 3)
     codex_command = Keyword.get(config, :codex_command)
+    codex_model = Keyword.get(config, :codex_model)
+    codex_reasoning_effort = Keyword.get(config, :codex_reasoning_effort)
     codex_pre_start_commands = Keyword.get(config, :codex_pre_start_commands)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
     codex_thread_sandbox = Keyword.get(config, :codex_thread_sandbox)
@@ -442,6 +446,8 @@ defmodule SymphonyElixir.TestSupport do
         "  max_failure_retries: #{yaml_value(max_failure_retries)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",
+        codex_selector_yaml("model", codex_model),
+        codex_selector_yaml("reasoning_effort", codex_reasoning_effort),
         "  pre_start_commands: #{yaml_value(codex_pre_start_commands)}",
         "  approval_policy: #{yaml_value(codex_approval_policy)}",
         "  thread_sandbox: #{yaml_value(codex_thread_sandbox)}",
@@ -468,6 +474,8 @@ defmodule SymphonyElixir.TestSupport do
 
   defp tracker_api_key_yaml(nil), do: nil
   defp tracker_api_key_yaml(token), do: "  api_key: #{yaml_value(token)}"
+  defp codex_selector_yaml(_key, nil), do: nil
+  defp codex_selector_yaml(key, value), do: "  #{key}: #{yaml_value(value)}"
 
   defp workflow_yaml(nil), do: nil
   defp workflow_yaml(policy), do: "workflow: #{yaml_value(policy)}"

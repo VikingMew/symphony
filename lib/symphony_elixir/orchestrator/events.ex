@@ -80,13 +80,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
           "read_timeout_ms" => settings.codex.read_timeout_ms,
           "stall_timeout_ms" => settings.codex.stall_timeout_ms
         },
-        "codex" => %{
-          "command" => settings.codex.command,
-          "pre_start_commands" => settings.codex.pre_start_commands,
-          "approval_policy" => settings.codex.approval_policy,
-          "thread_sandbox" => settings.codex.thread_sandbox,
-          "turn_sandbox_policy" => settings.codex.turn_sandbox_policy
-        },
+        "codex" => codex_payload(settings.codex),
         "handoff" => %{
           "branch" => issue.branch_name,
           "issue_id" => issue.id,
@@ -97,6 +91,24 @@ defmodule SymphonyElixir.Orchestrator.Events do
         }
       }
     }
+  end
+
+  defp codex_payload(codex) do
+    %{
+      "command" => codex.command,
+      "pre_start_commands" => codex.pre_start_commands,
+      "approval_policy" => codex.approval_policy,
+      "thread_sandbox" => codex.thread_sandbox,
+      "turn_sandbox_policy" => codex.turn_sandbox_policy
+    }
+    |> put_optional_codex_selector("model", codex.model)
+    |> put_optional_codex_selector("reasoning_effort", codex.reasoning_effort)
+  end
+
+  defp put_optional_codex_selector(payload, _key, nil), do: payload
+
+  defp put_optional_codex_selector(payload, key, value) when is_binary(value) do
+    if String.trim(value) == "", do: payload, else: Map.put(payload, key, value)
   end
 
   @spec event_attrs(String.t(), String.t() | nil, map(), term()) :: map()

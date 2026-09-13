@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-08-28
+updated: 2026-09-13
 ---
 
 # Workflow and Configuration Specification
@@ -225,6 +225,41 @@ hand-maintained enum in this spec. To inspect the installed Codex schema, run
 by `v2/ThreadStartParams.json` and `v2/TurnStartParams.json`. Implementations MAY validate these
 fields locally if they want stricter startup checks.
 
+`codex.model` and `codex.reasoning_effort` are Symphony-owned workflow selectors backed by one
+code-owned Codex catalog snapshot. The app-server protocol field shape comes from
+`codex-cli 0.150.1` generated schema evidence captured with
+`codex app-server generate-json-schema --out tmp/codex-schema-sym-108-20260913`:
+
+- `TurnStartParams.model` is nullable string and overrides the model for the current and
+  subsequent turns.
+- `TurnStartParams.effort` is nullable `ReasoningEffort` and overrides reasoning effort for the
+  current and subsequent turns.
+- `ReasoningEffort` is a non-empty string, not a closed JSON Schema enum.
+- `model/list` returns `ModelListResponse`; each row exposes `id`, `model`, `displayName`,
+  `defaultReasoningEffort`, and `supportedReasoningEfforts`.
+
+The selector values come from `SymphonyElixir.Codex.ModelCatalog`, captured from the same target
+Codex version by an initialized `codex app-server` `model/list` request with
+`includeHidden=false` and `limit=100`. The snapshot rows are:
+
+| model | label | default effort | supported efforts |
+| --- | --- | --- | --- |
+| `gpt-5.6-sol` | GPT-5.6-Sol | `low` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `gpt-5.6-terra` | GPT-5.6-Terra | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `gpt-5.6-luna` | GPT-5.6-Luna | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `gpt-5.5` | GPT-5.5 | `medium` | `low`, `medium`, `high`, `xhigh` |
+| `gpt-5.3-codex-spark` | GPT-5.3-Codex-Spark | `high` | `low`, `medium`, `high`, `xhigh` |
+
+Validation rules:
+
+- Omitted or blank `model` and `reasoning_effort` values normalize to absent config and MUST NOT
+  send empty string overrides.
+- Explicit `model` MUST exist in the catalog snapshot.
+- Explicit `reasoning_effort` without explicit `model` MUST exist in the union of catalog efforts.
+- Explicit `model` plus `reasoning_effort` MUST use an effort supported by that model row.
+- Settings selectors and schema validation MUST read the same code-owned catalog source. Settings
+  MUST NOT provide a free-text custom model input.
+
 The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
 Codex block carries explicit `thread_sandbox: "danger-full-access"` and
 `turn_sandbox_policy.type: "dangerFullAccess"` so new Settings / Import or cold-start imports do not
@@ -235,6 +270,18 @@ runtime workflow that omits an explicit `turn_sandbox_policy`.
   - Default: `codex app-server`
   - The runtime launches this command via `bash -lc` in the workspace directory.
   - The launched process MUST speak a compatible app-server protocol over stdio.
+  - This command remains the app-server process launch command and MUST NOT be parsed to infer
+    model or reasoning effort.
+- `model` (optional string)
+  - Default: absent.
+  - When present, send as `turn/start.params.model` for subsequent Codex turns created from the
+    parsed workflow snapshot.
+  - When absent, do not send a structured model override.
+- `reasoning_effort` (optional string)
+  - Default: absent.
+  - When present, send as `turn/start.params.effort` for subsequent Codex turns created from the
+    parsed workflow snapshot.
+  - When absent, do not send a structured effort override.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
 - `thread_sandbox` (Codex `SandboxMode` value)
@@ -370,6 +417,9 @@ Dynamic reload is REQUIRED:
   prompt content for future runs).
 - Reloaded config applies to future dispatch, retry scheduling, reconciliation decisions, hook
   execution, and agent launches.
+- Worker assignment payloads MUST carry the parsed Codex config slice, including explicit
+  `model`/`reasoning_effort` selectors. A later Settings save MUST NOT rewrite an already issued
+  assignment payload.
 - Implementations are not REQUIRED to restart in-flight agent sessions automatically when config
   changes.
 - Extensions that manage their own listeners/resources (for example an HTTP server port change) MAY
@@ -402,6 +452,8 @@ Validation checks:
 - `tracker.api_key` is present after `$` resolution.
 - `tracker.project_slug` is present when REQUIRED by the selected tracker kind.
 - `codex.command` is present and non-empty.
+- Configured `codex.model` and `codex.reasoning_effort` values are present in the code-owned Codex
+  catalog snapshot and the model/effort combination is supported.
 
 ### 6.4 Core Config Fields Summary (Cheat Sheet)
 
@@ -427,6 +479,10 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_failure_retries`: non-negative integer, default `3`
 - `codex.command`: shell command string, default `codex app-server`
+- `codex.model`: optional string selector from `SymphonyElixir.Codex.ModelCatalog`; absent sends no
+  `turn/start` model override
+- `codex.reasoning_effort`: optional string selector from `SymphonyElixir.Codex.ModelCatalog`;
+  absent sends no `turn/start` effort override
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined

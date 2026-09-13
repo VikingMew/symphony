@@ -38,6 +38,14 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "profile" => Map.fetch!(payload, "workflow_profile"),
       "issue" => Map.take(issue, ["identifier", "title"])
     }
+    |> put_optional_codex_selector("model", Map.get(codex, "model"))
+    |> put_optional_codex_selector("reasoning_effort", Map.get(codex, "reasoning_effort"))
+  end
+
+  defp put_optional_codex_selector(payload, _key, nil), do: payload
+
+  defp put_optional_codex_selector(payload, key, value) when is_binary(value) do
+    if String.trim(value) == "", do: payload, else: Map.put(payload, key, value)
   end
 
   defp prompt(payload) do

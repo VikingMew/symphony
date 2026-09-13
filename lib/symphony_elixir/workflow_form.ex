@@ -3,6 +3,7 @@ defmodule SymphonyElixir.WorkflowForm do
   Converts workflow packages to and from the structured Settings draft.
   """
 
+  alias SymphonyElixir.Codex.ModelCatalog
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Workflow
 
@@ -42,6 +43,8 @@ defmodule SymphonyElixir.WorkflowForm do
       "agent_max_turns" => get_integer_string(display_config, ["agent", "max_turns"]),
       "agent_max_failure_retries" => get_integer_string(display_config, ["agent", "max_failure_retries"]),
       "codex_command" => get_string(display_config, ["codex", "command"]),
+      "codex_model" => get_string(display_config, ["codex", "model"]),
+      "codex_reasoning_effort" => get_string(display_config, ["codex", "reasoning_effort"]),
       "codex_pre_start_commands" => get_list_text(display_config, ["codex", "pre_start_commands"]),
       "codex_approval_policy" => get_codex_approval_policy(display_config),
       "codex_thread_sandbox" => get_string(display_config, ["codex", "thread_sandbox"]),
@@ -89,6 +92,7 @@ defmodule SymphonyElixir.WorkflowForm do
     |> put_percent_error(draft, "codex_rate_limit_gate_5h_threshold_percent", "5-hour rate-limit threshold")
     |> put_percent_error(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold")
     |> put_turn_sandbox_error(draft)
+    |> put_codex_selector_errors(draft)
   end
 
   @spec to_config(draft()) :: {:ok, map()} | {:error, String.t()}
@@ -103,7 +107,8 @@ defmodule SymphonyElixir.WorkflowForm do
          {:ok, rate_limit_gate_7d_threshold} <- parse_percent(draft, "codex_rate_limit_gate_7d_threshold_percent", "7-day rate-limit threshold"),
          {:ok, rate_limit_gate_post_reset_delay_ms} <- parse_non_negative_integer(draft, "codex_rate_limit_gate_post_reset_delay_ms", "Rate-limit post-reset delay"),
          {:ok, hook_timeout_ms} <- parse_positive_integer(draft, "hook_timeout_ms", "Hook timeout"),
-         {:ok, turn_sandbox_policy} <- turn_sandbox_policy_from_draft(draft) do
+         {:ok, turn_sandbox_policy} <- turn_sandbox_policy_from_draft(draft),
+         :ok <- validate_codex_selectors(draft) do
       config =
         draft
         |> Map.get("_base_config", %{})
@@ -124,6 +129,8 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["agent", "max_turns"], max_turns)
         |> put_path(["agent", "max_failure_retries"], max_failure_retries)
         |> put_path(["codex", "command"], Map.get(draft, "codex_command", ""))
+        |> put_optional_selector_path(["codex", "model"], Map.get(draft, "codex_model", ""))
+        |> put_optional_selector_path(["codex", "reasoning_effort"], Map.get(draft, "codex_reasoning_effort", ""))
         |> put_path(["codex", "pre_start_commands"], lines(Map.get(draft, "codex_pre_start_commands", "")))
         |> put_path(["codex", "approval_policy"], Map.get(draft, "codex_approval_policy", "never"))
         |> put_path(["codex", "thread_sandbox"], Map.get(draft, "codex_thread_sandbox", ""))
@@ -276,6 +283,71 @@ defmodule SymphonyElixir.WorkflowForm do
     case turn_sandbox_policy_from_draft(draft) do
       {:ok, _policy} -> errors
       {:error, message} -> Map.put(errors, "codex_turn_sandbox_json", message)
+    end
+  end
+
+  defp put_codex_selector_errors(errors, draft) do
+    Map.merge(errors, codex_selector_errors(draft))
+  end
+
+  defp validate_codex_selectors(draft) do
+    case codex_selector_errors(draft) do
+      errors when map_size(errors) == 0 -> :ok
+      errors -> {:error, errors |> Map.values() |> List.first()}
+    end
+  end
+
+  defp codex_selector_errors(draft) do
+    model = optional_selector(Map.get(draft, "codex_model", ""))
+    effort = optional_selector(Map.get(draft, "codex_reasoning_effort", ""))
+
+    %{}
+    |> put_codex_model_error(model)
+    |> put_codex_reasoning_effort_error(model, effort)
+  end
+
+  defp put_codex_model_error(errors, nil), do: errors
+
+  defp put_codex_model_error(errors, model) do
+    if ModelCatalog.model?(model) do
+      errors
+    else
+      Map.put(errors, "codex_model", "Codex model must be one of: #{Enum.join(ModelCatalog.model_ids(), ", ")}")
+    end
+  end
+
+  defp put_codex_reasoning_effort_error(errors, _model, nil), do: errors
+
+  defp put_codex_reasoning_effort_error(errors, nil, effort) do
+    if ModelCatalog.reasoning_effort?(effort) do
+      errors
+    else
+      Map.put(
+        errors,
+        "codex_reasoning_effort",
+        "Codex reasoning effort must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}"
+      )
+    end
+  end
+
+  defp put_codex_reasoning_effort_error(errors, model, effort) do
+    cond do
+      not ModelCatalog.reasoning_effort?(effort) ->
+        Map.put(
+          errors,
+          "codex_reasoning_effort",
+          "Codex reasoning effort must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}"
+        )
+
+      ModelCatalog.model?(model) and not ModelCatalog.supports_reasoning_effort?(model, effort) ->
+        Map.put(
+          errors,
+          "codex_reasoning_effort",
+          "Codex reasoning effort must be one of #{Enum.join(ModelCatalog.reasoning_efforts_for_model(model), ", ")} for model #{model}"
+        )
+
+      true ->
+        errors
     end
   end
 
@@ -551,6 +623,32 @@ defmodule SymphonyElixir.WorkflowForm do
       config
     else
       put_path(config, path, value)
+    end
+  end
+
+  defp put_optional_selector_path(config, path, value) do
+    case optional_selector(value) do
+      nil -> delete_path(config, path)
+      selector -> put_path(config, path, selector)
+    end
+  end
+
+  defp optional_selector(value) do
+    value
+    |> to_string()
+    |> String.trim()
+    |> case do
+      "" -> nil
+      selector -> selector
+    end
+  end
+
+  defp delete_path(config, [key]), do: Map.delete(config, key)
+
+  defp delete_path(config, [key | rest]) do
+    case Map.get(config, key) do
+      child when is_map(child) -> Map.put(config, key, delete_path(child, rest))
+      _child -> config
     end
   end
 

@@ -96,4 +96,68 @@ defmodule SymphonyElixir.Config.SchemaTest do
 
     assert message =~ "blocked_rate_max"
   end
+
+  test "codex model and reasoning effort are optional catalog-backed fields" do
+    assert {:ok, settings} = Schema.parse(%{})
+    assert settings.codex.model == nil
+    assert settings.codex.reasoning_effort == nil
+
+    external = Schema.to_external_config(settings)
+    assert Map.has_key?(external["codex"], "model") == false
+    assert Map.has_key?(external["codex"], "reasoning_effort") == false
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               "codex" => %{
+                 "command" => "codex app-server",
+                 "model" => " gpt-5.5 ",
+                 "reasoning_effort" => " xhigh "
+               }
+             })
+
+    assert settings.codex.model == "gpt-5.5"
+    assert settings.codex.reasoning_effort == "xhigh"
+    assert Schema.to_external_config(settings)["codex"]["model"] == "gpt-5.5"
+    assert Schema.to_external_config(settings)["codex"]["reasoning_effort"] == "xhigh"
+
+    assert {:ok, settings} =
+             Schema.parse(%{
+               "codex" => %{
+                 "command" => "codex app-server",
+                 "model" => "",
+                 "reasoning_effort" => " "
+               }
+             })
+
+    assert settings.codex.model == nil
+    assert settings.codex.reasoning_effort == nil
+    external = Schema.to_external_config(settings)
+    assert Map.has_key?(external["codex"], "model") == false
+    assert Map.has_key?(external["codex"], "reasoning_effort") == false
+  end
+
+  test "codex model and reasoning effort validation rejects invalid catalog values" do
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{"codex" => %{"command" => "codex app-server", "model" => "gpt-future"}})
+
+    assert message =~ "codex.model must be one of:"
+    assert message =~ "gpt-5.5"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{"codex" => %{"command" => "codex app-server", "reasoning_effort" => "warp"}})
+
+    assert message =~ "codex.reasoning_effort must be one of:"
+    assert message =~ "xhigh"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               "codex" => %{
+                 "command" => "codex app-server",
+                 "model" => "gpt-5.5",
+                 "reasoning_effort" => "ultra"
+               }
+             })
+
+    assert message =~ "codex.reasoning_effort must be one of low, medium, high, xhigh for model gpt-5.5"
+  end
 end

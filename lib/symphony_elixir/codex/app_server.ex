@@ -440,10 +440,10 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
-    send_message(port, %{
-      "method" => "turn/start",
-      "id" => @turn_start_id,
-      "params" => %{
+    codex = Config.settings!().codex
+
+    params =
+      %{
         "threadId" => thread_id,
         "input" => [
           %{
@@ -456,12 +456,25 @@ defmodule SymphonyElixir.Codex.AppServer do
         "approvalPolicy" => approval_policy,
         "sandboxPolicy" => turn_sandbox_policy
       }
+      |> put_optional_turn_override("model", codex.model)
+      |> put_optional_turn_override("effort", codex.reasoning_effort)
+
+    send_message(port, %{
+      "method" => "turn/start",
+      "id" => @turn_start_id,
+      "params" => params
     })
 
     case await_response(port, @turn_start_id) do
       {:ok, %{"turn" => %{"id" => turn_id}}} -> {:ok, turn_id}
       other -> other
     end
+  end
+
+  defp put_optional_turn_override(params, _key, nil), do: params
+
+  defp put_optional_turn_override(params, key, value) when is_binary(value) do
+    if String.trim(value) == "", do: params, else: Map.put(params, key, value)
   end
 
   defp await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
