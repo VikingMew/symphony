@@ -242,6 +242,13 @@ The selector values come from `SymphonyElixir.Codex.ModelCatalog`, captured from
 Codex version by an initialized `codex app-server` `model/list` request with
 `includeHidden=false` and `limit=100`. The snapshot rows are:
 
+`Dockerfile:5` `ARG CODEX_VERSION` is the sole definition point for changing the Codex CLI
+version. Any change to that argument MUST re-derive the `SymphonyElixir.Codex.ModelCatalog`
+snapshot from the resulting Codex-capable image. The same pull request MUST update the snapshot's
+`codex_version`, model rows, and supported reasoning efforts, and update the `codex-cli` version
+and schema-generation command in the evidence above. Follow the Codex version-bump checklist in
+`docs/compose.md` for the required capture and selector acceptance procedure.
+
 | model | label | default effort | supported efforts |
 | --- | --- | --- | --- |
 | `gpt-5.6-sol` | GPT-5.6-Sol | `low` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
