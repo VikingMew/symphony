@@ -88,6 +88,12 @@ root-relative path，并标记 `需宿主 push`。若 ticket 必须以 push、PR
 handoff 作为验收，worker 记录精确 blocker evidence，并走 persistent `blocking_decision` /
 `Blocked` 流程。
 
+worker executor 只在 implementation handoff 为空、worker payload 中 issue description 的首个非空行
+精确等于 `交付路径:宿主 push`，且 workspace/repository 根存在精确
+`<issue-identifier>.patch` 时，将本地 validation 之后的终态归为 `blocked`。终态证据只保留
+root-relative patch path 与 `需宿主 push` marker。Codex 自报 blocked、只有 marker、只有 patch，或
+permission/workflow-scope detail 文本都不满足这个结构化判据。
+
 无 host-push 命中时，worker push 同一 branch。worker host 需要 Git remote push auth。禁止把
 feature result push 到 configured default branch。
 
@@ -111,6 +117,14 @@ turn 捕获，不表示 Linear 已更新。
 project current workflow 包含该 package 变更。worker 不执行 runtime import，不因缺少数据库连接而
 block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
 `mix symphony.workflow.sync` 或 drift `--check` 契约。
+
+若同一 worker/Codex session 留下成功的 `create_pull_request` 和 implementation
+`linear_task_update`（target state 规范化后为 `Ready to Merge`）证据，却没有提交最终 worker-owned
+`handoff` payload，executor 在本地 validation 后产出 `blocked` / `handoff_failed`。bounded evidence
+只含已提供的 PR URL、branch、commit 与 Linear target state；未满足该证据对时，summary detail 记录
+缺失的事件或字段。该分类只处理旧 prompt/contract mismatch 留下的同 turn 工具证据，不改变上面的
+当前完成顺序。没有 host-push 判据、没有完整 session evidence、也没有 handoff 的 implementation run
+仍为 `missing_handoff` failed。
 
 ### 6. Worker gates 与 Linear writeback
 
@@ -149,6 +163,9 @@ comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新�
 | Required gate failure | No Linear completion write |
 | PR create race | Re-read exact tuple and reuse the open PR |
 | Linear comment/state failure | Visible typed failure; retry reuses existing PR |
+| Host-push directive and root patch, but no handoff | Validate locally; block immediately with patch path and `需宿主 push` |
+| PR and Ready-to-Merge update succeeded, but final handoff is missing | Block immediately with bounded completed-delivery evidence |
+| Handoff missing without either structured evidence pair | Typed `missing_handoff` failure |
 | Normal turn exit/max turns | Return control; no PR and no completion transition |
 
 ## 审计与验收

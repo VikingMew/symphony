@@ -96,10 +96,16 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     defp claim_result(%{"failed_reason" => reason}), do: %{status: :failed, reason: reason}
 
     defp claim_result(%{"blocked" => true}) do
+      evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
+
       %{
         status: :blocked,
-        reason: {:handoff_failed, {:push_permission_blocked, "workflow scope"}},
-        detail: "workflow scope"
+        reason: {:handoff_failed, {:host_push_required, evidence}},
+        detail: evidence,
+        validation: %{
+          overall_status: :passed,
+          gates: [%{status: :passed, exit_code: 0, duration_ms: 42, detail: ""}]
+        }
       }
     end
 
@@ -345,9 +351,17 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert summary["outcome"] == "blocked"
     assert summary["reason"] == "handoff_failed"
-    assert summary["validation_status"] == "pending"
-    assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
-    assert summary["detail"] =~ "push_permission_blocked"
+    assert summary["validation_status"] == "passed"
+    assert [%{"name" => "check", "status" => "passed"}] = summary["gates"]
+
+    assert Jason.decode!(summary["detail"]) == %{
+             "detail" => %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"},
+             "reason" => [
+               "handoff_failed",
+               ["host_push_required", %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}]
+             ],
+             "status" => "blocked"
+           }
   end
 
   test "execution capability failures are delivered as task.failed with a typed summary reason", %{config: config} do
@@ -414,11 +428,22 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert phases("task-1") == []
   end
 
-  test "empty claim advice is observed with a legacy fallback", %{config: config} do
+  test "service claim advice controls cadence without per-issue worker state", %{config: config} do
     put_claims([%{"task" => nil, "poll_after_seconds" => 30}, %{"task" => nil}])
     runtime = start_runtime(config)
 
     eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 30 end)
+
+    assert [request | _rest] = state().claims_seen
+
+    assert request == %{
+             "worker_id" => "worker-1",
+             "session_id" => "session-1",
+             "protocol_version" => "worker-api-v1",
+             "available_slots" => 1,
+             "capabilities" => %{"execution" => ["v1"]}
+           }
+
     send(runtime, :poll)
     eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 5 end)
     assert :sys.get_state(runtime).claim_http_failure_streak == 0

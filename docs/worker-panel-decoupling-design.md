@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-12
+updated: 2026-09-13
 design_status: landed
 ---
 
@@ -50,6 +50,10 @@ history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+
+`agent.max_retry_backoff_ms` 只限制 Orchestrator 的 failure-retry 排程，不控制 worker claim。
+worker claim request 不携带 prospective issue id，也不保存 per-issue retry/cooldown 状态；再次 claim 的
+时间只取 Panel 下发的 `poll_after_seconds`，能否认领则由下一次 Panel admission 判定。
 
 Linear 429、5xx 或 request failure 会立即停止 workflow 遍历，不能被后续 workflow 的空结果
 覆盖。首次连续错误建议 30 秒，后续错误建议 60 秒并封顶；HTTP 分别映射为 429 和 503，响应
@@ -101,6 +105,13 @@ Codex adapter 判定，Panel 不得再按 reason 分类。Panel 只按该字段�
 该 issue 的失败链；`blocked` 立即持久化 blocking decision 并投递 Linear 评论与 `Blocked` 状态；
 `failed` 消耗一次 `agent.max_failure_retries` 预算，耗尽后同样持久化 blocking decision。outcome
 缺失或不在上述取值内按 `failed` 处理，协议异常不得绕过失败预算。
+worker executor 对两种无 final handoff 的结构化证据直接产生 `blocked` / `handoff_failed`：一是 payload
+issue description 首个非空行精确为 `交付路径:宿主 push` 且 workspace 根存在
+`<issue-identifier>.patch`；二是同一 Codex session 的 `create_pull_request` 与精确
+`linear_task_update(target_state: "Ready to Merge")` 均成功。前者在 validation 后保留 root-relative
+patch path 与 `需宿主 push`，后者保留 PR URL、branch、commit 与 target state。self-reported blocked、
+marker-only、patch-only、permission-detail-only 均不满足 host-push 判据；两种结构化证据都不存在时，
+missing handoff 仍是 `failed` 并消耗普通预算。
 持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
 claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
 才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。

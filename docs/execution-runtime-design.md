@@ -31,7 +31,7 @@ update succeeds. The assignment issue, payload issue, and rendered prompt curren
 started state, so refinement worker completions operate from `Refining -> Needs Refinement Review`
 and implementation handoff still operates from `In Progress -> Ready to Merge`. The assignment ID
 is carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The
-payload contains the issue, exact branch, source ref, rendered profile prompt, hooks, Codex
+payload contains the issue description, exact branch, source ref, rendered profile prompt, hooks, Codex
 settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
 Linear client nor a Linear credential.
 
@@ -53,9 +53,12 @@ metadata; accepted handoff results are bounded, and credentials, tokens, and com
 redacted before persistence. Failure payloads retain stable class/message and available reason
 fields. Audit delivery failures are logged as degraded execution and do not change the tool
 response or assignment lifecycle. Centralized execution records the same audit locally in the
-Panel. A missing `handoff` event remains distinct from a failed `handoff` event, so
-`require_handoff/2` continues to report `{:handoff_failed, :missing_handoff}` only when no handoff
-was submitted.
+Panel. For one Codex session, the worker also retains only the successful `create_pull_request` and
+exact `linear_task_update(target_state: "Ready to Merge")` audit fields needed to classify a missing
+final handoff. When both calls succeeded but no `handoff` was submitted, the executor reports
+`blocked` / `handoff_failed` with bounded PR URL, branch, commit, and Linear target-state evidence.
+Without that pair or the host-push predicate below, a missing `handoff` remains
+`{:handoff_failed, :missing_handoff}`.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
 comment/result/references in the Codex turn and reports `linear_updated: false`. The executor requires
@@ -71,7 +74,11 @@ rate limits, and absolute token totals with the same delta accounting as central
 Terminal events, cancellation, expiry, and stale-run reconciliation leave `running`; successful or
 cancelled endings clear the current entry, failed endings either enter orchestrator retry state or,
 when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
-centralized blocked outcomes.
+centralized blocked outcomes. An implementation with no handoff is classified as host-push only
+when the payload issue description's first non-empty line is exactly `交付路径:宿主 push` and the
+workspace root contains `<issue-identifier>.patch`. After required gates run, the worker emits
+`blocked` / `handoff_failed` with only that root-relative path and `需宿主 push`; self-reported
+blocked payloads, marker-only, patch-only, and permission-detail-only signals do not qualify.
 
 If the Codex command-execution capability is unavailable inside the worker, including the known
 bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
@@ -84,8 +91,14 @@ validation, `validation_status` is `pending` and every required gate from the as
 as `not_run`; the list is empty only when the assignment declared no required gates. In particular,
 a missing implementation handoff fails before validation with reason `handoff_failed`, preserves
 `missing_handoff` in deterministic JSON detail, and marks the assignment's required gates
-`not_run`. Failure detail is serialized from structured executor terms and never uses Elixir
-`inspect/1` syntax.
+`not_run`. The two structured missing-final-handoff blockers run validation first and preserve its
+actual result in the terminal summary. Failure detail is serialized from structured executor terms
+and never uses Elixir `inspect/1` syntax.
+
+`agent.max_retry_backoff_ms` caps only orchestrator failure-retry scheduling. A worker claim request
+contains no issue identifier for a prospective assignment and the worker keeps no per-issue retry or
+cooldown state. Worker re-claim cadence follows the Panel's `poll_after_seconds` response and the
+next claim is governed by Panel admission, including any persisted `blocking_decision`.
 
 Listening off only stops future dispatch. It does not alter an existing assignment or running Codex
 turn. Force-stop and cancel-current are explicit cancellation controls. Force-stop turns listening

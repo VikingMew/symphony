@@ -303,11 +303,11 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
   end
 
-  test "blocked worker outcomes persist and deliver immediately without entering the budget" do
+  test "structured handoff blockers persist and deliver immediately without entering the budget" do
     {orchestrator, pid} = start_orchestrator(max_failure_retries: 2)
     issue_id = "issue-worker-blocked"
     identifier = "SYM-WORKER-BLOCKED"
-    reason = "handoff_failed\nopaque permission evidence"
+    reason = ~s(handoff_failed\n{"marker":"需宿主 push","patch_path":"SYM-110.patch"})
     put_persisted_issue(issue_id, identifier)
     put_running(pid, issue_id, identifier, run_id: "run-worker-blocked")
 
@@ -334,7 +334,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert persisted.blocking_decision["evidence"] == reason
 
     assert_receive {:linear_comment, ^issue_id, comment}
-    assert comment =~ "opaque permission evidence"
+    assert comment =~ "SYM-110.patch"
     assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
   end

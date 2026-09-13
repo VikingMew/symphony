@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 # Orchestration Specification
@@ -250,6 +250,9 @@ Backoff formula:
 - Normal continuation retries after a clean worker exit use a short fixed delay of `1000` ms.
 - Failure-driven retries use `delay = min(10000 * 2^(attempt - 1), agent.max_retry_backoff_ms)`.
 - Power is capped by the configured max retry backoff (default `300000` / 5m).
+- `agent.max_retry_backoff_ms` applies only to this orchestrator failure-retry schedule. Worker
+  claim requests carry no prospective issue id and maintain no per-issue retry/cooldown state;
+  worker re-claim cadence uses the service-provided `poll_after_seconds` and Panel admission.
 - A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
   After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
   persists a blocking decision and delivers the Linear comment and `Blocked` transition.
@@ -259,6 +262,15 @@ Backoff formula:
 The orchestrator accepts an explicit `blocked` outcome without inspecting its reason or detail.
 Those opaque values and the run/session/references are persisted through `BlockingDecision`; the
 orchestrator has no blocked-reason or protocol-method whitelist.
+
+The worker executor emits an explicit `blocked` / `handoff_failed` outcome after validation when an
+implementation has no final handoff and either: the payload description's first non-empty line is
+exactly `交付路径:宿主 push` and the workspace root contains `<issue-identifier>.patch`; or the same
+Codex session successfully recorded `create_pull_request` and
+`linear_task_update(target_state: "Ready to Merge")`. The first form carries only the root-relative
+patch path and `需宿主 push`; the second carries bounded PR URL, branch, commit, and target-state
+evidence. Without either structured form, missing handoff remains `failed` and consumes the normal
+failure budget. Permission-detail text alone never selects the blocked path.
 
 External worker terminal events carry the same normalized outcome vocabulary at the assignment
 boundary. `task.completed` reports `success`, `task.cancelled` reports `cancelled`, and

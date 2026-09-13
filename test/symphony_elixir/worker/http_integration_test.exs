@@ -210,7 +210,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  test "classifies a workflow-scope push rejection as permission blocked", %{
+  test "permission detail alone remains a failed Codex run", %{
     root: root,
     codex_trace: codex_trace,
     codex_binary: codex_binary
@@ -222,11 +222,38 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     )
 
     result = execute_implementation(root, codex_binary, "push-permission-task")
+    assert result.status == :failed
+    assert result.reason == :failed
+    assert result.detail =~ "workflow scope"
+  end
+
+  test "exact host-push directive and root patch block after validation", %{
+    root: root,
+    codex_trace: codex_trace
+  } do
+    codex_binary =
+      fake_codex!(
+        root,
+        codex_trace,
+        ~s({"method":"turn/completed"}),
+        "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
+      )
+
+    result =
+      execute_implementation(
+        root,
+        codex_binary,
+        "host-push-task",
+        "\n交付路径:宿主 push\nImplement the task."
+      )
+
     assert result.status == :blocked
+    assert result.validation.overall_status == :passed
 
-    assert {:handoff_failed, {:push_permission_blocked, detail}} = result.reason
+    assert result.reason ==
+             {:handoff_failed, {:host_push_required, %{"marker" => "需宿主 push", "patch_path" => "SYM-12.patch"}}}
 
-    assert detail =~ "workflow scope"
+    assert result.detail == %{"marker" => "需宿主 push", "patch_path" => "SYM-12.patch"}
   end
 
   test "fails a true missing implementation handoff", %{
@@ -238,7 +265,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.reason == {:handoff_failed, :missing_handoff}
   end
 
-  defp execute_implementation(root, codex_binary, task_id) do
+  defp execute_implementation(root, codex_binary, task_id, description \\ "Run the fixture.") do
     source = Path.join(root, "source")
 
     claim = %{
@@ -255,6 +282,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "protocol_version" => Client.protocol_version(),
       "execution" =>
         panel_payload(source, codex_binary, "implementation")
+        |> put_in(["issue", "description"], description)
         |> ExecutionPayload.from_task_payload()
     }
 
@@ -310,7 +338,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp fake_codex!(root, trace_file, turn_event \\ ~s({"method":"turn/completed"})) do
+  defp fake_codex!(root, trace_file, turn_event \\ ~s({"method":"turn/completed"}), turn_command \\ ":") do
     codex_binary = Path.join(root, "fake-codex")
 
     File.write!(codex_binary, """
@@ -327,6 +355,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
           ;;
         *'"method":"turn/start"'*)
           printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-worker"}}}'
+          #{turn_command}
           printf '%s\n' '#{turn_event}'
           ;;
       esac

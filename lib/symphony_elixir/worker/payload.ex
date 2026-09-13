@@ -23,7 +23,11 @@ defmodule SymphonyElixir.Worker.Payload do
   @type codex :: %{
           required(:prompt) => String.t(),
           required(:profile) => String.t(),
-          required(:issue) => %{required(:identifier) => String.t(), required(:title) => String.t()},
+          required(:issue) => %{
+            required(:identifier) => String.t(),
+            required(:title) => String.t(),
+            required(:description) => String.t()
+          },
           required(:config) => map()
         }
   @type t :: %__MODULE__{
@@ -101,8 +105,9 @@ defmodule SymphonyElixir.Worker.Payload do
 
   defp codex_issue(%{} = issue) do
     with {:ok, identifier} <- required_string(issue, "identifier"),
-         {:ok, title} <- required_string(issue, "title") do
-      {:ok, %{identifier: identifier, title: title}}
+         {:ok, title} <- required_string(issue, "title"),
+         {:ok, description} <- string(issue, "description") do
+      {:ok, %{identifier: identifier, title: title, description: description}}
     end
   end
 
@@ -146,6 +151,13 @@ defmodule SymphonyElixir.Worker.Payload do
     case Map.get(payload, key) do
       value when is_binary(value) and value != "" -> {:ok, value}
       _ -> error("#{key} is required")
+    end
+  end
+
+  defp string(payload, key) do
+    case Map.get(payload, key) do
+      value when is_binary(value) -> {:ok, value}
+      _ -> error("#{key} must be a string")
     end
   end
 
