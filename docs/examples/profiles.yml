@@ -57,7 +57,7 @@ base_prompt: |
   - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
   - Keep ticket metadata current (state, checklist, acceptance criteria, links).
   - Treat a single persistent Linear comment as the source of truth for progress.
-  - Use that single workpad comment for ongoing progress. At implementation handoff, also send one concise `linear_task_update` comment containing `Completed`, `Validation`, `Deviations`, and `Blockers` so reviewers can see the final development summary without reading the whole workpad.
+  - Use that single workpad comment for ongoing progress. The final `handoff` payload includes one concise comment containing `Completed`, `Validation`, `Deviations`, and `Blockers` so reviewers can see the final development summary without reading the whole workpad.
   - Treat any ticket-authored `Validation`, `Test Plan`, or `Testing` section as non-negotiable acceptance input, subject to the higher-priority container-engine policy: execute allowed requirements; prohibited required validation must block completion.
   - When meaningful out-of-scope improvements are discovered during execution,
     file a separate Linear issue instead of expanding scope. The follow-up issue
@@ -95,7 +95,7 @@ base_prompt: |
   - Human moves `Needs Refinement Review` -> `Ready` when refinement is accepted.
   - Human moves `Needs Refinement Review` -> `Refining` when refinement needs another pass.
   - Agent may move `Ready` -> `In Progress` when starting implementation.
-  - Agent explicitly requests `In Progress` -> `Ready to Merge` only after implementation, validation, commit, and exact-branch push. Symphony opens or finds the PR before applying the state transition.
+  - Agent submits `handoff` only after implementation, validation, commit, exact-branch push, and successful `create_pull_request`. The executor runs required gates before Symphony applies `In Progress` -> `Ready to Merge`.
   - Human moves `Ready to Merge` -> `In Progress` when PR changes are requested.
   - Linear's GitHub integration moves the linked issue to `Done` after a human merges the PR on GitHub.
   - Human owns all transitions to `Canceled`, `Cancelled`, or `Duplicate`.
@@ -186,7 +186,7 @@ base_prompt: |
      - explicit, justified pushback reply is posted on that thread.
   4. Update the workpad plan/checklist to include each feedback item and its resolution status.
   5. Re-run validation after feedback-driven changes and push updates.
-  6. Repeat this sweep until there are no outstanding actionable comments, then request `Ready to Merge` again.
+  6. Repeat this sweep until there are no outstanding actionable comments, then submit `handoff` again.
   
   ## Blocked-access escape hatch (required behavior)
   
@@ -222,19 +222,19 @@ base_prompt: |
       - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
   6.  Re-check all acceptance criteria and close any gaps.
   7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-  8.  Do not create or attach the initial PR. Symphony creates or finds it during the explicit completion handoff and records its URL.
+  8.  Call `create_pull_request` only after validation, commit, and push. Use its returned URL and completion proof in the final `handoff` payload.
   9.  Merge latest `origin/main` into the exact Linear branch, resolve conflicts, and rerun checks.
   10. Update the workpad comment with final checklist status and validation notes.
       - Mark completed plan/acceptance/validation checklist items as checked.
       - Add final handoff notes (commit + validation summary) in the same workpad comment.
-      - Post exactly one final handoff comment before moving to review. It must include `Completed`, `Validation`, `Deviations`, and `Blockers`; use `None` for empty human-readable summary sections. In the structured result, use exactly `blockers: ""` when there are no blockers.
-      - Do not invent a PR URL; the backend adds the ensured PR reference to the update result and issue links.
+      - Submit exactly one final `handoff` call before moving to review. Its comment must include `Completed`, `Validation`, `Deviations`, and `Blockers`; use `None` for empty human-readable summary sections. In the structured result, use exactly `blockers: ""` when there are no blockers.
+      - Do not invent a PR URL; use the URL and completion proof returned by `create_pull_request`.
       - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
       - Do not post any additional duplicate completion summary comment.
   11. Confirm every required ticket-provided validation/test-plan item is explicitly marked complete and refresh the workpad so its plan and evidence match the latest commit.
-  12. Call `linear_task_update` once with the final comment, structured result, branch/commit references, and `target_state: "Ready to Merge"`.
-      - This explicit request is the only implementation-completion signal.
-      - Symphony validates the issue, repository, base, exact Linear branch, and remote branch; finds or creates the open PR; records its URL; and only then applies the Linear transition.
+  12. Call the `handoff` dynamic tool once with the final comment, structured result, branch/commit references, and the returned PR URL/completion proof.
+      - This tool call is the only implementation-completion signal and does not update Linear immediately.
+      - `Worker.Executor` requires the captured payload before validation, runs required gates, and only then writes the completion payload and `Ready to Merge` state through the restricted Linear backend.
       - A normal Codex turn exit or `agent.max_turns` exhaustion is not completion and must not create a PR or change state.
   
   ## Step 4: Human review gates
@@ -276,7 +276,7 @@ base_prompt: |
     title/description/acceptance criteria, same-project assignment, a `related`
     link to the current issue, and `blockedBy` when the follow-up depends on the
     current issue.
-  - Do not request `Ready to Merge` unless the `Completion bar before Ready to Merge` is satisfied.
+  - Do not submit `handoff` unless the `Completion bar before Ready to Merge` is satisfied.
   - In human review states, do not make changes; wait and poll.
   - If state is terminal (`Done`, `Canceled`, `Cancelled`, or `Duplicate`), do nothing and shut down.
   - Keep issue text concise, specific, and reviewer-oriented.
@@ -353,7 +353,7 @@ profiles:
 
         Implement, test, commit, and push the exact Linear `branchName` in the workspace.
 
-        Before requesting review, call `linear_task_update` with:
+        The final `handoff` dynamic-tool call must contain:
         - a concise `comment` containing:
           - `Completed`: what was implemented;
           - `Validation`: commands/checks run and their results;
@@ -362,7 +362,7 @@ profiles:
         - a structured `result` with the same information;
         - relevant `references` such as branch, commit, or artifact links.
 
-        After summary, validation, commit, and push are complete, call `create_pull_request` with a title/body conforming to `docs/pull-request-body.md`. Include the returned PR URL and completion proof in the final `linear_task_update` references and only then explicitly request `Ready to Merge`. Symphony owns the tool's lookup/create backend and credentials. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and request `Ready to Merge` again.
+        After summary, validation, commit, and push are complete, call `create_pull_request` with a title/body conforming to `docs/pull-request-body.md`. Include the returned PR URL and completion proof in the final references and only then call `handoff`. Accepted `handoff` submission captures the completion payload but does not update Linear immediately; `Worker.Executor` runs required gates and only then writes the payload and `Ready to Merge` state through the restricted Linear backend. Symphony owns the tool backends and credentials. When a human returns `Ready to Merge` to `In Progress`, update the same branch and PR, validate, and submit `handoff` again.
   refinement:
     description_limits:
       characters: 12000

@@ -5,7 +5,7 @@ domain: [spec, linear-integration]
 status: current
 language: en
 owner: SymphonyElixir.Linear
-updated: 2026-08-27
+updated: 2026-09-13
 ---
 
 # Issue Tracker Integration Specification
@@ -79,13 +79,15 @@ Orchestrator behavior on tracker errors:
 
 ### 11.5 Tracker Writes and Implementation Handoff
 
-- Codex requests task-scoped mutations through the restricted `linear_task_update` tool; raw Linear
-  GraphQL is not exposed to the agent.
-- The default implementation completion target is exactly `Ready to Merge` and requires a final
-  comment, structured result, and references containing the same-session `create_pull_request` URL.
-- `AgentRunner` MUST ensure the exact GitHub repository/base/head PR is open through the restricted
-  tool backend before `linear_task_update` attaches references, posts the comment, or moves Linear.
-  The Linear state update is last.
+- Codex requests ordinary task-scoped mutations through the restricted `linear_task_update` tool;
+  raw Linear GraphQL is not exposed to the agent.
+- Worker implementation completion uses the `handoff` dynamic tool after `create_pull_request`.
+  Its final comment, structured result, and references MUST contain the same-session PR URL/proof;
+  acceptance captures the payload without updating Linear.
+- `Worker.Executor` MUST require captured handoff before required gates, then write the payload and
+  fixed `Ready to Merge` target through the restricted Linear backend only after every gate passes.
+  The Linear state update is last. Codex MUST NOT use `linear_task_update` as the worker completion
+  action.
 - PR failure leaves the issue in `In Progress`. Linear write failure after PR creation is typed and
   visible so a retry can reuse the already-open PR.
 - `Ready to Merge` is a waiting state for ordinary issue dispatch. Symphony may deliver one
@@ -97,6 +99,6 @@ Orchestrator behavior on tracker errors:
   idempotently comment and request `Ready to Merge -> Blocked`. Existing blocker evidence is never
   overwritten; the review job records the delivery conflict for operator resolution.
 - Human change requests move `Ready to Merge -> In Progress`; Codex updates the same branch/PR and
-  explicitly requests `Ready to Merge` again after validation.
+  submits `handoff` again after validation and `create_pull_request` reuse.
 - Human recovery may move a review-blocked issue `Blocked -> In Progress` so the same PR receives a
   new review only after a new backend-resolved head OID is handed off.

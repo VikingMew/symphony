@@ -102,6 +102,8 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   test "workflow package round trip preserves analytics thresholds" do
     workflow_yaml = File.read!("docs/examples/workflow.yml")
 
+    assert workflow_yaml =~ "Implementation completion uses the `handoff`"
+
     assert {:ok, "workflow.yml", draft} =
              WorkflowSettingsPackage.import_draft(workflow_yaml, WorkflowForm.empty())
 
@@ -118,6 +120,12 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
 
     assert get_in(config, ["codex", "thread_sandbox"]) == "danger-full-access"
     assert get_in(config, ["codex", "turn_sandbox_policy"]) == %{"type" => "dangerFullAccess"}
+
+    assert get_in(config, ["workflow", "tool_policy", "linear", "exposed_tools"]) ==
+             ["linear_task_read", "linear_task_update"]
+
+    assert get_in(config, ["workflow", "tool_policy", "github", "exposed_tools"]) ==
+             ["create_pull_request"]
   end
 
   defp workflow_raw!(draft) do

@@ -4,14 +4,14 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-09
+updated: 2026-09-13
 design_status: landed
 ---
 
 # Codex / Linear 代码实现工作流
 
-本文维护当前 `read -> workspace -> baseline -> code -> verify -> commit -> push -> explicit
-handoff` 实现流。它适用于中心化 `AgentRunner` 的本地或 SSH-host Codex execution。
+本文维护当前 worker `read -> workspace -> baseline -> code -> verify -> commit -> push -> PR ->
+handoff -> required gates -> Linear writeback` 实现流。
 
 ## 目标与非目标
 
@@ -19,8 +19,8 @@ handoff` 实现流。它适用于中心化 `AgentRunner` 的本地或 SSH-host C
 
 - 使用 Linear 指定的精确 `branchName` 完成实现、验证、commit 和 push。
 - 让最新人工 comment/activity 控制返工范围。
-- 通过 final comment/result/references 显式请求 `Ready to Merge`。
-- 由 Symphony idempotently 创建或复用 GitHub PR 后再更新 Linear。
+- 通过 `handoff` 动态工具提交 final comment/result/references。
+- 由 Symphony idempotently 创建或复用 GitHub PR，required gates 通过后再更新 Linear。
 
 非目标：
 
@@ -39,7 +39,9 @@ Ready -> In Progress -> Ready to Merge
 ```
 
 `Ready` dispatch 后，Symphony 在 Codex work 开始时转到 `In Progress`。实现 turn 只在 Codex
-显式调用 `linear_task_update(target_state: "Ready to Merge", ...)` 时尝试完成 handoff。
+成功调用 `create_pull_request` 后显式调用 `handoff` 时提交完成 payload；该调用本身不更新 Linear。
+`Worker.Executor` 先要求 captured payload，再运行 required gates，最后通过受限 backend 写入
+`Ready to Merge`。
 `Ready to Merge` 是人工等待状态，无 executable route。PR merge 后由 Linear automation 转到
 `Done`。
 
@@ -89,14 +91,16 @@ handoff 作为验收，worker 记录精确 blocker evidence，并走 persistent 
 无 host-push 命中时，worker push 同一 branch。worker host 需要 Git remote push auth。禁止把
 feature result push 到 configured default branch。
 
-### 5. 提交显式完成请求
+### 5. 提交显式 handoff
 
-Codex 的 `linear_task_update` 必须包含：
+Codex 的 `handoff` 动态工具调用必须包含：
 
 - `comment`：`Completed`、`Validation`、`Deviations`、`Blockers`。
 - `result`：同样四类结构化信息。
 - `references`：至少 branch、commit 和 `create_pull_request` 返回的 PR URL/completion proof。
-- `target_state: Ready to Merge`。
+
+implementation Codex 不使用 `linear_task_update` 作为完成动作。`handoff` 接受只表示 payload 已被当前
+turn 捕获，不表示 Linear 已更新。
 
 初次实现不直接调用 `gh pr create`。Codex 按 [PR body contract](pull-request-body.md) 写 title/body
 并调用受限 `create_pull_request`；`AgentRunner` 提供 backend-owned lookup/create boundary。
@@ -108,10 +112,12 @@ project current workflow 包含该 package 变更。worker 不执行 runtime imp
 block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
 `mix symphony.workflow.sync` 或 drift `--check` 契约。
 
-### 6. Symphony 原子 handoff
+### 6. Worker gates 与 Linear writeback
 
-`AgentRunner` backend 校验 identifier、branch/default/repository、remote branch，lookup exact PR，必要时
-create。Codex 再把返回的 PR reference、comment/result 写入 Linear，最后更新 state。PR 必须：
+PR backend 校验 identifier、branch/default/repository、remote branch，lookup exact PR，必要时 create。
+Codex 提交 `handoff` 后，`Worker.Executor` 在运行 required gates 前要求 captured payload；缺失 payload
+返回 `missing_handoff`，所有 gates 保持 `not_run`。gates 通过后 executor 才把 comment/result/references
+交给受限 Linear backend，并固定更新 `Ready to Merge`。PR 必须：
 
 - repository 与配置/实际 remote identity 一致；
 - base 是 `project.default_branch`；
@@ -139,6 +145,8 @@ comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新�
 | `gh` unavailable/unusable | Use REST only when environment token exists |
 | No GitHub auth | Typed visible failure; no Linear completion writes |
 | Existing closed/merged PR | Typed conflict; no duplicate PR |
+| Missing captured `handoff` | Fail before required gates with `missing_handoff`; no Linear completion write |
+| Required gate failure | No Linear completion write |
 | PR create race | Re-read exact tuple and reuse the open PR |
 | Linear comment/state failure | Visible typed failure; retry reuses existing PR |
 | Normal turn exit/max turns | Return control; no PR and no completion transition |

@@ -57,6 +57,12 @@ Panel. A missing `handoff` event remains distinct from a failed `handoff` event,
 `require_handoff/2` continues to report `{:handoff_failed, :missing_handoff}` only when no handoff
 was submitted.
 
+For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
+comment/result/references in the Codex turn and reports `linear_updated: false`. The executor requires
+that payload before invoking `Validation.run/3`; once every required gate passes, it adds the fixed
+`Ready to Merge` target and performs the restricted Linear writeback. No Codex-side
+`linear_task_update` completion request is part of this worker path.
+
 The same assignment lifecycle feeds the Panel's live orchestrator snapshot. A successful claim that
 creates the worker run, applies the profile-derived started state, and returns the assignment enters
 `running`. Progress events can carry `codex_session_started` or a Codex app-server message under the

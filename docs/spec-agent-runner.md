@@ -5,7 +5,7 @@ domain: [spec, agent-runner]
 status: current
 language: en
 owner: SymphonyElixir.AgentRunner
-updated: 2026-08-27
+updated: 2026-09-13
 ---
 
 # Agent Runner Protocol Specification
@@ -241,7 +241,7 @@ Behavior:
 3. Build prompt from workflow template.
 4. Start app-server session.
 5. Forward app-server events to orchestrator.
-6. Treat only an explicit allowed `Ready to Merge` request as implementation completion.
+6. For worker implementation, treat only a captured `handoff` payload as implementation completion.
 7. On any error, fail the worker attempt (the orchestrator will retry).
 
 Note:
@@ -250,9 +250,9 @@ Note:
 - A normal app-server turn completion or `agent.max_turns` exhaustion MUST NOT create a PR or move
   an issue to `Ready to Merge`.
 
-### 10.8 Centralized GitHub PR Handoff
+### 10.8 Worker GitHub PR Handoff
 
-For the default implementation profile, `AgentRunner` owns the backend of this ordered boundary:
+For the worker implementation profile, `Worker.Executor` owns this ordered boundary:
 
 1. After validation, commit, and push, Codex calls the restricted `create_pull_request` tool with a
    title/body conforming to [pull-request-body.md](pull-request-body.md).
@@ -261,10 +261,15 @@ For the default implementation profile, `AgentRunner` owns the backend of this o
 3. Ensure an open PR exists for the exact repository/base/head tuple.
 4. Resolve and return the PR URL and immutable `head_oid` through the trusted GitHub backend;
    branch refs and agent-authored references are never reviewed-SHA evidence.
-5. Persist an idempotent review intent before external Linear writes.
-6. Update Linear from `In Progress` to `Ready to Merge` last, then arm the review job.
+5. Codex calls `handoff` with final comment/result/references containing the same-session PR URL and
+   completion proof. Acceptance captures the payload and reports `linear_updated: false`.
+6. Require that captured payload before running required gates; missing payload fails with
+   `missing_handoff` and leaves every gate `not_run`.
+7. After all required gates pass, write the captured payload to Linear and update `In Progress` to
+   `Ready to Merge` last.
 
-Step 5 MUST NOT run if PR preparation fails. Failures MUST be typed, visible, redacted, and leave
+Step 7 MUST NOT run if PR preparation, handoff capture, or a required gate fails. Failures MUST be
+typed, visible, redacted, and leave
 the issue in `In Progress`. Started/completed/failed `implementation_handoff` phase events MUST
 carry issue, session, and run context; completed events record the PR URL.
 

@@ -108,11 +108,11 @@ defmodule SymphonyElixir.PromptBuilder do
     |> String.trim()
   end
 
-  defp profile_contract("implementation", allowed_updates) do
+  defp profile_contract("implementation", _allowed_updates) do
     """
     Workflow profile: implementation
 
-    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Review the owning-design declaration against the actual diff before delivery. Changes to behavior under `lib/` or to runtime configuration semantics require the owning L3 design and its documentation-alignment row to be updated in the same change. If the diff disagrees with the ticket classification, correct the Linear description or work record and documentation scope before delivery. A missing owner must be disclosed in the PR body and registered as a new L3 owner or merged into an existing owner in the same PR; it is not an exemption. Implement, validate, commit, and push the exact Linear `branchName`. Then call `create_pull_request` with a title and body conforming to `docs/pull-request-body.md`; Symphony executes the exact repository/base/head lookup and gh-first/REST-fallback creation without exposing GitHub credentials. Use the returned PR URL and completion proof in `linear_task_update` references while posting the final result and concise comment, then explicitly request one of these states: #{target_states_text(allowed_updates)}. If human changes return the issue to In Progress, update the same branch and existing PR before requesting Ready to Merge again.
+    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Review the owning-design declaration against the actual diff before delivery. Changes to behavior under `lib/` or to runtime configuration semantics require the owning L3 design and its documentation-alignment row to be updated in the same change. If the diff disagrees with the ticket classification, correct the Linear description or work record and documentation scope before delivery. A missing owner must be disclosed in the PR body and registered as a new L3 owner or merged into an existing owner in the same PR; it is not an exemption. Implement, validate, commit, and push the exact Linear `branchName`. Then call `create_pull_request` with a title and body conforming to `docs/pull-request-body.md`; Symphony executes the exact repository/base/head lookup and gh-first/REST-fallback creation without exposing GitHub credentials. Use the returned PR URL and completion proof in the final references and call the `handoff` dynamic tool with the final comment, result, and references. Accepted `handoff` submission does not update Linear immediately: the worker requires the captured payload, runs required gates, and only then writes `Ready to Merge` through the restricted backend. If human changes return the issue to In Progress, update the same branch and existing PR, validate, and submit `handoff` again.
     """
     |> String.trim()
   end
@@ -133,7 +133,7 @@ defmodule SymphonyElixir.PromptBuilder do
 
     if is_binary(branch_name) and String.trim(branch_name) != "" do
       prompt <>
-        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before requesting Ready to Merge. Do not create or switch to a different task branch. After pushing, call `create_pull_request` with a body conforming to `docs/pull-request-body.md`, then include its URL and completion proof in the explicit completion request."
+        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before completion. Do not create or switch to a different task branch. After pushing, call `create_pull_request` with a body conforming to `docs/pull-request-body.md`, then include its URL and completion proof in the final `handoff` call."
     else
       prompt
     end

@@ -62,6 +62,9 @@ Design note:
   project's PostgreSQL snapshot rather than files from the source checkout.
 - Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
   runtime dispatch, transition validation, human-review classification, or profile routing.
+- `workflow.tool_policy.*.exposed_tools` is retained example-policy metadata, not a runtime
+  dynamic-tool allowlist. The implementation completion surface is the code-owned `handoff`
+  dynamic tool after `create_pull_request`.
 
 The default package contains refinement and implementation profiles only. There is no backend merge
 profile or merge success-state setting; GitHub/Linear automation owns the post-review completion.
@@ -333,6 +336,12 @@ Behavior changes under `lib/` and runtime-configuration semantic changes synchro
 design and documentation-alignment row in the same change. Classification drift is corrected in the
 Linear description or work record before delivery. A missing owner is disclosed in the PR body and
 registered or merged into an existing owner in that PR; it is not an exemption.
+
+The default implementation prompt MUST teach one worker completion action: after validation, commit,
+push, and successful `create_pull_request`, Codex calls the `handoff` dynamic tool with final
+comment/result/references and the returned PR URL/proof. Codex MUST NOT use `linear_task_update` to
+request `Ready to Merge` as that completion action. Accepted handoff capture does not update Linear;
+the worker runs required gates before restricted backend writeback.
 
 When the `refinement` profile requests normalized state `Needs Refinement Review`, the same tool
 request MUST contain the candidate description. Before any description or state write, Symphony

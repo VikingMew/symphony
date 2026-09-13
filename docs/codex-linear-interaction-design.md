@@ -19,7 +19,7 @@ GitHub PR 已打开，最后才把 Linear issue 移到人工等待状态。
 - Codex 读取当前 task detail、recent comments 和 activity，并把最新人工评论作为最高优先级范围。
 - Codex 可以追加评论、结构化结果、引用和受控状态请求。
 - Linear token、GraphQL 文档和 Authorization header 只存在于 Symphony 后端。
-- 实现完成由显式 `Ready to Merge` 请求触发，不由普通 turn exit 或 max-turn exhaustion 推断。
+- worker 实现完成由显式 `handoff` 动态工具调用触发，不由普通 turn exit 或 max-turn exhaustion 推断。
 - 初次 PR 由 Codex 调用受限 `create_pull_request` tool 请求；中心化 `AgentRunner` 独占其 backend、认证和 lookup/create 行为。
 - GitHub/Linear automation 在 PR merge 后把 issue 移到 `Done`；Symphony 不执行 merge。
 
@@ -39,10 +39,13 @@ Todo -> Refining -> Needs Refinement Review -> Ready -> In Progress
 
 ## 信任与所有权边界
 
-Codex 只看到两个 task-scoped tools：
+Codex 的 Linear task-scoped tools 只有两个：
 
 - `linear_task_read`：读取当前 issue detail 和可选的 recent activity。
-- `linear_task_update`：请求更新当前 issue 的允许字段。
+- `linear_task_update`：请求普通进度更新当前 issue 的允许字段。
+
+implementation profile 还看到 `create_pull_request` 与 `handoff` 动态工具。前者确保精确 PR，后者只把
+final comment/result/references 捕获到当前 worker turn；`handoff` 接受时不写 Linear。
 
 不暴露 raw GraphQL；执行 worker 使用现有的 `LINEAR_API_KEY` 为这些请求认证，Codex 仍只能通过
 task-scoped tools 操作当前 issue，不能操作其它 issue。中心化 `AgentRunner` 和 Panel writeback
@@ -52,10 +55,10 @@ workflow settings。
 
 实现交付的所有权如下：
 
-- Codex：实现、测试、验证、commit，并 push 精确 Linear `branchName`；提交 final
-  comment/result/references；显式请求 `Ready to Merge`。
-- Symphony：校验 issue/repository/default/head，lookup-before-create，确保 open PR，记录 PR URL，
-  然后执行 Linear 写入。
+- Codex：实现、测试、验证、commit，并 push 精确 Linear `branchName`；确保 PR 后通过 `handoff`
+  提交 final comment/result/references。
+- Symphony：校验 issue/repository/default/head，lookup-before-create，确保 open PR，捕获 handoff，
+  required gates 通过后才执行 Linear comment/result/references 与 `Ready to Merge` 写入。
 - Human/GitHub：review 和 merge。
 - Linear GitHub integration：PR merged 后转到 `Done`。
 
@@ -106,11 +109,11 @@ profiles:
 
 ### `linear_task_update`
 
-普通更新可以只包含 profile 允许的字段。实现完成请求必须同时包含：
+`linear_task_update` 只用于 profile 允许的普通进度更新，不是 worker implementation 的完成动作。
+完成 payload 由 `handoff` 动态工具接收：
 
 ```json
 {
-  "target_state": "Ready to Merge",
   "comment": "Completed: ...; Validation: ...; Deviations: None; Blockers: None",
   "result": {
     "completed": "...",
@@ -120,19 +123,17 @@ profiles:
   },
   "references": {
     "branch": "exact-linear-branch",
-    "commit": "<sha>"
+    "commit": "<sha>",
+    "pr_url": "https://github.com/acme/repo/pull/42",
+    "pr_proof": "<same-session completion proof>"
   }
 }
 ```
 
-成功 handoff 的 `result.blockers` 规范值是空字符串；字段缺失时的 `nil` 也表示没有 blocker。
-经过 trim 后为空的字符串会规范化为 `nil`。精确且大小写不敏感的 `none` 仅作为旧 payload
-兼容值保留；`None for handoff` 等其它非空自由文本始终是 blocker evidence，避免隐藏真实阻塞。
-
-在中心化 `AgentRunner` 路径中，缺少 comment/result/references（含 `pr_url`）、target 不允许、
-或没有注入的 PR backend 时，请求失败。execution worker 的 `DynamicTool` 只做参数规范化、
-当前 session 的 PR proof 校验和 Linear 写入；完成 handoff 的结构化字段由 `handoff` tool 校验，
-executor 在 required gates 通过后固定写入 `Ready to Merge`，Panel writeback 仍是 policy gate。
+成功 handoff 的 `result.blockers` 规范值是空字符串。`handoff` 校验非空 comment/result/references、
+精确 branch/commit，以及同一 session 的 PR URL/proof；接受结果固定报告 `linear_updated: false`。
+execution worker 的 executor 随后运行 required gates，再把捕获的 payload 加上固定
+`target_state: Ready to Merge` 交给受限 Linear backend，Panel writeback 仍是 policy gate。
 
 ## 原子实现 handoff
 
@@ -144,7 +145,10 @@ validation、commit、push 后，顺序固定：
 3. 对精确 repository/base/head 查找 open PR。
 4. 已有 open PR 则复用；否则创建 title 包含 Linear identifier、body 包含精确
    `Fixes <ID>` 的 PR。
-5. Codex 将返回的 PR URL 添加到 references，写 final comment/result，最后更新 Linear `In Progress -> Ready to Merge`。
+5. Codex 将返回的 PR URL/proof 添加到 references，并调用 `handoff` 提交 final comment/result/references。
+6. `Worker.Executor` 先要求该 captured payload；缺失时以 `missing_handoff` 在 gates 前失败。
+7. required gates 通过后，executor 才经受限 backend 写入 payload 并更新 Linear
+   `In Progress -> Ready to Merge`。
 
 任何 branch/GitHub/auth/PR 失败都会返回 typed error，并让 issue 留在 `In Progress`。Linear
 transition 失败也必须可见；此时 PR 已存在，重试会 idempotently 复用。
@@ -198,7 +202,8 @@ Req proxy 选择按请求 URL scheme 决定。`https` 请求优先 `HTTPS_PROXY`
   policy rejection、validation、PR proof mismatch、不可用 backend 和 backend failure。
 - profile-policy rejection、GitHub typed error、Linear GraphQL/update failure和 persistence degradation
   都必须可见，不能静默转换成成功。
-- attachment、comment 和 state update 仍写 task-tool audit；Linear state update 永远是 handoff 最后一步。
+- attachment、comment 和 state update 仍写 task-tool audit；required gates 通过后的 Linear state update
+  永远是 handoff writeback 的最后一步。
 
 ## Rollout 边界
 
