@@ -7,7 +7,13 @@ defmodule SymphonyElixir.Worker.PayloadTest do
     assert {:ok, payload} = Payload.parse(valid_payload())
     assert payload.repository == "https://example.test/repo.git"
     assert payload.codex.prompt == "Implement the task."
-    assert payload.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
+
+    assert payload.codex.issue == %{
+             identifier: "SYM-45",
+             title: "Align worker payloads",
+             description: "Classify host push from structured evidence."
+           }
+
     assert payload.codex.config["model"] == "gpt-5.5"
     assert payload.codex.config["reasoning_effort"] == "xhigh"
     assert payload.codex.config["thread_sandbox"] == "danger-full-access"
@@ -77,7 +83,11 @@ defmodule SymphonyElixir.Worker.PayloadTest do
         "stall_timeout_ms" => 30_000,
         "prompt" => "Implement the task.",
         "profile" => "implementation",
-        "issue" => %{"identifier" => "SYM-45", "title" => "Align worker payloads"}
+        "issue" => %{
+          "identifier" => "SYM-45",
+          "title" => "Align worker payloads",
+          "description" => "Classify host push from structured evidence."
+        }
       },
       "required_gates" => [%{"command" => "scripts/check.sh", "timeout_seconds" => 600}],
       "handoff" => %{"command" => "handoff", "timeout_seconds" => 60}

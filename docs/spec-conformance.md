@@ -5,7 +5,7 @@ domain: [spec, conformance]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-07
+updated: 2026-09-13
 ---
 
 # Test and Validation Matrix
@@ -92,6 +92,12 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
 - Worker terminal events route by explicit outcome only: `blocked` blocks immediately, `failed`
   consumes the shared budget, and `success`/`cancelled` clear the failure chain; no reason or
   method whitelist participates in the decision
+- Worker missing-handoff classification requires either the exact host-push description directive
+  plus root issue patch, or one-session successful PR URL plus normalized Ready-to-Merge update
+  evidence; permission text alone remains failed, either structured blocker preserves failed gate
+  evidence and bypasses the retry budget, and incomplete evidence names its missing event or PR URL
+- Worker claim cadence follows service `poll_after_seconds` and Panel admission with no per-issue
+  worker cooldown; `agent.max_retry_backoff_ms` remains an orchestrator retry-scheduling cap
 - Retry queue entries include attempt, due time, identifier, and error
 - Stall detection kills stalled sessions and schedules retry
 - Slot exhaustion requeues retries with explicit error reason

@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Config.RuntimeResolver
   alias SymphonyElixir.GitHub.PullRequest
   alias SymphonyElixir.Linear.{Client, Issue}
+  alias SymphonyElixir.StateName
   alias SymphonyElixir.Worker.{Command, Config, LinearToolAuditRecorder, Paths, Payload, Validation}
 
   @linear_endpoint "https://api.linear.app/graphql"
@@ -27,8 +28,18 @@ defmodule SymphonyElixir.Worker.Executor do
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
-         :ok <- require_handoff(payload, codex),
-         {:ok, validation} <- validate(config, claim, source, codex, payload.gates, workspace, log_dir),
+         {:ok, handoff_requirement} <- handoff_requirement(payload, codex, workspace),
+         {:ok, validation} <-
+           validate_handoff_requirement(
+             handoff_requirement,
+             config,
+             claim,
+             source,
+             codex,
+             payload.gates,
+             workspace,
+             log_dir
+           ),
          :ok <- not_cancelled(),
          {:ok, handoff} <- handoff(config, claim, payload, codex) do
       summary = summary(config, claim, source, codex, validation)
@@ -46,6 +57,12 @@ defmodule SymphonyElixir.Worker.Executor do
 
       {:blocked, reason, detail} ->
         %{status: :blocked, reason: reason, detail: detail}
+
+      {:blocked, reason, detail, validation} ->
+        %{status: :blocked, reason: reason, detail: detail, validation: validation}
+
+      {:error, reason, detail} ->
+        %{status: :failed, reason: reason, detail: detail}
 
       {:error, reason} ->
         %{status: :failed, reason: reason}
@@ -69,20 +86,23 @@ defmodule SymphonyElixir.Worker.Executor do
     started = System.monotonic_time(:millisecond)
     proof_secret = :crypto.strong_rand_bytes(32)
 
-    result =
+    execution_result =
       run_cancellable_codex(fn session_observer ->
         RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
           issue = %Issue{
             id: Map.fetch!(claim, "issue_id"),
             identifier: codex.issue.identifier,
             title: codex.issue.title,
+            description: codex.issue.description,
             branch_name: payload.branch,
             url: Map.get(payload.handoff, "issue_url")
           }
 
           progress.("codex_starting", %{})
 
-          audit_recorder = audit_recorder(config, claim)
+          audit_key = {:worker_delivery_audit, make_ref()}
+          Process.put(audit_key, [])
+          audit_recorder = recording_audit_recorder(config, claim, audit_key)
 
           app_server_opts = [
             profile: codex.profile,
@@ -100,9 +120,16 @@ defmodule SymphonyElixir.Worker.Executor do
             ]
           ]
 
-          run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
+          result = run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
+          {result, completed_delivery_evidence(Process.delete(audit_key))}
         end)
       end)
+
+    {result, delivery_evidence} =
+      case execution_result do
+        {result, delivery_evidence} -> {result, delivery_evidence}
+        :cancelled -> {:cancelled, nil}
+      end
 
     duration_ms = System.monotonic_time(:millisecond) - started
 
@@ -115,25 +142,13 @@ defmodule SymphonyElixir.Worker.Executor do
           status: :passed,
           session_id: Map.fetch!(app_server_result, :session_id),
           handoff: Map.get(app_server_result, :handoff),
+          delivery_evidence: delivery_evidence,
           proof_secret: proof_secret,
           duration_ms: duration_ms
         }
 
       {:error, reason} ->
-        detail = inspect(reason)
-
-        if push_permission_failure?(detail) do
-          %{
-            status: :passed,
-            session_id: nil,
-            handoff: nil,
-            proof_secret: proof_secret,
-            duration_ms: duration_ms,
-            detail: detail
-          }
-        else
-          %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: detail}
-        end
+        %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: inspect(reason)}
     end
   end
 
@@ -351,28 +366,110 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp require_handoff(
-         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
-         %{handoff: nil, detail: detail}
+  @doc false
+  @spec handoff_requirement(Payload.t(), map(), Path.t()) ::
+          {:ok, :ready | {:blocked, term(), map()}} | {:error, term()} | {:error, term(), map()}
+  def handoff_requirement(
+        %{
+          codex: %{profile: "implementation", issue: %{identifier: identifier, description: description}},
+          handoff: %{"policy" => "push_pr_then_restricted_linear"}
+        },
+        %{handoff: nil} = codex,
+        workspace
+      ) do
+    patch_path = identifier <> ".patch"
+
+    cond do
+      host_push_directive?(description) and File.regular?(Path.join(workspace, patch_path)) ->
+        evidence = %{"marker" => "需宿主 push", "patch_path" => patch_path}
+        {:ok, {:blocked, {:handoff_failed, {:host_push_required, evidence}}, evidence}}
+
+      match?({:complete, %{}}, codex.delivery_evidence) ->
+        {:complete, evidence} = codex.delivery_evidence
+        {:ok, {:blocked, {:handoff_failed, {:completed_delivery_missing_handoff, evidence}}, evidence}}
+
+      true ->
+        {:incomplete, evidence} = codex.delivery_evidence
+        {:error, {:handoff_failed, :missing_handoff}, evidence}
+    end
+  end
+
+  def handoff_requirement(_payload, _codex, _workspace), do: {:ok, :ready}
+
+  defp validate_handoff_requirement(:ready, config, claim, source, codex, gates, workspace, log_dir) do
+    validate(config, claim, source, codex, gates, workspace, log_dir)
+  end
+
+  defp validate_handoff_requirement(
+         {:blocked, reason, detail},
+         config,
+         claim,
+         source,
+         codex,
+         gates,
+         workspace,
+         log_dir
        ) do
-    if push_permission_failure?(detail),
-      do: {:blocked, {:handoff_failed, {:push_permission_blocked, detail}}, detail},
-      else: {:error, {:handoff_failed, :missing_handoff}}
+    case validate(config, claim, source, codex, gates, workspace, log_dir) do
+      {:ok, validation} -> {:blocked, reason, detail, validation}
+      {:validation_failed, %{validation: validation}} -> {:blocked, reason, detail, validation}
+      {:validation_cancelled, _summary} = cancelled -> cancelled
+    end
   end
 
-  defp require_handoff(
-         %{codex: %{profile: "implementation"}, handoff: %{"policy" => "push_pr_then_restricted_linear"}},
-         %{handoff: nil}
-       ),
-       do: {:error, {:handoff_failed, :missing_handoff}}
-
-  defp require_handoff(_payload, _codex), do: :ok
-
-  defp push_permission_failure?(detail) when is_binary(detail) do
-    normalized = String.downcase(detail)
-
-    Enum.any?(["workflow scope", "lacks the required scope", "403", "permission denied"], &String.contains?(normalized, &1))
+  defp host_push_directive?(description) do
+    description
+    |> String.split("\n")
+    |> Enum.find(&(String.trim(&1) != ""))
+    |> Kernel.==("交付路径:宿主 push")
   end
+
+  @doc false
+  @spec completed_delivery_evidence([map()]) :: {:complete | :incomplete, map()}
+  def completed_delivery_evidence(events) do
+    pull_request =
+      Enum.find(events, &match?(%{tool: "create_pull_request", status: "success"}, &1))
+
+    linear_update =
+      Enum.find(events, &match?(%{tool: "linear_task_update", status: "success"}, &1))
+
+    missing =
+      [pull_request_evidence_missing(pull_request), linear_update_evidence_missing(linear_update)]
+      |> Enum.reject(&is_nil/1)
+
+    case missing do
+      [] ->
+        %{result: %{"url" => url} = result} = pull_request
+
+        evidence =
+          result
+          |> Map.take(["head", "head_oid"])
+          |> Map.new(fn
+            {"head", branch} -> {"branch", branch}
+            {"head_oid", commit} -> {"commit", commit}
+          end)
+          |> Map.merge(%{"pr_url" => url, "linear_state" => "Ready to Merge"})
+
+        {:complete, evidence}
+
+      missing ->
+        {:incomplete, %{"missing" => missing}}
+    end
+  end
+
+  defp pull_request_evidence_missing(nil), do: "create_pull_request"
+  defp pull_request_evidence_missing(%{result: %{"url" => _url}}), do: nil
+  defp pull_request_evidence_missing(%{}), do: "create_pull_request.result.url"
+
+  defp linear_update_evidence_missing(nil), do: "linear_task_update"
+
+  defp linear_update_evidence_missing(%{arguments: %{"target_state" => state}}) do
+    if StateName.normalize(state) == StateName.normalize("Ready to Merge"),
+      do: nil,
+      else: "linear_task_update.arguments.target_state"
+  end
+
+  defp linear_update_evidence_missing(%{}), do: "linear_task_update.arguments.target_state"
 
   defp handoff(config, claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do
@@ -427,6 +524,15 @@ defmodule SymphonyElixir.Worker.Executor do
     }
 
     &LinearToolAuditRecorder.record(context, &1, &2)
+  end
+
+  defp recording_audit_recorder(config, claim, audit_key) do
+    panel_recorder = audit_recorder(config, claim)
+
+    fn attrs, payload ->
+      Process.put(audit_key, [payload | Process.get(audit_key)])
+      panel_recorder.(attrs, payload)
+    end
   end
 
   # Worker payloads do not include database-backed tracker settings. Linear

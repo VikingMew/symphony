@@ -18,7 +18,13 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["codex"]["thread_sandbox"] == "danger-full-access"
     assert execution["codex"]["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
-    assert execution["codex"]["issue"] == %{"identifier" => "SYM-45", "title" => "Align worker payloads"}
+
+    assert execution["codex"]["issue"] == %{
+             "identifier" => "SYM-45",
+             "title" => "Align worker payloads",
+             "description" => "Keep the persisted Panel snapshot unchanged."
+           }
+
     assert execution["codex"]["prompt"] =~ "Workflow profile: implementation"
     assert execution["codex"]["prompt"] =~ "Linear issue SYM-45: Align worker payloads"
     assert Enum.map(execution["hooks"], & &1["command"]) == ["mix setup", "mix test"]
@@ -36,7 +42,12 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
     assert parsed.codex.prompt == execution["codex"]["prompt"]
-    assert parsed.codex.issue == %{identifier: "SYM-45", title: "Align worker payloads"}
+
+    assert parsed.codex.issue == %{
+             identifier: "SYM-45",
+             title: "Align worker payloads",
+             description: "Keep the persisted Panel snapshot unchanged."
+           }
 
     assert Map.has_key?(execution, "issue") == false
     assert Map.has_key?(execution, "prompt") == false

@@ -95,11 +95,31 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     defp claim_result(%{"failed_reason" => reason}), do: %{status: :failed, reason: reason}
 
-    defp claim_result(%{"blocked" => true}) do
+    defp claim_result(%{"blocked_validation_failed" => true}) do
+      evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
+
       %{
         status: :blocked,
-        reason: {:handoff_failed, {:push_permission_blocked, "workflow scope"}},
-        detail: "workflow scope"
+        reason: {:handoff_failed, {:host_push_required, evidence}},
+        detail: evidence,
+        validation: %{
+          overall_status: :failed,
+          gates: [%{status: :failed, exit_code: 7, duration_ms: 42, detail: "validation failed"}]
+        }
+      }
+    end
+
+    defp claim_result(%{"blocked" => true}) do
+      evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
+
+      %{
+        status: :blocked,
+        reason: {:handoff_failed, {:host_push_required, evidence}},
+        detail: evidence,
+        validation: %{
+          overall_status: :passed,
+          gates: [%{status: :passed, exit_code: 0, duration_ms: 42, detail: ""}]
+        }
       }
     end
 
@@ -345,9 +365,17 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert summary["outcome"] == "blocked"
     assert summary["reason"] == "handoff_failed"
-    assert summary["validation_status"] == "pending"
-    assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
-    assert summary["detail"] =~ "push_permission_blocked"
+    assert summary["validation_status"] == "passed"
+    assert [%{"name" => "check", "status" => "passed"}] = summary["gates"]
+
+    assert Jason.decode!(summary["detail"]) == %{
+             "detail" => %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"},
+             "reason" => [
+               "handoff_failed",
+               ["host_push_required", %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}]
+             ],
+             "status" => "blocked"
+           }
   end
 
   test "execution capability failures are delivered as task.failed with a typed summary reason", %{config: config} do
@@ -414,11 +442,22 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert phases("task-1") == []
   end
 
-  test "empty claim advice is observed with a legacy fallback", %{config: config} do
+  test "service claim advice controls cadence without per-issue worker state", %{config: config} do
     put_claims([%{"task" => nil, "poll_after_seconds" => 30}, %{"task" => nil}])
     runtime = start_runtime(config)
 
     eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 30 end)
+
+    assert [request | _rest] = state().claims_seen
+
+    assert request == %{
+             "worker_id" => "worker-1",
+             "session_id" => "session-1",
+             "protocol_version" => "worker-api-v1",
+             "available_slots" => 1,
+             "capabilities" => %{"execution" => ["v1"]}
+           }
+
     send(runtime, :poll)
     eventually(fn -> :sys.get_state(runtime).next_poll_seconds == 5 end)
     assert :sys.get_state(runtime).claim_http_failure_streak == 0
@@ -452,6 +491,29 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       "block" => block,
       "execution" => %{"issue" => %{"identifier" => "SYM-75"}, "required_gates" => []}
     }
+  end
+
+  test "blocked host-push outcome preserves failed validation evidence", %{config: config} do
+    blocked_claim =
+      claim("task-1", false)
+      |> Map.put("blocked_validation_failed", true)
+      |> put_required_gates([%{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}])
+
+    put_claims([blocked_claim])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["outcome"] == "blocked"
+    assert summary["reason"] == "handoff_failed"
+    assert summary["validation_status"] == "failed"
+
+    assert [%{"name" => "check", "status" => "failed", "exit_code" => 7, "failure_detail" => "validation failed"}] =
+             summary["gates"]
+
+    assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
   defp put_required_gates(claim, gates), do: put_in(claim, ["execution", "required_gates"], gates)

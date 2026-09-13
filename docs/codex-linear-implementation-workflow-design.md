@@ -88,6 +88,13 @@ root-relative path，并标记 `需宿主 push`。若 ticket 必须以 push、PR
 handoff 作为验收，worker 记录精确 blocker evidence，并走 persistent `blocking_decision` /
 `Blocked` 流程。
 
+worker executor 只在 implementation handoff 为空、worker payload 中 issue description 的首个非空行
+精确等于 `交付路径:宿主 push`，且 workspace/repository 根存在精确
+`<issue-identifier>.patch` 时，将本地 validation 之后的终态归为 `blocked`。validation 失败也保留该
+终态，并把实际 gate 结果写入 summary。终态 handoff 证据只保留 root-relative patch path 与
+`需宿主 push` marker。Codex 自报 blocked、只有 marker、只有 patch，或 permission/workflow-scope
+detail 文本都不满足这个结构化判据。
+
 无 host-push 命中时，worker push 同一 branch。worker host 需要 Git remote push auth。禁止把
 feature result push 到 configured default branch。
 
@@ -112,11 +119,21 @@ project current workflow 包含该 package 变更。worker 不执行 runtime imp
 block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
 `mix symphony.workflow.sync` 或 drift `--check` 契约。
 
+若同一 worker/Codex session 留下成功的 `create_pull_request` 和 implementation
+`linear_task_update`（target state 规范化后为 `Ready to Merge`）证据，却没有提交最终 worker-owned
+`handoff` payload，executor 在本地 validation 后产出 `blocked` / `handoff_failed`。bounded evidence
+要求成功 PR 事件包含 URL，并保留已提供的 branch、commit 与规范化 Linear target state；validation
+失败仍是 `blocked` 并保留实际 gate 结果。未满足该证据对时，summary detail 记录缺失的事件或字段。
+该分类只处理旧 prompt/contract mismatch 留下的同 turn 工具证据，不改变上面的当前完成顺序。没有
+host-push 判据、没有完整 session evidence、也没有 handoff 的 implementation run 仍为
+`missing_handoff` failed。
+
 ### 6. Worker gates 与 Linear writeback
 
 PR backend 校验 identifier、branch/default/repository、remote branch，lookup exact PR，必要时 create。
 Codex 提交 `handoff` 后，`Worker.Executor` 在运行 required gates 前要求 captured payload；缺失 payload
-返回 `missing_handoff`，所有 gates 保持 `not_run`。gates 通过后 executor 才把 comment/result/references
+且未命中上述两种结构化 blocker 时返回 `missing_handoff`，所有 gates 保持 `not_run`。结构化 blocker
+仍运行 gates 并保留结果；正常 handoff 只有 gates 通过后，executor 才把 comment/result/references
 交给受限 Linear backend，并固定更新 `Ready to Merge`。PR 必须：
 
 - repository 与配置/实际 remote identity 一致；
@@ -146,9 +163,12 @@ comment。下一轮 Codex 读取该 activity，更新同一 branch/PR，重新�
 | No GitHub auth | Typed visible failure; no Linear completion writes |
 | Existing closed/merged PR | Typed conflict; no duplicate PR |
 | Missing captured `handoff` | Fail before required gates with `missing_handoff`; no Linear completion write |
-| Required gate failure | No Linear completion write |
+| Required gate failure | No Linear completion write; structured missing-handoff blockers remain blocked with failed gate evidence |
 | PR create race | Re-read exact tuple and reuse the open PR |
 | Linear comment/state failure | Visible typed failure; retry reuses existing PR |
+| Host-push directive and root patch, but no handoff | Validate locally; block immediately with patch path and `需宿主 push` |
+| PR and Ready-to-Merge update succeeded, but final handoff is missing | Block immediately with bounded completed-delivery evidence |
+| Handoff missing without either structured evidence pair | Typed `missing_handoff` failure |
 | Normal turn exit/max turns | Return control; no PR and no completion transition |
 
 ## 审计与验收

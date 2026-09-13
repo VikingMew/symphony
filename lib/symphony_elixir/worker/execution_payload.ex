@@ -36,7 +36,10 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
       "stall_timeout_ms" => Map.fetch!(limits, "stall_timeout_ms"),
       "prompt" => prompt(payload),
       "profile" => Map.fetch!(payload, "workflow_profile"),
-      "issue" => Map.take(issue, ["identifier", "title"])
+      "issue" =>
+        issue
+        |> Map.take(["identifier", "title"])
+        |> Map.put("description", Map.get(issue, "description") || "")
     }
     |> put_optional_codex_selector("model", Map.get(codex, "model"))
     |> put_optional_codex_selector("reasoning_effort", Map.get(codex, "reasoning_effort"))

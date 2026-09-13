@@ -26,6 +26,128 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert settings.project.repository_url == "git@github.com:VikingMew/symphony.git"
   end
 
+  test "host push requires the exact description directive and root patch" do
+    workspace = Path.join(System.tmp_dir!(), "executor-host-push-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf(workspace) end)
+
+    payload = implementation_payload("\n\n交付路径:宿主 push\nImplement the task.")
+
+    missing_handoff = %{
+      handoff: nil,
+      detail: nil,
+      delivery_evidence: {:incomplete, %{"missing" => ["create_pull_request", "linear_task_update"]}}
+    }
+
+    for codex <- [
+          %{missing_handoff | detail: "需宿主 push"},
+          %{missing_handoff | detail: "permission denied with 403 workflow scope"},
+          %{missing_handoff | detail: %{status: "blocked", marker: "需宿主 push"}}
+        ] do
+      assert {:error, {:handoff_failed, :missing_handoff}, _evidence} =
+               Executor.handoff_requirement(payload, codex, workspace)
+    end
+
+    File.write!(Path.join(workspace, "SYM-68.patch"), "binary-safe patch")
+
+    assert {:ok, {:blocked, {:handoff_failed, {:host_push_required, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}}, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}} =
+             Executor.handoff_requirement(payload, missing_handoff, workspace)
+
+    for description <- ["交付路径:宿主 push ", "Implement the task."] do
+      assert {:error, {:handoff_failed, :missing_handoff}, _evidence} =
+               payload
+               |> put_in([Access.key!(:codex), Access.key!(:issue), Access.key!(:description)], description)
+               |> Executor.handoff_requirement(missing_handoff, workspace)
+    end
+  end
+
+  test "completed delivery audit evidence blocks a missing final handoff" do
+    events = [
+      %{
+        tool: "linear_task_update",
+        status: "success",
+        arguments: %{"comment" => "done", "target_state" => "  READY TO MERGE  "},
+        result: %{"requested_state" => "Ready to Merge"}
+      },
+      %{
+        tool: "create_pull_request",
+        status: "success",
+        arguments: %{},
+        result: %{"url" => "https://github.com/VikingMew/symphony/pull/105"}
+      }
+    ]
+
+    evidence = %{
+      "pr_url" => "https://github.com/VikingMew/symphony/pull/105",
+      "linear_state" => "Ready to Merge"
+    }
+
+    assert Executor.completed_delivery_evidence(events) == {:complete, evidence}
+
+    full_pr =
+      put_in(List.last(events), [:result], %{
+        "url" => evidence["pr_url"],
+        "head" => "vikingmew-sym-108",
+        "head_oid" => "abc123"
+      })
+
+    assert {:complete,
+            %{
+              "pr_url" => "https://github.com/VikingMew/symphony/pull/105",
+              "branch" => "vikingmew-sym-108",
+              "commit" => "abc123",
+              "linear_state" => "Ready to Merge"
+            }} = Executor.completed_delivery_evidence([hd(events), full_pr])
+
+    codex = %{handoff: nil, delivery_evidence: {:complete, evidence}}
+
+    assert {:ok, {:blocked, {:handoff_failed, {:completed_delivery_missing_handoff, ^evidence}}, ^evidence}} =
+             Executor.handoff_requirement(implementation_payload("Implement the task."), codex, "/tmp")
+
+    assert Executor.completed_delivery_evidence(tl(events)) ==
+             {:incomplete, %{"missing" => ["linear_task_update"]}}
+
+    assert Executor.completed_delivery_evidence([hd(events)]) ==
+             {:incomplete, %{"missing" => ["create_pull_request"]}}
+
+    failed_pr = put_in(List.last(events), [:status], "failure")
+
+    assert Executor.completed_delivery_evidence([hd(events), failed_pr]) ==
+             {:incomplete, %{"missing" => ["create_pull_request"]}}
+
+    incomplete =
+      Executor.completed_delivery_evidence([
+        hd(events),
+        %{tool: "create_pull_request", status: "success", result: %{}}
+      ])
+
+    assert incomplete == {:incomplete, %{"missing" => ["create_pull_request.result.url"]}}
+
+    wrong_state = put_in(hd(events), [:arguments, "target_state"], "Blocked")
+
+    assert Executor.completed_delivery_evidence([wrong_state, List.last(events)]) ==
+             {:incomplete, %{"missing" => ["linear_task_update.arguments.target_state"]}}
+
+    assert Executor.completed_delivery_evidence([
+             wrong_state,
+             %{tool: "create_pull_request", status: "success", result: %{}}
+           ]) ==
+             {:incomplete,
+              %{
+                "missing" => [
+                  "create_pull_request.result.url",
+                  "linear_task_update.arguments.target_state"
+                ]
+              }}
+
+    assert {:error, {:handoff_failed, :missing_handoff}, %{"missing" => ["create_pull_request.result.url"]}} =
+             Executor.handoff_requirement(
+               implementation_payload("Implement the task."),
+               %{handoff: nil, delivery_evidence: incomplete},
+               "/tmp"
+             )
+  end
+
   test "prepares a new task branch from the latest configured default branch" do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
@@ -302,6 +424,17 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     payload
   end
 
+  defp implementation_payload(description) do
+    assert {:ok, payload} =
+             panel_payload()
+             |> put_in(["issue", "description"], description)
+             |> put_in(["handoff", "policy"], "push_pr_then_restricted_linear")
+             |> ExecutionPayload.from_task_payload()
+             |> Payload.parse()
+
+    payload
+  end
+
   defp git_fixture! do
     root = Path.join(System.tmp_dir!(), "executor-git-#{System.unique_integer([:positive])}")
     remote = Path.join(root, "remote.git")
@@ -352,7 +485,11 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
   defp panel_payload do
     %{
-      "issue" => %{"identifier" => "SYM-68", "title" => "Propagate project config"},
+      "issue" => %{
+        "identifier" => "SYM-68",
+        "title" => "Propagate project config",
+        "description" => "Propagate the project configuration."
+      },
       "prompt" => "Implement the task.",
       "workflow_profile" => "implementation",
       "repository" => %{

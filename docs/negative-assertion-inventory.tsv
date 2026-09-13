@@ -299,15 +299,14 @@ test/symphony_elixir/worker/assignment_manager_test.exs	142	refute	structure-dat
 test/symphony_elixir/worker/cleanup_test.exs	17	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(expired)
 test/symphony_elixir/worker/cleanup_test.exs	47	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(first)
 test/symphony_elixir/worker/execution_payload_test.exs	13	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "revision")
-test/symphony_elixir/worker/execution_payload_test.exs	29	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution["handoff"], "command")
-test/symphony_elixir/worker/execution_payload_test.exs	35	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "issue")
-test/symphony_elixir/worker/execution_payload_test.exs	36	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "prompt")
-test/symphony_elixir/worker/execution_payload_test.exs	37	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(execution, "workflow_profile")
-test/symphony_elixir/worker/executor_test.exs	77	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join(workspace, "stale.txt"))
-test/symphony_elixir/worker/executor_test.exs	126	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(marker)
-test/symphony_elixir/worker/executor_test.exs	165	flunk	control-flow	rewrite-match	explicit success shape	{output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
-test/symphony_elixir/worker/http_integration_test.exs	155	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute inspect(result) =~ "workflow_version_id"
-test/symphony_elixir/worker/payload_test.exs	12	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
+test/symphony_elixir/worker/execution_payload_test.exs	41	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution["handoff"], "command")
+test/symphony_elixir/worker/execution_payload_test.exs	52	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "issue")
+test/symphony_elixir/worker/execution_payload_test.exs	53	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(execution, "prompt")
+test/symphony_elixir/worker/execution_payload_test.exs	54	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(execution, "workflow_profile")
+test/symphony_elixir/worker/executor_test.exs	150	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(Path.join(workspace, "stale.txt"))
+test/symphony_elixir/worker/executor_test.exs	201	refute	structure-data	rewrite-exact	tested data/state contract	refute File.exists?(marker)
+test/symphony_elixir/worker/executor_test.exs	414	flunk	control-flow	rewrite-match	explicit success shape	{output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
+test/symphony_elixir/worker/payload_test.exs	22	refute	deployment-capability	review	docs/compose.md or docs/deployment.md	refute Map.has_key?(Map.from_struct(payload), :workflow_version_id)
 test/symphony_elixir/worker/validation_test.exs	32	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute contents =~ "sensitive"
 test/symphony_elixir/worker/validation_test.exs	33	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute contents =~ "bad"
 test/symphony_elixir/workflow_form_disk_guard_test.exs	15	refute	structure-data	rewrite-exact	tested data/state contract	refute Map.has_key?(setup_config["agent"], "max_concurrent_agents")
