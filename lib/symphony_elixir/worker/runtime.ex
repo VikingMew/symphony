@@ -119,7 +119,7 @@ defmodule SymphonyElixir.Worker.Runtime do
       {task_id, %{phase: phase} = active} when reason != :normal and phase != :delivering_terminal ->
         status = if Map.get(active, :cancelling, false), do: :cancelled, else: :failed
         type = if status == :cancelled, do: "task.cancelled", else: "task.failed"
-        result = %{status: status, reason: inspect(reason)}
+        result = %{status: status, reason: reason}
         {:noreply, begin_terminal_delivery(state, task_id, type, result)}
 
       _ ->
@@ -139,7 +139,7 @@ defmodule SymphonyElixir.Worker.Runtime do
         else
           {:error, reason} ->
             Process.exit(pid, :shutdown)
-            result = %{status: :failed, reason: inspect(reason)}
+            result = %{status: :failed, reason: reason}
             {:noreply, begin_terminal_delivery(state, task_id, "task.failed", result)}
         end
 
@@ -219,7 +219,7 @@ defmodule SymphonyElixir.Worker.Runtime do
 
         {:error, reason} ->
           active = %{ref: nil, pid: nil, claim: claim, phase: :starting, watchdog: nil, attempts: 0}
-          result = %{status: :failed, reason: inspect(reason)}
+          result = %{status: :failed, reason: reason}
           state |> put_active(task_id, active) |> begin_terminal_delivery(task_id, "task.failed", result)
       end
     else
@@ -262,7 +262,7 @@ defmodule SymphonyElixir.Worker.Runtime do
             phase: :delivering_terminal,
             watchdog: nil,
             terminal_type: event_type,
-            terminal_payload: %{summary: terminal_summary(result, state.config)},
+            terminal_payload: %{summary: terminal_summary(result, state.config, active.claim)},
             attempts: 0
           })
 
@@ -322,11 +322,12 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"
 
-  defp terminal_summary(result, config) do
+  defp terminal_summary(result, config, claim) do
     status = Map.get(result, :status, :failed)
     outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
     phase = if status == :completed, do: "complete", else: "validation"
     reason = if status == :completed, do: "completed", else: reason_for(status, result)
+    {validation_status, gates} = validation_evidence(result, get_in(claim, ["execution", "required_gates"]))
 
     %{
       "phase" => phase,
@@ -335,19 +336,91 @@ defmodule SymphonyElixir.Worker.Runtime do
       "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
       "source_revision" => config.source_revision,
       "runtime" => %{"image_tag" => config.image_reference, "worker_source_revision" => config.source_revision},
-      "validation_status" => "passed",
-      "gates" => [],
-      "detail" => inspect(result)
+      "validation_status" => validation_status,
+      "gates" => gates,
+      "detail" => terminal_detail(result)
     }
   end
 
   defp reason_for(:cancelled, _), do: "cancelled"
   defp reason_for(:blocked, _), do: "handoff_failed"
 
+  defp reason_for(_, %{reason: {:handoff_failed, _detail}}), do: "handoff_failed"
+  defp reason_for(_, %{validation: %{overall_status: :failed}}), do: "non_zero"
+  defp reason_for(_, %{validation: %{overall_status: :timed_out}}), do: "timed_out"
+  defp reason_for(_, %{validation: %{overall_status: :cancelled}}), do: "cancelled"
+
   defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed, :execution_capability_unavailable],
     do: Atom.to_string(reason)
 
   defp reason_for(_, _), do: "worker_error"
+
+  defp validation_evidence(%{validation: %{overall_status: status, gates: results}}, required_gates) do
+    {validation_status(status), Enum.zip_with(results, required_gates, &gate_evidence/2)}
+  end
+
+  defp validation_evidence(_result, required_gates) do
+    {"pending", Enum.map(required_gates, &not_run_gate/1)}
+  end
+
+  defp validation_status(:passed), do: "passed"
+  defp validation_status(:failed), do: "failed"
+  defp validation_status(:timed_out), do: "timed_out"
+  defp validation_status(:cancelled), do: "cancelled"
+  defp validation_status(:toolchain_unavailable), do: "failed"
+
+  defp gate_evidence(result, gate) do
+    %{
+      "name" => Map.fetch!(gate, "name"),
+      "status" => gate_status(Map.fetch!(result, :status)),
+      "exit_code" => Map.fetch!(result, :exit_code),
+      "duration_ms" => Map.fetch!(result, :duration_ms),
+      "timeout_ms" => Map.fetch!(gate, "timeout_seconds") * 1_000
+    }
+    |> put_failure_detail(result)
+  end
+
+  defp not_run_gate(gate) do
+    %{
+      "name" => Map.fetch!(gate, "name"),
+      "status" => "not_run",
+      "exit_code" => nil,
+      "duration_ms" => 0,
+      "timeout_ms" => Map.fetch!(gate, "timeout_seconds") * 1_000,
+      "failure_detail" => "validation did not start"
+    }
+  end
+
+  defp gate_status(:passed), do: "passed"
+  defp gate_status(:failed), do: "failed"
+  defp gate_status(:timed_out), do: "timed_out"
+  defp gate_status(:cancelled), do: "not_run"
+  defp gate_status(:toolchain_unavailable), do: "not_run"
+
+  defp put_failure_detail(gate, %{status: :passed}), do: gate
+  defp put_failure_detail(gate, result), do: Map.put(gate, "failure_detail", Map.fetch!(result, :detail))
+
+  defp terminal_detail(result) do
+    result
+    |> Map.take([:status, :reason, :detail])
+    |> json_value()
+    |> Jason.encode!()
+  end
+
+  defp json_value(%_{} = value), do: value |> Map.from_struct() |> json_value()
+
+  defp json_value(value) when is_map(value) do
+    Map.new(value, fn {key, item} -> {to_string(key), json_value(item)} end)
+  end
+
+  defp json_value(value) when is_tuple(value), do: value |> Tuple.to_list() |> Enum.map(&json_value/1)
+  defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp json_value(value) when is_pid(value), do: "pid"
+  defp json_value(value) when is_reference(value), do: "reference"
+  defp json_value(value) when is_port(value), do: "port"
+  defp json_value(value) when is_function(value), do: "function"
+  defp json_value(value), do: value
 
   defp recover_session(state) do
     Enum.each(state.active, fn

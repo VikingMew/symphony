@@ -121,8 +121,10 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     result = Executor.execute(config, claim)
     assert result.status == :failed
-    assert result.reason =~ "source_preparation_failed"
-    assert result.reason =~ "default_branch_fetch_failed"
+
+    assert {:source_preparation_failed, :default_branch_fetch_failed, %{status: :failed}} =
+             result.reason
+
     assert File.exists?(marker) == false
   end
 

@@ -21,6 +21,19 @@ defmodule SymphonyElixir.WorkerResultTest do
              WorkerResult.validate(blocked)
   end
 
+  test "accepts pending validation with required gates that were not run" do
+    pending =
+      summary([gate("scripts/check.sh", "not_run", nil, "validation did not start")])
+      |> Map.put("reason", "handoff_failed")
+      |> Map.put("validation_status", "pending")
+      |> Map.put("detail", ~s({"reason":["handoff_failed","missing_handoff"],"status":"failed"}))
+
+    assert {:ok, validated} = WorkerResult.validate(pending)
+    assert validated["validation_status"] == "pending"
+    assert [%{"status" => "not_run"}] = validated["gates"]
+    assert Jason.decode!(validated["detail"])["reason"] == ["handoff_failed", "missing_handoff"]
+  end
+
   test "rejects oversized, path-bearing, secret-bearing, and malformed evidence" do
     assert {:error, {:invalid_worker_summary, "gate count exceeds 32"}} =
              WorkerResult.validate(summary(List.duplicate(gate("gate", "passed", 0), 33)))

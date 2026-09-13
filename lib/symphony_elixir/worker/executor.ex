@@ -45,10 +45,10 @@ defmodule SymphonyElixir.Worker.Executor do
         Map.merge(summary, %{status: :failed, phase: :validation})
 
       {:blocked, reason, detail} ->
-        %{status: :blocked, reason: inspect(reason), detail: detail}
+        %{status: :blocked, reason: reason, detail: detail}
 
       {:error, reason} ->
-        %{status: :failed, reason: inspect(reason)}
+        %{status: :failed, reason: reason}
 
       %{status: :failed, reason: reason, detail: detail} ->
         %{status: :failed, reason: reason, detail: detail}

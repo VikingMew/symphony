@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.Log
-updated: 2026-09-12
+updated: 2026-09-13
 ---
 
 # Logging and Observability Specification
@@ -82,6 +82,16 @@ Failed external writes remain visible and retryable without creating a new codin
 worker claim admission reports `admission.reason = blocking_decision` and logs
 `event=worker_claim_skip` with issue and worker/session context while the decision remains uncleared;
 human recovery emits a decision-cleared event with issue and run context where available.
+
+External worker terminal summaries MUST distinguish validation evidence from terminal outcome.
+When validation ran, `validation_status` MUST be its actual `passed`, `failed`, `timed_out`, or
+`cancelled` result and `gates` MUST preserve the ordered results that ran. When execution ended
+before validation, `validation_status` MUST be `pending`; each required assignment gate MUST appear
+as `not_run`, and `gates` MAY be empty only when the assignment declared none. `detail` MUST be
+deterministic JSON without Elixir map or atom syntax and MUST preserve the underlying failure
+reason. A missing implementation handoff therefore reports `task.failed`, reason
+`handoff_failed`, pending validation, `not_run` required gates, and detail naming
+`missing_handoff`.
 
 RECOMMENDED snapshot error modes:
 
