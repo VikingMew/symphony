@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   alias SymphonyElixir.{Payload, Redaction}
 
-  @linear_tools ~w(linear_task_read linear_task_update linear_issue_create)
+  @linear_tools ~w(linear_task_read linear_task_update linear_issue_create create_pull_request handoff)
 
   @spec linear_tool?(term()) :: boolean()
   def linear_tool?(tool) when tool in @linear_tools, do: true
@@ -33,7 +33,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
           turn_id: Keyword.get(opts, :turn_id),
           arguments: safe_arguments(arguments),
           result: success_result(response),
-          error: failure_error(response),
+          error: failure_error(tool, response),
           started_at: started_at,
           duration_ms: duration_ms,
           message: message(tool, response)
@@ -72,19 +72,19 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp success_result(_response), do: nil
 
-  defp failure_error(%{"success" => false} = response) do
+  defp failure_error(tool, %{"success" => false} = response) do
     output = decoded_output(response)
     error = if is_map(output), do: Payload.get_any(output, ["error", :error]), else: nil
 
     %{
-      class: failure_class(error, output),
+      class: failure_class(tool, error, output),
       message: error_message(error, output),
       reason: error_reason(error)
     }
     |> drop_nil_values()
   end
 
-  defp failure_error(_response), do: nil
+  defp failure_error(_tool, _response), do: nil
 
   defp normalize_success_result(%{} = output) do
     output
@@ -93,6 +93,13 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
       "identifier",
       "title",
       "url",
+      "repository",
+      "base",
+      "head",
+      "head_oid",
+      "source",
+      "accepted",
+      "linear_updated",
       "state",
       "issue_update",
       "comment_update",
@@ -116,10 +123,43 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp decoded_output(response), do: response
 
-  defp failure_class(error, output) when is_map(error) do
+  defp failure_class(tool, error, output) when is_map(error) do
     message = error_message(error, output)
     reason = error_reason(error)
 
+    case tool do
+      "create_pull_request" -> pull_request_failure_class(message)
+      "handoff" -> handoff_failure_class(message)
+      _tool -> generic_failure_class(message, reason)
+    end
+  end
+
+  defp failure_class(_tool, _error, _output), do: "tool_failed"
+
+  defp pull_request_failure_class(message) do
+    cond do
+      contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
+      contains?(message, "not allowed") -> "pull_request_not_allowed"
+      contains?(message, "creation is unavailable") -> "pull_request_creator_unavailable"
+      contains?(message, "must be a non-empty") -> "validation_failed"
+      contains?(message, "expects a JSON object") -> "validation_failed"
+      true -> "pull_request_backend_failed"
+    end
+  end
+
+  defp handoff_failure_class(message) do
+    cond do
+      contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
+      contains?(message, "only available") -> "handoff_not_allowed"
+      contains?(message, "Call `create_pull_request`") -> "pull_request_proof_mismatch"
+      contains?(message, "submission is unavailable") -> "handoff_submitter_unavailable"
+      contains?(message, "must be a non-empty") -> "validation_failed"
+      contains?(message, "is required") -> "validation_failed"
+      true -> "handoff_backend_failed"
+    end
+  end
+
+  defp generic_failure_class(message, reason) do
     cond do
       contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
       contains?(message, "not allowed") -> "issue_create_not_allowed"
@@ -130,8 +170,6 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
       true -> "tool_failed"
     end
   end
-
-  defp failure_class(_error, _output), do: "tool_failed"
 
   defp error_message(error, _output) when is_map(error) do
     case Payload.get_any(error, ["message", :message]) do
