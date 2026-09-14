@@ -7,12 +7,13 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.{Schema, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, Schema, WorkflowScopes}
   alias SymphonyElixir.Persistence.{AppSetting, Project, WorkflowRecord}
   alias SymphonyElixir.{Repo, Text, Workflow}
 
   @default_project_slug "default"
   @instance_workflow_key "instance_workflow"
+  @legacy_candidates_key "legacy_instance_workflow_candidates"
   @project_hook_fields [
     {:after_create_hook, "after_create_hook"},
     {:before_run_hook, "before_run_hook"},
@@ -21,6 +22,11 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   ]
   @project_instance_fields WorkflowScopes.instance_sections() ++ ["prompt_body", "workflow"]
   @type current_workflow_error :: :missing_project_context
+  @type legacy_reconciliation_result ::
+          {:converged, WorkflowScopes.instance_workflow()}
+          | {:already_converged, WorkflowScopes.instance_workflow()}
+  @type legacy_reconciliation_error ::
+          :repo_unavailable | :zero | {:invalid_selection, String.t()} | {:transaction_failed, term()}
 
   @spec default_project() ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
@@ -140,11 +146,89 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end)
   end
 
+  @spec legacy_instance_workflow_status() ::
+          {:ok, LegacyWorkflowConvergence.status()} | {:error, :repo_unavailable | term()}
+  def legacy_instance_workflow_status do
+    query(:legacy_instance_workflow_status, fn ->
+      if repo_available?() do
+        LegacyWorkflowConvergence.status(
+          setting_value(@instance_workflow_key),
+          setting_value(@legacy_candidates_key)
+        )
+      else
+        {:error, :repo_unavailable}
+      end
+    end)
+  end
+
+  @spec reconcile_legacy_instance_workflow(String.t()) ::
+          {:ok, legacy_reconciliation_result()} | {:error, legacy_reconciliation_error()}
+  def reconcile_legacy_instance_workflow(project_slug) when is_binary(project_slug) do
+    if repo_available?() do
+      Repo.transaction(fn -> reconcile_legacy_instance_workflow!(project_slug) end)
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
   defp load_instance_setting do
     case Repo.get(AppSetting, @instance_workflow_key) do
       nil -> nil
       %AppSetting{value: value} -> load_instance_workflow!(value)
     end
+  end
+
+  defp setting_value(key) do
+    case Repo.get(AppSetting, key) do
+      nil -> nil
+      %AppSetting{value: value} -> value
+    end
+  end
+
+  defp reconcile_legacy_instance_workflow!(project_slug) do
+    conflict =
+      Repo.one(
+        from(setting in AppSetting,
+          where: setting.key == ^@legacy_candidates_key,
+          lock: "FOR UPDATE"
+        )
+      )
+
+    case conflict do
+      nil -> already_converged_or_zero!()
+      %AppSetting{} = setting -> select_and_converge!(setting, project_slug)
+    end
+  end
+
+  defp already_converged_or_zero! do
+    case setting_value(@instance_workflow_key) do
+      nil -> Repo.rollback(:zero)
+      value -> {:already_converged, load_instance_workflow!(value)}
+    end
+  end
+
+  defp select_and_converge!(setting, project_slug) do
+    case LegacyWorkflowConvergence.select_candidate(setting.value, project_slug) do
+      {:ok, instance} ->
+        with {:ok, _stored} <- insert_instance_setting(instance),
+             {:ok, _deleted} <- Repo.delete(setting) do
+          {:converged, instance}
+        else
+          {:error, reason} -> Repo.rollback({:transaction_failed, reason})
+        end
+
+      {:error, reason} ->
+        Repo.rollback(reason)
+    end
+  end
+
+  defp insert_instance_setting(instance) do
+    %AppSetting{}
+    |> AppSetting.changeset(%{
+      key: @instance_workflow_key,
+      value: WorkflowScopes.dump_instance(instance)
+    })
+    |> Repo.insert()
   end
 
   @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, current_workflow_error()}

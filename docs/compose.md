@@ -279,6 +279,59 @@ Workflows imported from a host may contain host-only workspace paths. Before ena
 listening, change the active workflow workspace root to `/data/workspaces` and verify repository,
 hook, SSH, and worktree paths are container-visible.
 
+## Legacy Instance Workflow Reconciliation
+
+The first upgrade containing the legacy convergence migration rewrites every project workflow to
+its tracker/project slice and removes the obsolete project hook columns in the same transaction.
+If all effective instance candidates are equal, the migration installs that singleton. If no
+candidate exists, or if candidates differ, the Panel remains setup-required and dispatch stays
+off. The temporary conflict record is inspection/reconciliation data only and is never runtime
+configuration.
+
+The measured five-project installation enters the conflict path: `ccrr`, `default`, `koroni`, and
+`quickpython` share one candidate while `symphony` differs. Use this rollout order:
+
+1. Back up PostgreSQL, deploy the new artifact, and run its migration release.
+2. Before selecting anything, run the release-safe status command from that same OTP artifact:
+
+```bash
+/app/bin/symphony eval 'SymphonyElixir.Release.reconcile_legacy_instance_workflow!()'
+```
+
+It prints `zero`, `converged`, or `conflict`. Conflict output lists every differing dotted path and
+every contributing project ID/slug. Status-only invocation does not mutate either setting.
+
+3. For conflict, select exactly one printed stored slug. The command prints the same status and
+contributors before mutation:
+
+```bash
+SYMPHONY_RECONCILE_PROJECT=symphony \
+  /app/bin/symphony eval 'SymphonyElixir.Release.reconcile_legacy_instance_workflow!()'
+```
+
+An unknown slug or transaction failure leaves the whole temporary record and absent singleton
+unchanged for retry. Success atomically writes `instance_workflow` and deletes the temporary value;
+a later invocation reports the typed already-converged result.
+
+4. If the Panel is already running, wait for its existing one-second workflow refresh to publish
+the singleton/project compositions. Otherwise start it from the converged database. Inspect the
+running VM, not the release eval VM:
+
+```bash
+/app/bin/symphony rpc 'SymphonyElixir.WorkflowStore.current_with_source() |> IO.inspect()'
+```
+
+5. Reconciliation deliberately does not restore listening. After the snapshot is no longer
+setup-required, enable listening through the supported control and verify the next cycle fetches
+and dispatches an eligible candidate:
+
+```bash
+/app/bin/symphony rpc 'SymphonyElixir.Orchestrator.start_listening() |> IO.inspect()'
+```
+
+Do not choose by row order, display name, or timestamp, and do not read a legacy project row or the
+temporary record as a fallback.
+
 ## Upgrade and Rollback
 
 Before an upgrade, take a PostgreSQL backup and retain the prior image tag:

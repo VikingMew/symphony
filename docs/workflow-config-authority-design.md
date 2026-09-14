@@ -27,8 +27,8 @@ design_status: landed
 - `workflow.states`、`allowed_transitions`、`human_review_states` 与 `tool_policy` 只来自
   `Schema.default_workflow_policy/0`；`tracker.api_key` 只按环境 secret contract 在运行时解析。
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret
-  或 project hook override 时返回 typed rejection，不接受也不静默丢弃。旧 project row 中的这些值和
-  hook columns 不再是运行时 authority；本设计不转换或清理旧数据。
+  或 project hook override 时返回 typed rejection，不接受也不静默丢弃。一次性迁移完成后，project
+  row 只保留 canonical tracker/project slice 与空 prompt，四个旧 hook columns 已删除。
 - `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 是示例与导入素材：它们记录 package
   格式、提供一次性导入的便利来源，永远不是同步源。
 - 示例作为导入素材时仍必须避免携带已知不可用的运行形态；当前 `docs/examples/workflow.yml`
@@ -49,6 +49,30 @@ design_status: landed
   import validation 成功，且保存后的 instance singleton 包含新 prompt。worker 不执行该发布，
   不把宿主路径不可用视为 blocker/retry，也不把 checked-in YAML 报告为 live runtime effect。
 - 运行时代码 MUST NOT 从源码 checkout 读取配置。
+
+## 一次性 legacy 收敛
+
+- 单调 PostgreSQL migration 从每个旧 workflow 的 `yaml_config` 与 `prompt_body` 派生 instance
+  candidate；project row 中每个非空 hook column 在切片前覆盖对应的 `hooks` 字段。
+  `raw_workflow_md` 只按 canonical project slice 重建，从不作为 candidate 来源。候选派生、所有
+  workflow rewrite、prompt 清空及 hook columns 删除属于同一个 migration transaction。
+- 已存在 `app_settings["instance_workflow"]` 时，migration 只清理 project storage，不覆盖 authority，
+  也不创建 conflict。零候选保持 singleton 缺失；一个 distinct canonical candidate（包括多个相同
+  candidate）直接成为 singleton。
+- 多个 distinct candidate 时，singleton 保持缺失，migration 写入唯一临时值
+  `app_settings["legacy_instance_workflow_candidates"]`。该值保留每个 project ID/精确 slug/candidate，
+  以及每个不同 dotted path 的所有 contributor；相同 candidate 的每个 project 仍分别保留。
+- 临时值不是第三个 authority。runtime、composition、startup、listening 与 dispatch 都不读取它；
+  singleton 缺失继续产生 setup-required。只有 typed status 与 reconciliation operation 可以读取它。
+- reconciliation 必须选择临时值中的精确 project slug。未知 slug 或 transaction failure 不改变
+  singleton 或临时值，原选择可重试；成功 transaction 锁定临时值、写 singleton 并整体删除临时值。
+  durable convergence 后的请求返回 typed `already_converged`，不再读取或选择旧 project row。
+- 正常进程内 facade 在 durable commit 后调用 `WorkflowStore.force_reload/0`。若发布失败，返回 typed
+  `runtime_publication_failed` 且不回滚 singleton；already-converged 重试可以再次发布。OTP release
+  eval 只启动 release database lifecycle，不启动业务 supervision tree，也不尝试跨 VM force reload；
+  已运行 Panel 由现有一秒 background refresh 发布 durable 结果，未运行 Panel 在启动时加载它。
+- 停止状态的 legacy SQLite cutover 在写入已经完成 migration 的 PostgreSQL schema 前应用同一候选与
+  rewrite 规则；旧 hook columns 只从 import source 读取，不会在 current project schema 中重建。
 
 ## 为何不再同步
 

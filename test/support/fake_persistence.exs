@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.TestSupport.FakePersistence do
   @moduledoc false
 
-  alias SymphonyElixir.Config.WorkflowScopes
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
 
   @name __MODULE__
 
@@ -226,6 +226,52 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def instance_workflow do
     ensure_started()
     Agent.get(@name, & &1.instance_workflow)
+  end
+
+  def put_legacy_instance_workflow_conflict!(conflict) do
+    ensure_started()
+
+    Agent.update(@name, fn state ->
+      state
+      |> Map.put(:instance_workflow, nil)
+      |> Map.put(:legacy_instance_workflow_candidates, conflict)
+    end)
+  end
+
+  def fail_next_legacy_reconciliation!(reason) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :next_legacy_reconciliation_error, reason))
+  end
+
+  def legacy_instance_workflow_status do
+    ensure_started()
+
+    Agent.get(@name, fn state ->
+      instance =
+        case state.instance_workflow do
+          nil -> nil
+          value -> WorkflowScopes.dump_instance(value)
+        end
+
+      LegacyWorkflowConvergence.status(instance, state.legacy_instance_workflow_candidates)
+    end)
+  end
+
+  def reconcile_legacy_instance_workflow_durable(project_slug) do
+    ensure_started()
+
+    Agent.get_and_update(@name, fn state ->
+      case state.next_legacy_reconciliation_error do
+        nil -> reconcile_legacy_state(state, project_slug)
+        reason -> {{:error, {:transaction_failed, reason}}, %{state | next_legacy_reconciliation_error: nil}}
+      end
+    end)
+  end
+
+  def reconcile_legacy_instance_workflow(project_slug) do
+    project_slug
+    |> reconcile_legacy_instance_workflow_durable()
+    |> SymphonyElixir.PersistenceProvider.publish_runtime_mutation()
   end
 
   defp persist_project_workflow(project, project_config, source, operation) do
@@ -888,6 +934,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       issues: [],
       workflows: [],
       instance_workflow: nil,
+      legacy_instance_workflow_candidates: nil,
+      next_legacy_reconciliation_error: nil,
       next_import_workflow_error: nil,
       users: %{}
     }
@@ -905,6 +953,33 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       SymphonyElixir.WorkflowStore.force_reload()
     else
       :ok
+    end
+  end
+
+  defp reconcile_legacy_state(%{instance_workflow: instance} = state, _project_slug)
+       when is_map(instance) do
+    {{:ok, {:already_converged, instance}}, state}
+  end
+
+  defp reconcile_legacy_state(%{legacy_instance_workflow_candidates: nil} = state, _project_slug) do
+    {{:error, :zero}, state}
+  end
+
+  defp reconcile_legacy_state(state, project_slug) do
+    case LegacyWorkflowConvergence.select_candidate(
+           state.legacy_instance_workflow_candidates,
+           project_slug
+         ) do
+      {:ok, instance} ->
+        next_state =
+          state
+          |> Map.put(:instance_workflow, instance)
+          |> Map.put(:legacy_instance_workflow_candidates, nil)
+
+        {{:ok, {:converged, instance}}, next_state}
+
+      {:error, _reason} = error ->
+        {error, state}
     end
   end
 
