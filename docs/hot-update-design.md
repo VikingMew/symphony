@@ -4,7 +4,7 @@ genre: design
 domain: [hot-update, runtime]
 status: current
 language: zh-CN
-updated: 2026-09-13
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -18,7 +18,7 @@ Symphony 需要区分三种热更新：
 
 | 类型 | 当前状态 | 说明 |
 | --- | --- | --- |
-| Settings / workflow 配置热更新 | 已支持 | 通过 Web UI 原位更新项目的 PostgreSQL current workflow，运行时重新读取配置，不需要重启进程。 |
+| Settings / workflow 配置热更新 | 已支持 | instance singleton 或 project slice 保存后重新组合并原子发布所有 enabled projects，不需要重启进程。 |
 | 开发期代码热更新 | 部分支持 | Elixir VM 支持加载新 beam；当前 `bin/symphony` 不是 Phoenix dev server，代码改动通常需要重启，或在 `iex -S mix` 中手动 `recompile()`。 |
 | 生产期 OTP release 热代码升级 | 未支持 | BEAM 支持 hot code upgrade，但本项目还没有 release upgrade、appup/relup、进程状态迁移和发布流程。当前生产策略应是重启式部署。 |
 
@@ -26,18 +26,19 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记录。Settings 导入 package、保存 Agents 或保存 Runtime 时，会在项目锁事务内原位更新该记录并发布新的内存 snapshot。
+Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` 与每项目唯一的 PostgreSQL
+`workflows` slice。portable package 导入在同一事务内写两个 scope；单独保存任一 scope 后，
+`WorkflowStore` 都重新读取 singleton 与全部 enabled project slices，并一次替换完整内存 snapshot。
 
 关键路径：
 
-- `/settings/import` 导入 workflow/routing/runtime 共享配置。
-- `/settings/agents` 保存 base prompt、profiles、allowed updates 和 executor policy。
-- `/settings/runtime` 保存 Codex runtime selector，例如 `codex.model` 与
-  `codex.reasoning_effort`。
+- `/settings/import` 导入 combined portable package，并拆分为 instance/project durable scopes。
+- base prompt、profiles 与 Codex runtime selectors 属于 instance singleton。当前 Agents/Runtime 字段仍
+  显示，但普通 project save 携带这些字段会在 persistence boundary 收到 typed rejection；字段收敛由后续 UI 工作负责。
 - Runtime model/effort 可选集来自 `SymphonyElixir.Codex.ModelCatalog`。该 code-owned catalog
   与 `Dockerfile` 的 bundled Codex CLI pin 同步派生；升级 CLI 需要重建镜像并同步 catalog，
   而从当前 catalog 选择并保存值仍属于 workflow 配置热更新。
-- 保存成功后，持久化边界在返回成功前发布完整的内存 snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
+- 保存成功后，持久化边界在返回成功前发布所有 project 的完整 derived snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。
@@ -46,8 +47,7 @@ Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记�
 
 这意味着以下改动可以不重启服务：
 
-- active states / terminal states / human review states。
-- allowed transitions。
+- project tracker active states / terminal states。
 - profile prompt。
 - profile allowed updates。
 - executor type。
@@ -55,6 +55,8 @@ Symphony 的长期运行配置来自项目唯一的 PostgreSQL `workflows` 记�
 - hook commands。
 - Codex command、`codex.model`、`codex.reasoning_effort` 和部分 Codex runtime policy。
 - polling interval 等 workflow contract 字段。
+
+`workflow.states`、transitions、human review states 与 tool policy 是 code-owned，不属于热更新持久化状态。
 
 保存后如果配置能解析但语义不完整，Settings 会显示 `Configuration check failed`。这类错误不会阻止保存，但会让 runtime 保持不可监听或不可调度，直到配置修好。
 
@@ -76,9 +78,7 @@ http://127.0.0.1:4000/settings
 修改配置后点击对应页面的保存按钮：
 
 - Projects 页面：保存 project 字段，例如 Linear project slug、repository URL、default branch。
-- Agents 页面：保存 prompt 和 profile 设置。
-- Runtime 页面：保存 Codex model 与 reasoning effort selector。
-- Import 页面：导入 workflow state model、hooks、workspace、codex 等共享 workflow 字段。
+- Import 页面：导入 singleton runtime/profile policy 与所选 project slice。
 
 保存成功后，页面会显示 saved 反馈；Linear 相关配置建议再打开 `/diagnostics/linear` 验证。
 

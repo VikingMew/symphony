@@ -4,8 +4,8 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  checked-in package is available for first-run import into a project's current
-  PostgreSQL runtime snapshot.
+  checked-in package is available for first-run import into the installation
+  singleton and one explicitly selected project's durable slice.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -161,7 +161,13 @@ defmodule SymphonyElixir.Workflow do
 
   @spec canonical_config(map()) :: map()
   def canonical_config(config) when is_map(config) do
-    update_in(config, [Access.key("agent", %{})], &Map.drop(&1, ["max_concurrent_agents", "max_concurrent_agents_by_state"]))
+    case Map.fetch(config, "agent") do
+      {:ok, agent} when is_map(agent) ->
+        Map.put(config, "agent", Map.drop(agent, ["max_concurrent_agents", "max_concurrent_agents_by_state"]))
+
+      _missing ->
+        config
+    end
   end
 
   defp yaml_document(map) when is_map(map) do

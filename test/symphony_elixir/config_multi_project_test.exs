@@ -60,7 +60,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     # docs/default-project-bootstrap-and-remove-design.md own the no-context resolution contract.
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.update_project("fake-project-id", %{enabled: false})
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
 
     {:ok, default_project} =
       FakePersistence.create_project(%{
@@ -71,7 +71,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _default_workflow} = FakePersistence.import_workflow(default_project, raw, "test")
+    {:ok, _default_workflow} = FakePersistence.import_package(default_project, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -82,7 +82,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
     assert {:ok, %{project_id: default_project_id}} = Config.current_workflow()
@@ -99,7 +99,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     # docs/default-project-bootstrap-and-remove-design.md allow the single loaded workflow case.
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
     {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
 
     {:ok, project} =
@@ -111,7 +111,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
+    {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
     assert {:ok, %{project_id: project_id}} = Config.current_workflow()
@@ -125,7 +125,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     # docs/default-project-bootstrap-and-remove-design.md require this typed error.
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
     {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
 
     {:ok, project_a} =
@@ -137,7 +137,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _project_a_workflow} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -148,7 +148,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
     assert {:error, :missing_project_context} = Config.current_workflow()

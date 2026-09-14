@@ -17,7 +17,7 @@ defmodule SymphonyElixir.LinearClientTest do
 
     {:ok, loaded} = Workflow.load()
     raw = Workflow.to_markdown(loaded.config, loaded.prompt)
-    {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
+    {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_api_token: nil)

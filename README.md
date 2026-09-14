@@ -67,15 +67,15 @@ Linear's GitHub automation owns the final move to `Done`.
 
 | Concept | Meaning |
 | --- | --- |
-| Project | A configured Linear project slug plus repository URL, default branch, checkout depth, workspace source policy, and optional hook overrides. |
-| Workflow | Runtime policy: active states, terminal states, transitions, bootstrap behavior, hooks, polling, and execution settings. One current workflow exists per enabled project. |
+| Project | A configured Linear project slug plus repository URL, default branch, checkout depth, source strategy, and setup/cleanup commands. |
+| Workflow | One installation-wide runtime/profile singleton plus one tracker/repository slice per enabled project; routing policy is code-owned. |
 | Agent profile | A stage-specific prompt and update policy, such as refinement or implementation. |
 | Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, worker sessions, blocking decisions, and worker assignment payloads carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
 | Worker mode | Optional HTTP mode where claims read and revalidate Linear, refuse uncleared persisted blockers, and return one ephemeral current-workflow assignment. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
-sharing a single Linear user, with per-project workflows and hooks. Settings and the
+sharing a single Linear user and installation runtime/profile policy. Settings and the
 observability pages (Runs, Events, Workers) are project-aware.
 
 Concurrency is deployment-wide rather than a workflow setting. Centralized mode uses the
@@ -143,10 +143,11 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 4. Settings / Import: optional workflow/profile package import with preview before applying, including
    bootstrap, hooks, polling, and state lists. Routing and transitions are an immutable code contract.
 
-If PostgreSQL has no workflow for an enabled project, Symphony starts in setup-required mode and does not listen for Linear work until Settings creates it.
+If PostgreSQL lacks either `app_settings["instance_workflow"]` or an enabled project workflow slice,
+Symphony starts in setup-required mode and does not listen for Linear work until an explicit import creates both.
 
 On a fresh database, Symphony can also offer to import the example package at
-`docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first current workflow.
+`docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first instance/project pair.
 To skip it and remain in setup-required mode, start with:
 
 ```bash
@@ -155,15 +156,16 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 
 ## Configuration
 
-PostgreSQL is the authority for project settings and profiles, while workflow routing is
-an immutable code contract. The package under `docs/examples/` is example and import material: it
+PostgreSQL stores installation runtime/profile policy once in `app_settings["instance_workflow"]`
+and tracker/repository properties once per project workflow, while workflow routing is an immutable
+code contract. The package under `docs/examples/` is example and import material: it
 documents the package format and can be imported through Settings / Import, but it is never
-synchronized into the database. On cold start Symphony publishes the active per-project
-workflow/config state as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
+synchronized into the database. On cold start Symphony composes the singleton with every enabled
+project slice and publishes the derived set as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
 dispatch reads use that snapshot without querying PostgreSQL. Successful imports republish
 before reporting success, and background external-change detection retains last-known-good state
 during database stalls. Change configuration through Settings (or Settings / Import) and do not
-update the `workflows` table by hand.
+update `workflows` or `app_settings` by hand.
 
 Useful startup options:
 
@@ -177,9 +179,10 @@ mise exec -- ./bin/symphony \
 - `--logs-root` changes the runtime log directory (default: `./log`).
 - `--no-default-yaml-prompt` disables the first-run package import prompt.
 
-The split package is organized by concern: `workflow.yml` contains tracker, project, hook, polling,
-and execution settings plus a non-runtime workflow-policy example; `profiles.yml` contains the base prompt and
-agent profiles. A project repository URL is required before polling and agent work can begin.
+The split package is organized by concern: `workflow.yml` contains project tracker/source fields plus
+instance runtime settings and a non-runtime workflow-policy example; `profiles.yml` contains the base
+prompt and instance-owned profiles. Import validates the combined package, then writes the two durable
+scopes separately. A project repository URL is required before polling and agent work can begin.
 
 Common environment variables:
 

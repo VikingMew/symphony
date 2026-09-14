@@ -16,6 +16,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
 
   @workflow_settings_source "web_workflow_settings"
   @agent_settings_source "web_agent_settings"
+  @package_import_source "web_settings_import"
 
   @spec validate(map(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def validate(params, socket) do
@@ -44,7 +45,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     else
       with {:ok, raw} <- WorkflowForm.to_raw(draft),
            :changed <- workflow_change_status(raw, socket),
-           {:ok, _workflow} <- safe_import_workflow(project, raw, settings_source(section)) do
+           {:ok, _workflow} <- persist_draft(project, raw, section, socket) do
         {:saved,
          socket
          |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
@@ -53,6 +54,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
          |> assign(:workflow_validation_visible?, true)
          |> assign(:workflow_form, draft)
          |> assign(:workflow_form_dirty?, false)
+         |> assign(:workflow_import_pending?, false)
          |> assign_validation(draft)}
       else
         :unchanged ->
@@ -118,13 +120,18 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     end
   end
 
+  def load_form(_workflow, {:ok, %{workflow: loaded}}), do: {WorkflowForm.from_loaded(loaded), false}
+
   def load_form(workflow, _runtime) do
-    workflow
-    |> persistence().export_workflow()
-    |> WorkflowForm.from_raw()
-    |> case do
-      {:ok, draft} -> {draft, false}
-      {:error, _reason} -> {WorkflowForm.empty(), false}
+    case persistence().export_workflow(workflow) do
+      {:ok, raw} ->
+        case WorkflowForm.from_raw(raw) do
+          {:ok, draft} -> {draft, false}
+          {:error, _reason} -> {WorkflowForm.empty(), false}
+        end
+
+      {:error, _reason} ->
+        {WorkflowForm.empty(), false}
     end
   end
 
@@ -202,16 +209,34 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     kind, reason -> {:error, {kind, reason}}
   end
 
+  defp safe_import_package(project, raw) do
+    project
+    |> persistence().import_package(raw, @package_import_source)
+    |> PersistenceProvider.publish_runtime_mutation()
+  rescue
+    exception -> {:error, Exception.message(exception)}
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp persist_draft(project, raw, section, socket) do
+    if Map.get(socket.assigns, :workflow_import_pending?, false),
+      do: safe_import_package(project, raw),
+      else: safe_import_workflow(project, raw, settings_source(section))
+  end
+
   defp workflow_change_status(raw, socket) do
     case Map.get(socket.assigns, :current_workflow) do
-      nil ->
-        :changed
-
-      workflow ->
-        current_raw = persistence().export_workflow(workflow)
-        if WorkflowSettingsPackage.changed?(current_raw, raw), do: :changed, else: :unchanged
+      nil -> :changed
+      workflow -> exported_change_status(persistence().export_workflow(workflow), raw)
     end
   end
+
+  defp exported_change_status({:ok, current_raw}, raw) do
+    if WorkflowSettingsPackage.changed?(current_raw, raw), do: :changed, else: :unchanged
+  end
+
+  defp exported_change_status({:error, _reason}, _raw), do: :changed
 
   defp persistence, do: PersistenceProvider.module()
 end

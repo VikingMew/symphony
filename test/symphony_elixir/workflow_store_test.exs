@@ -30,14 +30,15 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     end
 
     def default_project, do: counted(:default_project, &FakePersistence.default_project/0)
+    def instance_workflow, do: counted(:instance_workflow, &FakePersistence.instance_workflow/0)
     def list_projects, do: counted(:list_projects, &FakePersistence.list_projects/0)
 
     def current_workflow(project) do
       counted(:current_workflow, fn -> FakePersistence.current_workflow(project) end)
     end
 
-    def workflow_to_loaded(version) do
-      counted(:workflow_to_loaded, fn -> FakePersistence.workflow_to_loaded(version) end)
+    def workflow_to_loaded(instance, version) do
+      counted(:workflow_to_loaded, fn -> FakePersistence.workflow_to_loaded(instance, version) end)
     end
 
     defp counted(point, fun) do
@@ -68,9 +69,10 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     @moduledoc false
 
     def default_project, do: response(:default_project)
+    def instance_workflow, do: response(:instance_workflow)
     def list_projects, do: response(:projects)
     def current_workflow(_project), do: response(:current_workflow)
-    def workflow_to_loaded(%{loaded: loaded}), do: loaded
+    def workflow_to_loaded(_instance, %{loaded: loaded}), do: {:ok, loaded}
 
     defp response(key) do
       :symphony_elixir
@@ -134,6 +136,27 @@ defmodule SymphonyElixir.WorkflowStoreTest do
              WorkflowStore.current_with_source()
 
     assert {:ok, %{setup_required: true}} = WorkflowStore.current()
+    assert {:error, :setup_required} = Config.settings()
+  end
+
+  test "a legacy full project row is not an instance fallback" do
+    {:ok, loaded} = Workflow.load()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_workflow(%{
+      id: "legacy-full-workflow",
+      project_id: project.id,
+      raw_workflow_md: Workflow.to_markdown(loaded.config, loaded.prompt),
+      yaml_config: loaded.config,
+      prompt_body: loaded.prompt
+    })
+
+    assert FakePersistence.instance_workflow() == nil
+    assert :ok = WorkflowStore.force_reload()
+
+    assert {:ok, %{workflow: %{setup_required: true}, source: %{type: :setup_required}}} =
+             WorkflowStore.current_with_source()
+
     assert {:error, :setup_required} = Config.settings()
   end
 
@@ -264,28 +287,56 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     project = %{id: "edge", enabled: true}
     version = %{loaded: loaded}
 
-    put_edge(default_project: {:error, :not_found}, projects: [project], current_workflow: version)
+    put_edge(
+      default_project: {:error, :not_found},
+      instance_workflow: %{},
+      projects: [project],
+      current_workflow: version
+    )
+
     assert :ok = WorkflowStore.force_reload()
     assert {:ok, ^loaded} = WorkflowStore.current()
     assert {:ok, ^loaded} = WorkflowStore.for_project(project.id)
 
-    put_edge(default_project: {:error, :invalid_default}, projects: [], current_workflow: nil)
+    put_edge(default_project: {:error, :invalid_default}, instance_workflow: %{}, projects: [], current_workflow: nil)
 
     assert {:error, {:refresh_failed, {:query_failed, {:default_project, :invalid_default}}}} =
              WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: {:error, :projects_failed}, current_workflow: nil)
+    put_edge(
+      default_project: {:ok, project},
+      instance_workflow: %{},
+      projects: {:error, :projects_failed},
+      current_workflow: nil
+    )
+
     assert {:error, {:refresh_failed, {:query_failed, :projects_failed}}} = WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: :invalid_projects, current_workflow: nil)
+    put_edge(
+      default_project: {:ok, project},
+      instance_workflow: %{},
+      projects: :invalid_projects,
+      current_workflow: nil
+    )
 
     assert {:error, {:refresh_failed, {:query_failed, {:invalid_list_projects_result, :invalid_projects}}}} =
              WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: [project], current_workflow: {:error, :repo_unavailable})
+    put_edge(
+      default_project: {:ok, project},
+      instance_workflow: %{},
+      projects: [project],
+      current_workflow: {:error, :repo_unavailable}
+    )
+
     assert {:error, {:refresh_failed, :repo_unavailable}} = WorkflowStore.force_reload()
 
-    put_edge(default_project: {:ok, project}, projects: [project], current_workflow: {:error, :workflow_failed})
+    put_edge(
+      default_project: {:ok, project},
+      instance_workflow: %{},
+      projects: [project],
+      current_workflow: {:error, :workflow_failed}
+    )
 
     assert {:error, {:refresh_failed, {:query_failed, {:current_workflow, "edge", :workflow_failed}}}} =
              WorkflowStore.force_reload()
@@ -338,7 +389,7 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     {:ok, loaded} = Workflow.load()
     raw = Workflow.to_markdown(loaded.config, prompt)
     {:ok, project} = FakePersistence.default_project()
-    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+    assert {:ok, _version} = FakePersistence.import_package(project, raw, "test")
   end
 
   defp start_repo_stub! do

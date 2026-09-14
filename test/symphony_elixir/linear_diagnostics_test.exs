@@ -177,9 +177,10 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
 
     def default_project, do: {:error, :not_found}
 
+    defdelegate instance_workflow(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate workflow_to_loaded(instance, version), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
   setup do
@@ -299,7 +300,6 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     tracker:
       kind: linear
       endpoint: "https://api.linear.app/graphql"
-      api_key: "token"
       project_slug: "stale-workflow-project"
       active_states: ["Todo", "Ready", "In Progress"]
       terminal_states: ["Canceled", "Cancelled", "Duplicate", "Done"]
@@ -325,7 +325,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     FakePersistence.reset!()
     FakePersistence.put_default_project_attrs!(%{linear_project_slug: "db-project"})
     {:ok, project} = FakePersistence.default_project()
-    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "web_workflow_settings")
+    assert {:ok, _version} = FakePersistence.import_package(project, raw, "web_workflow_settings")
     assert :ok = WorkflowStore.force_reload()
 
     diagnostics = Diagnostics.run()

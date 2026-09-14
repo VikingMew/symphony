@@ -26,10 +26,10 @@ Elixir / Phoenix Web Service
 └── Worker Runtime / Sandbox Runtime
 ```
 
-当前实现已经引入 PostgreSQL current workflow、dashboard 管理页面、Linear 诊断和 Panel 侧 worker API。
+当前实现已经引入 PostgreSQL instance workflow singleton、per-project workflow slices、dashboard 管理页面、Linear 诊断和 Panel 侧 worker API。
 长期方向是让 DB 成为唯一运行时 workflow source，让 Web UI 成为主要配置入口。
 
-一个关键原则是：runtime workflow contract 的全部内容都应该可配置并入库。这里的“全部”包括 tracker、polling、workspace、hooks、agent、codex、server 等运行配置，以及 base prompt 和 agent profile。Web UI 最终应该能够编辑、校验、版本化和审计整个 workflow contract，而不是只编辑其中一部分。`workflow.yml` 和 `profiles.yml` 可以作为导入/导出的交换格式，但不应再作为运行时配置来源。
+一个关键原则是：runtime workflow contract 的全部内容都应该按 owner 入库。installation-wide 的 polling、workspace、hooks、agent、codex、observability、analytics、server、worker、base prompt 和 profiles 只保存一次；tracker/repository 属性按 project 保存；state/transition/tool policy 由代码拥有。`workflow.yml` 和 `profiles.yml` 可以作为 combined 导入/导出的交换格式，但不是运行时配置来源。
 
 另一个关键原则是：当前仍处于 alpha 阶段，开发时不保留历史兼容路径。产品方向变化后，应直接删除旧 route、旧 source label、旧 schema alias、旧文件 fallback、旧 fixture 和旧测试断言；除非 Linear 任务明确把一次性数据迁移列为交付物，否则不要为了过去的配置格式在 runtime、UI 或测试里保留隐藏兼容层。测试应该固定当前公开契约，而不是证明旧行为仍然可用。
 
@@ -48,9 +48,9 @@ Elixir / Phoenix Web Service
 
 当前已知对齐说明：
 
-- `已落地`：每项目唯一的 PostgreSQL current workflow、Settings tabbed configuration、`/settings/import` package 导入、`/settings/agents` base prompt/profile 编辑、原位保存、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。
-- `已落地`：Project source/bootstrap 由 Project Settings 和 Workflow Bootstrap 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；Workflow Bootstrap 拥有 `workspace.initialize_timeout_ms`，用于 clone/worktree 初始化和 project setup 超时。`hooks.timeout_ms` 只控制 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
-- `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取 DB current workflow；本地 split package 文件只作为导入/导出格式和示例存在。空 DB 不自动 seed 文件，直接进入 setup-required，且不会开始监听或调度。
+- `已落地`：唯一 PostgreSQL instance workflow singleton + 每项目唯一 tracker/source slice、Settings tabbed configuration、`/settings/import` 双 scope package 导入、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。Agents/Runtime 的 instance 字段暂时仍显示，但普通 project save 会 typed reject，等待后续 UI 收敛。
+- `已落地`：Project source/bootstrap 由 project slice 和 instance singleton 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；singleton 拥有 `workspace.initialize_timeout_ms`、workspace roots、disk threshold 与所有 lifecycle hooks，不接受 project hook override。
+- `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取组合后的内存 snapshot；本地 split package 文件只作为导入/导出格式和示例存在。singleton 或 enabled project slice 任一缺失时进入 setup-required，且不会开始监听或调度。
 - `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
 - `已落地`：中心化 agent run 终态必须持久化 `status`、`finished_at` 和失败原因；Orchestrator 启动时会把上一次 runtime 遗留的 `running` rows 标记为 failed 并写入明确原因，避免 Runs 页面长期显示多个过期 running attempts。
 - `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，展示 staged diff/review，并在确认后写入 editable draft；运行时仍只在正常 Save 后变化。
@@ -176,10 +176,9 @@ secrets_metadata（后续）
 
 ### 5.3 workflows
 
-保存完整 workflow package 的运行时版本。Web UI 会按 settings 页面和当前选中的 project 做历史过滤：
-Workflow 页面显示该 project 的 workflow 设置保存，Agents 页面显示该 project 的 profile/prompt 保存。
-Workflow 与 Agents 页面都编辑同一 current workflow 的所属字段，保存时写回完整记录，
-而不是直接激活旧版本覆盖其它页面负责的字段。
+每个 `workflows` row 只保存所属 project 的 tracker/repository/source slice。instance-owned 字段、
+base prompt、profiles、code-owned workflow policy 和 tracker secret 不写入该 row；project
+persistence/export 携带这些字段时 typed reject。
 
 典型字段：
 
@@ -195,7 +194,13 @@ Workflow 与 Agents 页面都编辑同一 current workflow 的所属字段，保
 
 run 不绑定 workflow 记录；后续 dispatch、retry 和 resumed turn 在安全边界解析 current workflow。
 
-`raw_workflow_md` 用于保留完整原文，`yaml_config` 和 `prompt_body` 用于结构化读取和 UI 展示。这样可以同时满足机器校验、表单编辑、diff 审计和无损导入/导出。
+`raw_workflow_md` 与 `yaml_config` 都只包含 project slice，`prompt_body` 为空。portable combined
+package 由 export helper 在边界重新组合，不把完整 package 复制进 project row。
+
+### 5.3.1 app_settings instance_workflow
+
+固定 key `instance_workflow` 的 typed map 保存 installation runtime/profile slice 与 base prompt。
+保存 singleton 后会重新组合并原子发布所有 enabled projects；不存在 per-project override。
 
 ### 5.4 runs / agent_turns / events
 
@@ -275,11 +280,11 @@ states/transitions 不提供第二套 UI 编辑入口，导入保存后的 Postg
 Settings 页面提供几个互相一致的 tab/入口：
 
 - `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
-- `/settings/agents` 结构化编辑：编辑 profiles、base prompt、profile prompt、allowed updates 和 executor policy（project 选择器限定到指定 project）。
-- `/settings/runtime` 运行时摘要：展示固定 runtime contract、当前 active version、数据库位置和运行时相关配置；保存已明确建模的 Codex model / reasoning effort selector。除非某字段明确建模为 runtime 设置，否则不要把它变成另一个主编辑入口。
-- Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，解析后进入同一套结构化模型，根据 YAML 字段自动识别 package 类型，显示 staged diff 和校验结果。确认导入只修改 editable draft；字段可解析时可以保存为 current workflow；语义校验失败时保存 configuration check failure 并阻止运行时监听。
+- `/settings/agents` 暂时展示 profiles/base prompt 字段；普通 project save typed reject instance-owned 字段，后续 UI 工作再提供正确 singleton 编辑面。
+- `/settings/runtime` 暂时展示 runtime selector；普通 project save 同样不能修改 singleton。
+- Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，显示 staged diff 和校验结果，确认后的 Save 把 combined draft 分拆写入 singleton 与所选 project slice。
 
-这些入口必须写入同一个 current workflow 模型。导入文件写入 DB workflow；导出文件来自 DB workflow；运行时只读取 DB current workflow，避免 UI 配置、文件配置和运行时配置分裂。
+这些入口必须遵守同一 ownership matrix。combined package 在边界拆成两个 durable scopes，导出时再组合；运行时只读取其原子发布的 composed snapshot。
 
 #### Settings 保存和校验原则
 
@@ -432,7 +437,7 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 
 ### 阶段 3：配置版本化（已落地基础模型）
 
-每次配置变更会原位更新项目唯一的 `workflows` 记录。run/task 不保存 workflow 引用；后续执行边界读取已发布的 current workflow。
+每次配置变更原位更新 singleton 或项目唯一的 `workflows` slice。run/task 不保存 workflow 引用；后续执行边界读取已发布的 composed workflow。
 
 这样可以回答：
 
@@ -445,12 +450,13 @@ contract，而不是把它埋在不可校验的 shell hook 字符串里。最低
 ### 阶段 4：多项目和多 worker
 
 当前已经有 projects 页面、Panel 侧 worker/session/task/lease 数据模型和 worker HTTP API。
-运行时已支持按 project 隔离的 current workflow 和 orchestrator dispatch，
+运行时已支持按 project 隔离 tracker/source 与共享 instance policy 的 composed workflow 和 orchestrator dispatch，
 Settings 顶部有 project 选择器，但多 worker 生产隔离还没完成。后续需要把这些能力扩展到完整多项目生产路径：
 
 - 多 project。✅ 已落地
 - 每个 project 独立 tracker 配置。✅ 已落地
-- 每个 project 独立 current workflow。✅ 已落地
+- 每个 project 独立 tracker/source workflow slice。✅ 已落地
+- installation-wide runtime/profile singleton。✅ 已落地
 - 多 worker runtime。
 - 不同 worker 的资源限制和安全策略。
 
@@ -637,10 +643,10 @@ lib/symphony_elixir_web/
 ### Milestone 3：配置 UI（结构化 Settings 基础路径已完成）
 
 - 已有 projects 页面。
-- 已有 `/settings/import` split package 导入，可保存完整 current workflow；workflow state/routing 不提供独立 UI 编辑入口。
-- 已有 `/settings/agents` 设置 tab，可编辑 base prompt、profiles、profile prompt 和 allowed updates。
+- 已有 `/settings/import` split package 导入，可分别保存 instance singleton 与 project slice；workflow state/routing 不提供独立 UI 编辑入口。
+- `/settings/agents` 设置 tab 暂时保留 base prompt/profile 字段，但普通 project save 会 typed reject，等待 singleton UI 收敛。
 - 页面不再以 raw textarea 作为主要编辑入口；`/settings/import` 已支持 split package 粘贴/上传、staged review 和 diff。导出入口仍需补齐。
-- 每次保存原位更新 current workflow；不保留或激活历史版本。
+- 每次保存原位更新其所属 singleton 或 project slice；不保留或激活历史版本。
 - 仍需补齐导出按钮、allowed transitions 完整编辑器、更多配置域和更细的字段级 verification。
 
 ### Milestone 4：安全和权限（部分完成）

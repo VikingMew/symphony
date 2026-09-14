@@ -264,9 +264,8 @@ defmodule SymphonyElixir.TestSupport do
     if Application.get_env(:symphony_elixir, :persistence_module) == FakePersistence do
       {:ok, loaded} = Workflow.load(workflow_path)
       FakePersistence.put_default_project_attrs!(project_attrs_from_workflow_config(loaded.config))
-      raw = Workflow.to_markdown(loaded.config, loaded.prompt)
       {:ok, project} = FakePersistence.default_project()
-      {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+      {:ok, _version} = FakePersistence.put_package_unchecked(project, loaded.config, loaded.prompt)
     end
   end
 

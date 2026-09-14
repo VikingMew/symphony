@@ -50,9 +50,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
     defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
     defdelegate default_project(), to: FakePersistence
+    defdelegate instance_workflow(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
     defdelegate current_workflow(project), to: FakePersistence
-    defdelegate workflow_to_loaded(record), to: FakePersistence
+    defdelegate workflow_to_loaded(instance, record), to: FakePersistence
 
     @spec heartbeat_worker(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
     def heartbeat_worker(worker_id, session_id) do
@@ -77,9 +78,10 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     defdelegate fresh_worker_session(worker_id, session_id, opts \\ []), to: FakePersistence
     defdelegate expire_stale_worker_sessions(opts \\ []), to: FakePersistence
     defdelegate default_project(), to: FakePersistence
+    defdelegate instance_workflow(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
     defdelegate current_workflow(project), to: FakePersistence
-    defdelegate workflow_to_loaded(record), to: FakePersistence
+    defdelegate workflow_to_loaded(instance, record), to: FakePersistence
 
     @spec heartbeat_worker(String.t(), String.t()) :: {:error, :heartbeat_history_failed}
     def heartbeat_worker(worker_id, session_id) do

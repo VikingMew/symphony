@@ -33,13 +33,13 @@ current workflows remain the durable authority, while normal `WorkflowStore` rea
 in-memory snapshot. The only supported cutover imports a stopped SQLite backup into an
 already-migrated empty PostgreSQL database.
 
-### Per-project current workflows and multi-project runtime
+### Scoped workflow persistence and multi-project runtime
 
 Status: accepted
 
-Each enabled project owns one current workflow and project-scoped runtime settings. Plans
-215-219 established a single orchestrator that iterates those project contexts while preserving
-default-project compatibility for existing callers.
+One fixed application setting owns installation runtime/profile policy; each enabled project owns
+one tracker/repository workflow slice. The orchestrator composes both scopes for each project while
+preserving explicit default-project selection for existing no-context callers.
 
 ### Linear task definition and PR-first delivery
 

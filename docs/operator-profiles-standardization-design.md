@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, operator, profiles]
 status: current
 language: zh-CN
-updated: 2026-08-16
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -14,15 +14,15 @@ design_status: landed
 
 Symphony 的 workflow 里有两类"巡检型"operator profile:**nap**(工程审计)与 **day_dreaming**(方向探索)。二者都是只读巡检:不改代码、不改文档、不建 commit/PR,只通过受限的 issue 创建工具为每个发现建一个 Backlog Linear issue。
 
-当前实现存在**三处来源漂移**:
+profile contract 有三种表示，但 durable authority 只有一处：
 
 | 来源 | nap | day_dreaming | 问题 |
 | --- | --- | --- | --- |
 | `lib/symphony_elixir/config/schema.ex` 默认值 | ✅(旧版 prompt) | ✅ | nap 默认 prompt 是旧版,未包含 2026-08-09 确立的"冗余错误处理/门控、不合理依赖、降复杂度 + Linus & Carmack 逐条对照"标准 |
-| DB `workflows.yaml_config`（每 project 一份） | ✅ | ✅ | 与代码默认值可能不一致；标准需通过 Settings 保存到各 project 的 current workflow |
-| `profiles.yml` 包文件 | ❌ **缺失** | ❌ **缺失** | import/export 包不完整,巡检 profile 无法随包迁移 |
+| DB `app_settings["instance_workflow"]`（installation 一份） | ✅ | ✅ | 保存显式配置；所有 project 使用同一份 singleton profile policy |
+| `profiles.yml` 包文件 | ✅ | ✅ | portable combined package 的 import/export 表示，不是 runtime authority |
 
-漂移的后果:同一个 profile 在不同 project 里行为不同;审计标准升级要改三处且易漏;包文件迁移丢失巡检 profile 定义。
+project workflow 不保存 base prompt 或 profiles，也不存在 project profile override。
 
 ## 2. 目标
 
@@ -30,7 +30,7 @@ Symphony 的 workflow 里有两类"巡检型"operator profile:**nap**(工程审�
 
 - 一份**权威的标准 prompt 模板**(代码默认值),所有来源以它为准;
 - `profiles.yml` 补齐 nap / day_dreaming,包迁移完整;
-- 新 DB workflow 初始化时从标准模板落库;已有 DB 允许 project 覆盖,但覆盖以标准为基线;
+- 新 DB 初始化或显式 package import 时把全部 profiles 与 base prompt 写入 instance singleton;
 - nap 默认 prompt 升级为 2026-08-09 确立的新标准(见 §3.1)。
 
 ## 3. 巡检 Profile 契约
@@ -102,28 +102,28 @@ nap 是「提出删除/优化方向的方法」，不是删除本身。发现路
 **代码默认值(`schema.ex`)是标准 prompt 的唯一权威来源**。其余来源的生成/迁移路径:
 
 1. **代码默认值** `schema.ex`:nap / day_dreaming 标准 prompt(§3)落在此处。
-2. **profiles.yml**:从标准模板生成,补 nap / day_dreaming 段,随 import/export 包迁移。
-3. **DB workflow 初始化**:新建 workflow 时,巡检 profile 默认值从标准模板填充;显式覆盖允许,但 schema/UI 提供"重置为标准"路径。
+2. **profiles.yml**:从标准模板生成,补 nap / day_dreaming 段,随 combined import/export 包迁移。
+3. **DB singleton 初始化**:新建 instance workflow 时从标准模板填充；显式 singleton 配置允许覆盖。
 
-改动巡检标准时,只改代码默认值一处;profiles.yml 由导出流程再生成;DB 存量通过"重置为标准"收敛。
+改动巡检标准时,只改代码默认值一处；profiles.yml 由导出流程再生成；DB singleton 通过显式导入收敛。
 
 ## 5. 非目标
 
 - 不做巡检调度/定时触发(有独立 plan 空间)。
 - 不改 `issue_create` 工具本身。
 - 不改变 implementation/refinement/merge 三类的 profile 契约。
-- 不做跨 project 的 prompt 强制同步(覆盖允许,仅提供基线)。
+- 不提供 per-project prompt/profile override；singleton 保存影响所有 project 的后续执行。
 
 ## 6. 验收
 
 - [ ] `schema.ex` 中 nap 默认 prompt 含 §3.1 全部要素(冗余错误处理/门控、依赖、死重、Linus & Carmack 逐条、产出格式)。
 - [ ] `schema.ex` 中 day_dreaming 默认 prompt 含 §3.2 要素。
 - [ ] `profiles.yml` 含 nap / day_dreaming 段,内容与代码默认值一致。
-- [ ] 新建 workflow 的巡检 profile 默认值来自标准模板(测试覆盖)。
+- [ ] 新建 instance workflow 的巡检 profile 默认值来自标准模板(测试覆盖)。
 - [ ] import/export 包往返后 nap / day_dreaming 完整保留(测试覆盖)。
 - [ ] `schema.ex` 中 nap 默认 prompt 含 2026-08-16 审计方法论全部要素（机械扫描前置、豁免 stale、无消费者 API、文档生成化、防复发门禁、产出格式含发现路径与验证方式、防误报纪律）。
 - [ ] `mix specs.check` 通过。
-- [ ] `make all` 通过。
+- [ ] `scripts/check.sh`、`scripts/unit.sh` 与 `scripts/dialyzer.sh` 通过。
 
 ## 7. 后续衔接
 

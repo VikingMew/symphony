@@ -498,7 +498,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       repository_url: "git@example.test:a.git"
     })
 
-    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _project_a_workflow} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -509,7 +509,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
     assert MapSet.new(Enum.map(WorkflowStore.list_enabled(), & &1.project_id)) == MapSet.new([project_a.id, project_b.id])
     {project_a, project_b}

@@ -3101,9 +3101,20 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp load_operator_workflow(project) do
     case persistence().current_workflow(project) do
-      nil -> {:error, :no_workflow}
-      {:error, reason} -> {:error, {:workflow_lookup_failed, reason}}
-      workflow -> {:ok, persistence().workflow_to_loaded(workflow)}
+      nil ->
+        {:error, :no_workflow}
+
+      {:error, reason} ->
+        {:error, {:workflow_lookup_failed, reason}}
+
+      workflow ->
+        with instance when is_map(instance) <- persistence().instance_workflow(),
+             {:ok, loaded} <- persistence().workflow_to_loaded(instance, workflow) do
+          {:ok, loaded}
+        else
+          nil -> {:error, :no_instance_workflow}
+          {:error, reason} -> {:error, {:workflow_lookup_failed, reason}}
+        end
     end
   rescue
     error -> {:error, {:workflow_lookup_failed, error}}

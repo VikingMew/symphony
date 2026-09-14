@@ -38,6 +38,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:workflow_import_notice, nil)
      |> assign(:settings_import_yaml, "")
      |> assign(:settings_import_stage, nil)
+     |> assign(:workflow_import_pending?, false)
      |> assign(:workflow_save_notice, nil)
      |> assign(:workflow_field_errors, %{})
      |> assign(:workflow_check_targets, [])

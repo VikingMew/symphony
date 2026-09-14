@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
 
   import ExUnit.CaptureLog
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Persistence
   alias SymphonyElixir.Persistence.Project
   alias SymphonyElixir.Persistence.WorkflowRecord
@@ -26,6 +27,16 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.current_workflow() == nil
   end
 
+  test "project hook writes are rejected before persistence" do
+    assert {:error, {:out_of_scope_project_fields, ["after_create_hook"]}} =
+             WorkflowStore.create_project(Map.put(%{after_create_hook: nil}, "after_create_hook", "mix setup"))
+  end
+
+  test "project records reject instance workflow sections before persistence" do
+    assert {:error, {:out_of_scope_project_fields, ["codex"]}} =
+             WorkflowStore.create_project(%{"codex" => %{"model" => "gpt-5.5"}})
+  end
+
   test "project and workflow query faults are logged and reraised" do
     _pid = start_repo_stub!()
     project = %Project{id: "project-id"}
@@ -42,31 +53,55 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert log =~ "Workflow persistence query failed operation=current_workflow outcome=failed"
   end
 
-  test "workflow_to_loaded returns runtime shape without a Repo-backed project overlay" do
+  test "workflow_to_loaded composes the instance and project slices" do
     workflow = %WorkflowRecord{
       id: "workflow-id",
       project_id: nil,
       yaml_config: %{"tracker" => %{"kind" => "linear"}},
-      prompt_body: "Base prompt"
+      prompt_body: ""
     }
 
-    assert WorkflowStore.workflow_to_loaded(workflow) == %{
-             config: %{"tracker" => %{"kind" => "linear"}},
+    instance = %{config: %{"polling" => %{"interval_ms" => 1_000}}, prompt_body: "Base prompt"}
+
+    assert {:ok, loaded} = WorkflowStore.workflow_to_loaded(instance, workflow)
+
+    assert loaded == %{
+             config: %{
+               "polling" => %{"interval_ms" => 1_000},
+               "tracker" => %{"kind" => "linear"},
+               "workflow" => Schema.default_workflow_policy()
+             },
              prompt: "Base prompt",
              prompt_template: "Base prompt",
              project_id: nil
            }
   end
 
-  test "export_workflow renders canonical stored YAML plus prompt" do
-    rendered =
-      WorkflowStore.export_workflow(%WorkflowRecord{
-        yaml_config: %{"tracker" => %{"kind" => "linear"}},
-        prompt_body: "Rendered prompt"
-      })
+  test "export_workflow renders only canonical project YAML" do
+    assert {:ok, rendered} =
+             WorkflowStore.export_workflow(%WorkflowRecord{
+               yaml_config: %{"tracker" => %{"kind" => "linear"}},
+               prompt_body: ""
+             })
 
     assert rendered =~ "tracker:"
-    assert rendered =~ "Rendered prompt"
+    assert rendered =~ "Rendered prompt" == false
+  end
+
+  test "export_workflow rejects persisted instance fields" do
+    assert {:error, {:out_of_scope_workflow_fields, :project, ["prompt_body"]}} =
+             WorkflowStore.export_workflow(%WorkflowRecord{
+               yaml_config: %{"codex" => %{"model" => "gpt-5.5"}},
+               prompt_body: "Rendered prompt"
+             })
+  end
+
+  test "export_workflow rejects persisted instance config with a blank prompt" do
+    assert {:error, {:out_of_scope_workflow_fields, :project, ["codex"]}} =
+             WorkflowStore.export_workflow(%WorkflowRecord{
+               yaml_config: %{"codex" => %{"model" => "gpt-5.5"}},
+               prompt_body: ""
+             })
   end
 
   test "public persistence context delegates current workflow functions" do

@@ -2,8 +2,8 @@ defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
   Publishes the current database workflow for every enabled project.
 
-  PostgreSQL is the durable runtime snapshot synchronized from the repository
-  package, while runtime reads use one atomically replaced in-memory snapshot.
+  PostgreSQL stores one instance slice and one tracker/repository slice per
+  project, while runtime reads use their atomically published compositions.
   The owner process performs initial and explicit loads and
   coordinates one background refresh; callers never query persistence or wait
   for that work.
@@ -229,12 +229,21 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp load_database_workflows do
     with {:ok, _default_project} <- load_default_project(),
+         {:ok, instance_workflow} <- load_instance_workflow(),
          {:ok, projects, workflows} <- load_project_workflows() do
       if map_size(workflows) == 0 do
         :setup_required
       else
-        {:ok, workflows, default_project_id(workflows, projects)}
+        compose_workflows(instance_workflow, projects, workflows)
       end
+    end
+  end
+
+  defp load_instance_workflow do
+    case persistence().instance_workflow() do
+      nil -> :setup_required
+      {:error, reason} -> {:error, reason}
+      instance_workflow -> {:ok, instance_workflow}
     end
   end
 
@@ -277,8 +286,23 @@ defmodule SymphonyElixir.WorkflowStore do
         {:halt, {:error, {:current_workflow, Map.get(project, :id), reason}}}
 
       workflow ->
-        loaded = persistence().workflow_to_loaded(workflow)
-        {:cont, {:ok, Map.put(workflows, Map.fetch!(project, :id), loaded)}}
+        {:cont, {:ok, Map.put(workflows, Map.fetch!(project, :id), workflow)}}
+    end
+  end
+
+  defp compose_workflows(instance_workflow, projects, workflow_records) do
+    result = Enum.reduce_while(workflow_records, {:ok, %{}}, &compose_workflow(&1, &2, instance_workflow))
+
+    case result do
+      {:ok, workflows} -> {:ok, workflows, default_project_id(workflows, projects)}
+      error -> error
+    end
+  end
+
+  defp compose_workflow({project_id, workflow}, {:ok, loaded}, instance_workflow) do
+    case persistence().workflow_to_loaded(instance_workflow, workflow) do
+      {:ok, composed} -> {:cont, {:ok, Map.put(loaded, project_id, composed)}}
+      {:error, reason} -> {:halt, {:error, {:compose_workflow, project_id, reason}}}
     end
   end
 

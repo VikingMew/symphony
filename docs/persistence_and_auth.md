@@ -55,18 +55,20 @@ application writers.
 
 ## Durable Workflow Authority
 
-PostgreSQL owns projects, current workflows, issues, runs, events, agent turns, workspaces, workers,
-sessions, tasks, leases, users, tracker configuration, and application settings. One active workflow
-version exists per enabled project.
+PostgreSQL owns projects, current workflow slices, issues, runs, events, agent turns, workspaces,
+workers, sessions, tasks, leases, users, tracker configuration, and application settings. The fixed
+`app_settings["instance_workflow"]` map stores runtime/profile policy once; one tracker/repository
+workflow slice exists per enabled project.
 
-At cold start `WorkflowStore` loads the active workflows and atomically publishes a coherent
-in-memory snapshot. Normal runtime config, prompt, dashboard, diagnostics, and dispatch reads use
+At cold start `WorkflowStore` composes the singleton with every active project slice and atomically
+publishes a coherent in-memory snapshot. Normal runtime config, prompt, dashboard, diagnostics, and dispatch reads use
 only that snapshot; they do not query PostgreSQL. Explicit Settings mutations persist first and
 republish before returning success. A failed background refresh retains the last-known-good
 snapshot and reports the database error rather than presenting it as setup-required.
 
-If the migrated database is genuinely empty, Symphony starts in setup-required mode and does not
-poll Linear or schedule agents until Settings creates a project and active workflow. Checked-in
+If either the singleton or all enabled project workflow slices are absent, Symphony starts in
+setup-required mode and does not poll Linear or schedule agents. A legacy full project workflow is
+not an instance fallback. Checked-in
 `workflow.yml` and `profiles.yml` remain import/export artifacts, not runtime fallbacks.
 
 ## Legacy SQLite Cutover

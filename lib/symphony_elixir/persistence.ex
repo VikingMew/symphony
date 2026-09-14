@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Persistence do
 
   import Ecto.Query
 
+  alias SymphonyElixir.Config.WorkflowScopes
   alias SymphonyElixir.{PersistenceProvider, Repo, RunLifecycle, Workflow}
   alias SymphonyElixir.PRReview.Store, as: ReviewStore
   alias SymphonyElixir.WorkflowStore, as: RuntimeWorkflowStore
@@ -92,6 +93,26 @@ defmodule SymphonyElixir.Persistence do
     |> publish_runtime_snapshot()
   end
 
+  @spec import_package(Project.t(), String.t(), String.t()) ::
+          {:ok, map()} | {:error, term() | {:runtime_publication_failed, map(), term()}}
+  def import_package(project, raw_workflow_md, source \\ "import") do
+    project
+    |> WorkflowStore.import_package(raw_workflow_md, source)
+    |> publish_runtime_snapshot()
+  end
+
+  @spec put_instance_workflow(map(), String.t()) ::
+          {:ok, WorkflowScopes.instance_workflow()}
+          | {:error, term() | {:runtime_publication_failed, WorkflowScopes.instance_workflow(), term()}}
+  def put_instance_workflow(config, prompt_body) do
+    config
+    |> WorkflowStore.put_instance_workflow(prompt_body)
+    |> publish_runtime_snapshot()
+  end
+
+  @spec instance_workflow() :: WorkflowScopes.instance_workflow() | nil | {:error, :repo_unavailable}
+  defdelegate instance_workflow(), to: WorkflowStore
+
   @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, WorkflowStore.current_workflow_error()}
   defdelegate current_workflow(), to: WorkflowStore
 
@@ -99,11 +120,16 @@ defmodule SymphonyElixir.Persistence do
           WorkflowRecord.t() | nil | {:error, WorkflowStore.current_workflow_error()}
   defdelegate current_workflow(project), to: WorkflowStore
 
-  @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
-  defdelegate workflow_to_loaded(workflow), to: WorkflowStore
+  @spec workflow_to_loaded(WorkflowScopes.instance_workflow(), WorkflowRecord.t()) ::
+          {:ok, Workflow.loaded_workflow()} | {:error, term()}
+  defdelegate workflow_to_loaded(instance, workflow), to: WorkflowStore
 
-  @spec export_workflow(WorkflowRecord.t()) :: String.t()
+  @spec export_workflow(WorkflowRecord.t()) :: {:ok, String.t()} | {:error, term()}
   defdelegate export_workflow(workflow), to: WorkflowStore
+
+  @spec export_package(WorkflowScopes.instance_workflow(), WorkflowRecord.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  defdelegate export_package(instance, workflow), to: WorkflowStore
 
   defp delete_project!(project) do
     Repo.update_all(from(run in RunRecord, where: run.project_id == ^project.id),

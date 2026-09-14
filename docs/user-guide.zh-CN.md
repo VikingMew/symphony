@@ -4,7 +4,7 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-08-27
+updated: 2026-09-14
 ---
 
 # Symphony 用户运行指南
@@ -165,13 +165,14 @@ mise exec -- mix symphony.migrate
 ```
 
 命令缺少 `DATABASE_URL`、连接不可达或 migration 失败时会显式失败，不会伪装成
-setup-required。setup-required 只表示数据库可用但项目尚无 current workflow。
+setup-required。setup-required 表示数据库可用，但 instance workflow singleton 或 enabled project
+workflow slice 尚未齐备。
 
 ## 7. 配置 workflow
 
-运行时配置来源是项目唯一的 PostgreSQL current workflow。空数据库会进入 setup-required 状态，不会开始
-监听 Linear 或调度 agent；先在 `/settings/import` 导入 workflow package，再按需在
-`/settings/agents` 调整 agent 配置并保存第一版 active workflow。
+运行时配置由 PostgreSQL 中唯一的 `app_settings["instance_workflow"]` 与每项目唯一的 tracker/source
+workflow slice 组合而成。任一 scope 缺失都会进入 setup-required，不会监听 Linear 或调度 agent；
+先在 `/settings/import` 显式导入 combined package。
 
 `workflow.yml` 和 `profiles.yml` 是 split workflow package 的导入/导出格式，不是启动参数，也不
 是运行时 fallback。这个 package 由两个文件组成：
@@ -185,7 +186,7 @@ profiles.yml
 `profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
 顶层字段自动识别 package 类型：包含 `profiles` 或 `base_prompt` 的文档按 `profiles.yml` 导入，其余
 有效 workflow mapping 按 `workflow.yml` 导入。导入只填充页面上的 draft，不会立即激活运行时；确认校验提示后，
-再点 Save 创建项目的 current database workflow。
+再点 Save；Symphony 在一个事务中写 instance singleton 和所选 project slice。
 setup-required 页面里的提示文案只是系统状态提示，不是 base prompt。正确的 base prompt 来自
 `profiles.yml` 的 `base_prompt`。
 
@@ -238,8 +239,8 @@ workflow:
 
 `profiles.yml` 里配置共享 base prompt 和 agent profile：
 
-每个项目的 PostgreSQL current workflow 仍是运行时权威；`profiles.yml` 只是默认导入/导出
-artifact。无论项目或目标仓库为何，refinement / implementation prompt 最终都会附加不可由
+PostgreSQL instance singleton 是 base prompt 与所有 profiles 的唯一 durable authority；
+`profiles.yml` 只是默认导入/导出 artifact。无论项目或目标仓库为何，refinement / implementation prompt 最终都会附加不可由
 profile 覆盖的容器验证安全契约：agent 只能静态审阅 Dockerfile、Compose YAML 和 CI 配置，
 不得调用容器引擎、daemon/socket 或执行镜像 build/pull/run/push/inspect/publish。若任务把
 此类验证列为必需项，agent 必须记录 blocker evidence 并沿持久 `blocking_decision` / `Blocked`
@@ -357,14 +358,11 @@ source strategy 会先完成 source preparation，`project.setup_commands` 再�
 `hooks.after_create` 作为附加自定义命令执行。
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
-Web UI 不提供独立的 workflow/routing 编辑 tab；这些配置通过 split workflow package 导入，
-PostgreSQL current workflow 仍是运行时权威。`/settings/agents` tab 管理 base prompt 和
-profiles，`/settings/runtime` tab 管理与 bundled CLI catalog 同源的 Codex model 与 reasoning
-effort selector。Settings
-顶部的 project 选择器决定这些 tab 编辑的是哪个 project（不选时保持默认 project 行为）；
-`/settings/projects` tab 始终列出全部 project 用于 enable/disable 编辑。后续导入/导出
-split package 时，`profiles.yml` 的 `base_prompt` 是共享
-prompt 来源。
+Web UI 不提供独立的 workflow/routing 编辑 tab；路由始终来自 code-owned policy。当前
+`/settings/agents` 与 `/settings/runtime` 仍展示 instance-owned 字段，但普通 project save 携带这些
+字段会返回 typed rejection，不会修改 singleton；显式 `/settings/import` 才会把 combined package
+拆分保存。`/settings/projects` 只保存 project-owned tracker/repository/source 字段，并始终列出全部
+project。`profiles.yml` 的 `base_prompt` 导入后保存在 instance singleton，供所有 project 共用。
 
 `codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
 `reject` map。当前支持值是 `untrusted`、`on-failure`、`on-request`、`granular` 和
@@ -421,8 +419,9 @@ Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_up
    PR-open automation 不会在 Symphony handoff 后覆盖 `Ready to Merge`。
 2. 让实际 Symphony runtime user 能使用已认证的 `gh`，或提供 `GH_TOKEN` / `GITHUB_TOKEN` 给
    REST fallback。使用 SSH execution 时，worker 还必须保留 branch-push auth。
-3. 部署新代码，并为每个 enabled project 创建、校验、应用 trimmed PostgreSQL active workflow
-   version。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们不会修改运行时。
+3. 部署新代码，创建并校验 installation singleton，再为每个 enabled project 创建、校验、应用
+   tracker/repository workflow slice。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们
+   不会修改运行时。
 4. 手工处理仍处于退休状态 `In Review`、`Merging`、`Merged` 的运行中 issue，并确认没有 live
    issue 依赖旧 route。
 5. live issue 清理完成后，才在每个相关 Linear team archive `In Review`、`Merging`、`Merged`。
@@ -453,7 +452,7 @@ http://127.0.0.1:4000/
 
 如果启用了认证，先访问 `/login` 登录。
 
-运行时配置来源是项目唯一的 PostgreSQL current workflow。`workflow.yml` 和 `profiles.yml` 是导入、
+运行时配置来源是 PostgreSQL instance singleton 与 project workflow slice 的组合。`workflow.yml` 和 `profiles.yml` 是导入、
 导出的 split package 文件，不再作为 CLI 启动参数，也不会在启动时自动导入。
 
 ### dashboard-first 数据库模式启动
@@ -467,10 +466,10 @@ mise exec -- ./bin/symphony \
 
 此时规则是：
 
-- 每个项目的 PostgreSQL current workflow 是持久化权威；启动时会发布完整的内存 snapshot，日常 config、dashboard、prompt、diagnostics 和 dispatch 读取不访问数据库。
-- `Default` 项目只在 projects 表为空时作为首启占位自动创建，且未配置仓库地址的占位记录不参与运行时派发。无显式 project context 的 runtime settings 和 Linear diagnostics 会选择已配置的 Default workflow；没有可用 Default 时选择第一个 enabled 且已加载 workflow 的真实项目。listening 会校验所有 enabled workflow，真实项目缺少仓库地址仍会阻止派发。
-- 如果 PostgreSQL 中还没有 current workflow，系统进入 setup-required。
-- setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/import`，导入并保存第一个 workflow。
+- `app_settings["instance_workflow"]` 是 runtime/profile 持久化权威；每个项目 workflow 只保存 tracker/source 属性。启动时组合并原子发布所有 enabled project 的完整 snapshot，日常读取不访问数据库。
+- `Default` 项目只在 projects 表为空时作为 disabled 首启占位自动创建，且未配置仓库地址的占位记录不参与运行时派发。无显式 project context 时优先选择已配置的 Default；没有可用 Default 时仅在恰好一个 enabled workflow 存在时选择它。
+- singleton 或 enabled project workflow 任一缺失时系统进入 setup-required；legacy full project row 不作为 singleton fallback。
+- setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/import`，导入并保存两个 scope。
 - 不带 `--port` 时也使用同一个 PostgreSQL workflow source，只是不启动 Web dashboard。
 
 ## 9. 常用页面
@@ -522,8 +521,8 @@ export SYMPHONY_WORKER_REGISTRATION_TOKEN="replace-this-worker-token"
 
 ## 11. 热更新
 
-Symphony 当前支持 Settings / workflow 配置热更新：原位保存 PostgreSQL current workflow 后，
-持久化边界会在报告成功前原子发布完整 snapshot，不需要重启服务。外部 activation 由单飞后台刷新检测；
+Symphony 当前支持 Settings / workflow 配置热更新：保存 singleton 或 project slice 后，
+持久化边界会在报告成功前重新组合并原子发布全部 enabled projects 的完整 snapshot，不需要重启服务。外部 activation 由单飞后台刷新检测；
 PostgreSQL 刷新失败时，读取继续使用 last-known-good snapshot。代码级热更新和生产 OTP release hot upgrade 不是当前已支持的部署能力。
 
 详细说明见 [Symphony 热更新说明](hot_update.zh-CN.md)。

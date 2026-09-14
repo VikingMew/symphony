@@ -7,11 +7,19 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Persistence.{Project, WorkflowRecord}
+  alias SymphonyElixir.Config.{Schema, WorkflowScopes}
+  alias SymphonyElixir.Persistence.{AppSetting, Project, WorkflowRecord}
   alias SymphonyElixir.{Repo, Text, Workflow}
 
   @default_project_slug "default"
+  @instance_workflow_key "instance_workflow"
+  @project_hook_fields [
+    {:after_create_hook, "after_create_hook"},
+    {:before_run_hook, "before_run_hook"},
+    {:after_run_hook, "after_run_hook"},
+    {:before_remove_hook, "before_remove_hook"}
+  ]
+  @project_instance_fields WorkflowScopes.instance_sections() ++ ["prompt_body", "workflow"]
   @type current_workflow_error :: :missing_project_context
 
   @spec default_project() ::
@@ -60,17 +68,21 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   @spec create_project(map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :repo_unavailable}
   def create_project(attrs) do
-    if repo_available?(),
-      do: %Project{} |> Project.changeset(attrs) |> Repo.insert(),
-      else: {:error, :repo_unavailable}
+    with :ok <- reject_project_hook_fields(attrs) do
+      if repo_available?(),
+        do: %Project{} |> Project.changeset(attrs) |> Repo.insert(),
+        else: {:error, :repo_unavailable}
+    end
   end
 
   @spec update_project(Project.t() | String.t(), map()) ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
   def update_project(%Project{} = project, attrs) do
-    if repo_available?(),
-      do: project |> Project.changeset(attrs) |> Repo.update(),
-      else: {:error, :repo_unavailable}
+    with :ok <- reject_project_hook_fields(attrs) do
+      if repo_available?(),
+        do: project |> Project.changeset(attrs) |> Repo.update(),
+        else: {:error, :repo_unavailable}
+    end
   end
 
   def update_project(id, attrs) when is_binary(id) do
@@ -85,15 +97,53 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import")
       when is_binary(raw_workflow_md) do
     with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
-         {:ok, _settings} <- Schema.parse(loaded.config) do
-      canonical_raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+         {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded),
+         {:ok, _settings} <- Schema.parse(project_config) do
+      canonical_raw = Workflow.to_markdown(project_config, "")
 
       upsert_workflow(project, %{
         raw_workflow_md: canonical_raw,
-        yaml_config: loaded.config,
-        prompt_body: loaded.prompt,
+        yaml_config: project_config,
+        prompt_body: "",
         source: source
       })
+    end
+  end
+
+  @spec import_package(Project.t(), String.t(), String.t()) ::
+          {:ok, %{instance_workflow: WorkflowScopes.instance_workflow(), project_workflow: WorkflowRecord.t()}}
+          | {:error, term()}
+  def import_package(%Project{} = project, raw_workflow_md, source \\ "import")
+      when is_binary(raw_workflow_md) do
+    with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
+         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
+      Repo.transaction(fn ->
+        instance = upsert_instance_workflow!(instance)
+        project_workflow = upsert_project_workflow!(project, project_config, source)
+        %{instance_workflow: instance, project_workflow: project_workflow}
+      end)
+    end
+  end
+
+  @spec put_instance_workflow(map(), String.t()) ::
+          {:ok, WorkflowScopes.instance_workflow()} | {:error, term()}
+  def put_instance_workflow(config, prompt_body) when is_map(config) and is_binary(prompt_body) do
+    with {:ok, instance} <- WorkflowScopes.new_instance(config, prompt_body) do
+      Repo.transaction(fn -> upsert_instance_workflow!(instance) end)
+    end
+  end
+
+  @spec instance_workflow() :: WorkflowScopes.instance_workflow() | nil | {:error, :repo_unavailable}
+  def instance_workflow do
+    query(:instance_workflow, fn ->
+      if repo_available?(), do: load_instance_setting(), else: {:error, :repo_unavailable}
+    end)
+  end
+
+  defp load_instance_setting do
+    case Repo.get(AppSetting, @instance_workflow_key) do
+      nil -> nil
+      %AppSetting{value: value} -> load_instance_workflow!(value)
     end
   end
 
@@ -152,24 +202,31 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
-  @spec workflow_to_loaded(WorkflowRecord.t()) :: Workflow.loaded_workflow()
-  def workflow_to_loaded(%WorkflowRecord{} = workflow) do
-    config =
-      workflow.yaml_config
-      |> Kernel.||(%{})
-      |> apply_project_runtime_settings(workflow.project_id)
-
-    %{
-      config: config,
-      prompt: workflow.prompt_body || "",
-      prompt_template: workflow.prompt_body || "",
-      project_id: workflow.project_id
-    }
+  @spec workflow_to_loaded(WorkflowScopes.instance_workflow(), WorkflowRecord.t()) ::
+          {:ok, Workflow.loaded_workflow()} | {:error, term()}
+  def workflow_to_loaded(instance, %WorkflowRecord{} = workflow) do
+    project_config = apply_project_runtime_settings(workflow.yaml_config || %{}, workflow.project_id)
+    WorkflowScopes.compose(instance, project_config, workflow.project_id)
   end
 
-  @spec export_workflow(WorkflowRecord.t()) :: String.t()
-  def export_workflow(%WorkflowRecord{} = workflow),
-    do: Workflow.to_markdown(workflow.yaml_config || %{}, workflow.prompt_body || "")
+  @spec export_workflow(WorkflowRecord.t()) :: {:ok, String.t()} | {:error, term()}
+  def export_workflow(%WorkflowRecord{} = workflow) do
+    loaded = %{config: workflow.yaml_config || %{}, prompt: workflow.prompt_body || ""}
+
+    with {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
+      {:ok, Workflow.to_markdown(project_config, "")}
+    end
+  end
+
+  @spec export_package(WorkflowScopes.instance_workflow(), WorkflowRecord.t()) ::
+          {:ok, String.t()} | {:error, term()}
+  def export_package(instance, %WorkflowRecord{} = workflow) do
+    project_config = apply_project_runtime_settings(workflow.yaml_config || %{}, workflow.project_id)
+
+    with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
+      {:ok, Workflow.to_markdown(loaded.config, loaded.prompt)}
+    end
+  end
 
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
     case project_for_runtime(project_id) do
@@ -241,29 +298,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
       |> put_project_value("worktree_fetch", project.worktree_fetch != false)
       |> put_project_value("worktree_cleanup", project.worktree_cleanup != false)
 
-    config
-    |> Map.put("project", project_config)
-    |> apply_project_hooks(project)
-  end
-
-  # Per-project hook overlay: workflow-level hooks are the default; a project
-  # hook field, when set, overrides the corresponding workflow hook for that
-  # project. Unset project hook fields leave the workflow hook in place.
-  defp apply_project_hooks(config, %Project{} = project) do
-    [
-      {"after_create", project.after_create_hook},
-      {"before_run", project.before_run_hook},
-      {"after_run", project.after_run_hook},
-      {"before_remove", project.before_remove_hook}
-    ]
-    |> Enum.reduce(config, fn {key, value}, acc ->
-      if is_binary(value) and String.trim(value) != "" do
-        hooks = Map.get(acc, "hooks", %{})
-        Map.put(acc, "hooks", Map.put(hooks, key, value))
-      else
-        acc
-      end
-    end)
+    Map.put(config, "project", project_config)
   end
 
   defp put_project_value(config, key, value) when is_binary(value) do
@@ -311,6 +346,37 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end)
   end
 
+  defp upsert_project_workflow!(project, project_config, source) do
+    raw = Workflow.to_markdown(project_config, "")
+
+    case upsert_workflow(project, %{
+           raw_workflow_md: raw,
+           yaml_config: project_config,
+           prompt_body: "",
+           source: source
+         }) do
+      {:ok, workflow} -> workflow
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp upsert_instance_workflow!(instance) do
+    value = WorkflowScopes.dump_instance(instance)
+
+    (Repo.get(AppSetting, @instance_workflow_key) || %AppSetting{})
+    |> AppSetting.changeset(%{key: @instance_workflow_key, value: value})
+    |> Repo.insert_or_update!()
+
+    instance
+  end
+
+  defp load_instance_workflow!(value) do
+    case WorkflowScopes.load_instance(value) do
+      {:ok, instance} -> instance
+      {:error, reason} -> raise ArgumentError, "invalid instance workflow: #{inspect(reason)}"
+    end
+  end
+
   defp workflow_changed?(existing, attrs) do
     Enum.any?(
       [:raw_workflow_md, :yaml_config, :prompt_body, :source],
@@ -320,5 +386,26 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   defp test_workflow_source_allowed? do
     Application.get_env(:symphony_elixir, :allow_test_workflow_source, false) == true
+  end
+
+  defp reject_project_hook_fields(attrs) do
+    instance_fields =
+      attrs
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> Enum.filter(&(&1 in @project_instance_fields))
+
+    hook_fields =
+      @project_hook_fields
+      |> Enum.filter(fn {atom_field, string_field} ->
+        Enum.any?([Map.get(attrs, atom_field), Map.get(attrs, string_field)], fn value ->
+          is_binary(value) and String.trim(value) != ""
+        end)
+      end)
+      |> Enum.map(&elem(&1, 1))
+
+    invalid = Enum.sort(Enum.uniq(instance_fields ++ hook_fields))
+
+    if invalid == [], do: :ok, else: {:error, {:out_of_scope_project_fields, invalid}}
   end
 end

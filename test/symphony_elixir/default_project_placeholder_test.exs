@@ -78,7 +78,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
   defp seed_default_placeholder_with_configured_project! do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.update_project("fake-project-id", %{enabled: false})
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
 
     {:ok, placeholder} =
       FakePersistence.create_project(%{
@@ -89,7 +89,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
         enabled: true
       })
 
-    {:ok, _placeholder_workflow} = FakePersistence.import_workflow(placeholder, raw, "test")
+    {:ok, _placeholder_workflow} = FakePersistence.import_package(placeholder, raw, "test")
 
     {:ok, configured_project} =
       FakePersistence.create_project(%{
@@ -100,7 +100,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
         enabled: true
       })
 
-    {:ok, _configured_workflow} = FakePersistence.import_workflow(configured_project, raw, "test")
+    {:ok, _configured_workflow} = FakePersistence.import_package(configured_project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
     configured_project
   end
@@ -116,7 +116,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
         enabled: true
       })
 
-    {:ok, _workflow} = FakePersistence.import_workflow(project, raw, "test")
+    {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
   end
 

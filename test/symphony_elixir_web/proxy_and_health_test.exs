@@ -112,7 +112,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
   defp seed_multi_project_without_default_workflow! do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
     {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
 
     {:ok, project_a} =
@@ -124,7 +124,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
         enabled: true
       })
 
-    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _project_a_workflow} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -135,7 +135,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
   end
 

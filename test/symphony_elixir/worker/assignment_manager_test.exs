@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   import ExUnit.CaptureLog
 
   alias SymphonyElixir.BlockingDecision
+  alias SymphonyElixir.Config.WorkflowScopes
   alias SymphonyElixir.EnvironmentFailureCircuit
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator
@@ -1103,9 +1104,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       })
 
     {:ok, _project_b_workflow} =
-      FakePersistence.import_workflow(
+      FakePersistence.import_package(
         project_b,
-        workflow_markdown(base, "Prompt B {{ issue.identifier }}"),
+        workflow_markdown(base, "Shared prompt {{ issue.identifier }}"),
         "test"
       )
 
@@ -1118,10 +1119,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
         enabled: true
       })
 
+    {:ok, _instance, project_config} = WorkflowScopes.split_package(base.config, base.prompt)
+
     {:ok, _project_a_workflow} =
       FakePersistence.import_workflow(
         project_a,
-        workflow_markdown(base, "Prompt A {{ issue.identifier }}"),
+        Workflow.to_markdown(project_config, ""),
         "test"
       )
 
@@ -1163,9 +1166,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert assignment.project_id == project_b.id
     assert assignment.correlation["project_id"] == project_b.id
     assert assignment.payload["repository"]["project_id"] == project_b.id
-    assert assignment.payload["prompt"] =~ "Prompt B SYM-78"
-    refute assignment.payload["prompt"] =~ "Prompt A"
-    refute assignment.payload["prompt"] =~ "You are an agent for this repository."
+    assert assignment.payload["prompt"] =~ "Shared prompt SYM-78"
+    assert assignment.payload["prompt"] =~ "Prompt A" == false
+    assert assignment.payload["prompt"] =~ "Prompt B" == false
 
     run = FakePersistence.get_run(assignment.run_id)
     assert run.project_id == project_b.id
