@@ -4,7 +4,7 @@ defmodule SymphonyElixir.WorkflowForm do
   """
 
   alias SymphonyElixir.Codex.ModelCatalog
-  alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.Config.{Schema, WorkflowScopes}
   alias SymphonyElixir.Workflow
 
   @type draft :: %{String.t() => term()}
@@ -144,6 +144,29 @@ defmodule SymphonyElixir.WorkflowForm do
         |> put_path(["workflow"], Schema.default_workflow_policy())
 
       {:ok, config}
+    end
+  end
+
+  @spec to_scopes(draft()) ::
+          {:ok, WorkflowScopes.instance_workflow(), map()} | {:error, term()}
+  def to_scopes(draft) when is_map(draft) do
+    with {:ok, config} <- to_config(draft) do
+      WorkflowScopes.split_package(config, Map.get(draft, "prompt_body", ""))
+    end
+  end
+
+  @spec to_instance_scope(draft()) :: {:ok, WorkflowScopes.instance_workflow()} | {:error, term()}
+  def to_instance_scope(draft) when is_map(draft) do
+    with {:ok, instance, _project} <- to_scopes(draft), do: {:ok, instance}
+  end
+
+  @spec to_project_scope(draft()) :: {:ok, map()} | {:error, term()}
+  def to_project_scope(draft) when is_map(draft) do
+    with {:ok, config} <- to_config(draft) do
+      WorkflowScopes.project_from_loaded(%{
+        config: config,
+        prompt: Map.get(draft, "prompt_body", "")
+      })
     end
   end
 

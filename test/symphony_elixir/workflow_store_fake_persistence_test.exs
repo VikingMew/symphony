@@ -28,7 +28,7 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
       end)
 
     {:ok, project} = FakePersistence.default_project()
-    assert {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+    assert {:ok, _version} = FakePersistence.import_package(project, raw, "test")
 
     missing_path = Path.join(System.tmp_dir!(), "missing-workflow-#{System.unique_integer([:positive])}.md")
     Workflow.set_workflow_file_path(missing_path)

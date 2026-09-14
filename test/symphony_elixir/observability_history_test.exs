@@ -9,9 +9,10 @@ defmodule SymphonyElixir.ObservabilityHistoryTest do
     def list_events(_opts), do: response(:history_events_response)
 
     defdelegate default_project(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate instance_workflow(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate workflow_to_loaded(instance, version), to: SymphonyElixir.TestSupport.FakePersistence
 
     defp response(key), do: Application.fetch_env!(:symphony_elixir, key)
   end
@@ -20,9 +21,10 @@ defmodule SymphonyElixir.ObservabilityHistoryTest do
     def get_issue_by_identifier(_identifier), do: Process.exit(self(), :kill)
 
     defdelegate default_project(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate instance_workflow(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
-    defdelegate workflow_to_loaded(version), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate workflow_to_loaded(instance, version), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
   setup do

@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, projects, persistence, admin-ui]
 status: current
 language: zh-CN
-updated: 2026-08-09
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -40,8 +40,8 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
 
 1. **零 project 引导**:`default_project!` 在 `list_projects() == []` 时自动创建
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: false}`。
-   该记录是 Settings 可见的引导占位,不参与 runtime dispatch；first-run 默认 workflow
-   导入仍要求存在 enabled project。
+   该记录是 Settings 可见的引导占位,不参与 runtime dispatch；first-run combined package
+   导入仍要求显式选择 enabled project，并在同一事务写入 instance singleton 与该 project slice。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建新的 Default。无显式 project context 的 runtime settings 和诊断选择已配置的
    Default workflow；没有可用 Default 时,只有恰好一个 enabled 且已加载 workflow 的真实
@@ -61,6 +61,8 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
   无上下文 runtime 读取优先配置完整的 Default,否则只有恰好一个 enabled 且已加载 workflow 的
   project 时才解析成功；多项目无配置完整 Default 返回 `:missing_project_context`。per-project polling 继续通过 workflow context 解析各自的 Linear slug。
 - **显式删除而非自动清理**:不做启动时检测删除 default 的魔法。用户要删 default,点按钮。
+- **两个 scope 都是启动前提**：缺少 `app_settings["instance_workflow"]` 或缺少至少一个 enabled
+  project workflow 都是 setup-required。legacy full project row 不会被选为 singleton fallback。
 - **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。
 - **移除按钮的确认**:phx-click + data-confirm,防误删。

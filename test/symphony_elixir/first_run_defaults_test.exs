@@ -48,7 +48,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert_received {:prompt, prompt}
     assert prompt =~ "1) Alpha (alpha)"
     assert prompt =~ "2) Beta (beta)"
-    assert_received {:import_workflow, %{id: "project-beta"}, raw, "first_run_default_yaml"}
+    assert_received {:import_package, %{id: "project-beta"}, raw, "first_run_default_yaml"}
     assert raw =~ "Default imported base prompt."
     assert raw =~ "implementation"
   end
@@ -57,7 +57,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     parent = self()
 
     assert :ok = FirstRunDefaults.maybe_import([], deps(parent, prompt: fn _prompt -> "no\n" end))
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
   end
 
   test "opt-out flag skips prompt and import" do
@@ -65,7 +65,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert :ok = FirstRunDefaults.maybe_import([no_default_yaml_prompt: true], deps(parent))
     refute_received {:prompt, _}
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
   end
 
   test "existing workflow skips default package reads" do
@@ -73,6 +73,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     deps =
       deps(parent,
+        instance_workflow: fn -> %{config: %{}} end,
         current_workflow: fn -> %{id: "current"} end,
         read_file: fn path ->
           send(parent, {:unexpected_read, path})
@@ -95,8 +96,35 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert_received {:prompt, prompt}
     assert prompt =~ "1) Alpha (alpha)"
-    assert_received {:import_workflow, %{id: "project-beta"}, raw, "first_run_default_yaml"}
+    assert_received {:import_package, %{id: "project-beta"}, raw, "first_run_default_yaml"}
     assert raw =~ "Default imported base prompt."
+  end
+
+  test "missing singleton imports both scopes even when a project workflow exists" do
+    parent = self()
+
+    assert :ok =
+             FirstRunDefaults.maybe_import(
+               [],
+               deps(parent, current_workflow: fn -> %{id: "legacy-project-workflow"} end)
+             )
+
+    assert_received {:import_package, %{id: "project-beta"}, _raw, "first_run_default_yaml"}
+  end
+
+  test "missing project workflow imports both scopes even when singleton exists" do
+    parent = self()
+
+    assert :ok =
+             FirstRunDefaults.maybe_import(
+               [],
+               deps(parent,
+                 instance_workflow: fn -> %{config: %{}} end,
+                 current_workflow: fn -> nil end
+               )
+             )
+
+    assert_received {:import_package, %{id: "project-beta"}, _raw, "first_run_default_yaml"}
   end
 
   test "missing package file does not crash or import partial defaults" do
@@ -111,7 +139,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
       )
 
     assert :ok = FirstRunDefaults.maybe_import([], deps)
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
   end
 
   test "invalid defaults do not create a workflow" do
@@ -126,7 +154,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
       )
 
     assert :ok = FirstRunDefaults.maybe_import([], deps)
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
   end
 
   test "non-interactive startup logs available defaults without prompting" do
@@ -134,7 +162,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert :ok = FirstRunDefaults.maybe_import([], deps(parent, interactive?: fn -> false end))
     refute_received {:prompt, _}
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
   end
 
   test "zero-project interactive startup imports into the bootstrap project" do
@@ -152,7 +180,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert_received {:prompt, prompt}
     assert prompt =~ "1) Default (default)"
 
-    assert_received {:import_workflow, project, raw, "first_run_default_yaml"}
+    assert_received {:import_package, project, raw, "first_run_default_yaml"}
     assert project.slug == "default"
     assert raw =~ "Default imported base prompt."
   end
@@ -164,7 +192,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert :ok = FirstRunDefaults.maybe_import([], deps)
     assert [%{slug: "default", enabled: true}] = Agent.get(agent, & &1.projects)
     refute_received {:prompt, _}
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
     assert_received {:log, :info, message}
     assert message =~ "non-interactive"
   end
@@ -176,7 +204,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert :ok = FirstRunDefaults.maybe_import([], deps(parent, list_projects: fn -> [disabled_project] end))
     refute_received {:prompt, _}
-    refute_received {:import_workflow, _, _, _}
+    refute_received {:import_package, _, _, _}
     assert_received {:log, :info, message}
     assert message =~ "No enabled projects"
   end
@@ -202,6 +230,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
   defp deps(parent, overrides \\ []) do
     defaults = %{
+      instance_workflow: fn -> nil end,
       current_workflow: fn -> nil end,
       list_projects: fn ->
         [
@@ -210,8 +239,8 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
           %{id: "project-beta", name: "Beta", slug: "beta", enabled: true}
         ]
       end,
-      import_workflow: fn project, raw, source ->
-        send(parent, {:import_workflow, project, raw, source})
+      import_package: fn project, raw, source ->
+        send(parent, {:import_package, project, raw, source})
         {:ok, %{id: "workflow"}}
       end,
       package_root: fn -> "/package" end,

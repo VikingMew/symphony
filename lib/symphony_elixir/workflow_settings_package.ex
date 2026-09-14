@@ -7,6 +7,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   without a LiveView process.
   """
 
+  alias SymphonyElixir.Config.WorkflowScopes
   alias SymphonyElixir.{Workflow, WorkflowForm}
 
   @spec require_import_content(String.t() | nil) :: :ok | {:error, String.t()}
@@ -48,6 +49,18 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   end
 
   def changed?(_current_raw, _next_raw), do: true
+
+  @spec durable_scopes(WorkflowForm.draft()) ::
+          {:ok, WorkflowScopes.instance_workflow(), map()} | {:error, term()}
+  def durable_scopes(draft) when is_map(draft), do: WorkflowForm.to_scopes(draft)
+
+  @spec combined_draft(WorkflowScopes.instance_workflow(), map()) ::
+          {:ok, WorkflowForm.draft()} | {:error, term()}
+  def combined_draft(instance, project_config) when is_map(project_config) do
+    with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
+      {:ok, WorkflowForm.from_loaded(loaded)}
+    end
+  end
 
   @spec import_error_message(term()) :: String.t()
   def import_error_message(message) when is_binary(message), do: message

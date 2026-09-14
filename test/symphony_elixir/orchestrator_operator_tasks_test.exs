@@ -425,7 +425,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   defp create_project_with_workflow(name, slug, repository_url) do
     raw_workflow = FakePersistence.current_workflow().raw_workflow_md
     {:ok, project} = create_project(name, slug, true, repository_url)
-    {:ok, _version} = FakePersistence.import_workflow(project, raw_workflow, "test")
+    {:ok, _version} = FakePersistence.import_package(project, raw_workflow, "test")
     :ok = WorkflowStore.force_reload()
     project
   end

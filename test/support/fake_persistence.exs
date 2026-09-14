@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.TestSupport.FakePersistence do
   @moduledoc false
 
+  alias SymphonyElixir.Config.WorkflowScopes
+
   @name __MODULE__
 
   def start_link(_opts \\ []) do
@@ -138,18 +140,100 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def import_workflow(project, raw_workflow_md, source) do
     ensure_started()
 
-    workflow = %{
-      id: "fake-workflow-#{Map.get(project, :slug) || "project"}",
-      project_id: project.id,
-      source: source,
-      inserted_at: DateTime.utc_now(),
-      updated_at: DateTime.utc_now(),
-      raw_workflow_md: raw_workflow_md
+    with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
+         {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
+      persist_project_workflow(project, project_config, source, :import_workflow)
+    end
+  end
+
+  def import_package(project, raw_workflow_md, source) do
+    ensure_started()
+
+    with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
+         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
+      workflow = project_workflow(project, project_config, source)
+
+      result =
+        Agent.get_and_update(
+          @name,
+          &import_package_state(&1, project, workflow, instance, source)
+        )
+
+      case result do
+        {:ok, _scopes} ->
+          maybe_publish_runtime()
+          result
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp import_package_state(state, project, workflow, instance, source) do
+    state = record_call(state, {:import_package, project, workflow.raw_workflow_md, source})
+
+    case Map.get(state, :next_import_workflow_error) do
+      nil ->
+        next_state =
+          state
+          |> Map.update!(:workflows, &put_workflow_record(&1, workflow))
+          |> Map.put(:instance_workflow, instance)
+
+        {{:ok, %{instance_workflow: instance, project_workflow: workflow}}, next_state}
+
+      reason ->
+        {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
+    end
+  end
+
+  def put_instance_workflow(config, prompt_body) do
+    with {:ok, instance} <- WorkflowScopes.new_instance(config, prompt_body) do
+      Agent.update(@name, fn state ->
+        state
+        |> record_call({:put_instance_workflow, config, prompt_body})
+        |> Map.put(:instance_workflow, instance)
+      end)
+
+      maybe_publish_runtime()
+      {:ok, instance}
+    end
+  end
+
+  def put_package_unchecked(project, config, prompt_body) do
+    instance = %{
+      config: Map.take(config, WorkflowScopes.instance_sections()),
+      prompt_body: prompt_body
     }
+
+    project_config =
+      config
+      |> Map.take(WorkflowScopes.project_sections())
+      |> update_in([Access.key("tracker", %{})], &Map.delete(&1, "api_key"))
+
+    workflow = project_workflow(project, project_config, "test")
+
+    Agent.update(@name, fn state ->
+      state
+      |> Map.update!(:workflows, &put_workflow_record(&1, workflow))
+      |> Map.put(:instance_workflow, instance)
+    end)
+
+    maybe_publish_runtime()
+    {:ok, %{instance_workflow: instance, project_workflow: workflow}}
+  end
+
+  def instance_workflow do
+    ensure_started()
+    Agent.get(@name, & &1.instance_workflow)
+  end
+
+  defp persist_project_workflow(project, project_config, source, operation) do
+    workflow = project_workflow(project, project_config, source)
 
     result =
       Agent.get_and_update(@name, fn state ->
-        state = record_call(state, {:import_workflow, project, raw_workflow_md, source})
+        state = record_call(state, {operation, project, workflow.raw_workflow_md, source})
 
         case Map.get(state, :next_import_workflow_error) do
           nil ->
@@ -164,6 +248,19 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
     if match?({:ok, _workflow}, result), do: maybe_publish_runtime()
     result
+  end
+
+  defp project_workflow(project, project_config, source) do
+    %{
+      id: "fake-workflow-#{Map.get(project, :slug) || "project"}",
+      project_id: project.id,
+      source: source,
+      inserted_at: DateTime.utc_now(),
+      updated_at: DateTime.utc_now(),
+      raw_workflow_md: SymphonyElixir.Workflow.to_markdown(project_config, ""),
+      yaml_config: project_config,
+      prompt_body: ""
+    }
   end
 
   def current_workflow do
@@ -191,6 +288,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def create_project(attrs) do
     ensure_started()
 
+    with :ok <- reject_project_hook_fields(attrs) do
+      do_create_project(attrs)
+    end
+  end
+
+  defp do_create_project(attrs) do
     result =
       Agent.get_and_update(@name, fn state ->
         project =
@@ -211,6 +314,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def update_project(id, attrs) do
     ensure_started()
 
+    with :ok <- reject_project_hook_fields(attrs) do
+      do_update_project(id, attrs)
+    end
+  end
+
+  defp do_update_project(id, attrs) do
     result =
       Agent.get_and_update(@name, fn state ->
         case Enum.find(state.projects, &(Map.get(&1, :id) == id)) do
@@ -441,7 +550,24 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def expire_stale_worker_sessions(_opts \\ []), do: 0
 
-  def export_workflow(%{raw_workflow_md: raw}), do: raw
+  def export_workflow(workflow) do
+    loaded = %{
+      config: Map.get(workflow, :yaml_config, %{}),
+      prompt: Map.get(workflow, :prompt_body, "")
+    }
+
+    with {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
+      {:ok, SymphonyElixir.Workflow.to_markdown(project_config, "")}
+    end
+  end
+
+  def export_package(instance, workflow) do
+    project_config = apply_project_runtime_settings(Map.fetch!(workflow, :yaml_config), project_for_workflow(workflow))
+
+    with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
+      {:ok, SymphonyElixir.Workflow.to_markdown(loaded.config, loaded.prompt)}
+    end
+  end
 
   def repo_available? do
     :symphony_elixir
@@ -557,13 +683,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, fn state -> Map.get(state.users, username) end)
   end
 
-  def workflow_to_loaded(record) do
-    {:ok, workflow} = SymphonyElixir.Workflow.parse_content(record.raw_workflow_md)
+  def workflow_to_loaded(instance, record) do
     project = project_for_workflow(record)
+    project_config = apply_project_runtime_settings(Map.fetch!(record, :yaml_config), project)
 
-    workflow
-    |> Map.update!(:config, &apply_project_runtime_settings(&1, project))
-    |> Map.put(:project_id, record.project_id)
+    WorkflowScopes.compose(instance, project_config, record.project_id)
   end
 
   defp project_for_workflow(workflow) do
@@ -639,26 +763,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       |> put_project_value("worktree_fetch", Map.get(project, :worktree_fetch) != false)
       |> put_project_value("worktree_cleanup", Map.get(project, :worktree_cleanup) != false)
 
-    config
-    |> Map.put("project", project_config)
-    |> apply_project_hooks(project)
-  end
-
-  defp apply_project_hooks(config, project) do
-    [
-      {"after_create", Map.get(project, :after_create_hook)},
-      {"before_run", Map.get(project, :before_run_hook)},
-      {"after_run", Map.get(project, :after_run_hook)},
-      {"before_remove", Map.get(project, :before_remove_hook)}
-    ]
-    |> Enum.reduce(config, fn {key, value}, acc ->
-      if is_binary(value) and String.trim(value) != "" do
-        hooks = Map.get(acc, "hooks", %{})
-        Map.put(acc, "hooks", Map.put(hooks, key, value))
-      else
-        acc
-      end
-    end)
+    Map.put(config, "project", project_config)
   end
 
   defp put_project_value(config, key, value) when is_binary(value) do
@@ -782,6 +887,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       worker_sessions: [],
       issues: [],
       workflows: [],
+      instance_workflow: nil,
       next_import_workflow_error: nil,
       users: %{}
     }
@@ -892,4 +998,24 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   }
 
   defp fixture_key(key), do: Map.fetch!(@fixture_keys, key)
+
+  defp reject_project_hook_fields(attrs) do
+    hook_fields = [
+      {:after_create_hook, "after_create_hook"},
+      {:before_run_hook, "before_run_hook"},
+      {:after_run_hook, "after_run_hook"},
+      {:before_remove_hook, "before_remove_hook"}
+    ]
+
+    invalid =
+      hook_fields
+      |> Enum.filter(fn {atom_field, string_field} ->
+        value = Map.get(attrs, atom_field, Map.get(attrs, string_field))
+        is_binary(value) and String.trim(value) != ""
+      end)
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.sort()
+
+    if invalid == [], do: :ok, else: {:error, {:out_of_scope_project_fields, invalid}}
+  end
 end

@@ -30,14 +30,18 @@ Workflow source precedence:
 
 1. Workflow policy is the immutable contract returned by
    `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
-2. Project settings and profiles come from the current PostgreSQL snapshot of that project.
-3. Setup-required mode applies when no current workflow exists.
+2. Installation runtime/profile policy comes from the fixed PostgreSQL
+   `app_settings["instance_workflow"]` value.
+3. Tracker/repository settings come from the current PostgreSQL workflow slice for that project.
+4. Setup-required mode applies when either the singleton or every enabled project workflow is absent.
 
 Loader behavior:
 
-- If no active workflow exists, return a typed setup-required error and keep the service alive.
-- Each project has exactly one operator-visible current workflow record; an operator import updates
-  that record in place and does not add configuration version semantics.
+- If either required durable scope is absent, return a typed setup-required error, keep the service
+  alive, and do not treat a legacy full project row as an instance fallback.
+- Each project has exactly one operator-visible current workflow slice. Runtime publication composes
+  the singleton with every enabled project slice before parsing and atomically replaces the complete
+  derived snapshot set.
 - Reads without explicit project context select a configured, enabled `slug=default` workflow when
   present; otherwise they select the only enabled, loaded, non-placeholder project workflow when
   exactly one exists. If two or more enabled loaded workflows exist without a configured Default,
@@ -57,11 +61,12 @@ YAML:
 
 Design note:
 
-- A package SHOULD be self-contained enough to recreate a project's settings and profiles after import.
+- A package SHOULD be self-contained enough to recreate the instance policy and one project's settings.
 - The package under `docs/examples/` is example and import material. Runtime code MUST read the
   project's PostgreSQL snapshot rather than files from the source checkout.
-- Persisted `workflow` keys MUST be retained for raw import/export fidelity but MUST NOT affect
-  runtime dispatch, transition validation, human-review classification, or profile routing.
+- `workflow` keys are portable example metadata only. Durable instance and project slices MUST NOT
+  persist them; runtime dispatch, transition validation, human-review classification, and profile
+  routing MUST use `Schema.default_workflow_policy/0`.
 - `workflow.tool_policy.*.exposed_tools` is retained example-policy metadata, not a runtime
   dynamic-tool allowlist. The implementation completion surface is the code-owned `handoff`
   dynamic tool after `create_pull_request`.
@@ -78,7 +83,9 @@ Parsing rules:
 
 - YAML files MUST decode to map/object roots; non-map YAML is an error.
 - Base prompt fields are trimmed before use.
-- Implementations MUST validate imported package data before replacing the current workflow.
+- Implementations MUST validate imported package data before atomically replacing its two durable scopes.
+- Project persistence and project-slice export MUST reject out-of-scope fields with a typed error;
+  they MUST NOT silently discard instance keys, profiles, base prompts, workflow policy, or secrets.
 
 Returned workflow object:
 
@@ -97,7 +104,8 @@ Top-level keys:
 - `codex`
 - `project`
 
-Unknown keys SHOULD be ignored for forward compatibility.
+Unknown keys MAY be ignored by the general parser. Durable instance/project persistence and export
+boundaries MUST reject keys outside their declared scope.
 
 Note:
 
@@ -105,10 +113,11 @@ Note:
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
-- A Symphony instance maintains one current workflow **per enabled project**. The workflow
-  schema is the per-project policy; `tracker.project_slug`, the repository URL, and workspace
-  hooks are overridable per project through the Project settings record, and persisted runs,
-  issues, events, and worker tasks carry the originating `project_id`.
+- A Symphony instance maintains one runtime/profile singleton and one tracker/repository workflow
+  slice per enabled project. Workspace roots, initialization/disk thresholds, lifecycle hooks,
+  Codex policy, observability, analytics, server/worker policy, base prompt, and profiles have no
+  per-project override. Persisted runs, issues, events, and worker tasks carry the originating
+  `project_id`.
 
 #### 5.3.1 `tracker` (object)
 
@@ -119,10 +128,9 @@ Fields:
   - Current supported value: `linear`
 - `endpoint` (string)
   - Default for `tracker.kind == "linear"`: `https://api.linear.app/graphql`
-- `api_key` (string)
-  - MAY be a literal token or `$VAR_NAME`.
+- `api_key` (runtime-only string)
+  - MUST NOT be persisted in either durable workflow scope.
   - Canonical environment variable for `tracker.kind == "linear"`: `LINEAR_API_KEY`.
-  - If `$VAR_NAME` resolves to an empty string, treat the key as missing.
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
 - `active_states` (list of strings)
@@ -421,14 +429,15 @@ Dynamic reload is REQUIRED:
   metadata, and setup/error state.
 - Runtime reads MUST NOT query persistence, trigger refresh-on-read, or wait behind persistence
   refresh work. An absent cache owner MUST NOT cause caller-side database fallback.
-- Successful workflow and project mutations MUST persist first and publish the complete replacement
+- Successful instance, workflow, and project mutations MUST persist first and publish the complete replacement
   snapshot before reporting full success. Persistence success followed by publication failure MUST
   return a typed partial/refresh failure.
 - The software MUST detect externally saved current-workflow changes in the background with at
   most one refresh in flight. Timer ticks during a stall MUST coalesce or skip.
 - Background publication MUST use a generation guard so work started before a newer mutation cannot
   overwrite that mutation.
-- On change, the software MUST re-read and re-apply workflow config and prompt/profile data without restart.
+- On change, the software MUST re-read the singleton and every enabled project slice, compose them,
+  and re-apply workflow config and prompt/profile data without restart.
 - The software MUST attempt to adjust live behavior to the new config (for example polling
   cadence, concurrency limits, active/terminal states, codex settings, workspace paths/hooks, and
   prompt content for future runs).
@@ -480,17 +489,17 @@ not require recognizing or validating extension fields unless that extension is 
 
 - `tracker.kind`: string, REQUIRED, currently `linear`
 - `tracker.endpoint`: string, default `https://api.linear.app/graphql` when `tracker.kind=linear`
-- `tracker.api_key`: string or `$VAR`, canonical env `LINEAR_API_KEY` when `tracker.kind=linear`
+- `tracker.api_key`: runtime-only secret from canonical env `LINEAR_API_KEY`; never persisted
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
   the Project settings record (each enabled project names its own Linear project slug)
 - `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
 - `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
-- `hooks.after_create`: shell script or null; overridable per project
-- `hooks.before_run`: shell script or null; overridable per project
-- `hooks.after_run`: shell script or null; overridable per project
-- `hooks.before_remove`: shell script or null; overridable per project
+- `hooks.after_create`: instance-owned shell script or null
+- `hooks.before_run`: instance-owned shell script or null
+- `hooks.after_run`: instance-owned shell script or null
+- `hooks.before_remove`: instance-owned shell script or null
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)

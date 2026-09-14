@@ -53,7 +53,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   test "startup terminal workspace cleanup uses each enabled workflow context" do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
     {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
 
     {:ok, project_a} =
@@ -65,7 +65,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _project_a_workflow} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -76,7 +76,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
     assert {:error, :missing_project_context} = WorkflowStore.current()
     assert {:error, :missing_project_context} = Config.settings()
@@ -111,7 +111,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       linear_project_slug: "project"
     })
 
-    {:ok, _} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -122,7 +122,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _} = FakePersistence.import_package(project_b, raw, "test")
 
     assert :ok = WorkflowStore.force_reload()
     assert length(WorkflowStore.list_enabled()) == 2
@@ -150,7 +150,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       linear_project_slug: "project"
     })
 
-    {:ok, _} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, _project_b} =
       FakePersistence.create_project(%{
@@ -178,7 +178,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     refute_receive {:candidate_fetch, "linear-b"}, 500
   end
 
-  test "project-scoped rate-limit settings do not globally block dispatch" do
+  test "singleton rate-limit settings apply identically to every project" do
     {:ok, base} = Workflow.load()
     {:ok, project_a} = FakePersistence.default_project()
 
@@ -188,7 +188,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     })
 
     {:ok, _} =
-      FakePersistence.import_workflow(
+      FakePersistence.import_package(
         project_a,
         workflow_markdown(base, "Project A", 5.0),
         "test"
@@ -204,7 +204,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       })
 
     {:ok, _} =
-      FakePersistence.import_workflow(
+      FakePersistence.import_package(
         project_b,
         workflow_markdown(base, "Project B", 3.0),
         "test"
@@ -228,7 +228,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     send(pid, :run_poll_cycle)
 
-    refute_receive {:candidate_fetch, "linear-a"}, 200
+    assert_receive {:candidate_fetch, "linear-a"}, 2_000
     assert_receive {:candidate_fetch, "linear-b"}, 2_000
   end
 
@@ -241,7 +241,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       linear_project_slug: "linear-a"
     })
 
-    {:ok, _} = FakePersistence.import_workflow(project_a, workflow_markdown(base, "Project A", 5.0), "test")
+    {:ok, _} = FakePersistence.import_package(project_a, workflow_markdown(base, "Project A", 5.0), "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -252,7 +252,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_markdown(base, "Project B", 3.0), "test")
+    {:ok, _} = FakePersistence.import_package(project_b, workflow_markdown(base, "Project B", 3.0), "test")
     assert :ok = WorkflowStore.force_reload()
 
     orchestrator_name = Module.concat(__MODULE__, :SnapshotOrchestrator)
@@ -279,7 +279,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     {:ok, base} = Workflow.load()
     {:ok, project_a} = FakePersistence.default_project()
     FakePersistence.put_default_project_attrs!(%{repository_url: "git@example.test:a.git", linear_project_slug: "linear-a"})
-    {:ok, _} = FakePersistence.import_workflow(project_a, workflow_markdown(base, "Prompt A {{ issue.identifier }}", 5.0), "test")
+    {:ok, _} = FakePersistence.import_package(project_a, workflow_markdown(base, "Prompt A {{ issue.identifier }}", 5.0), "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -290,7 +290,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _} = FakePersistence.import_workflow(project_b, workflow_markdown(base, "Prompt B {{ issue.identifier }}", 3.0), "test")
+    {:ok, _} = FakePersistence.import_package(project_b, workflow_markdown(base, "Prompt B {{ issue.identifier }}", 3.0), "test")
     {:ok, _worker} = FakePersistence.register_worker(%{"worker_name" => "worker-1", "total_slots" => 1})
 
     issue = %Issue{id: "issue-b", identifier: "B-1", title: "Run B", state: "Ready", labels: [], blocked_by: []}
@@ -328,7 +328,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     {:ok, base} = Workflow.load()
     {:ok, project} = FakePersistence.default_project()
     FakePersistence.put_default_project_attrs!(%{repository_url: "git@example.test:a.git", linear_project_slug: "linear-a"})
-    {:ok, _workflow} = FakePersistence.import_workflow(project, workflow_markdown(base, "Prompt {{ issue.identifier }}", 5.0), "test")
+    {:ok, _workflow} = FakePersistence.import_package(project, workflow_markdown(base, "Prompt {{ issue.identifier }}", 5.0), "test")
     assert :ok = WorkflowStore.force_reload()
 
     {:ok, registration} = FakePersistence.register_worker(%{"worker_name" => "worker-capacity", "total_slots" => 3})
@@ -359,7 +359,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   test "retry without project context does not crash when multiple projects require explicit context" do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()
-    {:ok, _fixture_workflow} = FakePersistence.import_workflow(fixture_project, raw, "test")
+    {:ok, _fixture_workflow} = FakePersistence.import_package(fixture_project, raw, "test")
     {:ok, _disabled_fixture} = FakePersistence.update_project(fixture_project.id, %{enabled: false})
 
     {:ok, project_a} =
@@ -371,7 +371,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_a_workflow} = FakePersistence.import_workflow(project_a, raw, "test")
+    {:ok, _project_a_workflow} = FakePersistence.import_package(project_a, raw, "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -382,7 +382,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
         enabled: true
       })
 
-    {:ok, _project_b_workflow} = FakePersistence.import_workflow(project_b, raw, "test")
+    {:ok, _project_b_workflow} = FakePersistence.import_package(project_b, raw, "test")
     assert :ok = WorkflowStore.force_reload()
     assert {:error, :missing_project_context} = WorkflowStore.current()
 

@@ -14,9 +14,10 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
     alias SymphonyElixir.TestSupport.FakePersistence
 
     defdelegate default_project(), to: FakePersistence
+    defdelegate instance_workflow(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
     defdelegate current_workflow(project), to: FakePersistence
-    defdelegate workflow_to_loaded(workflow), to: FakePersistence
+    defdelegate workflow_to_loaded(instance, workflow), to: FakePersistence
     defdelegate export_workflow(workflow), to: FakePersistence
     defdelegate list_runs_page(opts), to: FakePersistence
     defdelegate list_events(opts), to: FakePersistence

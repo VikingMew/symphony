@@ -26,7 +26,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
   test "prompt builder uses the active persisted project workflow" do
     {:ok, base} = Workflow.load()
     {:ok, project_a} = FakePersistence.default_project()
-    {:ok, _} = FakePersistence.import_workflow(project_a, Workflow.to_markdown(base.config, "Prompt A"), "test")
+    {:ok, _} = FakePersistence.import_package(project_a, Workflow.to_markdown(base.config, "Prompt A"), "test")
 
     {:ok, project_b} =
       FakePersistence.create_project(%{
@@ -37,7 +37,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
       })
 
     {:ok, _} =
-      FakePersistence.import_workflow(
+      FakePersistence.import_package(
         project_b,
         Workflow.to_markdown(base.config, "Prompt B {{ issue.identifier }}"),
         "test"
@@ -618,7 +618,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
     {:ok, loaded} = Workflow.load(repo_workflow_path)
     raw = Workflow.to_markdown(loaded.config, loaded.prompt)
     {:ok, project} = FakePersistence.default_project()
-    {:ok, _version} = FakePersistence.import_workflow(project, raw, "test")
+    {:ok, _version} = FakePersistence.import_package(project, raw, "test")
     WorkflowStore.force_reload()
 
     issue = %Issue{

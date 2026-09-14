@@ -135,6 +135,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
          |> assign(:workflow_validation_visible?, true)
          |> assign(:workflow_form, draft)
          |> assign(:workflow_form_dirty?, true)
+         |> assign(:workflow_import_pending?, true)
          |> assign(:settings_import_stage, nil)
          |> WorkflowState.assign_validation(draft)
          |> push_patch(to: Components.path(owning_tab))}

@@ -4,7 +4,7 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-09-12
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -89,7 +89,7 @@ Project Settings 应展示并保存 project-specific source 信息：
 - clean stale worktree
 - setup / cleanup commands
 
-workflow package 应继续定义并保存：
+instance workflow singleton 应定义并保存：
 
 - initialize timeout
 - lifecycle hooks
@@ -98,6 +98,9 @@ workflow package 应继续定义并保存：
 - repository base root
 - worktree base root
 - Codex sandbox policy 和 allowed roots
+
+这些字段没有 per-project override。Project persistence/export 携带 instance 字段或 non-blank legacy
+hook override 时返回 typed rejection；既有 project hook columns 保留在物理 schema 中但运行时忽略。
 
 UI 必须展示最终派生路径预览：
 
@@ -134,7 +137,7 @@ or add that root to Settings / Workflow / Codex / Sandbox allowed roots.
 `WorkspaceDiskGuard` 是本地 agent 启动前的准入检查。Orchestrator 在本地
 agent spawn / workspace preparation 之前调用它；远端 worker 的磁盘状况不由该模块探测。
 
-检查输入来自当前 workflow snapshot 的 runtime settings。`workspace.min_free_bytes` 是最低可用空间阈值，
+检查输入来自 instance singleton 与 project slice 组合后的 runtime snapshot。`workspace.min_free_bytes` 是最低可用空间阈值，
 未配置时默认为 `1_073_741_824` bytes（1 GiB）；值小于或等于 `0` 时跳过磁盘检查并返回
 `free_bytes: :unchecked`。阈值只控制准入，不触发清理或其它磁盘修改。
 
