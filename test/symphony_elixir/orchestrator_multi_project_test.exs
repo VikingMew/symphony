@@ -356,6 +356,87 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     refute old_capacity_predicate_called?()
   end
 
+  test "worker capacity timeout fails closed for one poll and recovers from fresh liveness" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: MultiProjectLinearClient, persistence: FakePersistence, workflows: WorkflowStore, reconcile_interval_ms: :timer.hours(1)})
+
+    {:ok, base} = Workflow.load()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@example.test:a.git",
+      linear_project_slug: "linear-a"
+    })
+
+    {:ok, _workflow} =
+      FakePersistence.import_package(
+        project,
+        workflow_markdown(base, "Prompt {{ issue.identifier }}", 5.0),
+        "test"
+      )
+
+    issue = %Issue{
+      id: "issue-capacity-timeout",
+      identifier: "SYM-CAPACITY-TIMEOUT",
+      title: "Capacity timeout",
+      state: "Ready",
+      labels: [],
+      blocked_by: []
+    }
+
+    Application.put_env(:symphony_elixir, :multi_project_candidates, %{
+      "linear-a" => [issue]
+    })
+
+    assert :ok = WorkflowStore.force_reload()
+
+    {:ok, registration} =
+      FakePersistence.register_worker(%{
+        "worker_name" => "worker-capacity-timeout",
+        "total_slots" => 3
+      })
+
+    :ok = AssignmentManager.observe_session(registration.worker, registration.session)
+
+    orchestrator_name =
+      Module.concat(__MODULE__, "CapacityTimeoutOrchestrator#{System.unique_integer([:positive])}")
+
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+
+    :sys.replace_state(pid, &%{&1 | max_concurrent_agents: 9})
+    :sys.suspend(AssignmentManager)
+
+    on_exit(fn ->
+      if manager = Process.whereis(AssignmentManager), do: :sys.resume(manager)
+    end)
+
+    log =
+      capture_log(fn ->
+        send(pid, :run_poll_cycle)
+        Process.sleep(5_100)
+        assert :sys.get_state(pid).max_concurrent_agents == 0
+      end)
+
+    assert Process.alive?(pid)
+
+    assert %{polling: %{listening?: true, listening_mode: "listening_all"}} =
+             Orchestrator.snapshot(orchestrator_name, 1_000)
+
+    assert FakePersistence.list_runs(project_id: project.id) == []
+
+    assert log =~
+             "event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0"
+
+    :sys.resume(AssignmentManager)
+    send(pid, :run_poll_cycle)
+    eventually(fn -> :sys.get_state(pid).max_concurrent_agents == 3 end)
+  end
+
   test "retry without project context does not crash when multiple projects require explicit context" do
     raw = sample_workflow_markdown()
     {:ok, fixture_project} = FakePersistence.default_project()

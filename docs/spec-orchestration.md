@@ -237,6 +237,12 @@ request records a fresh last-seen.
 
 Candidate dispatch and retry use this same execution-mode-aware capacity decision. Capacity
 rejection emits `global_capacity` skip evidence and never falls back to a workflow field.
+If the worker-mode `AssignmentManager.available_worker_slots/0` call exits with its explicit
+5000 ms timeout, that refresh MUST use capacity zero, emit warning
+`event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0`,
+and leave the Orchestrator process and listening mode unchanged. The next refresh MUST query fresh
+in-memory liveness again. Other exits remain explicit failures, and centralized capacity behavior
+is unchanged.
 
 ### 8.4 Retry and Backoff
 

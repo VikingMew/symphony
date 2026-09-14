@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-13
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -50,6 +50,13 @@ history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+
+Orchestrator 的普通 poll 与 active retry 共用 worker-mode deployment capacity 刷新。若
+`AssignmentManager.available_worker_slots/0` 的同步调用明确以默认 5000 ms timeout exit 结束，该次
+刷新必须 fail closed 为容量 0，不派发且不改变 listening mode；后续刷新仍重新查询内存 fresh
+liveness，不复用旧容量。每次 timeout 记录 warning：
+`event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0`。
+其他 exit 不降级，centralized mode 容量语义不变。
 
 `agent.max_retry_backoff_ms` 只限制 Orchestrator 的 failure-retry 排程，不控制 worker claim。
 worker claim request 不携带 prospective issue id，也不保存 per-issue retry/cooldown 状态；再次 claim 的
