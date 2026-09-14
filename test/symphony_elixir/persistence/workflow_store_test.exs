@@ -25,6 +25,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.create_project(%{}) == {:error, :repo_unavailable}
     assert WorkflowStore.update_project("project-id", %{}) == {:error, :repo_unavailable}
     assert WorkflowStore.current_workflow() == nil
+    assert WorkflowStore.legacy_instance_workflow_status() == {:error, :repo_unavailable}
+    assert WorkflowStore.reconcile_legacy_instance_workflow("project") == {:error, :repo_unavailable}
   end
 
   test "project hook writes are rejected before persistence" do

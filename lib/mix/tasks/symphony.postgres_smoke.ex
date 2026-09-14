@@ -181,6 +181,24 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       SQL.query!(repo, "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname <> 'schema_migrations_pkey'", [])
 
     if indexes < 14, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
+
+    %{rows: [[0]]} =
+      SQL.query!(
+        repo,
+        """
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'projects'
+          AND column_name IN (
+            'after_create_hook',
+            'before_run_hook',
+            'after_run_hook',
+            'before_remove_hook'
+          )
+        """,
+        []
+      )
   end
 
   defp seed_pre_repair_worker_session!(repo) do
@@ -261,6 +279,19 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         "SELECT id::text, worker_id::text FROM worker_sessions WHERE id = $1::text::uuid",
         [@session_id]
       )
+
+    %{rows: [[yaml_config, "", raw_workflow_md]]} =
+      SQL.query!(
+        repo,
+        "SELECT yaml_config, prompt_body, raw_workflow_md FROM workflows WHERE id = $1::text::uuid",
+        [@workflow_id]
+      )
+
+    ["project", "tracker"] = Enum.sort(Map.keys(yaml_config))
+    false = String.contains?(raw_workflow_md, "Smoke prompt")
+
+    %{rows: [[%{"config" => %{}, "prompt_body" => "Smoke prompt"}]]} =
+      SQL.query!(repo, "SELECT value FROM app_settings WHERE key = 'instance_workflow'", [])
   end
 
   defp with_repo!(fun) do

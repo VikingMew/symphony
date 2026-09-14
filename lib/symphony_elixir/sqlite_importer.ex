@@ -7,6 +7,9 @@ defmodule SymphonyElixir.SQLiteImporter do
   """
 
   alias Ecto.Adapters.SQL
+  alias SymphonyElixir.Config.LegacyWorkflowConvergence
+
+  @app_setting_columns [key: :text, value: :jsonb, inserted_at: :timestamp, updated_at: :timestamp]
 
   @tables [
     {"users",
@@ -31,10 +34,6 @@ defmodule SymphonyElixir.SQLiteImporter do
        source_strategy: :text,
        worktree_fetch: :boolean,
        worktree_cleanup: :boolean,
-       after_create_hook: :text,
-       before_run_hook: :text,
-       after_run_hook: :text,
-       before_remove_hook: :text,
        inserted_at: :timestamp,
        updated_at: :timestamp
      ]},
@@ -133,7 +132,7 @@ defmodule SymphonyElixir.SQLiteImporter do
        inserted_at: :timestamp,
        updated_at: :timestamp
      ]},
-    {"app_settings", [key: :text, value: :jsonb, inserted_at: :timestamp, updated_at: :timestamp]},
+    {"app_settings", @app_setting_columns},
     {"workers",
      [
        id: :uuid,
@@ -223,26 +222,109 @@ defmodule SymphonyElixir.SQLiteImporter do
 
   defp import_tables!(repo, source_path, sqlite3) do
     Enum.reduce(@tables, %{}, fn {table, columns}, counts ->
-      rows = source_rows_for_table!(sqlite3, source_path, table, columns)
+      rows = source_rows_for_table!(repo, sqlite3, source_path, table, columns)
+      count_before = target_count!(repo, table)
       insert_rows!(repo, table, columns, rows)
       target_count = target_count!(repo, table)
-      verify_count!(repo, table, length(rows), target_count)
+      verify_count!(repo, table, count_before + length(rows), target_count)
       Map.put(counts, table, target_count)
     end)
   end
 
-  defp source_rows_for_table!(sqlite3, source_path, "workflows", columns) do
+  defp source_rows_for_table!(repo, sqlite3, source_path, "workflows", columns) do
     source_columns =
       List.insert_at(columns, 2, {:version, :integer})
       |> List.insert_at(7, {:active, :boolean})
 
-    sqlite3
-    |> source_rows!(source_path, "workflow_versions", source_columns, "WHERE active = 1")
-    |> Enum.map(&Map.drop(&1, ["version", "active"]))
+    rows =
+      sqlite3
+      |> source_rows!(source_path, "workflow_versions", source_columns, "WHERE active = 1")
+      |> Enum.map(&Map.drop(&1, ["version", "active"]))
+
+    project_hooks = legacy_project_hooks(sqlite3, source_path)
+
+    legacy_rows =
+      Enum.map(rows, fn row ->
+        project_id = Map.fetch!(row, "project_id")
+        project = Map.fetch!(project_hooks, project_id)
+
+        %{
+          workflow_id: Map.fetch!(row, "id"),
+          project_id: project_id,
+          project_slug: Map.fetch!(project, "slug"),
+          yaml_config: normalize_value(Map.fetch!(row, "yaml_config"), :jsonb),
+          prompt_body: Map.fetch!(row, "prompt_body"),
+          after_create_hook: Map.fetch!(project, "after_create_hook"),
+          before_run_hook: Map.fetch!(project, "before_run_hook"),
+          after_run_hook: Map.fetch!(project, "after_run_hook"),
+          before_remove_hook: Map.fetch!(project, "before_remove_hook")
+        }
+      end)
+
+    {:ok, plan} =
+      LegacyWorkflowConvergence.plan(
+        legacy_rows,
+        source_instance_workflow?(sqlite3, source_path)
+      )
+
+    persist_import_setting!(repo, plan.setting)
+    candidates = Map.new(plan.candidates, &{&1.workflow_id, &1})
+
+    Enum.map(rows, fn row ->
+      candidate = Map.fetch!(candidates, Map.fetch!(row, "id"))
+
+      Map.merge(row, %{
+        "yaml_config" => candidate.project_config,
+        "raw_workflow_md" => candidate.raw_workflow_md,
+        "prompt_body" => ""
+      })
+    end)
   end
 
-  defp source_rows_for_table!(sqlite3, source_path, table, columns) do
+  defp source_rows_for_table!(_repo, sqlite3, source_path, table, columns) do
     source_rows!(sqlite3, source_path, table, columns)
+  end
+
+  defp legacy_project_hooks(sqlite3, source_path) do
+    columns = [
+      id: :uuid,
+      slug: :text,
+      after_create_hook: :text,
+      before_run_hook: :text,
+      after_run_hook: :text,
+      before_remove_hook: :text
+    ]
+
+    sqlite3
+    |> source_rows!(source_path, "projects", columns)
+    |> Map.new(&{Map.fetch!(&1, "id"), &1})
+  end
+
+  defp source_instance_workflow?(sqlite3, source_path) do
+    sqlite3
+    |> source_rows!(source_path, "app_settings", @app_setting_columns)
+    |> Enum.any?(&(Map.fetch!(&1, "key") == "instance_workflow"))
+  end
+
+  defp persist_import_setting!(_repo, :none), do: :ok
+
+  defp persist_import_setting!(repo, {kind, value}) when kind in [:instance, :conflict] do
+    key =
+      case kind do
+        :instance -> "instance_workflow"
+        :conflict -> "legacy_instance_workflow_candidates"
+      end
+
+    now = NaiveDateTime.utc_now()
+
+    insert_rows!(repo, "app_settings", @app_setting_columns, [
+      %{
+        "key" => key,
+        "value" => value,
+        "inserted_at" => now,
+        "updated_at" => now
+      }
+    ])
   end
 
   defp verify_count!(_repo, _table, expected, expected), do: :ok
