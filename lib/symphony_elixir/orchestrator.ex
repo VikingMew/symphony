@@ -39,6 +39,7 @@ defmodule SymphonyElixir.Orchestrator do
   @poll_transition_render_delay_ms 20
   @mergeability_checks_per_poll 20
   @control_stop_timeout_ms 35_000
+  @capacity_query_timeout_ms 5_000
   @empty_codex_totals %{
     input_tokens: 0,
     output_tokens: 0,
@@ -2279,11 +2280,20 @@ defmodule SymphonyElixir.Orchestrator do
   defp refresh_deployment_capacity(%State{} = state) do
     capacity =
       case Config.execution_mode() do
-        :worker -> AssignmentManager.available_worker_slots()
+        :worker -> worker_deployment_capacity()
         :centralized -> Config.panel_max_concurrent_agents()
       end
 
     %{state | max_concurrent_agents: capacity}
+  end
+
+  defp worker_deployment_capacity do
+    AssignmentManager.available_worker_slots()
+  catch
+    :exit, {:timeout, {GenServer, :call, [AssignmentManager, :available_worker_slots, @capacity_query_timeout_ms]}} ->
+      Logger.warning("event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0")
+
+      0
   end
 
   @spec request_refresh() :: map() | :unavailable
