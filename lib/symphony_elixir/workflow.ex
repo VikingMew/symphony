@@ -4,8 +4,8 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  checked-in package is available for first-run import into a project's current
-  PostgreSQL runtime snapshot.
+  checked-in package is available for first-run import into the installation
+  singleton and one explicitly selected project's durable slice.
   """
 
   alias SymphonyElixir.Config.Schema

@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-08-29
+updated: 2026-09-14
 owner: compose.yaml
 ---
 
@@ -38,8 +38,9 @@ conflicts with this rule is persisted as a blocker and fails closed through the 
 `blocking_decision` / `Blocked` workflow; it is not skipped while the task proceeds to delivery.
 
 Configure each project through Settings (or Settings / Import for a package file) before starting
-the Panel. Each enabled project has exactly one PostgreSQL workflow snapshot, and direct SQL updates
-to `workflows` are unsupported. The package under `docs/examples/` is example and import material,
+the Panel. PostgreSQL stores one installation-wide `app_settings["instance_workflow"]` value and one
+tracker/repository workflow slice per project; both are required before dispatch. Direct SQL updates
+to either store are unsupported. The package under `docs/examples/` is example and import material,
 not a synchronization source.
 
 Image building, image-level verification, and publication belong to dedicated external CI; this

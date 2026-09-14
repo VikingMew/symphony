@@ -2,8 +2,8 @@ defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
   Publishes the current database workflow for every enabled project.
 
-  PostgreSQL is the durable runtime snapshot synchronized from the repository
-  package, while runtime reads use one atomically replaced in-memory snapshot.
+  PostgreSQL stores one instance slice and one tracker/repository slice per
+  project, while runtime reads use their atomically published compositions.
   The owner process performs initial and explicit loads and
   coordinates one background refresh; callers never query persistence or wait
   for that work.

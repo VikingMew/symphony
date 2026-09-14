@@ -4,7 +4,7 @@ genre: architecture
 domain: [architecture, runtime]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-09-14
 owner: SymphonyElixir.Orchestrator
 ---
 
@@ -289,14 +289,16 @@ request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 
 ## 7. Configuration Model
 
-The current workflow is a single PostgreSQL-backed row per project. Operators create and update it in
-place through the Settings UI; startup can enter setup-required mode when no current workflow exists.
-`workflow.yml` and `profiles.yml` are split package artifacts for import/export and examples, not
-startup authority.
+PostgreSQL stores installation runtime/profile policy once in
+`app_settings["instance_workflow"]` and tracker/repository properties in one workflow row per
+project. `WorkflowStore` composes both scopes before parsing and atomically publishes the complete
+enabled-project set. Startup remains setup-required when either scope is absent.
+`workflow.yml` and `profiles.yml` are package artifacts for import/export and examples, not startup
+authority.
 
 Important configuration areas:
 
-- `tracker`: Linear project, API key, active states, terminal states.
+- `tracker`: per-project Linear endpoint/project/state properties; the API key is runtime-only.
 - `polling`: poll interval.
 - `workspace`: root directory for per-issue workspaces.
 - `hooks`: shell commands for workspace lifecycle events.

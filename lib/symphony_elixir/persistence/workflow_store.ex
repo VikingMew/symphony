@@ -19,6 +19,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     {:after_run_hook, "after_run_hook"},
     {:before_remove_hook, "before_remove_hook"}
   ]
+  @project_instance_fields WorkflowScopes.instance_sections() ++ ["prompt_body", "workflow"]
   @type current_workflow_error :: :missing_project_context
 
   @spec default_project() ::
@@ -388,7 +389,13 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   end
 
   defp reject_project_hook_fields(attrs) do
-    invalid =
+    instance_fields =
+      attrs
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> Enum.filter(&(&1 in @project_instance_fields))
+
+    hook_fields =
       @project_hook_fields
       |> Enum.filter(fn {atom_field, string_field} ->
         Enum.any?([Map.get(attrs, atom_field), Map.get(attrs, string_field)], fn value ->
@@ -396,7 +403,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
         end)
       end)
       |> Enum.map(&elem(&1, 1))
-      |> Enum.sort()
+
+    invalid = Enum.sort(Enum.uniq(instance_fields ++ hook_fields))
 
     if invalid == [], do: :ok, else: {:error, {:out_of_scope_project_fields, invalid}}
   end

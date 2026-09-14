@@ -4,7 +4,7 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-08-27
+updated: 2026-09-14
 ---
 
 # Symphony 用户运行指南
@@ -419,8 +419,9 @@ Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_up
    PR-open automation 不会在 Symphony handoff 后覆盖 `Ready to Merge`。
 2. 让实际 Symphony runtime user 能使用已认证的 `gh`，或提供 `GH_TOKEN` / `GITHUB_TOKEN` 给
    REST fallback。使用 SSH execution 时，worker 还必须保留 branch-push auth。
-3. 部署新代码，并为每个 enabled project 创建、校验、应用 trimmed PostgreSQL active workflow
-   version。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们不会修改运行时。
+3. 部署新代码，创建并校验 installation singleton，再为每个 enabled project 创建、校验、应用
+   tracker/repository workflow slice。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们
+   不会修改运行时。
 4. 手工处理仍处于退休状态 `In Review`、`Merging`、`Merged` 的运行中 issue，并确认没有 live
    issue 依赖旧 route。
 5. live issue 清理完成后，才在每个相关 Linear team archive `In Review`、`Merging`、`Merged`。

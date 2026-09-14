@@ -5,7 +5,7 @@ domain: [spec, overview]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-27
+updated: 2026-09-14
 ---
 
 # Symphony Service Specification
@@ -56,9 +56,10 @@ The service solves four operational problems:
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps project settings and profiles in an active workflow record and uses an immutable,
-  code-owned workflow policy. Implementations MAY import/export a split package format for
-  portability, but its workflow-policy keys are not a runtime source.
+- It keeps installation runtime/profile policy in one singleton, tracker/repository properties in
+  one workflow slice per project, and workflow routing in immutable code-owned policy.
+  Implementations MAY import/export a combined package format for portability, but its
+  workflow-policy keys are not a runtime source.
 - It provides enough observability to operate and debug multiple concurrent agent runs.
 
 Implementations are expected to document their trust and safety posture explicitly. This

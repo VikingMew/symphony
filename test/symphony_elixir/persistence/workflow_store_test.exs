@@ -32,6 +32,11 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
              WorkflowStore.create_project(Map.put(%{after_create_hook: nil}, "after_create_hook", "mix setup"))
   end
 
+  test "project records reject instance workflow sections before persistence" do
+    assert {:error, {:out_of_scope_project_fields, ["codex"]}} =
+             WorkflowStore.create_project(%{"codex" => %{"model" => "gpt-5.5"}})
+  end
+
   test "project and workflow query faults are logged and reraised" do
     _pid = start_repo_stub!()
     project = %Project{id: "project-id"}
@@ -88,6 +93,14 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
              WorkflowStore.export_workflow(%WorkflowRecord{
                yaml_config: %{"codex" => %{"model" => "gpt-5.5"}},
                prompt_body: "Rendered prompt"
+             })
+  end
+
+  test "export_workflow rejects persisted instance config with a blank prompt" do
+    assert {:error, {:out_of_scope_workflow_fields, :project, ["codex"]}} =
+             WorkflowStore.export_workflow(%WorkflowRecord{
+               yaml_config: %{"codex" => %{"model" => "gpt-5.5"}},
+               prompt_body: ""
              })
   end
 

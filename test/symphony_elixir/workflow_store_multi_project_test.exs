@@ -105,6 +105,11 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     assert updated_b.prompt == "Updated shared prompt"
     assert get_in(updated_a.config, ["polling", "interval_ms"]) == 7_777
     assert get_in(updated_b.config, ["polling", "interval_ms"]) == 7_777
+
+    assert workflow_a.prompt == "Shared prompt"
+    assert workflow_b.prompt == "Shared prompt"
+    assert get_in(workflow_a.config, ["polling", "interval_ms"]) != 7_777
+    assert get_in(workflow_b.config, ["polling", "interval_ms"]) != 7_777
   end
 
   test "project imports reject complete portable packages without changing singleton" do

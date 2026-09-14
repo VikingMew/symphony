@@ -31,6 +31,43 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
     assert combined.config["workflow"] == Schema.default_workflow_policy()
   end
 
+  test "slice parsing canonicalizes atom keys without dropping owned fields" do
+    assert {:ok, instance, project} =
+             WorkflowScopes.split_package(
+               %{
+                 polling: %{interval_ms: 1_234},
+                 tracker: %{kind: "linear"}
+               },
+               "Prompt"
+             )
+
+    assert instance == %{config: %{"polling" => %{"interval_ms" => 1_234}}, prompt_body: "Prompt"}
+    assert project == %{"tracker" => %{"kind" => "linear"}}
+  end
+
+  test "slice parsing rejects duplicate canonical keys" do
+    assert {:error, {:duplicate_workflow_fields, :instance, ["polling"]}} =
+             WorkflowScopes.split_package(
+               %{"polling" => %{"interval_ms" => 1_000}, polling: %{interval_ms: 2_000}},
+               ""
+             )
+  end
+
+  test "portable routing input never becomes durable or editable policy" do
+    {:ok, loaded} = Workflow.load()
+
+    config =
+      Map.put(loaded.config, "workflow", %{
+        "states" => %{"Invented" => %{"profile" => "implementation"}}
+      })
+
+    assert {:ok, instance, project} = WorkflowScopes.split_package(config, loaded.prompt)
+    assert Map.has_key?(instance.config, "workflow") == false
+    assert Map.has_key?(project, "workflow") == false
+    assert {:ok, combined} = WorkflowScopes.combined(instance, project)
+    assert combined.config["workflow"] == Schema.default_workflow_policy()
+  end
+
   test "project slice rejects instance, prompt, secret, hook, and workflow fields" do
     assert {:error, {:out_of_scope_workflow_fields, :project, ["codex"]}} =
              WorkflowScopes.validate_project_config(%{"codex" => %{}})

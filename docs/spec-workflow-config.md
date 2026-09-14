@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Workflow and Configuration Specification
@@ -401,11 +401,14 @@ Dispatch gating behavior:
 
 Configuration is resolved in this order:
 
-1. Select the current persisted workflow for the project.
-2. Parse its raw workflow config map.
-3. Apply built-in defaults for missing OPTIONAL fields.
-4. Resolve `$VAR_NAME` indirection only for config values that explicitly contain `$VAR_NAME`.
-5. Coerce and validate typed values.
+1. Load the fixed installation singleton and the current workflow slice for the project.
+2. Compose instance-owned fields with the project's tracker/repository fields and inject
+   `Schema.default_workflow_policy/0`.
+3. Parse the composed config map and apply built-in defaults for missing OPTIONAL fields.
+4. Resolve the runtime tracker secret from its canonical environment contract.
+5. Resolve `$VAR_NAME` indirection only for other config values that explicitly contain
+   `$VAR_NAME`.
+6. Coerce and validate typed values.
 
 Environment variables do not globally override YAML values. They are used only when a config value
 explicitly references them.

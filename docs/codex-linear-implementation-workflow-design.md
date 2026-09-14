@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-13
+updated: 2026-09-14
 design_status: landed
 ---
 
@@ -114,8 +114,8 @@ turn 捕获，不表示 Linear 已更新。
 
 若 PR 修改 repository split workflow package（`docs/examples/workflow.yml` 或
 `docs/examples/profiles.yml`），PR Test Plan 只记录 merge 后由部署侧/宿主通过 Settings / Import
-导入并保存目标 project 的 PostgreSQL current workflow，预期结果是 import validation 通过且保存后的
-project current workflow 包含该 package 变更。worker 不执行 runtime import，不因缺少数据库连接而
+导入并分别保存 instance singleton 与目标 project slice，预期结果是 import validation 通过且保存后的
+对应 durable scope 包含该 package 变更。worker 不执行 runtime import，不因缺少数据库连接而
 block，也不声称 checked-in package 已经影响后续 dispatch。仓库 package 是示例与导入素材；不存在
 `mix symphony.workflow.sync` 或 drift `--check` 契约。
 

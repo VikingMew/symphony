@@ -49,6 +49,7 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert prompt =~ "1) Alpha (alpha)"
     assert prompt =~ "2) Beta (beta)"
     assert_received {:import_package, %{id: "project-beta"}, raw, "first_run_default_yaml"}
+    assert raw =~ "tracker:"
     assert raw =~ "Default imported base prompt."
     assert raw =~ "implementation"
   end
@@ -165,36 +166,30 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_package, _, _, _}
   end
 
-  test "zero-project interactive startup imports into the bootstrap project" do
+  test "zero-project interactive startup remains setup-required" do
     parent = self()
 
-    {_agent, deps} =
-      zero_project_bootstrap_deps(parent,
-        prompt: fn prompt ->
-          send(parent, {:prompt, prompt})
-          "1\n"
-        end
-      )
-
-    assert :ok = FirstRunDefaults.maybe_import([], deps)
-    assert_received {:prompt, prompt}
-    assert prompt =~ "1) Default (default)"
-
-    assert_received {:import_package, project, raw, "first_run_default_yaml"}
-    assert project.slug == "default"
-    assert raw =~ "Default imported base prompt."
-  end
-
-  test "zero-project non-interactive startup logs and leaves the bootstrap project" do
-    parent = self()
-    {agent, deps} = zero_project_bootstrap_deps(parent, interactive?: fn -> false end)
-
-    assert :ok = FirstRunDefaults.maybe_import([], deps)
-    assert [%{slug: "default", enabled: true}] = Agent.get(agent, & &1.projects)
+    assert :ok = FirstRunDefaults.maybe_import([], deps(parent, list_projects: fn -> [] end))
     refute_received {:prompt, _}
     refute_received {:import_package, _, _, _}
     assert_received {:log, :info, message}
-    assert message =~ "non-interactive"
+    assert message =~ "No enabled projects"
+  end
+
+  test "disabled Default placeholder never becomes first-run authority" do
+    parent = self()
+    placeholder = %{id: "bootstrap-project", name: "Default", slug: "default", enabled: false}
+
+    assert :ok =
+             FirstRunDefaults.maybe_import(
+               [],
+               deps(parent, list_projects: fn -> [placeholder] end)
+             )
+
+    refute_received {:prompt, _}
+    refute_received {:import_package, _, _, _}
+    assert_received {:log, :info, message}
+    assert message =~ "No enabled projects"
   end
 
   test "startup without enabled projects remains setup-required without prompting" do
@@ -207,25 +202,6 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     refute_received {:import_package, _, _, _}
     assert_received {:log, :info, message}
     assert message =~ "No enabled projects"
-  end
-
-  defp zero_project_bootstrap_deps(parent, overrides) do
-    {:ok, agent} = Agent.start_link(fn -> %{projects: []} end)
-    bootstrap = %{id: "bootstrap-project", name: "Default", slug: "default", enabled: true}
-
-    bootstrap_overrides = [
-      current_workflow: fn ->
-        Agent.update(agent, fn
-          %{projects: []} = state -> %{state | projects: [bootstrap]}
-          state -> state
-        end)
-
-        nil
-      end,
-      list_projects: fn -> Agent.get(agent, & &1.projects) end
-    ]
-
-    {agent, deps(parent, Keyword.merge(bootstrap_overrides, overrides))}
   end
 
   defp deps(parent, overrides \\ []) do

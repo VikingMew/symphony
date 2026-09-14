@@ -1007,14 +1007,21 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       {:before_remove_hook, "before_remove_hook"}
     ]
 
-    invalid =
+    instance_fields =
+      attrs
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> Enum.filter(&(&1 in (WorkflowScopes.instance_sections() ++ ["prompt_body", "workflow"])))
+
+    hook_fields =
       hook_fields
       |> Enum.filter(fn {atom_field, string_field} ->
         value = Map.get(attrs, atom_field, Map.get(attrs, string_field))
         is_binary(value) and String.trim(value) != ""
       end)
       |> Enum.map(&elem(&1, 1))
-      |> Enum.sort()
+
+    invalid = Enum.sort(Enum.uniq(instance_fields ++ hook_fields))
 
     if invalid == [], do: :ok, else: {:error, {:out_of_scope_project_fields, invalid}}
   end

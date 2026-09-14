@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-13
+updated: 2026-09-14
 ---
 
 # Orchestration Specification
@@ -390,9 +390,9 @@ Supported hooks:
 - `hooks.after_run`
 - `hooks.before_remove`
 
-Hooks are defined at the workflow level and MAY be overridden per project through the Project
-settings record. A non-blank project hook replaces the workflow-level hook for that project;
-unset project hooks leave the workflow-level hook intact.
+Hooks are installation-owned fields in the instance workflow singleton. Project workflow slices
+and Project settings records MUST NOT override them; legacy project hook columns are ignored by
+runtime composition.
 
 Execution contract:
 
