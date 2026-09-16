@@ -62,7 +62,10 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
   project 时才解析成功；多项目无配置完整 Default 返回 `:missing_project_context`。per-project polling 继续通过 workflow context 解析各自的 Linear slug。
 - **显式删除而非自动清理**:不做启动时检测删除 default 的魔法。用户要删 default,点按钮。
 - **两个 scope 都是启动前提**：缺少 `app_settings["instance_workflow"]` 或缺少至少一个 enabled
-  project workflow 都是 setup-required。legacy full project row 不会被选为 singleton fallback。
+  project workflow 都是 setup-required。legacy 收敛的零候选与多候选 conflict 在没有 singleton 时
+  同样保持 setup-required；临时候选记录和 legacy full project row 都不会被选为 singleton fallback。
+  disabled Default placeholder 即使关联旧 workflow candidate，也只作为显式对账可选来源，不会自动
+  成为 authority、enabled project 或 dispatch 输入。
 - **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。
 - **移除按钮的确认**:phx-click + data-confirm,防误删。

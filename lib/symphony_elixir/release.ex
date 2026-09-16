@@ -4,6 +4,8 @@ defmodule SymphonyElixir.Release do
   """
 
   alias SymphonyElixir.{DatabaseSetup, Repo, SQLiteImporter}
+  alias SymphonyElixir.Persistence.WorkflowStore
+  alias SymphonyElixir.Release.LegacyWorkflowCommand
 
   @spec migrate() :: :ok | {:error, term()}
   def migrate do
@@ -46,6 +48,29 @@ defmodule SymphonyElixir.Release do
 
       {:error, reason} ->
         raise "SQLite import failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    end
+  end
+
+  @spec reconcile_legacy_instance_workflow!() :: term()
+  def reconcile_legacy_instance_workflow! do
+    :ok = load_application()
+
+    Ecto.Migrator.with_repo(Repo, fn _repo ->
+      {:ok, status} = WorkflowStore.legacy_instance_workflow_status()
+
+      case LegacyWorkflowCommand.execute(
+             status,
+             System.get_env("SYMPHONY_RECONCILE_PROJECT"),
+             &WorkflowStore.reconcile_legacy_instance_workflow/1,
+             &IO.puts/1
+           ) do
+        {:ok, result} -> result
+        {:error, reason} -> raise "Legacy instance workflow reconciliation failed: #{inspect(reason)}"
+      end
+    end)
+    |> case do
+      {:ok, result, _apps} -> result
+      {:error, reason} -> raise "Legacy instance workflow database startup failed: #{inspect(reason)}"
     end
   end
 

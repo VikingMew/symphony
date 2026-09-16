@@ -18,5 +18,6 @@ defmodule SymphonyElixir.Persistence.AppSetting do
     setting
     |> cast(attrs, [:key, :value])
     |> validate_required([:key, :value])
+    |> unique_constraint(:key, name: :app_settings_pkey)
   end
 end

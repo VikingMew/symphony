@@ -113,6 +113,21 @@ defmodule SymphonyElixir.Persistence do
   @spec instance_workflow() :: WorkflowScopes.instance_workflow() | nil | {:error, :repo_unavailable}
   defdelegate instance_workflow(), to: WorkflowStore
 
+  @spec legacy_instance_workflow_status() ::
+          {:ok, SymphonyElixir.Config.LegacyWorkflowConvergence.status()} | {:error, term()}
+  defdelegate legacy_instance_workflow_status(), to: WorkflowStore
+
+  @spec reconcile_legacy_instance_workflow(String.t()) ::
+          {:ok, WorkflowStore.legacy_reconciliation_result()}
+          | {:error,
+             WorkflowStore.legacy_reconciliation_error()
+             | {:runtime_publication_failed, WorkflowStore.legacy_reconciliation_result(), term()}}
+  def reconcile_legacy_instance_workflow(project_slug) when is_binary(project_slug) do
+    project_slug
+    |> WorkflowStore.reconcile_legacy_instance_workflow()
+    |> publish_runtime_snapshot()
+  end
+
   @spec current_workflow() :: WorkflowRecord.t() | nil | {:error, WorkflowStore.current_workflow_error()}
   defdelegate current_workflow(), to: WorkflowStore
 
