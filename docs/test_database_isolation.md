@@ -4,7 +4,7 @@ genre: spec
 domain: [testing, database]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-09-18
 owner: SymphonyElixir.Repo
 ---
 
@@ -35,12 +35,18 @@ export DATABASE_URL='postgresql://symphony:password@127.0.0.1:5432/symphony_smok
 make pg-smoke
 ```
 
-The target database must be isolated and empty. The smoke command applies the full migration
-history, reverses and reapplies it, checks PostgreSQL column/constraint/index types, creates a
-legacy SQLite fixture, imports all application tables, verifies relationships and active workflow
-state, exercises representative persistence operations, performs 200 concurrent event writes,
-and proves another write/read succeeds afterward. It also proves the importer rejects a non-empty
-target.
+The target database must be isolated and empty. The smoke command repeatedly rebuilds its public
+schema to the version immediately before the irreversible legacy workflow convergence migration,
+then uses forward-only migration runs to cover zero candidates, one candidate, equal candidates,
+different candidates, and a pre-existing instance singleton. It verifies the migrated workflow
+slices and settings, the removed project hook columns, and an already-applied release migration
+no-op. It never invokes the convergence migration's `down/0`.
+
+After the migration scenarios, the same command checks PostgreSQL column/constraint/index types,
+creates a legacy SQLite fixture, imports all application tables, verifies relationships and active
+workflow state, exercises representative persistence operations, performs 200 concurrent event
+writes, and proves another write/read succeeds afterward. It also proves the importer rejects a
+non-empty target.
 
 SQLite in this target is an import fixture only. No Ecto SQLite adapter or selectable SQLite
 runtime exists.

@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-18
 design_status: landed
 ---
 
@@ -73,6 +73,11 @@ design_status: landed
   已运行 Panel 由现有一秒 background refresh 发布 durable 结果，未运行 Panel 在启动时加载它。
 - 停止状态的 legacy SQLite cutover 在写入已经完成 migration 的 PostgreSQL schema 前应用同一候选与
   rewrite 规则；旧 hook columns 只从 import source 读取，不会在 current project schema 中重建。
+- 显式 PostgreSQL smoke 在隔离数据库中为零候选、单候选、多候选等值、多候选不等和已存在 singleton
+  五个分支分别重建到 migration 前一版本，写入包含 instance 字段、base prompt 和四个 project hook 的
+  legacy fixture，再只向前执行收敛 migration。每个分支验证 project rewrite、setting 选择、hook columns
+  删除及 migration 版本；最后通过 release migrator 验证已应用版本 no-op。该边界不直接重复调用
+  migration `up/0`，也不调用不可逆的 `down/0`。
 
 ## 为何不再同步
 
