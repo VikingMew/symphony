@@ -7,8 +7,10 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   use Mix.Task
 
   alias Ecto.Adapters.SQL
+  alias SymphonyElixir.Config.LegacyWorkflowConvergence
   alias SymphonyElixir.{Persistence, Repo, SQLiteImporter}
   alias SymphonyElixir.Persistence.{EventRecord, Project, WorkflowStore}
+  alias SymphonyElixir.Workflow
 
   @shortdoc "Runs the explicit PostgreSQL integration smoke test"
   @requirements ["app.config"]
@@ -22,6 +24,26 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @legacy_session_id "60000000-0000-0000-0000-000000000002"
   @timestamp "2026-08-27T10:00:00.000000Z"
   @capacity_migration 20_260_905_000_000
+  @pre_convergence_migration 20_260_907_000_000
+  @convergence_migration 20_260_914_000_000
+  @legacy_project_ids [
+    "70000000-0000-0000-0000-000000000001",
+    "70000000-0000-0000-0000-000000000002"
+  ]
+  @legacy_workflow_ids [
+    "80000000-0000-0000-0000-000000000001",
+    "80000000-0000-0000-0000-000000000002"
+  ]
+  @legacy_hooks %{
+    after_create_hook: "echo after-create",
+    before_run_hook: "echo before-run",
+    after_run_hook: "echo after-run",
+    before_remove_hook: "echo before-remove"
+  }
+  @existing_instance %{
+    "config" => %{"polling" => %{"interval_ms" => 12_345}},
+    "prompt_body" => "Preserved instance prompt"
+  }
 
   @impl Mix.Task
   @spec run([String.t()]) :: :ok
@@ -48,21 +70,260 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   def run(_args), do: Mix.raise("Usage: mix symphony.postgres_smoke")
 
   defp migrate_and_rebuild! do
-    case SymphonyElixir.Release.migrate() do
-      :ok -> :ok
-      {:error, reason} -> Mix.raise(SymphonyElixir.DatabaseSetup.format_error(reason))
-    end
+    migrations_path = :symphony_elixir |> :code.priv_dir() |> to_string() |> Path.join("repo/migrations")
+
+    expected_snapshot =
+      with_repo!(fn repo ->
+        Enum.each([:zero, :single, :equal, :conflict], fn scenario ->
+          rebuild_pre_convergence_schema!(repo, migrations_path, scenario)
+          rows = seed_legacy_fixture!(repo, scenario)
+          migrate_and_verify_convergence!(repo, migrations_path, scenario, rows)
+        end)
+
+        rebuild_pre_convergence_schema!(repo, migrations_path, :existing)
+        rows = seed_legacy_fixture!(repo, :existing)
+        migrate_and_verify_convergence!(repo, migrations_path, :existing, rows)
+        convergence_snapshot!(repo)
+      end)
+
+    migrate_release!()
 
     with_repo!(fn repo ->
-      migrations_path = :symphony_elixir |> :code.priv_dir() |> to_string() |> Path.join("repo/migrations")
-      Ecto.Migrator.run(repo, migrations_path, :down, all: true)
-      Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
-      seed_pre_repair_worker_session!(repo)
-      Ecto.Migrator.run(repo, migrations_path, :up, all: true)
+      ^expected_snapshot = convergence_snapshot!(repo)
+      Mix.shell().info("smoke release_migrator_noop=PASS")
+      cleanup_legacy_fixture!(repo)
       verify_postgres_schema!(repo)
       verify_worker_session_compatibility!(repo)
       verify_bootstrap_concurrency!()
     end)
+  end
+
+  defp rebuild_pre_convergence_schema!(repo, migrations_path, scenario) do
+    SQL.query!(repo, "DROP SCHEMA public CASCADE", [])
+    SQL.query!(repo, "CREATE SCHEMA public", [])
+
+    if scenario == :existing do
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
+      seed_pre_repair_worker_session!(repo)
+    end
+
+    Ecto.Migrator.run(repo, migrations_path, :up, to: @pre_convergence_migration)
+  end
+
+  defp seed_legacy_fixture!(_repo, :zero), do: []
+
+  defp seed_legacy_fixture!(repo, scenario) do
+    {:ok, loaded} = Workflow.load()
+
+    rows =
+      case scenario do
+        :single ->
+          [legacy_row(0, "legacy-single", loaded.config, loaded.prompt)]
+
+        :equal ->
+          [
+            legacy_row(0, "legacy-equal-a", loaded.config, loaded.prompt),
+            legacy_row(1, "legacy-equal-b", loaded.config, loaded.prompt)
+          ]
+
+        :conflict ->
+          different_config = put_in(loaded.config, ["polling", "interval_ms"], 9_999)
+
+          [
+            legacy_row(0, "legacy-conflict-a", loaded.config, loaded.prompt),
+            legacy_row(1, "Legacy-Conflict-B", different_config, "Different base prompt")
+          ]
+
+        :existing ->
+          insert_setting!(repo, "instance_workflow", @existing_instance)
+          [legacy_row(0, "legacy-existing", loaded.config, loaded.prompt)]
+      end
+
+    Enum.each(rows, &insert_legacy_row!(repo, &1))
+    rows
+  end
+
+  defp legacy_row(index, slug, config, prompt_body) do
+    %{
+      workflow_id: Enum.fetch!(@legacy_workflow_ids, index),
+      project_id: Enum.fetch!(@legacy_project_ids, index),
+      project_slug: slug,
+      yaml_config: config,
+      prompt_body: prompt_body,
+      after_create_hook: @legacy_hooks.after_create_hook,
+      before_run_hook: @legacy_hooks.before_run_hook,
+      after_run_hook: @legacy_hooks.after_run_hook,
+      before_remove_hook: @legacy_hooks.before_remove_hook
+    }
+  end
+
+  defp insert_legacy_row!(repo, row) do
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO projects (
+        id, name, slug, enabled, after_create_hook, before_run_hook, after_run_hook,
+        before_remove_hook, inserted_at, updated_at
+      )
+      VALUES (
+        $1::text::uuid, $2, $3, TRUE, $4, $5, $6, $7, NOW(), NOW()
+      )
+      """,
+      [
+        row.project_id,
+        "Legacy #{row.project_slug}",
+        row.project_slug,
+        row.after_create_hook,
+        row.before_run_hook,
+        row.after_run_hook,
+        row.before_remove_hook
+      ]
+    )
+
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO workflows (
+        id, project_id, raw_workflow_md, yaml_config, prompt_body, source, inserted_at, updated_at
+      )
+      VALUES (
+        $1::text::uuid, $2::text::uuid, $3, $4::jsonb, $5, 'migration-smoke', NOW(), NOW()
+      )
+      """,
+      [
+        row.workflow_id,
+        row.project_id,
+        Workflow.to_markdown(row.yaml_config, row.prompt_body),
+        row.yaml_config,
+        row.prompt_body
+      ]
+    )
+  end
+
+  defp insert_setting!(repo, key, value) do
+    SQL.query!(
+      repo,
+      "INSERT INTO app_settings (key, value, inserted_at, updated_at) VALUES ($1, $2::jsonb, NOW(), NOW())",
+      [key, value]
+    )
+  end
+
+  defp migrate_and_verify_convergence!(repo, migrations_path, scenario, rows) do
+    [@convergence_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @convergence_migration)
+
+    verify_convergence_version!(repo)
+    verify_hook_columns_removed!(repo)
+
+    instance_exists? = scenario == :existing
+    {:ok, plan} = LegacyWorkflowConvergence.plan(rows, instance_exists?)
+    verify_rewritten_workflows!(repo, plan.candidates)
+    verify_convergence_settings!(repo, scenario, plan.setting)
+    Mix.shell().info("smoke convergence_scenario=#{scenario} result=PASS")
+  end
+
+  defp verify_convergence_version!(repo) do
+    %{rows: [[1]]} =
+      SQL.query!(repo, "SELECT COUNT(*) FROM schema_migrations WHERE version = $1", [@convergence_migration])
+  end
+
+  defp verify_hook_columns_removed!(repo) do
+    %{rows: [[0]]} =
+      SQL.query!(
+        repo,
+        """
+        SELECT COUNT(*)
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'projects'
+          AND column_name IN (
+            'after_create_hook',
+            'before_run_hook',
+            'after_run_hook',
+            'before_remove_hook'
+          )
+        """,
+        []
+      )
+  end
+
+  defp verify_rewritten_workflows!(repo, candidates) do
+    Enum.each(candidates, fn candidate ->
+      %{rows: [[yaml_config, "", raw_workflow_md]]} =
+        SQL.query!(
+          repo,
+          """
+          SELECT yaml_config, prompt_body, raw_workflow_md
+          FROM workflows
+          WHERE id = $1::text::uuid
+          """,
+          [candidate.workflow_id]
+        )
+
+      ^yaml_config = candidate.project_config
+      ^raw_workflow_md = candidate.raw_workflow_md
+      ["project", "tracker"] = yaml_config |> Map.keys() |> Enum.sort()
+    end)
+  end
+
+  defp verify_convergence_settings!(repo, :zero, :none) do
+    nil = fetch_setting(repo, "instance_workflow")
+    nil = fetch_setting(repo, "legacy_instance_workflow_candidates")
+  end
+
+  defp verify_convergence_settings!(repo, :existing, :none) do
+    expected = @existing_instance
+    ^expected = fetch_setting(repo, "instance_workflow")
+    nil = fetch_setting(repo, "legacy_instance_workflow_candidates")
+  end
+
+  defp verify_convergence_settings!(repo, _scenario, {:instance, expected}) do
+    ^expected = fetch_setting(repo, "instance_workflow")
+    nil = fetch_setting(repo, "legacy_instance_workflow_candidates")
+  end
+
+  defp verify_convergence_settings!(repo, :conflict, {:conflict, expected}) do
+    nil = fetch_setting(repo, "instance_workflow")
+    ^expected = fetch_setting(repo, "legacy_instance_workflow_candidates")
+  end
+
+  defp fetch_setting(repo, key) do
+    case SQL.query!(repo, "SELECT value FROM app_settings WHERE key = $1", [key]).rows do
+      [] -> nil
+      [[value]] -> value
+    end
+  end
+
+  defp convergence_snapshot!(repo) do
+    verify_convergence_version!(repo)
+
+    SQL.query!(
+      repo,
+      """
+      SELECT key, value, inserted_at, updated_at
+      FROM app_settings
+      WHERE key IN ('instance_workflow', 'legacy_instance_workflow_candidates')
+      ORDER BY key
+      """,
+      []
+    ).rows
+  end
+
+  defp migrate_release! do
+    case SymphonyElixir.Release.migrate() do
+      :ok -> :ok
+      {:error, reason} -> Mix.raise(SymphonyElixir.DatabaseSetup.format_error(reason))
+    end
+  end
+
+  defp cleanup_legacy_fixture!(repo) do
+    SQL.query!(repo, "DELETE FROM projects", [])
+
+    SQL.query!(
+      repo,
+      "DELETE FROM app_settings WHERE key IN ('instance_workflow', 'legacy_instance_workflow_candidates')",
+      []
+    )
   end
 
   defp verify_bootstrap_concurrency! do
@@ -182,23 +443,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
     if indexes < 14, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
 
-    %{rows: [[0]]} =
-      SQL.query!(
-        repo,
-        """
-        SELECT COUNT(*)
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'projects'
-          AND column_name IN (
-            'after_create_hook',
-            'before_run_hook',
-            'after_run_hook',
-            'before_remove_hook'
-          )
-        """,
-        []
-      )
+    verify_hook_columns_removed!(repo)
   end
 
   defp seed_pre_repair_worker_session!(repo) do
@@ -206,7 +451,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       repo,
       """
       INSERT INTO workers (id, name, status, labels, capabilities, inserted_at, updated_at)
-      VALUES ($1::uuid, 'migration-smoke-worker', 'online', '{}', '{}', NOW(), NOW())
+      VALUES ($1::text::uuid, 'migration-smoke-worker', 'online', '{}', '{}', NOW(), NOW())
       """,
       [@worker_id]
     )
@@ -217,7 +462,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       INSERT INTO worker_sessions (
         id, worker_id, protocol_version, total_slots, connected_at, status, inserted_at, updated_at
       )
-      VALUES ($1::uuid, $2::uuid, 'worker-api-v1', 7, NOW(), 'online', NOW(), NOW())
+      VALUES ($1::text::uuid, $2::text::uuid, 'worker-api-v1', 7, NOW(), 'online', NOW(), NOW())
       """,
       [@session_id, @worker_id]
     )
@@ -238,7 +483,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       )
 
     %{rows: [[7]]} =
-      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::uuid", [@session_id])
+      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::text::uuid", [@session_id])
 
     SQL.query!(
       repo,
@@ -246,15 +491,15 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       INSERT INTO worker_sessions (
         id, worker_id, protocol_version, connected_at, status, inserted_at, updated_at
       )
-      VALUES ($1::uuid, $2::uuid, 'legacy-worker-api-v1', NOW(), 'online', NOW(), NOW())
+      VALUES ($1::text::uuid, $2::text::uuid, 'legacy-worker-api-v1', NOW(), 'online', NOW(), NOW())
       """,
       [@legacy_session_id, @worker_id]
     )
 
     %{rows: [[1]]} =
-      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::uuid", [@legacy_session_id])
+      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::text::uuid", [@legacy_session_id])
 
-    SQL.query!(repo, "DELETE FROM workers WHERE id = $1::uuid", [@worker_id])
+    SQL.query!(repo, "DELETE FROM workers WHERE id = $1::text::uuid", [@worker_id])
   end
 
   defp assert_imported_relationships!(repo) do

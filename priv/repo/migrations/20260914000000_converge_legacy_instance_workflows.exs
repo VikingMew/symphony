@@ -90,7 +90,7 @@ defmodule SymphonyElixir.Repo.Migrations.ConvergeLegacyInstanceWorkflows do
           raw_workflow_md = $2,
           prompt_body = '',
           updated_at = NOW()
-      WHERE id = $3::uuid
+      WHERE id = $3::text::uuid
       """,
       [candidate.project_config, candidate.raw_workflow_md, candidate.workflow_id]
     )

@@ -559,9 +559,9 @@ mise exec -- mix build
 mise exec -- make all
 ```
 
-默认单元测试不访问数据库。显式 PostgreSQL 集成 smoke 只能指向一次性空数据库；它会反向并
-重新执行全部 migration、导入 SQLite fixture、验证关系，并发写入 200 条 event，然后验证
-数据库仍可读写：
+默认单元测试不访问数据库。显式 PostgreSQL 集成 smoke 只能指向一次性空数据库；它会为 legacy
+workflow 收敛的五个分支分别重建 migration 前 schema 并只向前迁移，验证已应用版本 no-op，随后
+导入 SQLite fixture、验证关系，并发写入 200 条 event，然后验证数据库仍可读写：
 
 ```bash
 export DATABASE_URL="postgresql://symphony:password@127.0.0.1:5432/symphony_smoke"
