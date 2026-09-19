@@ -4,6 +4,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   import Phoenix.ConnTest
   import Plug.Conn, only: [put_req_header: 3]
 
+  alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.{AssignmentManager, HeartbeatHistory, HeartbeatMetrics}
 
@@ -233,7 +234,14 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> post("/api/worker/v1/register", worker_registration_payload())
              |> json_response(200)
 
-    assert %{"task" => nil, "admission" => %{"capacity" => 0, "reason" => "worker_dispatch_disabled"}} =
+    assert %{
+             "task" => nil,
+             "admission" => %{
+               "capacity" => 0,
+               "reason" => "not_listening",
+               "listening_mode" => "not_listening"
+             }
+           } =
              build_conn()
              |> worker_headers(worker_id, session_id)
              |> post("/api/worker/v1/tasks/claim", %{"available_slots" => 1})
@@ -303,6 +311,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   test "claim observes expired liveness after admission so the following claim is fresh" do
     start_test_endpoint()
     start_assignment_manager(FakePersistence)
+    :sys.replace_state(Orchestrator, &%{&1 | listening_mode: :listening_all})
+    on_exit(fn -> :sys.replace_state(Orchestrator, &%{&1 | listening_mode: :not_listening}) end)
 
     %{"worker_id" => worker_id, "session_id" => session_id} =
       build_conn()

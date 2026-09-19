@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-13
+updated: 2026-09-19
 design_status: landed
 ---
 
@@ -22,8 +22,13 @@ checked-in import package therefore carries `thread_sandbox: "danger-full-access
 kept by Compose and image policy, not by relaxing host seccomp or adding container-engine access
 inside the worker.
 
-A claim is created from a live Linear candidate read, absence of an uncleared persisted
-`blocking_decision`, and a second state/dependency/routing/blocking-decision check. The Panel
+A claim enters through the Orchestrator mailbox and is admitted against the current in-memory
+listening mode before any Linear candidate read. `not_listening` returns an empty claim immediately;
+`listening_refine_only` filters each sorted candidate through the same refinement-state policy used
+by centralized dispatch, so an earlier implementation candidate cannot hide a later refinement
+candidate; `listening_all` admits both profiles. An admitted claim is then created from a live Linear
+candidate read, absence of an uncleared persisted `blocking_decision`, and a second
+state/dependency/routing/listening/blocking-decision check. The Panel
 derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
 contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
 validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state
@@ -103,8 +108,12 @@ contains no issue identifier for a prospective assignment and the worker keeps n
 cooldown state. Worker re-claim cadence follows the Panel's `poll_after_seconds` response and the
 next claim is governed by Panel admission, including any persisted `blocking_decision`.
 
-Listening off only stops future dispatch. It does not alter an existing assignment or running Codex
-turn. Force-stop and cancel-current are explicit cancellation controls. Force-stop turns listening
+Listening off stops all future dispatch, including worker HTTP claims, before candidate reads, run
+creation, issue transition, or `task.accepted` persistence. Start-listening, stop-listening, and the
+full worker claim admission/creation transaction share the Orchestrator mailbox boundary. Therefore
+a successful stop response waits for any earlier claim to finish, and every claim admitted afterward
+sees `not_listening`. An ordinary stop does not alter an existing assignment or running Codex turn.
+Force-stop and cancel-current are explicit cancellation controls. Force-stop turns listening
 off, keeps the existing centralized rollback/force-stop behavior, and cancels the current worker
 assignment through the same assignment-scoped path used by cancel-current. Cancel-current targets
 only the current in-memory worker assignment and does not change listening mode; when `project_id`
@@ -144,6 +153,12 @@ therefore take effect at the next check. When a persisted blocker exists, empty 
 `reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
 context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
 routing, and run-history gates pass.
+
+Listening rejection evidence is `{reason: not_listening, capacity: 0, listening_mode:
+not_listening}`. A refine-only batch containing no refinement candidate uses `reason:
+listening_mode` with the current mode. Both paths log `event=worker_claim_skip` with worker/session,
+reason, mode, and capacity. These response and log fields use the same Orchestrator mode exposed by
+the control and state APIs; no listening value is persisted in the assignment manager or workflow.
 
 Panel restart deliberately loses the assignment and payload. Reconciliation uses Linear `In
 Progress` state plus latest persisted run/event time: no duplicate is dispatched before timeout,
