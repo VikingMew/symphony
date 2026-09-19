@@ -1,0 +1,35 @@
+name: docs-drift
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-drift-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  linkage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Advisory documentation change linkage
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          body_file=$(mktemp)
+          trap 'rm -f "$body_file"' EXIT
+          printf '%s' "$PR_BODY" > "$body_file"
+          scripts/docs_drift_pr_linkage.sh --base "$BASE_SHA" --head "$HEAD_SHA" --body "$body_file"

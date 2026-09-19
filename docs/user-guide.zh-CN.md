@@ -4,7 +4,8 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-19
+owner: SymphonyElixir.CLI
 ---
 
 # Symphony 用户运行指南

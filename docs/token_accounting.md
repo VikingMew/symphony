@@ -4,8 +4,8 @@ genre: reference
 domain: [codex, observability]
 status: current
 language: en
-owner: TokenUsage
-updated: 2026-08-07
+owner: SymphonyElixir.Codex.TokenUsage
+updated: 2026-09-19
 ---
 
 # Codex Token Accounting

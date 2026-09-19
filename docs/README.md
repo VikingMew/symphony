@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-08-07
+updated: 2026-09-19
 ---
 
 # Documentation Index
@@ -90,6 +90,13 @@ other documents link instead of restating.
   [documentation-system-design.md](documentation-system-design.md) §4), add frontmatter, and
   register here. `mise exec -- mix docs.check` enforces structure, genre/status legality, index
   registration, and owner anchors.
+- Drift signals: `mise exec -- mix docs.drift` checks current L4/L5 documents plus
+  `documentation-alignment.md` for still-existing module, path, and config identifier references
+  and reports owner Git-history freshness (`--freshness-days N`, `--format json`; see
+  [documentation-system-design.md](documentation-system-design.md) §9).
+  Exemptions live in `docs/drift-allowlist.yml` with a reviewed `reason`; freshness drift is
+  **warning-only / non-blocking** (`stale` never fails the command), while invalid references
+  and malformed allowlists cause a non-zero exit.
 - Feature designs: one concern per `*-design.md` (L3); land status in `design_status`.
 - Claim changes: update the owning document (see [documentation-alignment.md](documentation-alignment.md)),
   then fix stale links elsewhere — never copy the claim into a second document.

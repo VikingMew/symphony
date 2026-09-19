@@ -4,7 +4,7 @@ genre: spec
 domain: [spec, observability]
 status: current
 language: en
-owner: SymphonyElixir.Log
+owner: SymphonyElixir.LogFile
 updated: 2026-09-19
 ---
 

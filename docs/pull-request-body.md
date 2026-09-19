@@ -5,7 +5,7 @@ domain: [governance, github]
 status: current
 language: en
 owner: Mix.Tasks.PrBody.Check
-updated: 2026-08-29
+updated: 2026-09-19
 ---
 
 # Pull Request Body Contract
@@ -22,6 +22,12 @@ in the form `Fixes SYM-123`.
 For implementation handoff, Codex supplies the completed title and body to the restricted
 `create_pull_request` tool after commit, validation, and branch push. Symphony owns the tool backend,
 credential isolation, exact repository/base/head lookup, and gh-first/REST-fallback creation.
+
+An optional `#### Docs Drift Exemption` section is permitted between `Summary` and `Test Plan`.
+Its heading must be exactly that line, without leading or trailing spaces. The next non-empty line
+must be `Reason: <non-empty text>` with a non-whitespace reason. This section is optional and is
+intentionally absent from the required template below. The advisory check and exact exemption
+semantics belong to [the documentation-system design](documentation-system-design.md#pr-change-linkage-signal).
 
 <!-- pr-body-template:start -->
 #### Summary

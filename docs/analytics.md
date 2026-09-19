@@ -4,7 +4,8 @@ genre: guide
 domain: [operations, analytics]
 status: current
 language: en
-updated: 2026-09-06
+updated: 2026-09-19
+owner: SymphonyElixir.Analytics
 ---
 
 # Analytics Operations
