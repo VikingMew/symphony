@@ -1,0 +1,31 @@
+entries:
+  - document: docs/compose.md
+    token: SYMPHONY_EMBED_CODEX
+    reason: Build argument declared in the root Dockerfile, outside the runtime lib/config scan.
+  - document: docs/compose.md
+    token: SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION
+    reason: Compose interpolation variable declared in compose.yaml and mapped to the worker runtime source revision.
+  - document: docs/compose.md
+    token: SYMPHONY_IMAGE
+    reason: Image selection is declared in compose.yaml, outside the runtime lib/config scan.
+  - document: docs/documentation-alignment.md
+    token: SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION
+    reason: Compose interpolation variable declared in compose.yaml and mapped to the worker runtime source revision.
+  - document: docs/execution-worker-operations.md
+    token: SYMPHONY_IMAGE
+    reason: Image selection is declared in compose.yaml, outside the runtime lib/config scan.
+  - document: docs/execution-worker-operations.md
+    token: SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION
+    reason: Compose interpolation variable declared in compose.yaml and mapped to the worker runtime source revision.
+  - document: docs/execution-worker-operations.md
+    token: SYMPHONY_EXECUTION_WORKER_NO_PROXY
+    reason: Compose interpolation variable mapped to NO_PROXY in compose.yaml.
+  - document: docs/execution-worker-operations.md
+    token: SYMPHONY_EXECUTION_WORKER_RETENTION_SECONDS
+    reason: Compose interpolation variable mapped to SYMPHONY_WORKER_RETENTION_SECONDS in compose.yaml.
+  - document: docs/test_database_isolation.md
+    token: SymphonyElixir.TestSupport.FakePersistence
+    reason: Test-only module declared in test/support/fake_persistence.exs, intentionally outside lib/.
+  - document: docs/user-guide.zh-CN.md
+    token: SYMPHONY_DATABASE_PATH
+    reason: Migration guidance explicitly identifies this removed variable and directs operators to DATABASE_URL.

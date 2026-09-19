@@ -4,7 +4,8 @@ genre: guide
 domain: [deployment, operations]
 status: current
 language: en
-updated: 2026-08-27
+updated: 2026-09-19
+owner: compose.yaml
 ---
 
 # Deploying Symphony Behind a Reverse Proxy

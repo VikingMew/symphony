@@ -4,8 +4,8 @@ genre: spec
 domain: [spec, linear-integration]
 status: current
 language: en
-owner: SymphonyElixir.Linear
-updated: 2026-09-13
+owner: SymphonyElixir.Linear.Client
+updated: 2026-09-19
 ---
 
 # Issue Tracker Integration Specification

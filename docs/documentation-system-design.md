@@ -4,7 +4,7 @@ genre: design
 domain: [meta, documentation]
 status: current
 language: zh-CN
-updated: 2026-09-12
+updated: 2026-09-19
 design_status: landed
 ---
 
@@ -89,3 +89,49 @@ translation_of: <path>       # 可选
 - **227 文档物理归位**(✅ 已完成):全部文档进根 docs/、锚点去 elixir/ 前缀、SPEC 按域拆分、CODE_STRUCTURE 并入 design.md、语言规则落地、全量贴 frontmatter。
 
 顺序逻辑:225 纯设计不依赖路径 → 226 动代码(锚点一次改对)→ 227 物理归位(不二次移动)。精确性机制在 225 就位,迁移全程有 `docs.check` 护航。
+
+## 9. 漂移信号(docs-drift)
+
+`mix docs.drift` 从 `docs/README.md` 的 L4/L5 表格解析目标 Markdown 路径，
+并始终纳入 `docs/documentation-alignment.md`；L3 功能设计不在扫描范围内。
+索引是唯一 registry，不维护第二份文档清单。
+
+`mix docs.check` 负责 frontmatter、genre/层合法性、索引注册和 owner anchor 存在性；
+`mix docs.drift` 负责内容引用完整性与 Git 历史新鲜度。两者互补，互不替代。
+引用扫描只读取行内代码，跳过 fenced code block、命令、flags、URL、状态、通配符和普通值：
+
+- module：完整的 `SymphonyElixir.*` / `Mix.Tasks.*` 模块名必须精确匹配 `lib/` 内
+  的 `defmodule` 声明，包括嵌套模块。
+- path：`lib/`、`config/`、`docs/`、`.github/`、`test/`、`scripts/` 开头的具体路径，
+  或明确的根文件名（如 `README.md`、`mix.exs`、`compose.yaml`）。只移除末尾行号或
+  fragment 后检查存在性；无根目录的导入包文件名（如 `workflow.yml`）不推断为根路径。
+- config：完整 `SYMPHONY_*` 名称，以及代码中 `System.get_env` / `System.fetch_env`
+  明确读取的完整环境变量名；另检查完整 `SymphonyElixir.Config.*` 函数引用，支持
+  裸函数名、`/arity` 和无参调用写法。标识符必须精确存在于 `lib/` 或 `config/`，
+  函数也可通过完整模块内的公开声明解析，不接受更长名称的子串匹配。
+
+`docs/drift-allowlist.yml` 顶层只有 `entries` 列表，每项恰好包含 `document`、`token`、
+非空 `reason`。结构错误、重复 document/token 身份、已无当前候选的条目均报错。
+豁免必须有可复核理由；当前基线仅豁免 Compose/Dockerfile 声明、测试目录模块与明确说明
+已移除的历史变量，不能用豁免隐藏未知漂移。无效引用输出稳定的 `kind`、`document`、
+`line`、`token`、`reason` 字段。
+
+新鲜度只复用 frontmatter `owner`：完整模块解析到声明文件，仓库相对路径必须存在。
+没有单一 owner 的治理矩阵明确输出带原因的 `SKIP`，不猜测归属。
+使用 Git 最后触及文档及 owner 的提交时间（UTC committer timestamp），重命名计为一次修改，
+支持跟随文件重命名；首次提交即可提供历史，代码/文档同提交的时间差为零。
+只有 owner 晚于文档且差值严格大于阈值才是 `stale`；默认 30 天，
+CLI 参数 `--freshness-days N` 可覆盖（非负整数），不引入运行时配置。
+未提交的文件内容用于引用扫描，未提交的修改不改变 Git 时间；缺少 Git 历史或 owner 无效是显式错误。
+
+人类输出和 `--format json` 共用新鲜度字段 `document`、`owner`、`doc_last_modified`、
+`owner_last_touched`、`delta_days`、`status`、`reason`；不适用值为 JSON null。
+JSON 顶层固定为 `references`、`freshness`、`allowlist_errors`、`summary`，供 SYM-27 消费。
+引用状态为 `valid` / `exempt` / `error`，新鲜度状态为 `fresh` / `stale` / `SKIP` / `error`。
+`summary` 包含 `documents`、`references`、`exempt`、`stale`、`skipped`、`errors` 计数。
+`delta_days` 是 owner 时间减文档时间的秒数除以 86400，可为负值；不截断小数。
+
+漂移告警信号为 **warning-only / non-blocking**：新鲜度 `stale` 永远不使命令失败。
+PR-linkage warning 归 CI 所有且永不阻断合并；该 CI 接线由 SYM-29 unit 2 交付。
+本 unit 的 CLI 在无效引用、allowlist 错误、缺少 Git 历史、无效 owner 时非零退出，
+用于暴露确定性输入错误，不把新鲜度启发式升级为合并门禁。
