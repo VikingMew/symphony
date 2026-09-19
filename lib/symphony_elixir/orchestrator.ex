@@ -157,11 +157,18 @@ defmodule SymphonyElixir.Orchestrator do
 
   @type worker_terminal_outcome ::
           :success | :cancelled | {:blocked, term()} | {:failed, term()}
+  @type listening_mode :: :not_listening | :listening_all | :listening_refine_only
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
     GenServer.start_link(__MODULE__, opts, name: name)
+  end
+
+  @spec claim_worker(String.t(), String.t(), map(), GenServer.server(), GenServer.server()) ::
+          {:ok, map() | {:empty, pos_integer()}, map()} | {:error, term()} | {:error, term(), pos_integer()}
+  def claim_worker(worker_id, session_id, attrs, server \\ __MODULE__, assignment_manager \\ AssignmentManager) do
+    GenServer.call(server, {:worker_claim, worker_id, session_id, attrs, assignment_manager}, :infinity)
   end
 
   @spec worker_task_started(map(), GenServer.server()) :: :ok
@@ -1611,19 +1618,23 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp dispatch_policy_settings(%State{} = state) do
+  @spec dispatch_policy_settings(listening_mode(), pos_integer()) :: DispatchPolicy.dispatch_settings()
+  def dispatch_policy_settings(listening_mode, max_concurrent_agents) do
     config = Config.settings!()
 
     DispatchPolicy.build_settings(%{
       active_states: config.tracker.active_states,
       terminal_states: config.tracker.terminal_states,
       refinement_states: refinement_states(config),
-      listening_mode: listening_mode_atom(state),
-      max_concurrent_agents: state.max_concurrent_agents,
+      listening_mode: listening_mode,
+      max_concurrent_agents: max_concurrent_agents,
       workflow_executor_for_state: &Config.workflow_executor_for_state/1,
       human_review_state?: &Config.human_review_state?/1
     })
   end
+
+  defp dispatch_policy_settings(%State{} = state),
+    do: dispatch_policy_settings(listening_mode_atom(state), state.max_concurrent_agents)
 
   defp refinement_states(config) do
     routed_states =
@@ -2626,6 +2637,26 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     {:reply, reply, state}
+  end
+
+  def handle_call({:worker_claim, worker_id, session_id, attrs, assignment_manager}, _from, state) do
+    result =
+      case listening_mode_atom(state) do
+        :not_listening ->
+          AssignmentManager.reject_claim(worker_id, session_id, :not_listening)
+
+        listening_mode ->
+          AssignmentManager.claim_with_policy_evidence(
+            worker_id,
+            session_id,
+            attrs,
+            listening_mode,
+            state.max_concurrent_agents,
+            assignment_manager
+          )
+      end
+
+    {:reply, result, state}
   end
 
   def handle_call(:reset_environment_failure_circuit, _from, state) do

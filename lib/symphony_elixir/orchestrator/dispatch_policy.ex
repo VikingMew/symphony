@@ -247,6 +247,9 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
 
   def allowed_by_listening_mode?(_state_name, _dispatch_settings), do: false
 
+  @spec listening_mode(dispatch_settings()) :: :not_listening | :listening_refine_only | :listening_all
+  def listening_mode(dispatch_settings), do: dispatch_settings.listening_mode
+
   @spec normalized_state_set(term()) :: MapSet.t()
   def normalized_state_set(states) do
     states

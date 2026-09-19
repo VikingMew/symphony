@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.Log
-updated: 2026-09-13
+updated: 2026-09-19
 ---
 
 # Logging and Observability Specification
@@ -84,6 +84,9 @@ assignment lifecycle feeds the same orchestrator snapshot: a successful worker c
 returned; accepted progress updates session identity, last event/message, rate limits, and absolute
 token totals; terminal, cancellation, expiry, or stale-run reconciliation removes the active entry.
 Workers do not make `/api/v1/state` read persisted history for current state.
+The snapshot's `polling.listening_mode` is the Orchestrator's current in-memory mode and is the
+exact value used to gate worker claims. It is not copied from workflow configuration or persisted
+by the assignment manager.
 
 `retrying` is orchestrator-owned retry state. Worker `failed` terminal outcomes with remaining
 failure budget appear there with the same issue identifier, attempt, delay, and error metadata as
@@ -366,6 +369,13 @@ Minimum endpoints:
 - `POST /api/v1/control/listening`
   - Accepts `{"mode":"all"}`, `{"mode":"refine_only"}`, or `{"mode":"off"}` and applies the
     corresponding listening mode through the configured orchestrator.
+  - Start, stop, and worker claim admission are serialized by that Orchestrator. After an `off`
+    response succeeds, a later claim cannot create or return a new assignment; an assignment that
+    already existed remains active.
+  - A closed worker claim returns `task: null` with `admission.reason = not_listening`,
+    `admission.capacity = 0`, and `admission.listening_mode = not_listening`. A refine-only claim
+    whose candidates are all filtered returns `reason = listening_mode` and the current mode.
+    Both outcomes emit `event=worker_claim_skip` with worker/session, reason, capacity, and mode.
 - `POST /api/v1/control/environment-failure-circuit/reset`
   - Clears the open environment failure circuit described in
     [spec-reliability-security §14.5](spec-reliability-security.md).

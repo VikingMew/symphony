@@ -56,22 +56,44 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end
 
-  @spec claim(String.t(), String.t(), map(), GenServer.server()) ::
+  @spec claim_with_policy(String.t(), String.t(), map(), Orchestrator.listening_mode(), pos_integer(), GenServer.server()) ::
           {:ok, assignment() | {:empty, pos_integer()}} | {:error, term()} | {:error, term(), pos_integer()}
-  def claim(worker_id, session_id, attrs, server \\ __MODULE__) do
-    case claim_with_evidence(worker_id, session_id, attrs, server) do
+  def claim_with_policy(worker_id, session_id, attrs, listening_mode, max_concurrent_agents, server \\ __MODULE__) do
+    case claim_with_policy_evidence(worker_id, session_id, attrs, listening_mode, max_concurrent_agents, server) do
       {:ok, result, _evidence} -> {:ok, result}
       {:error, reason, seconds} -> {:error, reason, seconds}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  @spec claim_with_evidence(String.t(), String.t(), map(), GenServer.server()) ::
+  @spec claim_with_policy_evidence(
+          String.t(),
+          String.t(),
+          map(),
+          Orchestrator.listening_mode(),
+          pos_integer(),
+          GenServer.server()
+        ) ::
           {:ok, assignment() | {:empty, pos_integer()}, map()} | {:error, term()} | {:error, term(), pos_integer()}
-  def claim_with_evidence(worker_id, session_id, attrs, server \\ __MODULE__) do
+  def claim_with_policy_evidence(
+        worker_id,
+        session_id,
+        attrs,
+        listening_mode,
+        max_concurrent_agents,
+        server \\ __MODULE__
+      ) do
     if process_alive?(server),
-      do: GenServer.call(server, {:claim, worker_id, session_id, attrs}, :infinity),
-      else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled)}
+      do: GenServer.call(server, {:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, :infinity),
+      else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled, listening_mode)}
+  end
+
+  @spec reject_claim(String.t(), String.t(), :not_listening) ::
+          {:ok, {:empty, pos_integer()}, map()}
+  def reject_claim(worker_id, session_id, :not_listening) do
+    evidence = admission_evidence(:not_listening, :not_listening)
+    log_admission_skip(:not_listening, worker_id, session_id, evidence)
+    {:ok, {:empty, @initial_poll_seconds}, evidence}
   end
 
   @spec observe_session(map(), map(), GenServer.server()) :: :ok
@@ -216,7 +238,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:claim, worker_id, session_id, attrs}, _from, state) do
+  def handle_call({:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, _from, state) do
     state = expire_assignment(state)
     liveness = worker_session_liveness(state, worker_id, session_id)
     state = observe_request_liveness(state, worker_id, session_id, attrs)
@@ -226,29 +248,29 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            true <- available_slots(attrs) > 0,
            :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
-        case claim_from_workflows(state, worker, session) do
+        case claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents) do
           {:ok, nil, evidence} ->
             {:ok, nil, evidence}
 
           {:ok, assignment} ->
             Orchestrator.worker_task_started(assignment, state.orchestrator)
-            {:ok, assignment, admission_evidence(:assigned)}
+            {:ok, assignment, admission_evidence(:assigned, listening_mode)}
 
           error ->
             error
         end
       else
         {:block, circuit} ->
-          {:bypass, @max_poll_seconds, environment_failure_circuit_evidence(circuit)}
+          {:bypass, @max_poll_seconds, environment_failure_circuit_evidence(circuit, listening_mode)}
 
         %{} ->
-          {:bypass, @initial_poll_seconds, admission_evidence(:active_assignment)}
+          {:bypass, @initial_poll_seconds, admission_evidence(:active_assignment, listening_mode)}
 
         false ->
-          {:bypass, @initial_poll_seconds, admission_evidence(:no_available_slots)}
+          {:bypass, @initial_poll_seconds, admission_evidence(:no_available_slots, listening_mode)}
 
         {:error, reason} when reason in [:worker_session_not_found, :worker_session_stale] ->
-          {:bypass, @initial_poll_seconds, admission_evidence(reason)}
+          {:bypass, @initial_poll_seconds, admission_evidence(reason, listening_mode)}
 
         {:error, reason} ->
           {:error, reason}
@@ -312,11 +334,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp claim_from_workflows(state, worker, session) do
-    empty = {:ok, nil, admission_evidence(:no_eligible_candidate)}
+  defp claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents) do
+    empty = {:ok, nil, admission_evidence(:no_eligible_candidate, listening_mode)}
 
     Enum.reduce_while(state.workflows.list_enabled(), empty, fn workflow, {:ok, nil, evidence} ->
-      result = Config.with_workflow_context(workflow, fn -> claim_from_workflow(state, worker, session, workflow) end)
+      result =
+        Config.with_workflow_context(workflow, fn ->
+          dispatch_settings = Orchestrator.dispatch_policy_settings(listening_mode, max_concurrent_agents)
+          claim_from_workflow(state, worker, session, workflow, dispatch_settings)
+        end)
 
       case result do
         {:ok, nil, next_evidence} -> {:cont, {:ok, nil, merge_empty_evidence(evidence, next_evidence)}}
@@ -337,15 +363,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp tracker_backoff_error?({:linear_api_request, _reason}), do: true
   defp tracker_backoff_error?(_reason), do: false
 
-  defp claim_from_workflow(state, worker, session, workflow) do
+  defp claim_from_workflow(state, worker, session, workflow, dispatch_settings) do
     with {:ok, candidates} <- state.tracker.fetch_candidate_issues(),
-         {:ok, %Issue{} = candidate} <- select_candidate(candidates, state.persistence),
-         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker, state.persistence),
+         {:ok, %Issue{} = candidate} <- select_candidate(candidates, state.persistence, dispatch_settings),
+         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker, state.persistence, dispatch_settings),
          {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue) do
       {:ok, assignment}
     else
       {:skip, reason, evidence} ->
-        log_admission_skip(reason, worker, session, evidence)
+        log_admission_skip(reason, worker.id, session.id, evidence)
         {:ok, nil, evidence}
 
       {:error, reason} ->
@@ -353,25 +379,40 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp select_candidate(candidates, persistence) do
+  defp select_candidate(candidates, persistence, dispatch_settings) do
+    listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
+
     candidates
     |> DispatchPolicy.sort_issues_for_dispatch()
-    |> Enum.reduce_while({:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate)}, fn issue, skip ->
-      case candidate_admission(issue, persistence) do
-        :ok -> {:halt, {:ok, issue}}
-        {:skip, :blocking_decision, _evidence} = blocking -> {:cont, merge_candidate_skip(skip, blocking)}
-        {:skip, _reason, _evidence} -> {:cont, skip}
-        {:error, reason} -> {:halt, {:error, reason}}
+    |> Enum.reduce_while(
+      {:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate, listening_mode)},
+      fn issue, skip ->
+        case candidate_admission(issue, persistence, dispatch_settings) do
+          :ok -> {:halt, {:ok, issue}}
+          {:skip, :blocking_decision, _evidence} = blocking -> {:cont, merge_candidate_skip(skip, blocking)}
+          {:skip, :listening_mode, _evidence} = filtered -> {:cont, merge_candidate_skip(skip, filtered)}
+          {:skip, _reason, _evidence} -> {:cont, skip}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
       end
-    end)
+    )
   end
 
-  defp candidate_admission(%Issue{} = issue, persistence) do
-    with :ok <- live_issue_admission(issue),
-         :ok <- blocking_decision_admission(issue, persistence) do
+  defp candidate_admission(%Issue{} = issue, persistence, dispatch_settings) do
+    listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
+
+    with true <- DispatchPolicy.allowed_by_listening_mode?(issue.state, dispatch_settings),
+         :ok <- live_issue_admission(issue, listening_mode),
+         :ok <- blocking_decision_admission(issue, persistence, listening_mode) do
       if dispatchable_from_history?(issue, persistence),
         do: :ok,
-        else: {:skip, :run_history, admission_evidence(:run_history)}
+        else: {:skip, :run_history, admission_evidence(:run_history, listening_mode)}
+    else
+      false ->
+        {:skip, :listening_mode, admission_evidence(:listening_mode, listening_mode)}
+
+      other ->
+        other
     end
   end
 
@@ -387,37 +428,44 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp live_issue_admission(%Issue{} = issue) do
+  defp live_issue_admission(%Issue{} = issue, listening_mode) do
     normalized = SymphonyElixir.StateName.normalize(issue.state)
     active = Config.settings!().tracker.active_states |> DispatchPolicy.normalized_state_set()
 
     cond do
-      not MapSet.member?(active, normalized) -> {:skip, :stale, admission_evidence(:stale)}
-      issue.blocked_by != [] -> {:skip, :dependency, admission_evidence(:dependency)}
-      Config.human_review_state?(issue.state) -> {:skip, :human_review, admission_evidence(:human_review)}
+      not MapSet.member?(active, normalized) -> {:skip, :stale, admission_evidence(:stale, listening_mode)}
+      issue.blocked_by != [] -> {:skip, :dependency, admission_evidence(:dependency, listening_mode)}
+      Config.human_review_state?(issue.state) -> {:skip, :human_review, admission_evidence(:human_review, listening_mode)}
       true -> :ok
     end
   end
 
-  defp blocking_decision_admission(%Issue{} = issue, persistence) do
+  defp blocking_decision_admission(%Issue{} = issue, persistence, listening_mode) do
     case persistence.get_issue_by_identifier(issue.identifier) do
-      %{blocking_decision: %{} = decision} -> {:skip, :blocking_decision, blocking_decision_evidence(issue, decision)}
-      %{} -> :ok
-      nil -> :ok
-      {:error, reason} -> {:error, reason}
+      %{blocking_decision: %{} = decision} ->
+        {:skip, :blocking_decision, blocking_decision_evidence(issue, decision, listening_mode)}
+
+      %{} ->
+        :ok
+
+      nil ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
-  defp revalidate(%Issue{id: issue_id}, tracker, persistence) do
+  defp revalidate(%Issue{id: issue_id}, tracker, persistence, dispatch_settings) do
     case tracker.fetch_issue_states_by_ids([issue_id]) do
       {:ok, [%Issue{} = issue | _]} ->
-        with :ok <- live_issue_admission(issue),
-             :ok <- blocking_decision_admission(issue, persistence) do
-          {:ok, issue}
+        case candidate_admission(issue, persistence, dispatch_settings) do
+          :ok -> {:ok, issue}
+          other -> other
         end
 
       {:ok, []} ->
-        {:skip, :missing, admission_evidence(:missing)}
+        {:skip, :missing, admission_evidence(:missing, DispatchPolicy.listening_mode(dispatch_settings))}
 
       {:error, reason} ->
         {:error, reason}
@@ -724,13 +772,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     state.persistence.worker_heartbeat_interval_seconds() * 3
   end
 
-  defp admission_evidence(reason) do
-    %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason}
+  defp admission_evidence(reason, listening_mode) do
+    %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason, listening_mode: listening_mode}
   end
 
-  defp blocking_decision_evidence(issue, decision) do
+  defp blocking_decision_evidence(issue, decision, listening_mode) do
     :blocking_decision
-    |> admission_evidence()
+    |> admission_evidence(listening_mode)
     |> Map.merge(%{
       issue_id: issue.id,
       issue_identifier: issue.identifier,
@@ -739,23 +787,33 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp merge_candidate_skip(_current, {:skip, :blocking_decision, evidence}), do: {:skip, :blocking_decision, evidence}
+  defp merge_candidate_skip({:skip, :blocking_decision, _evidence} = current, _next), do: current
+  defp merge_candidate_skip(_current, {:skip, :listening_mode, evidence}), do: {:skip, :listening_mode, evidence}
 
-  defp merge_empty_evidence(%{reason: :no_eligible_candidate}, %{reason: :blocking_decision} = evidence), do: evidence
+  defp merge_empty_evidence(%{reason: :blocking_decision} = evidence, _next_evidence), do: evidence
+  defp merge_empty_evidence(_evidence, %{reason: :blocking_decision} = next_evidence), do: next_evidence
+  defp merge_empty_evidence(%{reason: :listening_mode} = evidence, _next_evidence), do: evidence
+  defp merge_empty_evidence(_evidence, %{reason: :listening_mode} = next_evidence), do: next_evidence
   defp merge_empty_evidence(evidence, _next_evidence), do: evidence
 
-  defp log_admission_skip(:blocking_decision, worker, session, evidence) do
+  defp log_admission_skip(:blocking_decision, worker_id, session_id, evidence) do
     blocking_reason = get_in(evidence, [:blocking_decision, "reason"])
 
     Logger.info(
-      "event=worker_claim_skip issue_id=#{evidence.issue_id} issue_identifier=#{evidence.issue_identifier} worker_id=#{worker.id} session_id=#{session.id} skip_reason=blocking_decision blocking_reason=#{inspect(blocking_reason)}"
+      "event=worker_claim_skip issue_id=#{evidence.issue_id} issue_identifier=#{evidence.issue_identifier} worker_id=#{worker_id} session_id=#{session_id} skip_reason=blocking_decision blocking_reason=#{inspect(blocking_reason)} listening_mode=#{evidence.listening_mode} capacity=#{evidence.capacity}"
     )
   end
 
-  defp log_admission_skip(_reason, _worker, _session, _evidence), do: :ok
+  defp log_admission_skip(reason, worker_id, session_id, evidence)
+       when reason in [:not_listening, :listening_mode] do
+    Logger.info("event=worker_claim_skip worker_id=#{worker_id} session_id=#{session_id} skip_reason=#{reason} listening_mode=#{evidence.listening_mode} capacity=#{evidence.capacity}")
+  end
 
-  defp environment_failure_circuit_evidence(circuit) do
+  defp log_admission_skip(_reason, _worker_id, _session_id, _evidence), do: :ok
+
+  defp environment_failure_circuit_evidence(circuit, listening_mode) do
     :environment_failure_circuit_open
-    |> admission_evidence()
+    |> admission_evidence(listening_mode)
     |> Map.put(:failure_fingerprint, circuit.triggering_fingerprint)
   end
 

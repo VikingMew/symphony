@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-14
+updated: 2026-09-19
 ---
 
 # Orchestration Specification
@@ -153,6 +153,9 @@ An issue is dispatch-eligible only if all are true:
 - It is not already in `running`.
 - It is not already in `claimed`.
 - Deployment concurrency slots are available.
+- The current Orchestrator listening mode admits the issue state: `not_listening` admits nothing,
+  `listening_refine_only` admits only configured refinement states, and `listening_all` admits both
+  refinement and implementation states.
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
 
@@ -167,6 +170,14 @@ Unknown mergeability, CI, behind, or API failure states MUST NOT block. A post-h
 finding MAY block through its own typed decision without replacing merge-conflict evidence. In particular, no
 orchestrator path transitions `Ready to Merge`
 to `Done`; GitHub review plus Linear automation owns that transition.
+
+Worker HTTP claim and listening controls share the Orchestrator mailbox. `not_listening` returns an
+empty claim before tracker access and all run, issue-transition, assignment, and accepted-event side
+effects. In refine-only mode the listening check is part of sorted candidate admission, so a filtered
+implementation candidate does not stop selection of a later refinement candidate. The second issue
+read repeats listening admission before assignment creation. A successful stop response is ordered
+after any earlier in-flight claim and before every later claim; it does not cancel an assignment
+that already exists.
 
 `Ready to Merge` has no ordinary issue route. The only allowed execution there is a durable
 post-handoff review job, keyed by project, issue, PR URL, and backend-resolved immutable head OID.

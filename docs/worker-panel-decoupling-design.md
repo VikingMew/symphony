@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-19
 design_status: landed
 ---
 
@@ -14,7 +14,9 @@ Linear 是“当前是否有工作”的唯一事实源。Panel 是唯一访问 
 register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/session 身份以及 run/event
 历史，但不保存待执行工作。
 
-`Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。它串行处理
+`Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
+Orchestrator mailbox；Orchestrator 以当下持有的 `listening_mode` 完成整次 claim 调用后才处理下一条
+start/stop 控制消息。`AssignmentManager` 不持久化或缓存另一份 mode。它串行处理已经通过该边界的
 claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。`AssignmentManager` 同时拥有
 Panel 内存中的 worker/session liveness：每个 entry 以 worker/session 为 key，保存最近一次
 `last_seen_at`、worker/session 身份以及 registration 广告的 `total_slots`。该 entry 只有在
@@ -23,9 +25,17 @@ Panel 内存中的 worker/session liveness：每个 entry 以 worker/session 为
 snapshot 判定，再记录本次已通过 identity/protocol 的 request 观测供后续请求使用，因此已经过期的
 entry 会拒绝当前 claim，但该请求可刷新下一次 claim 的 last-seen。freshness 判据不读取
 `worker_sessions.last_heartbeat_at`，也不把由该列派生的 persisted offline/stale 状态作为热路径
-准入依据。每次 fresh claim 还要求调用方当次 `available_slots > 0`，再实时读取 Linear candidates，
+准入依据。claim admission 顺序是：Orchestrator listening gate、内存 session freshness、调用方
+`available_slots > 0`、environment failure circuit、当前 assignment，然后才实时读取 Linear candidates，
 按 priority、created_at、identifier 排序，再按 issue id 读取 Linear 并重新验证状态、依赖、
-routing/profile 和未清除的持久 `blocking_decision`。Panel 创建新 run 和不可混淆 assignment id，并从 `AgentRunner.Policy` 的唯一
+routing/profile、listening mode 和未清除的持久 `blocking_decision`。三种 mode 的规则为：
+
+- `not_listening` 在 Linear candidate read、run 创建、issue 迁移和 `task.accepted` 写入前返回空 claim。
+- `listening_refine_only` 在排序后的逐候选 admission 中只接受 refinement state；过滤靠前的
+  implementation candidate 后继续检查同批次后续候选。
+- `listening_all` 保留 refinement 与 implementation 的现有 admission。
+
+Panel 创建新 run 和不可混淆 assignment id，并从 `AgentRunner.Policy` 的唯一
 profile-to-started-state 映射推导 worker 起始态：
 `refinement` 使用 `Refining`，`implementation` 使用 `In Progress`。非 started issue 必须先按当前
 workflow contract 验证并执行 `Todo -> Refining` 或 `Ready -> In Progress`；只有状态更新成功才返回当前
@@ -50,6 +60,12 @@ history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+
+`not_listening` 的空响应稳定包含 `reason = not_listening`、`capacity = 0` 和
+`listening_mode = not_listening`；refine-only 仅因 mode 过滤为空时使用 `reason = listening_mode`。
+两种结果都记录带 worker/session、reason、capacity、listening mode 的
+`event=worker_claim_skip`。普通 stop-listening 成功返回时，所有更早进入 mailbox 的 claim 已结束，
+后续 claim 均先看到关闭态；已有 assignment 保持不变，只有 force-stop/cancel-current 负责取消。
 
 Orchestrator 的普通 poll 与 active retry 共用 worker-mode deployment capacity 刷新。若
 `AssignmentManager.available_worker_slots/0` 的同步调用明确以默认 5000 ms timeout exit 结束，该次

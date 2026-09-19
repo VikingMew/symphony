@@ -31,6 +31,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     def fetch_count, do: Agent.get(__MODULE__, & &1.fetch_count)
 
     def fetch_candidate_issues do
+      if hook = Application.get_env(:symphony_elixir, :assignment_test_fetch_hook) do
+        hook.()
+      end
+
       Agent.get_and_update(__MODULE__, fn
         %{fetch_error: nil, candidates: candidates} = state ->
           {{:ok, candidates}, %{state | fetch_count: state.fetch_count + 1}}
@@ -195,6 +199,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_owner)
       Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
+      Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
     end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
@@ -226,13 +231,156 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert AssignmentManager.current_assignment(context.manager) == nil
   end
 
+  test "not-listening worker claim returns evidence before tracker or persistence side effects", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, context.now)
+    Tracker.put([issue(1)])
+    fetch_count = Tracker.fetch_count()
+
+    log =
+      capture_log(fn ->
+        assert {:ok, {:empty, 5}, evidence} =
+                 Orchestrator.claim_worker(
+                   context.worker.id,
+                   context.session.id,
+                   %{"available_slots" => 1},
+                   orchestrator,
+                   manager
+                 )
+
+        assert evidence == %{capacity: 0, reason: :not_listening, listening_mode: :not_listening}
+      end)
+
+    assert log =~ "event=worker_claim_skip"
+    assert log =~ "worker_id=#{context.worker.id}"
+    assert log =~ "session_id=#{context.session.id}"
+    assert log =~ "skip_reason=not_listening"
+    assert log =~ "listening_mode=not_listening"
+    assert log =~ "capacity=0"
+    assert Tracker.fetch_count() == fetch_count
+    assert FakePersistence.list_runs_for_issue("SYM-1") == []
+    assert FakePersistence.list_events(event_type: "task.accepted") == []
+    assert Tracker.updates() == []
+  end
+
+  test "refine-only claim skips an earlier implementation candidate and assigns refinement", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, context.now)
+    ready = issue(1)
+    todo = %{issue(2) | state: "Todo"}
+    Tracker.put([ready, todo])
+    set_listening_mode(orchestrator, :listening_refine_only)
+
+    assert {:ok, assignment, %{capacity: 1, reason: :assigned, listening_mode: :listening_refine_only}} =
+             Orchestrator.claim_worker(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               orchestrator,
+               manager
+             )
+
+    assert assignment.issue_identifier == todo.identifier
+    assert Tracker.updates() == [{todo.id, "Refining"}]
+    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+  end
+
+  test "refine-only claim returns filtering evidence when only implementation is eligible", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, context.now)
+    ready = issue(1)
+    Tracker.put([ready])
+    set_listening_mode(orchestrator, :listening_refine_only)
+
+    log =
+      capture_log(fn ->
+        assert {:ok, {:empty, 5}, evidence} =
+                 Orchestrator.claim_worker(
+                   context.worker.id,
+                   context.session.id,
+                   %{"available_slots" => 1},
+                   orchestrator,
+                   manager
+                 )
+
+        assert evidence == %{capacity: 0, reason: :listening_mode, listening_mode: :listening_refine_only}
+      end)
+
+    assert log =~ "skip_reason=listening_mode"
+    assert log =~ "listening_mode=listening_refine_only"
+    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert Tracker.updates() == []
+  end
+
+  test "stop-listening waits for an in-flight claim and gates every later claim", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, context.now)
+    ready = issue(1)
+    Tracker.put([ready])
+    set_listening_mode(orchestrator, :listening_all)
+    owner = self()
+
+    Application.put_env(:symphony_elixir, :assignment_test_fetch_hook, fn ->
+      send(owner, {:claim_fetch_started, self()})
+
+      receive do
+        :release_claim_fetch -> :ok
+      end
+    end)
+
+    claim_task =
+      Task.async(fn ->
+        Orchestrator.claim_worker(
+          context.worker.id,
+          context.session.id,
+          %{"available_slots" => 1},
+          orchestrator,
+          manager
+        )
+      end)
+
+    assert_receive {:claim_fetch_started, claim_process}
+    stop_task = Task.async(fn -> Orchestrator.stop_listening(orchestrator) end)
+    assert Task.yield(stop_task, 20) == nil
+    send(claim_process, :release_claim_fetch)
+
+    assert {:ok, assignment, %{reason: :assigned, listening_mode: :listening_all}} = Task.await(claim_task)
+    assert %{listening?: false, listening_mode: "not_listening"} = Task.await(stop_task)
+    assert AssignmentManager.current_assignment(manager).id == assignment.id
+
+    Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
+    complete_with_manager(context, assignment, manager)
+    Tracker.put([issue(2)])
+    fetch_count = Tracker.fetch_count()
+
+    assert {:ok, {:empty, 5}, %{reason: :not_listening, listening_mode: :not_listening}} =
+             Orchestrator.claim_worker(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               orchestrator,
+               manager
+             )
+
+    assert Tracker.fetch_count() == fetch_count
+    assert FakePersistence.list_runs_for_issue("SYM-2") == []
+  end
+
   test "accepted worker assignment feeds current state until terminal completion", context do
     orchestrator = start_orchestrator()
     manager = start_manager(context, orchestrator, DateTime.add(DateTime.utc_now(), -5, :second))
     ready = issue(99)
     Tracker.put([ready])
 
-    assert {:ok, assignment} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, manager)
+    assert {:ok, assignment} =
+             AssignmentManager.claim_with_policy(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               manager
+             )
 
     eventually(fn ->
       payload = Presenter.state_payload(orchestrator, 100)
@@ -293,7 +441,15 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     ready = issue(100)
     Tracker.put([ready])
 
-    assert {:ok, assignment} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, manager)
+    assert {:ok, assignment} =
+             AssignmentManager.claim_with_policy(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               manager
+             )
 
     send_codex_token_progress(context, manager, assignment, 5, 7, 12)
     send_codex_token_progress(context, manager, assignment, 9, 11, 20)
@@ -335,16 +491,19 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     log =
       capture_log(fn ->
         assert {:ok, {:empty, 5}, evidence} =
-                 AssignmentManager.claim_with_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 1},
+                   :listening_all,
+                   1,
                    context.manager
                  )
 
         assert evidence == %{
                  capacity: 0,
                  reason: :blocking_decision,
+                 listening_mode: :listening_all,
                  issue_id: ready.id,
                  issue_identifier: ready.identifier,
                  blocking_decision: %{
@@ -372,10 +531,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end)
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision, issue_identifier: "SYM-102"}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -389,20 +550,24 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Tracker.put([ready])
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                context.manager
              )
 
     assert :ok = BlockingDecision.clear(ready.identifier)
 
     assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -762,13 +927,36 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   test "rejects unavailable sessions, zero slots, and mismatched correlation", context do
     Tracker.put([issue(1)])
-    assert {:ok, {:empty, 5}} = AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
+
+    assert {:ok, {:empty, 5}} =
+             AssignmentManager.claim_with_policy(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 0},
+               :listening_all,
+               1,
+               context.manager
+             )
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :no_available_slots}} =
-             AssignmentManager.claim_with_evidence(context.worker.id, context.session.id, %{"available_slots" => 0}, context.manager)
+             AssignmentManager.claim_with_policy_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 0},
+               :listening_all,
+               1,
+               context.manager
+             )
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
-             AssignmentManager.claim_with_evidence("wrong", "wrong", %{"available_slots" => 1}, context.manager)
+             AssignmentManager.claim_with_policy_evidence(
+               "wrong",
+               "wrong",
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               context.manager
+             )
 
     assert {:ok, %{lease_renewals: []}} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
     assert {:ok, assignment} = claim(context)
@@ -809,10 +997,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end)
 
     assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 4},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -829,10 +1019,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert AssignmentManager.available_worker_slots(context.manager) == 0
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_stale}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 4},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -840,10 +1032,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     refute old_freshness_predicate_called?()
 
     assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 4},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -877,10 +1071,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert {:ok, first} = claim(context)
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :active_assignment}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                other.worker.id,
                other.session.id,
                %{"available_slots" => 8},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -888,10 +1084,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Tracker.put([issue(2)])
 
     assert {:ok, second, %{capacity: 1, reason: :assigned}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                other.worker.id,
                other.session.id,
                %{"available_slots" => 8},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -926,7 +1124,15 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Process.exit(context.manager, :normal)
     Process.sleep(10)
 
-    assert {:ok, {:empty, 5}} = AssignmentManager.claim(context.worker.id, context.session.id, %{}, context.manager)
+    assert {:ok, {:empty, 5}} =
+             AssignmentManager.claim_with_policy(
+               context.worker.id,
+               context.session.id,
+               %{},
+               :listening_all,
+               1,
+               context.manager
+             )
 
     assert {:ok, %{lease_renewals: [], commands: []}} =
              AssignmentManager.heartbeat(context.worker.id, context.session.id, %{}, context.manager)
@@ -1007,10 +1213,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert AssignmentManager.available_worker_slots(restarted) == 0
 
     assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                restarted
              )
 
@@ -1018,10 +1226,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert AssignmentManager.available_worker_slots(restarted) == 1
 
     assert {:ok, next} =
-             AssignmentManager.claim(
+             AssignmentManager.claim_with_policy(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                restarted
              )
 
@@ -1155,10 +1365,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
 
     assert {:ok, assignment} =
-             AssignmentManager.claim(
+             AssignmentManager.claim_with_policy(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                manager
              )
 
@@ -1208,10 +1420,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     fetch_count = Tracker.fetch_count()
 
     assert {:ok, {:empty, 60}, %{reason: :environment_failure_circuit_open, failure_fingerprint: ^fingerprint}} =
-             AssignmentManager.claim_with_evidence(
+             AssignmentManager.claim_with_policy_evidence(
                context.worker.id,
                context.session.id,
                %{"available_slots" => 1},
+               :listening_all,
+               1,
                context.manager
              )
 
@@ -1236,7 +1450,14 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   defp claim(context) do
-    AssignmentManager.claim(context.worker.id, context.session.id, %{"available_slots" => 1}, context.manager)
+    AssignmentManager.claim_with_policy(
+      context.worker.id,
+      context.session.id,
+      %{"available_slots" => 1},
+      :listening_all,
+      1,
+      context.manager
+    )
   end
 
   defp expire_worker_liveness(context) do
@@ -1260,6 +1481,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     name = Module.concat(__MODULE__, "Orchestrator#{System.unique_integer([:positive])}")
     start_supervised!({Orchestrator, name: name})
     name
+  end
+
+  defp set_listening_mode(orchestrator, listening_mode) do
+    :sys.replace_state(orchestrator, &%{&1 | listening_mode: listening_mode})
   end
 
   defp start_manager(context, orchestrator, now) do
@@ -1324,6 +1549,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   defp complete(context, assignment) do
+    complete_with_manager(context, assignment, context.manager)
+  end
+
+  defp complete_with_manager(context, assignment, manager) do
     assert {:ok, _event} =
              AssignmentManager.record_event(
                context.worker.id,
@@ -1331,7 +1560,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                assignment.id,
                "task.completed",
                %{"correlation" => assignment.correlation, "summary" => summary("succeeded")},
-               context.manager
+               manager
              )
   end
 
