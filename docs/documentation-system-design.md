@@ -132,6 +132,44 @@ JSON 顶层固定为 `references`、`freshness`、`allowlist_errors`、`summary`
 `delta_days` 是 owner 时间减文档时间的秒数除以 86400，可为负值；不截断小数。
 
 漂移告警信号为 **warning-only / non-blocking**：新鲜度 `stale` 永远不使命令失败。
-PR-linkage warning 归 CI 所有且永不阻断合并；该 CI 接线由 SYM-29 unit 2 交付。
-本 unit 的 CLI 在无效引用、allowlist 错误、缺少 Git 历史、无效 owner 时非零退出，
+`mix docs.drift` CLI 在无效引用、allowlist 错误、缺少 Git 历史、无效 owner 时非零退出，
 用于暴露确定性输入错误，不把新鲜度启发式升级为合并门禁。
+
+### PR change-linkage signal
+
+独立的 `.github/workflows/docs-drift.yml` 在 PR opened、reopened、synchronize、edited、
+ready_for_review 时运行 advisory linkage check。它以完整 Git 历史检查 PR base/head 的
+三点 diff（`--diff-filter=ACDMRTUXB`），不调用 GitHub API；PR body 经环境变量写入临时文件。
+本地接口为：
+
+```bash
+scripts/docs_drift_pr_linkage.sh --base <sha> --head <sha> [--body <path>]
+```
+
+- implementation paths：`lib/**`、`config/**`。
+- documentation paths：`docs/**`、根目录 `README.md`、根目录 `AGENTS.md`。
+- 其他路径均为 neutral（包括 `.github/**`、`scripts/**`、`test/**`、`mix.exs`），既不触发也不满足文档联动。
+
+有 implementation 变更而无 documentation 变更时，脚本只输出 **一条** `::warning`，
+在同一 annotation 中按路径排序完整列出所有触发文件，不截断、不拆分；退出码为 0。
+同时修改实现和文档、仅文档、仅 neutral 或空 diff 时输出简短 notice，无 warning，退出码为 0。
+
+PR body 可用以下精确语法豁免（该节在 PR body 中的位置由
+[PR body contract](pull-request-body.md) 定义）：
+
+```markdown
+#### Docs Drift Exemption
+
+Reason: Internal refactor with no documented behavior change.
+```
+
+heading 整行必须恰为 `#### Docs Drift Exemption`，无前后空格，恰好四个 `#`；
+下一非空行必须以 `Reason: ` 开头并含非空白理由。空白行可跳过，但不跳过其他内容。
+有效豁免输出携带理由的 `::notice`，无 warning，退出码为 0。
+缺少或格式错误的豁免（包括错误 heading 层级、heading 尾随空格、缺少 Reason、空白理由、
+backtick/tilde fenced code block 中的示例）不能抑制 warning。annotation 内容转义 `%` 和换行。
+
+信号始终 **warning-only / non-blocking**；workflow 步骤设置 `continue-on-error: true`，
+不作为合并门禁。缺少必填 flag、无法解析本地 commit、无 merge base 或无法读取/解析所需 body
+是输入错误：stderr 给出明确说明，stdout 输出一条 `::error::`，退出码为 2；不静默成功。
+此信号只检查路径联动，不判断文档内容是否充分，也不改变 `mix docs.drift` 的引用/新鲜度语义。
