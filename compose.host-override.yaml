@@ -1,0 +1,8 @@
+services:
+  execution-worker:
+    volumes:
+      - type: bind
+        source: ${SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE:?set SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE to the host Codex auth.json file}
+        target: /home/symphony/.codex/auth.json
+        bind:
+          create_host_path: false

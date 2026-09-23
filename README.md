@@ -103,8 +103,11 @@ The supported Compose stack exposes it only through the opt-in `execution-worker
 [the worker operations guide](docs/execution-worker-operations.md). Run it with
 `SYMPHONY_PANEL_URL` and `SYMPHONY_WORKER_TOKEN`. The fixed non-root user owns
 `/worker/workspaces`, `/worker/cache`, and `/worker/logs`; mount those roots and Codex credentials
-explicitly. Pass `GH_TOKEN` or `GITHUB_TOKEN` with the least repository clone/push permissions the
-workflow needs. The image rewrites GitHub SCP-style URLs to HTTPS and uses `gh` as the system
+explicitly. The checked-in `compose.host-override.yaml` keeps the Codex directory volume while
+binding the host's live account-level `auth.json` into the worker. The worker receives the same
+permissions as that host login; concurrent refresh can make one call fail before the next call
+reloads the shared file. Pass `GH_TOKEN` or `GITHUB_TOKEN` with the least repository clone/push
+permissions the workflow needs. The image rewrites GitHub SCP-style URLs to HTTPS and uses `gh` as the system
 credential helper, so it needs no external Git config or GitHub SSH host-key injection. The claimed
 opaque `execution` payload supplies repository/ref, ordered hooks, Codex,
 required gates, and handoff commands. Its Codex section carries app-server settings and the
@@ -273,15 +276,17 @@ equal to that full commit SHA:
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
-docker compose -f compose.yaml -f compose.published.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml up -d
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d
 ```
 
 After deployment, the operator must confirm that Panel and execution-worker are running the two
 selected immutable references, that Panel readiness is healthy, and that the execution-worker is
 healthy. CI never publishes or updates a Symphony `latest` tag.
 
-The published file pair is mandatory for every pull, migration, and start command. Its required
+The three-file form is mandatory for every published pull, migration, start, and rollback command.
+`compose.host-override.yaml` is not loaded automatically; omitting it leaves the worker using the
+older named-volume copy of `auth.json`. Its required
 immutable `SYMPHONY_IMAGE` is shared by `migrate` and `symphony`. Before Repo, orchestration,
 worker reconciliation, or HTTP starts, the Panel release performs a read-only exact comparison
 with `schema_migrations`; mismatches terminate startup. Successful readiness includes

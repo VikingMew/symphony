@@ -4,6 +4,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   alias SymphonyElixir.Codex.ModelCatalog
 
   @compose Path.expand("../../compose.yaml", __DIR__)
+  @host_override Path.expand("../../compose.host-override.yaml", __DIR__)
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
@@ -224,16 +225,20 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ "Smoke published worker on both platforms"
   end
 
-  test "published Compose validation quotes the execution worker service key" do
+  test "published Compose validation includes both Codex worker mounts" do
     workflow = File.read!(@publish_workflow)
 
     assert workflow =~
-             "docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker config --format json"
+             "docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --profile execution-worker config --format json"
 
     assert workflow =~ ~r/\.services\["execution-worker"\]\.image == env\.SYMPHONY_EXECUTION_WORKER_IMAGE/
     assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
     assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
     assert workflow =~ ~r/\.services\["execution-worker"\]\.profiles == \["execution-worker"\]/
+    assert workflow =~ ~s(.type == "volume" and .target == "/home/symphony/.codex")
+    assert workflow =~ ~s(.source == env.SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE)
+    assert workflow =~ ~s(.target == "/home/symphony/.codex/auth.json")
+    assert workflow =~ ~s(.bind.create_host_path == false)
   end
 
   test "published Compose removes the worker build and requires its image" do
@@ -263,15 +268,25 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert local_compose =~ "build:"
   end
 
-  test "published deployment commands always use the overlay file pair" do
+  test "published deployment and rollback commands always use all three files" do
     readme = File.read!(Path.expand("../../README.md", __DIR__))
     compose_guide = File.read!(Path.expand("../../docs/compose.md", __DIR__))
+    worker_guide = File.read!(Path.expand("../../docs/execution-worker-operations.md", __DIR__))
 
     readme_commands = command_lines_between(readme, "For a published deployment", "The final image")
     guide_commands = command_lines_between(compose_guide, "## Published Multi-architecture Image", "## Daily Operations")
 
-    for command <- readme_commands ++ guide_commands do
-      assert command =~ "-f compose.yaml -f compose.published.yaml", command
+    rollback_commands =
+      command_lines_between(compose_guide, "For a published-image deployment", "To roll application code back")
+
+    worker_commands =
+      command_lines_between(worker_guide, "For a published deployment", "Start the Panel") ++
+        command_lines_between(worker_guide, "For a published rollback", "Verify the worker")
+
+    for command <- readme_commands ++ guide_commands ++ rollback_commands ++ worker_commands do
+      assert command =~
+               "-f compose.yaml -f compose.published.yaml -f compose.host-override.yaml",
+             command
     end
   end
 
@@ -291,15 +306,35 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert panel =~ "gh_config:/home/symphony/.config/gh"
   end
 
-  test "execution worker keeps its Codex runtime and credential volume" do
+  test "execution worker keeps its Codex directory volume and binds the host auth file" do
     dockerfile = File.read!(@dockerfile)
     compose = File.read!(@compose)
+    override = File.read!(@host_override)
     worker_image = stage_body(dockerfile, "execution-worker")
     worker_service = service_body(compose, "execution-worker")
+    override_model = YamlElixir.read_from_file!(@host_override)
 
     assert worker_image =~ "CODEX_HOME=/home/symphony/.codex"
     assert worker_image =~ "COPY --from=codex /usr/local/lib/node_modules"
     assert worker_service =~ "execution_worker_codex:/home/symphony/.codex"
+
+    assert override_model == %{
+             "services" => %{
+               "execution-worker" => %{
+                 "volumes" => [
+                   %{
+                     "type" => "bind",
+                     "source" => "${SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE:?set SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE to the host Codex auth.json file}",
+                     "target" => "/home/symphony/.codex/auth.json",
+                     "bind" => %{"create_host_path" => false}
+                   }
+                 ]
+               }
+             }
+           }
+
+    refute override =~ ~r/^\s*source:\s*\/(?:home|Users|var|tmp)\//m
+    refute override =~ ~r/(?:access_token|refresh_token|sk-[A-Za-z0-9]|eyJ[A-Za-z0-9_-]+)/i
   end
 
   defp service_body(compose, service) do
