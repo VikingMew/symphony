@@ -276,15 +276,27 @@ profiles:
     prompt:
       mode: extend
       template: |
-        Implement, test, verify, commit, and push the exact Linear branch. Submit the final
-        call create_pull_request with a docs/pull-request-body.md-conformant title/body, then submit
-        comment/result/references with its URL and explicitly request Ready to Merge.
+        Implement, test, verify, and commit the exact Linear branch. If the issue description's
+        first non-empty line is exactly `交付路径:宿主 push`, write a complete binary-safe root
+        `<issue-identifier>.patch`, do not push or call create_pull_request, and report
+        `需宿主 push`. Otherwise push the exact branch, call create_pull_request with a
+        docs/pull-request-body.md-conformant title/body, and submit the handoff evidence.
     allowed_updates:
       description: false
       comment: true
       result: true
       target_states: ["In Progress", "Ready to Merge"]
 ```
+
+operator 判断 implementation 交付路径时，以 issue description 的首个非空行是否精确等于
+`交付路径:宿主 push` 为准，必须使用 ASCII 冒号。普通路径由 worker push 精确 Linear branch、调用
+`create_pull_request` 并提交 handoff evidence，门禁通过后进入 `Ready to Merge`。host-push 路径还要求
+workspace 根存在完整、binary-safe 的 `<issue-identifier>.patch`；worker 完成本地 commit 与允许的
+validation 后不 push、不创建 PR，也不会成功 handoff 或进入 `Ready to Merge`。executor 会记录包含
+根相对 patch 路径与 `需宿主 push` 的 blocked / `handoff_failed` 证据；宿主据此接续 push 分支并创建
+PR。精确判据和证据格式以
+[Codex/Linear implementation workflow design](codex-linear-implementation-workflow-design.md) 与
+[execution runtime design](execution-runtime-design.md) 为准。
 
 `workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。默认
 `source_strategy: clone` 会在这个目录下为每个 Linear issue 创建子目录，然后把

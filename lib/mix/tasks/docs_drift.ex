@@ -52,7 +52,7 @@ defmodule Mix.Tasks.Docs.Drift do
       |> String.split("\n")
       |> Enum.reduce({false, []}, fn line, {active, paths} ->
         cond do
-          Regex.match?(~r/^##\s+L[45]\b/, line) -> {true, paths}
+          Regex.match?(~r/^##\s+L[145]\b/, line) -> {true, paths}
           Regex.match?(~r/^\#{1,2}\s/, line) -> {false, paths}
           active and String.starts_with?(String.trim_leading(line), "|") -> {active, paths ++ registry_paths(line)}
           true -> {active, paths}

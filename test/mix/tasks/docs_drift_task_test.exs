@@ -51,6 +51,35 @@ defmodule Mix.Tasks.Docs.DriftTest do
     assert report["summary"] == %{"documents" => 3, "references" => 0, "exempt" => 0, "stale" => 0, "skipped" => 1, "errors" => 0}
   end
 
+  test "registry tables also select L1 architecture and direction documents" do
+    index = File.read!("docs/README.md")
+
+    write(
+      "docs/README.md",
+      String.replace(
+        index,
+        "## L3 — Feature Designs",
+        """
+        ## L1 — System Architecture
+        | Document | Purpose |
+        | --- | --- |
+        | [architecture.md](architecture.md) | architecture |
+        | [direction.md](direction.md) | direction |
+        ## L3 — Feature Designs
+        """
+      )
+    )
+
+    write("docs/architecture.md", doc("SymphonyElixir.Sample"))
+    write("docs/direction.md", doc("compose.yaml"))
+    commit("2026-01-02T00:00:00Z")
+
+    assert report()["freshness"]
+           |> Enum.map(& &1["document"])
+           |> Enum.filter(&(&1 in ~w(docs/architecture.md docs/direction.md))) ==
+             ~w(docs/architecture.md docs/direction.md)
+  end
+
   test "exact modules, nested declarations, explicit paths and runtime identifiers are valid candidates" do
     write("lib/config.ex", """
     defmodule SymphonyElixir.Config do
