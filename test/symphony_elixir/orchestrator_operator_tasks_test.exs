@@ -325,20 +325,29 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   end
 
   test "operator runner failures clear running state and mark the task failed" do
-    {:ok, pid} = start_operator_orchestrator(:FailedNap)
+    pid = Process.whereis(Orchestrator)
 
     reply = GenServer.call(pid, {:request_operator_task, :nap})
     run_id = reply.run_id
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
 
-    send(runner_pid, {:finish_operator_runner, {:error, {:codex_startup_failed, %{reason: :boom}}}})
+    startup_failure =
+      {:codex_startup_failed, %{reason: :response_timeout, stage: :thread_start, timeout_ms: 30_000}}
+
+    send(runner_pid, {:finish_operator_runner, {:error, startup_failure}})
 
     snapshot =
       wait_for_snapshot(pid, fn snapshot ->
         snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "failed"
       end)
 
-    assert snapshot.operator_tasks.nap.failure_reason =~ "codex_startup_failed"
+    failure_reason = snapshot.operator_tasks.nap.failure_reason
+    assert failure_reason =~ "codex_startup_failed"
+    assert failure_reason =~ "stage: :thread_start"
+    assert failure_reason =~ "timeout_ms: 30000"
+
+    assert %{payload: %{failure_reason: ^failure_reason}} =
+             Enum.find(FakePersistence.list_events(), &(&1.event_type == "run.failed" and &1.run_id == run_id))
   end
 
   test "stale synthetic operator entries do not keep the runtime busy forever" do
