@@ -53,13 +53,9 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
       codex_pre_start_commands: ["source ~/.nvs/nvs.sh", "nvs use 22 >/dev/null"]
     )
 
-    assert Config.settings!().codex.command ==
-             "codex --config 'model=\"gpt-5.5\"' app-server"
-
-    assert Config.settings!().codex.pre_start_commands == [
-             "source ~/.nvs/nvs.sh",
-             "nvs use 22 >/dev/null"
-           ]
+    assert_raise ArgumentError,
+                 ~r/codex.command must not set model; use the Settings \/ Runtime Codex model selector/,
+                 &Config.settings!/0
 
     explicit_root =
       Path.join(

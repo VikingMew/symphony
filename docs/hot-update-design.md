@@ -4,7 +4,7 @@ genre: design
 domain: [hot-update, runtime]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-23
 design_status: landed
 ---
 
@@ -53,7 +53,8 @@ Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` �
 - executor type。
 - workspace root。
 - hook commands。
-- Codex command、`codex.model`、`codex.reasoning_effort` 和部分 Codex runtime policy。
+- Codex app-server launch command、`codex.model`、`codex.reasoning_effort` 和部分 Codex runtime policy；
+  model/effort 只由结构化 selector 拥有，launch command 不能通过 CLI option 覆盖它们。
 - polling interval 等 workflow contract 字段。
 
 `workflow.states`、transitions、human review states 与 tool policy 是 code-owned，不属于热更新持久化状态。
@@ -90,9 +91,11 @@ http://127.0.0.1:4000/settings
 
 - 新保存的 workflow 影响后续读取配置、后续 dispatch、retry、resumed turn 和 operator task。
 - 已执行中的 turn 可使用已接收的输入完成；下一安全执行边界重新解析当前 workflow。
-- `codex.model` 与 `codex.reasoning_effort` 是 Codex `turn/start` override。未配置时不发送
-  override，继续由 `codex.command` 启动的 app-server 默认配置决定；显式配置时只影响后续
-  turn/session，不改写已经启动的 turn。
+- `codex.model` 与 `codex.reasoning_effort` 是 model/effort 唯一的 workflow authority，并作为 Codex
+  `turn/start` override 发送。model 未配置时使用 Codex 默认 model；effort 未配置时使用所选 model
+  或 Codex 的默认 effort。`codex.command` 只启动 app-server，schema 禁止它通过 `-c` / `--config`
+  的 `model` / `model_reasoning_effort` 或 `-m` / `--model` 建立第二份 authority。显式 selector 只影响
+  后续 turn/session，不改写已经启动的 turn。
 - Runtime selector 与 workflow validation 读取同一个 `ModelCatalog`，因此页面可选的
   model/effort 组合与 bundled CLI pin 对应的 code-owned 快照保持一致。
 - worker claim 每次从最新 workflow 构造 ephemeral payload；不存在尚未 claim 的 persisted task，

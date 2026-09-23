@@ -7,6 +7,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.WorkflowStore
+  alias SymphonyElixirWeb.Admin.SettingsCheck
+  alias SymphonyElixirWeb.AdminLive.Settings.Runtime
 
   @endpoint SymphonyElixirWeb.Endpoint
   @worker_token "fake-worker-token"
@@ -477,7 +479,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ ~s(name="workflow[codex_model]")
     assert html =~ "GPT-6-Astra (default medium)"
     assert html =~ "GPT-5.5"
-    assert html =~ "Use command default"
+    assert html =~ "Use Codex default"
+    assert html =~ "Use selected model or Codex default"
     assert html =~ ~s(id="workflow-codex-reasoning-effort")
     assert html =~ ~s(name="workflow[codex_reasoning_effort]")
     assert html =~ "ultra - Maximum reasoning with automatic task delegation"
@@ -506,6 +509,32 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
     assert reloaded_html =~ ~s(id="workflow-codex-model")
     assert reloaded_html =~ ~s(id="workflow-codex-reasoning-effort")
+  end
+
+  test "Runtime renders Codex command failures on the implicated selectors" do
+    message =
+      "Invalid workflow config: codex.command must not set model or model_reasoning_effort; use the Settings / Runtime Codex model and reasoning effort selectors"
+
+    targets = SettingsCheck.workflow_check_targets(%{}, message)
+
+    html =
+      render_component(&Runtime.render/1,
+        execution_mode: :centralized,
+        runtime_configuration_items: [],
+        workflow_validation_visible?: true,
+        workflow_field_errors: %{},
+        workflow_validation_error: message,
+        workflow_check_targets: targets,
+        workflow_save_notice: nil,
+        workflow_form: %{},
+        runtime_workflow_source: %{type: "PostgreSQL", detail: "current workflow"}
+      )
+
+    assert html =~ "Configuration check failed:"
+    assert html =~ "codex.command must not set model or model_reasoning_effort"
+    assert html =~ ~s(id="workflow-codex-model")
+    assert html =~ ~s(id="workflow-codex-reasoning-effort")
+    assert length(Regex.scan(~r/settings-check-title-invalid/, html)) == 2
   end
 
   test "project settings page creates and updates projects" do

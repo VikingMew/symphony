@@ -128,6 +128,54 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
              ["create_pull_request"]
   end
 
+  test "workflow import promotes legacy Codex command selectors and exposes the conversion diff" do
+    yaml =
+      WorkflowFixtures.workflow_package_yaml(%{
+        "codex" => %{
+          "command" => "codex --config 'model=\"gpt-5.5\"' -c model_reasoning_effort=xhigh app-server"
+        }
+      })
+
+    assert {:ok, stage} =
+             WorkflowSettingsPackage.stage_import(yaml, WorkflowForm.empty(), source: :paste)
+
+    assert stage.draft["codex_command"] == "codex app-server"
+    assert stage.draft["codex_model"] == "gpt-5.5"
+    assert stage.draft["codex_reasoning_effort"] == "xhigh"
+    assert "Runtime" in stage.affected_areas
+
+    assert Enum.any?(stage.diff, &match?(%{path: "codex.command", after: "codex app-server"}, &1))
+    assert Enum.any?(stage.diff, &match?(%{path: "codex.model", after: "gpt-5.5"}, &1))
+
+    assert Enum.any?(
+             stage.diff,
+             &match?(%{path: "codex.reasoning_effort", after: "xhigh"}, &1)
+           )
+
+    assert {:ok, config} = WorkflowForm.to_config(stage.draft)
+    assert get_in(config, ["codex", "command"]) == "codex app-server"
+    assert get_in(config, ["codex", "model"]) == "gpt-5.5"
+    assert get_in(config, ["codex", "reasoning_effort"]) == "xhigh"
+  end
+
+  test "workflow import preserves explicit Codex selectors over legacy command values" do
+    yaml =
+      WorkflowFixtures.workflow_package_yaml(%{
+        "codex" => %{
+          "command" => "codex -c model=gpt-5.5 -c model_reasoning_effort=xhigh app-server",
+          "model" => "gpt-5.6-sol",
+          "reasoning_effort" => "high"
+        }
+      })
+
+    assert {:ok, "workflow.yml", draft} =
+             WorkflowSettingsPackage.import_draft(yaml, WorkflowForm.empty())
+
+    assert draft["codex_command"] == "codex app-server"
+    assert draft["codex_model"] == "gpt-5.6-sol"
+    assert draft["codex_reasoning_effort"] == "high"
+  end
+
   defp workflow_raw!(draft) do
     case WorkflowForm.to_raw(draft) do
       {:ok, raw} -> raw

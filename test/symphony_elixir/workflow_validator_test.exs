@@ -38,6 +38,23 @@ defmodule SymphonyElixir.WorkflowValidatorTest do
     assert message =~ "Invalid workflow semantics"
   end
 
+  test "rejects Codex command selector overrides with the schema error" do
+    raw =
+      valid_raw()
+      |> Workflow.parse_content()
+      |> then(fn {:ok, workflow} ->
+        workflow.config
+        |> put_in(["codex", "command"], "codex --model gpt-5.5 -c model_reasoning_effort=xhigh app-server")
+        |> Workflow.to_markdown(workflow.prompt)
+      end)
+
+    assert {:error, {:workflow_validation_failed, message}} =
+             WorkflowValidator.validate_raw(raw, runtime?: false)
+
+    assert message ==
+             "Invalid workflow config: codex.command must not set model or model_reasoning_effort; use the Settings / Runtime Codex model and reasoning effort selectors"
+  end
+
   defp valid_raw do
     config =
       Workflow.setup_required_workflow().config

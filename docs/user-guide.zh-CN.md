@@ -4,7 +4,7 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-09-19
+updated: 2026-09-23
 owner: SymphonyElixir.CLI
 ---
 
@@ -314,6 +314,13 @@ default branch、checkout depth、source strategy 等项目自身信息。Sympho
 workflow validation 共用随 bundled `codex-cli 0.154.0` pin 派生的 code-owned catalog；当前六行
 依次为 `gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` 和
 `gpt-5.3-codex-spark`：
+
+不要在 `codex.command` 使用 `-c` / `--config model=...`、
+`-c` / `--config model_reasoning_effort=...` 或 `-m` / `--model`。workflow validation 会把它作为
+`codex.command` 配置错误，并在 Settings / Runtime 标记对应 selector。Runtime 的空 model 选项表示
+使用 Codex 默认 model；空 effort 选项表示使用所选 model 或 Codex 默认 effort。Settings / Import
+仍接受这类已知 legacy command：review diff 会显示 command 清理与缺失 selector 的提升，显式导入的
+selector 优先；确认并保存后 PostgreSQL current workflow 只保留干净 command 与结构化 selector。
 
 ```yaml
 codex:

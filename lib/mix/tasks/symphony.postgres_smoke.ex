@@ -26,6 +26,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @capacity_migration 20_260_905_000_000
   @pre_convergence_migration 20_260_907_000_000
   @convergence_migration 20_260_914_000_000
+  @codex_selector_migration 20_260_923_000_000
   @legacy_project_ids [
     "70000000-0000-0000-0000-000000000001",
     "70000000-0000-0000-0000-000000000002"
@@ -83,6 +84,10 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         rebuild_pre_convergence_schema!(repo, migrations_path, :existing)
         rows = seed_legacy_fixture!(repo, :existing)
         migrate_and_verify_convergence!(repo, migrations_path, :existing, rows)
+
+        rebuild_pre_codex_selector_schema!(repo, migrations_path)
+        expected = seed_codex_selector_fixture!(repo)
+        migrate_and_verify_codex_selectors!(repo, migrations_path, expected)
         convergence_snapshot!(repo)
       end)
 
@@ -108,6 +113,119 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     end
 
     Ecto.Migrator.run(repo, migrations_path, :up, to: @pre_convergence_migration)
+  end
+
+  defp rebuild_pre_codex_selector_schema!(repo, migrations_path) do
+    SQL.query!(repo, "DROP SCHEMA public CASCADE", [])
+    SQL.query!(repo, "CREATE SCHEMA public", [])
+    Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
+    seed_pre_repair_worker_session!(repo)
+    Ecto.Migrator.run(repo, migrations_path, :up, to: @convergence_migration)
+  end
+
+  defp seed_codex_selector_fixture!(repo) do
+    {:ok, loaded} = Workflow.load()
+
+    missing =
+      put_in(
+        loaded.config,
+        ["codex", "command"],
+        "codex -c model=gpt-5.5 -c model_reasoning_effort=xhigh app-server"
+      )
+      |> update_in(["codex"], &Map.drop(&1, ["model", "reasoning_effort"]))
+
+    explicit =
+      loaded.config
+      |> put_in(
+        ["codex", "command"],
+        "codex --model gpt-5.5 --config model_reasoning_effort=xhigh app-server"
+      )
+      |> put_in(["codex", "model"], "gpt-5.6-sol")
+      |> put_in(["codex", "reasoning_effort"], "high")
+
+    expected = [
+      codex_selector_row(0, "codex-missing", missing, "Missing selectors", "gpt-5.5", "xhigh"),
+      codex_selector_row(1, "codex-explicit", explicit, "Explicit selectors", "gpt-5.6-sol", "high")
+    ]
+
+    Enum.each(expected, &insert_current_workflow!(repo, &1))
+
+    insert_setting!(repo, "instance_workflow", %{
+      "config" => missing,
+      "prompt_body" => "Instance prompt"
+    })
+
+    expected
+  end
+
+  defp codex_selector_row(index, slug, config, prompt, model, effort) do
+    %{
+      workflow_id: Enum.fetch!(@legacy_workflow_ids, index),
+      project_id: Enum.fetch!(@legacy_project_ids, index),
+      project_slug: slug,
+      yaml_config: config,
+      prompt_body: prompt,
+      expected_model: model,
+      expected_effort: effort
+    }
+  end
+
+  defp insert_current_workflow!(repo, row) do
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO projects (id, name, slug, enabled, inserted_at, updated_at)
+      VALUES ($1::text::uuid, $2, $3, TRUE, NOW(), NOW())
+      """,
+      [row.project_id, "Codex #{row.project_slug}", row.project_slug]
+    )
+
+    SQL.query!(
+      repo,
+      """
+      INSERT INTO workflows (
+        id, project_id, raw_workflow_md, yaml_config, prompt_body, source, inserted_at, updated_at
+      )
+      VALUES (
+        $1::text::uuid, $2::text::uuid, $3, $4::jsonb, $5, 'migration-smoke', NOW(), NOW()
+      )
+      """,
+      [
+        row.workflow_id,
+        row.project_id,
+        Workflow.to_markdown(row.yaml_config, row.prompt_body),
+        row.yaml_config,
+        row.prompt_body
+      ]
+    )
+  end
+
+  defp migrate_and_verify_codex_selectors!(repo, migrations_path, expected) do
+    [@codex_selector_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @codex_selector_migration)
+
+    Enum.each(expected, fn row ->
+      %{rows: [[yaml_config, raw_workflow_md]]} =
+        SQL.query!(
+          repo,
+          "SELECT yaml_config, raw_workflow_md FROM workflows WHERE id = $1::text::uuid",
+          [row.workflow_id]
+        )
+
+      "codex app-server" = get_in(yaml_config, ["codex", "command"])
+      expected_model = row.expected_model
+      expected_effort = row.expected_effort
+      ^expected_model = get_in(yaml_config, ["codex", "model"])
+      ^expected_effort = get_in(yaml_config, ["codex", "reasoning_effort"])
+      {:ok, %{config: ^yaml_config, prompt: prompt}} = Workflow.parse_content(raw_workflow_md)
+      ^prompt = row.prompt_body
+    end)
+
+    %{"config" => instance_config} = fetch_setting(repo, "instance_workflow")
+    "codex app-server" = get_in(instance_config, ["codex", "command"])
+    "gpt-5.5" = get_in(instance_config, ["codex", "model"])
+    "xhigh" = get_in(instance_config, ["codex", "reasoning_effort"])
+    Mix.shell().info("smoke codex_selector_migration result=PASS")
   end
 
   defp seed_legacy_fixture!(_repo, :zero), do: []

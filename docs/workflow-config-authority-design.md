@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-18
+updated: 2026-09-23
 design_status: landed
 ---
 
@@ -44,6 +44,12 @@ design_status: landed
 - Settings / Import 是 portable combined package 的受支持路径：解析文件、预览合并后的 draft、
   保存时分别写入 singleton 与所选 project。空库冷启动使用同一显式双 scope 导入；拒绝导入、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
+- Settings / Import 在生成 editable draft 前转换已知的 legacy Codex command selector：
+  `-c` / `--config` 中的 `model`、`model_reasoning_effort` 以及 `-m` / `--model` 会填入尚未显式
+  配置的 `codex.model` / `codex.reasoning_effort`，显式 selector 始终优先，随后从 command 删除这些
+  参数。staged diff 同时展示 command 清理和 selector 提升；保存到 PostgreSQL current workflow 的
+  结果只有结构化 selector 与干净的 app-server launch command。该转换只属于 import，不属于 launch、
+  dispatch 或 turn 创建时的 command 解释。
 - 修改 split package 中的 implementation prompt 时，worker 交付只验证 rendered prompt 与 package
   artifact。release record 记录 merge 后宿主访问 `/settings/import`、导入 package 并 Save；预期结果是
   import validation 成功，且保存后的 instance singleton 包含新 prompt。worker 不执行该发布，
@@ -51,6 +57,13 @@ design_status: landed
 - 运行时代码 MUST NOT 从源码 checkout 读取配置。
 
 ## 一次性 legacy 收敛
+
+- 单调 PostgreSQL data migration 对所有仍在 `codex.command` 中携带 model/effort override 的 current
+  workflow 应用与 Settings / Import 相同的优先级：现有结构化 selector 优先，缺失 selector 从 legacy
+  flag 填入，然后删除 flag。migration 在同一行更新 `yaml_config` 与从相同 config/prompt 重建的
+  `raw_workflow_md`；若之前的 scope 收敛 migration 已执行，则同一 migration 更新当前
+  `app_settings["instance_workflow"]`，以及尚未 reconciliation 的 candidate 内的 instance config。
+  因此 export、Settings 与 runtime 继续读取等价表示；migration 在更严格的 schema validation 生效前完成。
 
 - 单调 PostgreSQL migration 从每个旧 workflow 的 `yaml_config` 与 `prompt_body` 派生 instance
   candidate；project row 中每个非空 hook column 在切片前覆盖对应的 `hooks` 字段。
