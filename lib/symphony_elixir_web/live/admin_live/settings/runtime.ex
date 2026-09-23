@@ -3,9 +3,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
 
   use Phoenix.Component
 
-  import SymphonyElixirWeb.AdminLive.Settings.Components, only: [settings_check_summary: 1]
+  import SymphonyElixirWeb.AdminLive.Settings.Components,
+    only: [settings_check_messages: 1, settings_check_summary: 1]
 
   alias SymphonyElixir.Codex.ModelCatalog
+  alias SymphonyElixirWeb.Admin.SettingsCheck
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -14,10 +16,10 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
 
     assigns =
       assigns
-      |> assign(:codex_model_options, [{"Use command default", ""} | ModelCatalog.model_options()])
+      |> assign(:codex_model_options, [{"Use Codex default", ""} | ModelCatalog.model_options()])
       |> assign(
         :codex_reasoning_effort_options,
-        [{"Use model or command default", ""} | ModelCatalog.reasoning_effort_options(selected_model)]
+        [{"Use selected model or Codex default", ""} | ModelCatalog.reasoning_effort_options(selected_model)]
       )
 
     ~H"""
@@ -67,20 +69,22 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
 
         <section class="workflow-form-section">
           <div class="workflow-profile-field-grid">
-            <div class={field_class(@workflow_field_errors, "codex_model")}>
-              <label class={field_title_class(@workflow_field_errors, "codex_model")} for="workflow-codex-model">Codex model</label>
-              <select id="workflow-codex-model" name="workflow[codex_model]" aria-invalid={field_invalid?(@workflow_field_errors, "codex_model")}>
+            <div class={field_class(@workflow_field_errors, @workflow_check_targets, :codex_model, "codex_model")}>
+              <label class={field_title_class(@workflow_field_errors, @workflow_check_targets, :codex_model, "codex_model")} for="workflow-codex-model">Codex model</label>
+              <select id="workflow-codex-model" name="workflow[codex_model]" aria-invalid={field_invalid?(@workflow_field_errors, @workflow_check_targets, :codex_model, "codex_model")}>
                 <option :for={{label, value} <- @codex_model_options} value={value} selected={Map.get(@workflow_form, "codex_model", "") == value}><%= label %></option>
               </select>
               <p :if={Map.has_key?(@workflow_field_errors, "codex_model")} class="settings-check-message"><%= @workflow_field_errors["codex_model"] %></p>
+              <.settings_check_messages targets={@workflow_check_targets} tab={:runtime} field={:codex_model} />
             </div>
 
-            <div class={field_class(@workflow_field_errors, "codex_reasoning_effort")}>
-              <label class={field_title_class(@workflow_field_errors, "codex_reasoning_effort")} for="workflow-codex-reasoning-effort">Reasoning effort</label>
-              <select id="workflow-codex-reasoning-effort" name="workflow[codex_reasoning_effort]" aria-invalid={field_invalid?(@workflow_field_errors, "codex_reasoning_effort")}>
+            <div class={field_class(@workflow_field_errors, @workflow_check_targets, :codex_reasoning_effort, "codex_reasoning_effort")}>
+              <label class={field_title_class(@workflow_field_errors, @workflow_check_targets, :codex_reasoning_effort, "codex_reasoning_effort")} for="workflow-codex-reasoning-effort">Reasoning effort</label>
+              <select id="workflow-codex-reasoning-effort" name="workflow[codex_reasoning_effort]" aria-invalid={field_invalid?(@workflow_field_errors, @workflow_check_targets, :codex_reasoning_effort, "codex_reasoning_effort")}>
                 <option :for={{label, value} <- @codex_reasoning_effort_options} value={value} selected={Map.get(@workflow_form, "codex_reasoning_effort", "") == value}><%= label %></option>
               </select>
               <p :if={Map.has_key?(@workflow_field_errors, "codex_reasoning_effort")} class="settings-check-message"><%= @workflow_field_errors["codex_reasoning_effort"] %></p>
+              <.settings_check_messages targets={@workflow_check_targets} tab={:runtime} field={:codex_reasoning_effort} />
             </div>
           </div>
         </section>
@@ -89,13 +93,17 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
     """
   end
 
-  defp field_class(errors, field) do
-    ["settings-field", if(Map.has_key?(errors, field), do: "settings-check-invalid")]
+  defp field_class(errors, targets, target_field, field) do
+    ["settings-field", if(invalid?(errors, targets, target_field, field), do: "settings-check-invalid")]
   end
 
-  defp field_title_class(errors, field) do
-    ["metric-label", if(Map.has_key?(errors, field), do: "settings-check-title-invalid")]
+  defp field_title_class(errors, targets, target_field, field) do
+    ["metric-label", if(invalid?(errors, targets, target_field, field), do: "settings-check-title-invalid")]
   end
 
-  defp field_invalid?(errors, field), do: Map.has_key?(errors, field)
+  defp field_invalid?(errors, targets, target_field, field), do: invalid?(errors, targets, target_field, field)
+
+  defp invalid?(errors, targets, target_field, field) do
+    Map.has_key?(errors, field) or SettingsCheck.invalid?(targets, :runtime, target_field)
+  end
 end

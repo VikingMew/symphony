@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Config.Schema do
   import Ecto.Changeset
 
   alias SymphonyElixir.Codex.ModelCatalog
-  alias SymphonyElixir.Config.{ProjectCommands, RuntimeResolver, WorkflowContract}
+  alias SymphonyElixir.Config.{CodexCommand, ProjectCommands, RuntimeResolver, WorkflowContract}
 
   @primary_key false
 
@@ -320,6 +320,7 @@ defmodule SymphonyElixir.Config.Schema do
         empty_values: []
       )
       |> validate_required([:command])
+      |> validate_command_overrides()
       |> normalize_optional_selector(:model)
       |> normalize_optional_selector(:reasoning_effort)
       |> validate_model_and_reasoning_effort()
@@ -341,6 +342,19 @@ defmodule SymphonyElixir.Config.Schema do
         less_than_or_equal_to: 100
       )
       |> validate_number(:rate_limit_gate_post_reset_delay_ms, greater_than_or_equal_to: 0)
+    end
+
+    defp validate_command_overrides(changeset) do
+      case get_field(changeset, :command) do
+        command when is_binary(command) ->
+          case CodexCommand.override_fields(command) do
+            [] -> changeset
+            fields -> add_error(changeset, :command, CodexCommand.validation_message(fields))
+          end
+
+        _missing ->
+          changeset
+      end
     end
 
     defp normalize_approval_policy(changeset) do

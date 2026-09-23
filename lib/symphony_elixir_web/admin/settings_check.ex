@@ -3,12 +3,15 @@ defmodule SymphonyElixirWeb.Admin.SettingsCheck do
   Settings validation target and field-highlighting presentation policy.
   """
 
+  alias SymphonyElixir.Config.CodexCommand
+
   @spec workflow_check_targets(map(), term()) :: [map()]
   def workflow_check_targets(draft, message) do
     text = to_string(message)
     quoted = quoted_values(text)
 
     []
+    |> Kernel.++(workflow_codex_targets(text))
     |> Kernel.++(workflow_state_length_targets(text))
     |> Kernel.++(workflow_tracker_targets(text))
     |> Kernel.++(workflow_human_review_targets(text))
@@ -16,6 +19,28 @@ defmodule SymphonyElixirWeb.Admin.SettingsCheck do
     |> Kernel.++(workflow_transition_targets(text, draft, quoted))
     |> Kernel.++(workflow_profile_targets(text, quoted))
     |> Enum.uniq_by(fn target -> {target.tab, target.field, target.scope, target.message} end)
+  end
+
+  defp workflow_codex_targets(text) do
+    fields =
+      cond do
+        String.contains?(text, CodexCommand.validation_message([:model, :reasoning_effort])) ->
+          [:codex_model, :codex_reasoning_effort]
+
+        String.contains?(text, CodexCommand.validation_message([:model])) ->
+          [:codex_model]
+
+        String.contains?(text, CodexCommand.validation_message([:reasoning_effort])) ->
+          [:codex_reasoning_effort]
+
+        true ->
+          []
+      end
+
+    Enum.map(fields, fn
+      :codex_model -> check_target(:runtime, :codex_model, nil, "Codex model", text)
+      :codex_reasoning_effort -> check_target(:runtime, :codex_reasoning_effort, nil, "Reasoning effort", text)
+    end)
   end
 
   @spec class([map()], atom(), atom(), term(), String.t()) :: [String.t() | nil]

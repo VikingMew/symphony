@@ -7,7 +7,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   without a LiveView process.
   """
 
-  alias SymphonyElixir.Config.WorkflowScopes
+  alias SymphonyElixir.Config.{CodexCommand, WorkflowScopes}
   alias SymphonyElixir.{Workflow, WorkflowForm}
 
   @spec require_import_content(String.t() | nil) :: :ok | {:error, String.t()}
@@ -27,6 +27,8 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml),
          {:ok, label, draft} <- do_import_draft(parsed, current) do
       type = package_type(parsed)
+      import_diff = legacy_codex_conversion_diff(parsed)
+      changes = import_diff ++ diff(current, draft)
 
       {:ok,
        %{
@@ -35,8 +37,8 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
          label: label,
          draft: draft,
          owning_tab: owning_tab(type),
-         affected_areas: affected_areas(current, draft),
-         diff: diff(current, draft),
+         affected_areas: affected_areas(changes),
+         diff: changes,
          warnings: [],
          preview: preview(yaml)
        }}
@@ -68,6 +70,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
   defp do_import_draft({:workflow, workflow_config}, current) do
     current_config = draft_config_or_base(current)
+    workflow_config = migrate_legacy_codex_command(workflow_config)
 
     loaded = %{
       config:
@@ -91,13 +94,43 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     {:ok, "profiles.yml", WorkflowForm.from_loaded(loaded)}
   end
 
+  defp migrate_legacy_codex_command(config) do
+    case CodexCommand.migrate_config(config) do
+      {:changed, migrated} -> migrated
+      :unchanged -> config
+    end
+  end
+
+  defp legacy_codex_conversion_diff({:workflow, config}) do
+    case CodexCommand.migrate_config(config) do
+      {:changed, migrated} ->
+        before = Map.get(config, "codex", %{})
+        migrated_codex = Map.fetch!(migrated, "codex")
+
+        ["command", "model", "reasoning_effort"]
+        |> Enum.reject(&(Map.get(before, &1) == Map.get(migrated_codex, &1)))
+        |> Enum.map(fn key ->
+          %{
+            area: "Runtime",
+            path: "codex.#{key}",
+            before: inspect_for_diff(Map.get(before, key)),
+            after: inspect_for_diff(Map.get(migrated_codex, key))
+          }
+        end)
+
+      :unchanged ->
+        []
+    end
+  end
+
+  defp legacy_codex_conversion_diff({:profiles, _profile_package}), do: []
+
   defp package_type({type, _package}), do: type
   defp owning_tab(:profiles), do: :agents
   defp owning_tab(_type), do: :workflow
 
-  defp affected_areas(current, draft) do
-    current
-    |> diff(draft)
+  defp affected_areas(changes) do
+    changes
     |> Enum.map(& &1.area)
     |> Enum.uniq()
   end

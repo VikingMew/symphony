@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-14
+updated: 2026-09-23
 ---
 
 # Workflow and Configuration Specification
@@ -278,6 +278,19 @@ Validation rules:
 - Explicit `model` plus `reasoning_effort` MUST use an effort supported by that model row.
 - Settings selectors and schema validation MUST read the same code-owned catalog source. Settings
   MUST NOT provide a free-text custom model input.
+- `codex.command` MUST NOT set `model` or `model_reasoning_effort` through `-c` / `--config`, and
+  MUST NOT use the synonymous `-m` / `--model` option. Validation errors MUST identify
+  `codex.command` and direct the operator to the Settings / Runtime selectors. Other command
+  options and other `-c` / `--config` keys remain valid.
+
+Settings / Import converts the supported legacy command representation before it builds the
+editable draft. Existing explicit selectors win; missing selectors are populated from the legacy
+flags; the migrated flags are removed; and the staged diff exposes the command and selector
+changes. This is an import-time conversion only. Launch, dispatch, and turn creation MUST NOT parse
+model or effort from `codex.command`. The PostgreSQL data migration applies the same precedence to
+persisted current workflows, updates legacy full workflow rows' `yaml_config` and `raw_workflow_md`
+together, and updates the converged instance singleton or unresolved instance candidates when the
+earlier scope migration has already moved Codex configuration there.
 
 The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
 Codex block carries explicit `thread_sandbox: "danger-full-access"` and
@@ -291,6 +304,8 @@ runtime workflow that omits an explicit `turn_sandbox_policy`.
   - The launched process MUST speak a compatible app-server protocol over stdio.
   - This command remains the app-server process launch command and MUST NOT be parsed to infer
     model or reasoning effort.
+  - `-c` / `--config` entries for `model` or `model_reasoning_effort`, and `-m` / `--model`, are
+    invalid workflow configuration.
 - `model` (optional string)
   - Default: absent.
   - When present, send as `turn/start.params.model` for subsequent Codex turns created from the
@@ -481,6 +496,7 @@ Validation checks:
 - `tracker.api_key` is present after `$` resolution.
 - `tracker.project_slug` is present when REQUIRED by the selected tracker kind.
 - `codex.command` is present and non-empty.
+- `codex.command` does not carry a model or reasoning-effort override.
 - Configured `codex.model` and `codex.reasoning_effort` values are present in the code-owned Codex
   catalog snapshot and the model/effort combination is supported.
 
@@ -507,7 +523,8 @@ not require recognizing or validating extension fields unless that extension is 
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_failure_retries`: non-negative integer, default `3`
-- `codex.command`: shell command string, default `codex app-server`
+- `codex.command`: app-server launch shell command, default `codex app-server`; model/effort CLI
+  overrides are invalid
 - `codex.model`: optional string selector from `SymphonyElixir.Codex.ModelCatalog`; absent sends no
   `turn/start` model override
 - `codex.reasoning_effort`: optional string selector from `SymphonyElixir.Codex.ModelCatalog`;

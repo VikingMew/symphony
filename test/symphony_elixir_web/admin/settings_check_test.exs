@@ -35,6 +35,32 @@ defmodule SymphonyElixirWeb.Admin.SettingsCheckTest do
     assert SettingsCheck.messages(targets, :agents, :profile_target_states, "implementation") != []
   end
 
+  test "targets Runtime selectors implicated by Codex command validation" do
+    model_targets =
+      SettingsCheck.workflow_check_targets(
+        %{},
+        "Invalid workflow config: codex.command must not set model; use the Settings / Runtime Codex model selector"
+      )
+
+    assert Enum.map(model_targets, & &1.field) == [:codex_model]
+
+    effort_targets =
+      SettingsCheck.workflow_check_targets(
+        %{},
+        "Invalid workflow config: codex.command must not set model_reasoning_effort; use the Settings / Runtime reasoning effort selector"
+      )
+
+    assert Enum.map(effort_targets, & &1.field) == [:codex_reasoning_effort]
+
+    combined_targets =
+      SettingsCheck.workflow_check_targets(
+        %{},
+        "Invalid workflow config: codex.command must not set model or model_reasoning_effort; use the Settings / Runtime Codex model and reasoning effort selectors"
+      )
+
+    assert Enum.map(combined_targets, & &1.field) == [:codex_model, :codex_reasoning_effort]
+  end
+
   test "returns stable css classes for invalid settings and project items" do
     targets = [%{tab: :workflow, field: :active_states, scope: nil, title: "Active states", message: "bad"}]
 

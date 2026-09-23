@@ -291,7 +291,7 @@ defmodule SymphonyElixir.AppServerStartupTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        codex_command: "#{codex_binary} --config 'model=\"gpt-5.5\"' app-server"
+        codex_command: "#{codex_binary} --config 'network_access=true' app-server"
       )
 
       issue = %Issue{
@@ -310,7 +310,7 @@ defmodule SymphonyElixir.AppServerStartupTest do
       lines = String.split(trace, "\n", trim: true)
 
       assert argv_line = Enum.find(lines, fn line -> String.starts_with?(line, "ARGV:") end)
-      assert String.contains?(argv_line, "--config model=\"gpt-5.5\" app-server")
+      assert String.contains?(argv_line, "--config network_access=true app-server")
       assert String.contains?(argv_line, "--ask-for-approval never") == false
       assert String.contains?(argv_line, "--sandbox danger-full-access") == false
     after

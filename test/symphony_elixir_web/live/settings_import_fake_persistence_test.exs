@@ -46,6 +46,48 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
            end) == false
   end
 
+  test "legacy Codex command import stages conversion details and applies selector values" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    legacy_yaml = """
+    codex:
+      command: codex --config 'model="gpt-5.5"' -c model_reasoning_effort=xhigh app-server
+    """
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => legacy_yaml})
+      |> render_submit()
+
+    assert staged_html =~ "Review staged import"
+    assert staged_html =~ "codex.command"
+    assert staged_html =~ "codex app-server"
+    assert staged_html =~ "codex.model"
+    assert staged_html =~ "gpt-5.5"
+    assert staged_html =~ "codex.reasoning_effort"
+    assert staged_html =~ "xhigh"
+
+    view
+    |> element("button[phx-click='confirm_settings_import']")
+    |> render_click()
+
+    assert_patch(view, "/settings")
+    runtime_html = render_patch(view, "/settings/runtime")
+
+    assert has_element?(view, "#workflow-codex-model option[selected][value='gpt-5.5']")
+
+    assert has_element?(
+             view,
+             "#workflow-codex-reasoning-effort option[selected][value='xhigh']"
+           )
+
+    assert runtime_html =~ "Use Codex default"
+    assert runtime_html =~ "Use selected model or Codex default"
+  end
+
   defp start_test_endpoint do
     endpoint_config =
       :symphony_elixir

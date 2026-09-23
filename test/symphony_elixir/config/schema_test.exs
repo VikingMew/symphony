@@ -160,4 +160,46 @@ defmodule SymphonyElixir.Config.SchemaTest do
 
     assert message =~ "codex.reasoning_effort must be one of low, medium, high, xhigh for model gpt-5.5"
   end
+
+  test "codex command rejects model and reasoning effort overrides" do
+    model_message =
+      "codex.command must not set model; use the Settings / Runtime Codex model selector"
+
+    for command <- [
+          "codex -c model=gpt-5.5 app-server",
+          "codex --config 'model=\"gpt-5.5\"' app-server",
+          "codex -cmodel=gpt-5.5 app-server",
+          "codex -c=model=gpt-5.5 app-server",
+          "codex --config=model=gpt-5.5 app-server",
+          "codex -m gpt-5.5 app-server",
+          "codex -m=gpt-5.5 app-server",
+          "codex --model=gpt-5.5 app-server"
+        ] do
+      assert Schema.parse(%{"codex" => %{"command" => command}}) ==
+               {:error, {:invalid_workflow_config, model_message}}
+    end
+
+    effort_message =
+      "codex.command must not set model_reasoning_effort; use the Settings / Runtime reasoning effort selector"
+
+    for command <- [
+          "codex -c model_reasoning_effort=xhigh app-server",
+          "codex --config 'model_reasoning_effort=\"xhigh\"' app-server"
+        ] do
+      assert Schema.parse(%{"codex" => %{"command" => command}}) ==
+               {:error, {:invalid_workflow_config, effort_message}}
+    end
+  end
+
+  test "codex command permits unrelated options and config keys" do
+    for command <- [
+          "codex app-server",
+          "codex --config network_access=true app-server",
+          "codex -c sandbox_workspace_write.writable_roots='[\"/tmp\"]' app-server",
+          "codex --quiet app-server"
+        ] do
+      assert {:ok, settings} = Schema.parse(%{"codex" => %{"command" => command}})
+      assert settings.codex.command == command
+    end
+  end
 end
