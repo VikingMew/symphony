@@ -74,6 +74,7 @@ jobs:
           DATABASE_URL: postgresql://symphony:test@postgres/symphony
           POSTGRES_PASSWORD: test
           SECRET_KEY_BASE: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+          SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE: ${{ runner.temp }}/symphony-codex-auth.json
         shell: bash
         run: |
           set -euo pipefail
@@ -85,7 +86,7 @@ jobs:
           '
           export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
           export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
-          docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker config --format json | jq -e '
+          docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --profile execution-worker config --format json | jq -e '
             .services.migrate.image == env.SYMPHONY_IMAGE and
             .services.symphony.image == .services.migrate.image and
             (.services.migrate | has("build") | not) and
@@ -97,7 +98,14 @@ jobs:
             .services["execution-worker"].image == env.SYMPHONY_EXECUTION_WORKER_IMAGE and
             (.services["execution-worker"] | has("build") | not) and
             .services["execution-worker"].pull_policy == "always" and
-            .services["execution-worker"].profiles == ["execution-worker"]
+            .services["execution-worker"].profiles == ["execution-worker"] and
+            ([.services["execution-worker"].volumes[] |
+              select(.type == "volume" and .target == "/home/symphony/.codex")] | length) == 1 and
+            ([.services["execution-worker"].volumes[] |
+              select(.type == "bind" and
+                .source == env.SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE and
+                .target == "/home/symphony/.codex/auth.json" and
+                .bind.create_host_path == false)] | length) == 1
           '
 
   publish:

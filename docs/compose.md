@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-09-14
+updated: 2026-09-23
 owner: compose.yaml
 ---
 
@@ -83,7 +83,17 @@ with `SYMPHONY_EMBED_CODEX=false`, and `compose.published.yaml` fixes
 `SYMPHONY_EXECUTION_MODE=worker` while replacing the Panel mounts without `codex_home`. That image
 contains no Node/Codex installation, `codex` link, `CODEX_HOME`, or Codex OAuth volume. The
 separately published `execution-worker` image owns execution, keeps Codex and `CODEX_HOME`, and
-mounts `execution_worker_codex`; its contents are independent of the Panel build argument.
+mounts `execution_worker_codex` for configuration, logs, and session data. The non-default
+`compose.host-override.yaml` additionally binds the existing host Codex `auth.json` named by
+`SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE` over the deeper
+`/home/symphony/.codex/auth.json` path. The required interpolation and
+`bind.create_host_path: false` make a missing source an explicit deployment error. Compose does not
+load this override automatically.
+
+The bind shares the host's account-level Codex login, so the worker has the same permissions and
+compromise exposure as that login. Concurrent host and worker refreshes can make one side's single
+call fail; its next call reads the rotated state from the shared file and recovers. The named
+volume's older `auth.json` remains untouched and is hidden only while the deeper bind is active.
 
 Token environment variables are an alternative to interactive `gh` authentication. For GitHub,
 `gh` uses `GH_TOKEN` before `GITHUB_TOKEN`. The `symphony`, SSH `worker`, and `execution-worker`
@@ -212,15 +222,16 @@ pulls them; the worker profile remains opt-in:
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
-docker compose -f compose.yaml -f compose.published.yaml --env-file .env config --quiet
-docker compose -f compose.yaml -f compose.published.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml up -d postgres
-docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
-docker compose -f compose.yaml -f compose.published.yaml up -d symphony
-docker compose -f compose.yaml -f compose.published.yaml --profile execution-worker up -d execution-worker
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env config --quiet
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d postgres
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml run --rm migrate
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d symphony
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --profile execution-worker up -d execution-worker
 ```
 
-Never omit either Compose file from a published-image migration or start command. The override
+Never omit any of the three Compose files from a published-image pull, migration, start, or
+rollback command. `compose.host-override.yaml` is not loaded automatically. The published override
 requires one immutable `SYMPHONY_IMAGE` for both `migrate` and `symphony`, so there is no published
 path that can silently fall back to `symphony:local`. Panel startup compares the migrations in that
 image with the complete `schema_migrations` set before any business child starts. Pending and
@@ -271,7 +282,8 @@ The container paths are stable:
 | Logs | `/data/logs` | `symphony_logs` |
 | Workspaces | `/data/workspaces` | `symphony_workspaces` |
 | Codex state (centralized Panel only) | `/home/symphony/.codex` | `codex_home` |
-| Codex state (execution worker) | `/home/symphony/.codex` | `execution_worker_codex` |
+| Codex configuration, logs, and sessions (execution worker) | `/home/symphony/.codex` | `execution_worker_codex` |
+| Live Codex login (execution worker) | `/home/symphony/.codex/auth.json` | host file from `SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE` |
 | GitHub CLI state | `/home/symphony/.config/gh` | `gh_config` |
 | SSH state | `/home/symphony/.ssh` | `ssh_home` |
 
@@ -395,14 +407,14 @@ project/run/event state. To roll application code back, restore the prior image 
 retag `symphony:rollback`), then start it only if its migration compatibility is understood. If a
 database restore is required, stop Symphony first and use the procedure below.
 
-For a published-image deployment, keep the same Compose file pair and replace only the immutable
+For a published-image deployment, keep the same three Compose files and replace only the immutable
 reference. Pull before migration so Compose cannot fall back to a local build:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:v1.2.3
-docker compose -f compose.yaml -f compose.published.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml run --rm migrate
-docker compose -f compose.yaml -f compose.published.yaml up -d symphony
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml run --rm migrate
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d symphony
 ```
 
 To roll application code back, restore the previously recorded version/SHA tag or digest and run

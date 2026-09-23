@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-19
+updated: 2026-09-23
 design_status: landed
 ---
 
@@ -21,6 +21,22 @@ checked-in import package therefore carries `thread_sandbox: "danger-full-access
 `turn_sandbox_policy.type: "dangerFullAccess"` for that deployment shape. The container boundary is
 kept by Compose and image policy, not by relaxing host seccomp or adding container-engine access
 inside the worker.
+
+The checked-in `compose.host-override.yaml` makes the execution worker credential boundary
+explicit. The existing `execution_worker_codex` named volume remains mounted at
+`/home/symphony/.codex` for Codex configuration, logs, and session data. A deeper bind mount maps
+the existing host `auth.json` named by the required
+`SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE` parameter onto
+`/home/symphony/.codex/auth.json`; `bind.create_host_path: false` makes a missing source file a
+deployment error. Compose does not load this non-default override automatically, so every worker
+deployment command must name it.
+
+This bind shares the host's account-level Codex login rather than a worker-scoped token. The worker
+therefore has every permission granted to that login, and compromise of the worker exposes the same
+credential boundary as compromise of the host login. Host and worker refreshes can race: one side's
+single call may fail after the other rotates the refresh state, then recover on its next call after
+reading the updated shared file. The named volume's older `auth.json` is neither migrated nor
+deleted; the deeper bind is authoritative while the override is loaded.
 
 A claim enters through the Orchestrator mailbox and is admitted against the current in-memory
 listening mode before any Linear candidate read. `not_listening` returns an empty claim immediately;
