@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-08-29
+updated: 2026-09-23
 owner: compose.yaml
 ---
 
@@ -26,7 +26,9 @@ Execution ownership is deliberately exclusive. The default centralized Panel com
 with local execution, so its image contains Codex and its service mounts `codex_home`. The
 published worker-mode Panel is pure control: it is built with `SYMPHONY_EMBED_CODEX=false`, has no
 Node/Codex runtime or `CODEX_HOME`, and does not mount Codex credentials. The `execution-worker`
-image always contains Codex and stores its OAuth state only in `execution_worker_codex`.
+image always contains Codex. Its `execution_worker_codex` volume stores configuration, logs, and
+session data, while `compose.host-override.yaml` binds the host's live `auth.json` over the deeper
+`/home/symphony/.codex/auth.json` path.
 
 ## Preflight and credentials
 
@@ -35,8 +37,19 @@ tag and source revision and builds from the checkout. Published Compose removes 
 requires an immutable `ghcr.io/vikingmew/symphony-execution-worker` SHA tag or digest. Select it
 from the same publication as `SYMPHONY_IMAGE` and set its full commit in
 `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`.
-Give the worker only these credentials: the Panel registration token, a least-scope Codex token,
-a repository push/PR token, and the existing `LINEAR_API_KEY` credential. Never set
+Set `SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE` in the ignored `.env` to the host's existing Codex
+`auth.json` file. The required interpolation and `bind.create_host_path: false` make a missing or
+incorrect source fail deployment instead of creating a directory. The override is not a default
+Compose filename and is never loaded implicitly; commands that run the worker must name it.
+
+This shares the host's account-level Codex login, so the worker receives every permission available
+to that login. If the host and worker refresh concurrently, one side can fail a single call after
+the other rotates the refresh state; its next call reads the updated shared file and recovers. The
+older `auth.json` in `execution_worker_codex` is left in place but is hidden by the deeper bind while
+the override is loaded.
+
+Give the worker the Panel registration token, a repository push/PR token, and the existing
+`LINEAR_API_KEY` credential. Never set
 `DATABASE_URL` or `POSTGRES_*` on `execution-worker`.
 
 Provide the repository token as `GH_TOKEN` or `GITHUB_TOKEN` with clone and push permission for the
@@ -55,9 +68,9 @@ Validate without printing substituted secrets:
 
 ```bash
 grep -Eq '^SYMPHONY_WORKER_REGISTRATION_TOKEN=.+$' .env
-docker compose --env-file .env --profile execution-worker config --quiet
-docker compose --env-file .env --profile execution-worker build execution-worker
-docker compose --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker config --quiet
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker build execution-worker
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env run --rm --no-deps --entrypoint sh execution-worker -lc '
   test "$(id -u)" = 10002 &&
   test "$SYMPHONY_ROLE" = worker &&
   test -z "$DATABASE_URL" && test -n "$LINEAR_API_KEY" &&
@@ -85,28 +98,30 @@ environment or rendered Compose output.
 
 ## Deploy, rotate, and inspect
 
-For a published deployment, include both Compose files and matching immutable Panel and worker
-references. The override selects worker execution for the Codex-free Panel; the execution-worker
-profile remains opt-in and must be started with it:
+For a published deployment, include the base, published, and host override files with matching
+immutable Panel and worker references. The published override selects worker execution for the
+Codex-free Panel; the host override supplies the live auth file; the execution-worker profile
+remains opt-in and must be started with it:
 
 ```bash
-docker compose -f compose.yaml -f compose.published.yaml --env-file .env up -d postgres migrate symphony
-docker compose -f compose.yaml -f compose.published.yaml --env-file .env --profile execution-worker up -d execution-worker
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env up -d postgres migrate symphony
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker up -d execution-worker
 ```
 
 Start the Panel in its existing `centralized` mode, then opt in the idle worker:
 
 ```bash
-docker compose --env-file .env up -d postgres migrate symphony
-docker compose --env-file .env --profile execution-worker up -d execution-worker
-docker compose --env-file .env ps
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env up -d postgres migrate symphony
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker up -d execution-worker
+docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env ps
 curl --fail http://127.0.0.1:${SYMPHONY_DASHBOARD_PORT:-4000}/health/ready
 ```
 
 Open `/workers` and retain the worker/session ID, protocol/runtime identity, heartbeat time, and
 available slots. A healthy idle worker has no claim until new work is routed to worker mode. To
-rotate a credential, stop the worker, replace only that value in `.env`, revoke the old token at
-its issuer, and recreate the service. Rotating the shared registration token also requires
+rotate the registration or repository credential, stop the worker, replace only that value in
+`.env`, revoke the old token at its issuer, and recreate the service. Rotating the shared
+registration token also requires
 recreating the Panel.
 
 ## End-to-end verification record
@@ -166,14 +181,14 @@ validation, repeated lease loss, capacity loss, or divergent handoff as rollback
 Rollback affects new work only and preserves PostgreSQL runs, tasks, leases, sessions, and events:
 
 For a published rollback, first select a previously recorded matching pair of image references and
-set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that worker image's full commit. Add
-`-f compose.yaml -f compose.published.yaml` to the commands below.
+set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that worker image's full commit. Keep the same
+three-file form; the host override is not loaded automatically.
 
 ```bash
-docker compose --env-file .env --profile execution-worker stop execution-worker
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker stop execution-worker
 # set SYMPHONY_EXECUTION_MODE=centralized in .env
-docker compose --env-file .env up -d --force-recreate symphony
-docker compose --env-file .env ps
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env up -d --force-recreate symphony
+docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env ps
 ```
 
 Verify the worker has no new heartbeat/claim, the Panel is ready, existing history remains visible,
