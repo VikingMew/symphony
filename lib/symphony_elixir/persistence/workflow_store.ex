@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, Schema, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectIdentity, Schema, WorkflowScopes}
   alias SymphonyElixir.Persistence.{AppSetting, Project, WorkflowRecord}
   alias SymphonyElixir.{Repo, Text, Workflow}
 
@@ -27,6 +27,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
           | {:already_converged, WorkflowScopes.instance_workflow()}
   @type legacy_reconciliation_error ::
           :repo_unavailable | :zero | {:invalid_selection, String.t()} | {:transaction_failed, term()}
+  @type project_identity_status :: %{
+          mismatch_count: non_neg_integer(),
+          workflows: [%{workflow_id: String.t(), project_id: String.t(), project_slug: String.t()}]
+        }
 
   @spec default_project() ::
           {:ok, Project.t()} | {:error, Ecto.Changeset.t() | :not_found | :repo_unavailable}
@@ -125,10 +129,40 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
          {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
       Repo.transaction(fn ->
         instance = upsert_instance_workflow!(instance)
-        project_workflow = upsert_project_workflow!(project, project_config, source)
+        project_workflow = upsert_project_workflow!(project, ProjectIdentity.put(project_config, project), source)
         %{instance_workflow: instance, project_workflow: project_workflow}
       end)
     end
+  end
+
+  @spec project_identity_status() :: {:ok, project_identity_status()} | {:error, :repo_unavailable}
+  def project_identity_status do
+    query(:project_identity_status, fn ->
+      if repo_available?(), do: {:ok, identity_status(identity_rows())}, else: {:error, :repo_unavailable}
+    end)
+  end
+
+  @spec reconcile_project_identities() ::
+          {:ok, %{updated: non_neg_integer(), status: project_identity_status()}}
+          | {:error, :repo_unavailable}
+  def reconcile_project_identities do
+    if repo_available?() do
+      Repo.transaction(&reconcile_project_identities!/0)
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
+  defp reconcile_project_identities! do
+    mismatches = identity_rows(lock: true) |> identity_mismatches()
+
+    Enum.each(mismatches, fn {workflow, project} ->
+      workflow
+      |> WorkflowRecord.changeset(ProjectIdentity.workflow_attrs(workflow, project))
+      |> Repo.update!()
+    end)
+
+    %{updated: length(mismatches), status: identity_status(identity_rows())}
   end
 
   @spec put_instance_workflow(map(), String.t()) ::
@@ -470,6 +504,44 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
 
   defp test_workflow_source_allowed? do
     Application.get_env(:symphony_elixir, :allow_test_workflow_source, false) == true
+  end
+
+  defp identity_rows(lock: true) do
+    Repo.all(
+      from(w in WorkflowRecord,
+        join: p in Project,
+        on: p.id == w.project_id,
+        order_by: [asc: w.id],
+        lock: "FOR UPDATE OF w, p",
+        select: {w, p}
+      )
+    )
+  end
+
+  defp identity_rows do
+    Repo.all(
+      from(w in WorkflowRecord,
+        join: p in Project,
+        on: p.id == w.project_id,
+        order_by: [asc: w.id],
+        select: {w, p}
+      )
+    )
+  end
+
+  defp identity_status(rows) do
+    workflows =
+      rows
+      |> identity_mismatches()
+      |> Enum.map(fn {workflow, project} ->
+        %{workflow_id: workflow.id, project_id: project.id, project_slug: project.slug}
+      end)
+
+    %{mismatch_count: length(workflows), workflows: workflows}
+  end
+
+  defp identity_mismatches(rows) do
+    Enum.reject(rows, fn {workflow, project} -> ProjectIdentity.workflow_matches?(workflow, project) end)
   end
 
   defp reject_project_hook_fields(attrs) do

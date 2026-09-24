@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-09-24
 design_status: landed
 ---
 
@@ -29,8 +29,10 @@ design_status: landed
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret
   或 project hook override 时返回 typed rejection，不接受也不静默丢弃。一次性迁移完成后，project
   row 只保留 canonical tracker/project slice 与空 prompt，四个旧 hook columns 已删除。
-- `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 是示例与导入素材：它们记录 package
-  格式、提供一次性导入的便利来源，永远不是同步源。
+- `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 只记录 portable package 格式，并作为
+  人类显式导入的素材。文件内的 tracker slug、repository URL 或 workspace root 都不构成 project
+  identity 或 runtime config authority。运行时代码不隐式回退到该目录；代码、smoke 或测试确实需要
+  示例时必须调用明确命名的 `Workflow.load_example_package/0` 或 `Workflow.example_package_root/0`。
 - 示例作为导入素材时仍必须避免携带已知不可用的运行形态；当前 `docs/examples/workflow.yml`
   的 Codex 配置显式使用 `thread_sandbox: "danger-full-access"` 与
   `turn_sandbox_policy.type: "dangerFullAccess"`，使 Settings / Import 与空库冷启动素材不依赖
@@ -44,6 +46,11 @@ design_status: landed
 - Settings / Import 是 portable combined package 的受支持路径：解析文件、预览合并后的 draft、
   保存时分别写入 singleton 与所选 project。空库冷启动使用同一显式双 scope 导入；拒绝导入、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
+- `WorkflowStore.import_package/3` 是 project identity 的统一持久化边界。保存 project slice 前，它用
+  所选 project record 的 `linear_project_slug` 与 `repository_url` 覆盖 package 中的
+  `tracker.project_slug` 与 `project.repository_url`。package 中的这两个值只是 portable metadata；
+  值不同不会产生拒绝或 no-write 分支。Settings / Import 可以在 draft 层提前展示相同覆盖，但 durable
+  正确性不依赖 web 层。
 - Settings / Import 在生成 editable draft 前转换已知的 legacy Codex command selector：
   `-c` / `--config` 中的 `model`、`model_reasoning_effort` 以及 `-m` / `--model` 会填入尚未显式
   配置的 `codex.model` / `codex.reasoning_effort`，显式 selector 始终优先，随后从 command 删除这些
@@ -55,6 +62,18 @@ design_status: landed
   import validation 成功，且保存后的 instance singleton 包含新 prompt。worker 不执行该发布，
   不把宿主路径不可用视为 blocker/retry，也不把 checked-in YAML 报告为 live runtime effect。
 - 运行时代码 MUST NOT 从源码 checkout 读取配置。
+
+## Project identity 存量对账
+
+- `SymphonyElixir.Release.project_identity_status!/0` 是只读 status。它逐行比较 `yaml_config` 与
+  `raw_workflow_md` 中的两个 identity 字段和关联 project record，并报告不一致 workflow；它不写库。
+- `SymphonyElixir.Release.reconcile_project_identities!/0` 是唯一显式 apply。apply 在一个 transaction
+  中锁定待检查 workflow，并只把两个 durable 表示改为关联 project record 的值。任一更新失败会回滚
+  整次 apply；再次执行时已一致的行不会更新。
+- apply 不自动运行，不修改 project record、enabled/listening 状态、instance singleton、prompt、source
+  或其它 workflow 字段。操作者按 status → apply → status 顺序执行，并在 apply 前后只读比较 projects、
+  instance singleton 与非 identity workflow 字段。已运行 Panel 继续由现有 background refresh 发布
+  durable 结果，新启动 Panel 在初始 snapshot 中读取它。
 
 ## 一次性 legacy 收敛
 

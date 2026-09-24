@@ -79,8 +79,8 @@ defmodule SymphonyElixir.PromptBuilderTest do
   end
 
   test "implementation instruction sources require handoff completion" do
-    profiles = File.read!(Path.expand("../../docs/examples/profiles.yml", __DIR__))
-    workflow = File.read!(Path.expand("../../docs/examples/workflow.yml", __DIR__))
+    profiles = File.read!(Path.join(Workflow.example_package_root(), "profiles.yml"))
+    workflow = File.read!(Path.join(Workflow.example_package_root(), "workflow.yml"))
     handoff_skill = File.read!(Path.expand("../../.codex/skills/handoff/SKILL.md", __DIR__))
     linear_skill = File.read!(Path.expand("../../.codex/skills/linear/SKILL.md", __DIR__))
     defaults = Config.Schema.default_profiles()
@@ -304,7 +304,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
   end
 
   test "profiles import artifact carries the highest-priority safety policies" do
-    profiles = File.read!("docs/examples/profiles.yml")
+    profiles = File.read!(Path.join(Workflow.example_package_root(), "profiles.yml"))
 
     assert profiles =~ "Container-engine validation policy (highest priority)"
     assert profiles =~ "policy-prohibited required validation is a true blocker"
@@ -613,7 +613,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
 
   test "in-repo split package renders correctly" do
     workflow_path = Workflow.workflow_file_path()
-    repo_workflow_path = Path.expand("docs/examples/workflow.yml", File.cwd!())
+    repo_workflow_path = Path.join(Workflow.example_package_root(), "workflow.yml")
     Workflow.set_workflow_file_path(repo_workflow_path)
     {:ok, loaded} = Workflow.load(repo_workflow_path)
     raw = Workflow.to_markdown(loaded.config, loaded.prompt)

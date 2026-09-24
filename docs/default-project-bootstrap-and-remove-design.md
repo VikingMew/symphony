@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, projects, persistence, admin-ui]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-24
 design_status: landed
 ---
 
@@ -42,6 +42,10 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: false}`。
    该记录是 Settings 可见的引导占位,不参与 runtime dispatch；first-run combined package
    导入仍要求显式选择 enabled project，并在同一事务写入 instance singleton 与该 project slice。
+   first-run 只通过明确命名的 example package root 读取示例，并且只在操作者从 enabled projects 中
+   选择目标后继续。写入的 tracker slug 与 repository URL 来自该 project record，不来自示例。
+   singleton 已存在时保留其中的 workspace root；singleton 缺失时使用 `Schema` 的代码默认 root，
+   不把示例中的宿主路径写入 durable configuration。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建新的 Default。无显式 project context 的 runtime settings 和诊断选择已配置的
    Default workflow；没有可用 Default 时,只有恰好一个 enabled 且已加载 workflow 的真实
@@ -66,6 +70,9 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
   同样保持 setup-required；临时候选记录和 legacy full project row 都不会被选为 singleton fallback。
   disabled Default placeholder 即使关联旧 workflow candidate，也只作为显式对账可选来源，不会自动
   成为 authority、enabled project 或 dispatch 输入。
+- **first-run identity 来源**：示例 package 只提供 portable 配置素材。`WorkflowStore.import_package/3`
+  在 durable boundary 用操作者所选 project 的记录统一覆盖 identity，不比较后拒绝；first-run 的
+  project 选择、确认与跳过交互保持不变。
 - **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。
 - **移除按钮的确认**:phx-click + data-confirm,防误删。

@@ -8,6 +8,7 @@ defmodule SymphonyElixir.FirstRunDefaults do
 
   require Logger
 
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.{Persistence, Workflow}
 
   @source "first_run_default_yaml"
@@ -90,13 +91,22 @@ defmodule SymphonyElixir.FirstRunDefaults do
         :ok
 
       project ->
-        raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+        config = put_workspace_root(loaded.config, deps.instance_workflow.())
+        raw = Workflow.to_markdown(config, loaded.prompt)
 
         with {:ok, _workflow} <- deps.import_package.(project, raw, @source) do
           deps.log.(:info, "Imported default workflow.yml and profiles.yml into the database.")
           :ok
         end
     end
+  end
+
+  defp put_workspace_root(config, nil) do
+    put_in(config, ["workspace", "root"], get_in(Schema.defaults(), ["workspace", "root"]))
+  end
+
+  defp put_workspace_root(config, %{config: instance_config}) do
+    put_in(config, ["workspace", "root"], get_in(instance_config, ["workspace", "root"]))
   end
 
   defp select_project(deps, root, projects) do

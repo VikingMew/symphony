@@ -5,8 +5,13 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
   @workflow_yaml """
   tracker:
+    project_slug: example-project
     active_states: [Ready]
     terminal_states: [Done]
+  project:
+    repository_url: https://github.com/example/project
+  workspace:
+    root: /host/example/workspaces
   workflow:
     states:
       Ready:
@@ -52,6 +57,26 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
     assert raw =~ "tracker:"
     assert raw =~ "Default imported base prompt."
     assert raw =~ "implementation"
+    assert raw =~ System.tmp_dir!() <> "/symphony_workspaces"
+    assert raw =~ "/host/example/workspaces" == false
+  end
+
+  test "existing singleton workspace root survives first-run project import" do
+    parent = self()
+
+    assert :ok =
+             FirstRunDefaults.maybe_import(
+               [],
+               deps(parent,
+                 instance_workflow: fn ->
+                   %{config: %{"workspace" => %{"root" => "/existing/workspaces"}}}
+                 end
+               )
+             )
+
+    assert_received {:import_package, %{id: "project-beta"}, raw, "first_run_default_yaml"}
+    assert raw =~ "/existing/workspaces"
+    assert raw =~ "/host/example/workspaces" == false
   end
 
   test "declining first-run prompt leaves database unchanged" do

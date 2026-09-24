@@ -17,7 +17,7 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
   end
 
   test "portable workflow splits into instance and project durable slices" do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     assert {:ok, instance, project} = WorkflowScopes.split_package(loaded.config, loaded.prompt)
     assert instance.config == Map.take(loaded.config, WorkflowScopes.instance_sections())
@@ -54,7 +54,7 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
   end
 
   test "portable routing input never becomes durable or editable policy" do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     config =
       Map.put(loaded.config, "workflow", %{
@@ -101,7 +101,7 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
   end
 
   test "form and package adapters expose separate durable scopes" do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
     draft = WorkflowForm.from_loaded(loaded)
 
     assert {:ok, instance, project} = WorkflowForm.to_scopes(draft)

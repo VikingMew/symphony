@@ -318,6 +318,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert saved_html =~ "Agent settings saved"
     assert FakePersistence.instance_workflow().prompt_body == "Imported base prompt."
 
+    {:ok, project} = FakePersistence.default_project()
+    workflow = FakePersistence.current_workflow(project)
+    assert get_in(workflow.yaml_config, ["tracker", "project_slug"]) == project.linear_project_slug
+    assert get_in(workflow.yaml_config, ["project", "repository_url"]) == project.repository_url
+
     assert Enum.any?(FakePersistence.calls(), fn
              {:import_package, _project, _raw, "web_settings_import"} -> true
              _ -> false

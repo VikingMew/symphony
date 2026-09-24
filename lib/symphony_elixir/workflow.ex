@@ -23,8 +23,7 @@ defmodule SymphonyElixir.Workflow do
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
-    Application.get_env(:symphony_elixir, :workflow_file_path) ||
-      Path.join(example_package_root(), "workflow.yml")
+    Application.fetch_env!(:symphony_elixir, :workflow_file_path)
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
@@ -53,6 +52,11 @@ defmodule SymphonyElixir.Workflow do
   @spec load() :: {:ok, loaded_workflow()} | {:error, term()}
   def load do
     load(workflow_file_path())
+  end
+
+  @spec load_example_package() :: {:ok, loaded_workflow()} | {:error, term()}
+  def load_example_package do
+    load(example_package_root())
   end
 
   @spec load(Path.t()) :: {:ok, loaded_workflow()} | {:error, term()}

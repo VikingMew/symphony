@@ -74,6 +74,42 @@ defmodule SymphonyElixir.Release do
     end
   end
 
+  @spec project_identity_status!() :: SymphonyElixir.Persistence.WorkflowStore.project_identity_status()
+  def project_identity_status! do
+    :ok = load_application()
+
+    Ecto.Migrator.with_repo(Repo, fn _repo ->
+      {:ok, status} = WorkflowStore.project_identity_status()
+      print_project_identity_status(status)
+      status
+    end)
+    |> unwrap_repo_result("Project identity status failed")
+  end
+
+  @spec reconcile_project_identities!() :: map()
+  def reconcile_project_identities! do
+    :ok = load_application()
+
+    Ecto.Migrator.with_repo(Repo, fn _repo ->
+      {:ok, result} = WorkflowStore.reconcile_project_identities()
+      IO.puts("project identity reconciliation updated=#{result.updated}")
+      print_project_identity_status(result.status)
+      result
+    end)
+    |> unwrap_repo_result("Project identity reconciliation failed")
+  end
+
+  defp print_project_identity_status(status) do
+    IO.puts("project identity status mismatches=#{status.mismatch_count}")
+
+    Enum.each(status.workflows, fn workflow ->
+      IO.puts("workflow: id=#{workflow.workflow_id} project_id=#{workflow.project_id} project_slug=#{workflow.project_slug}")
+    end)
+  end
+
+  defp unwrap_repo_result({:ok, result, _apps}, _message), do: result
+  defp unwrap_repo_result({:error, reason}, message), do: raise("#{message}: #{inspect(reason)}")
+
   defp load_application do
     case Application.load(:symphony_elixir) do
       :ok -> :ok

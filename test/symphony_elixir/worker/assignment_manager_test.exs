@@ -179,7 +179,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     start_supervised!(Tracker)
     circuit = Module.concat(__MODULE__, "Circuit#{System.unique_integer([:positive])}")
     start_supervised!({EnvironmentFailureCircuit, name: circuit})
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
     workflow = Map.put(loaded, :project_id, "fake-project-id")
     Application.put_env(:symphony_elixir, :assignment_test_workflow, workflow)
     {:ok, registration} = FakePersistence.register_worker(%{"worker_name" => "test", "total_slots" => 1})
@@ -1296,7 +1296,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   test "claim uses persisted project workflow context for prompt and correlation", context do
     start_supervised!(ProjectTracker)
-    {:ok, base} = Workflow.load()
+    {:ok, base} = Workflow.load_example_package()
     {:ok, default_project} = FakePersistence.default_project()
 
     {:ok, project_b} =

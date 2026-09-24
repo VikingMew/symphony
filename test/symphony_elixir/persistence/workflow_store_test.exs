@@ -27,6 +27,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.current_workflow() == nil
     assert WorkflowStore.legacy_instance_workflow_status() == {:error, :repo_unavailable}
     assert WorkflowStore.reconcile_legacy_instance_workflow("project") == {:error, :repo_unavailable}
+    assert WorkflowStore.project_identity_status() == {:error, :repo_unavailable}
+    assert WorkflowStore.reconcile_project_identities() == {:error, :repo_unavailable}
   end
 
   test "project hook writes are rejected before persistence" do
@@ -114,6 +116,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStoreTest do
     assert WorkflowStore.list_projects() == []
     assert Persistence.current_workflow() == WorkflowStore.current_workflow()
     assert Persistence.export_workflow(workflow) == WorkflowStore.export_workflow(workflow)
+    assert Persistence.project_identity_status() == {:error, :repo_unavailable}
+    assert Persistence.reconcile_project_identities() == {:error, :repo_unavailable}
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
