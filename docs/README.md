@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-09-19
+updated: 2026-09-23
 ---
 
 # Documentation Index
@@ -90,7 +90,7 @@ other documents link instead of restating.
   [documentation-system-design.md](documentation-system-design.md) §4), add frontmatter, and
   register here. `mise exec -- mix docs.check` enforces structure, genre/status legality, index
   registration, and owner anchors.
-- Drift signals: `mise exec -- mix docs.drift` checks current L4/L5 documents plus
+- Drift signals: `mise exec -- mix docs.drift` checks current L1/L4/L5 documents plus
   `documentation-alignment.md` for still-existing module, path, and config identifier references
   and reports owner Git-history freshness (`--freshness-days N`, `--format json`; see
   [documentation-system-design.md](documentation-system-design.md) §9).
