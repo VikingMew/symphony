@@ -15,7 +15,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     dockerfile = File.read!(@dockerfile)
     [_, codex_version] = Regex.run(~r/^ARG CODEX_VERSION=(\S+)$/m, dockerfile)
 
-    assert codex_version == "0.154.0"
+    assert codex_version == "0.156.0"
     assert "codex-cli #{codex_version}" == ModelCatalog.source_evidence().codex_version
     assert dockerfile =~ ~s(npm install --global "@openai/codex@${CODEX_VERSION}")
     assert dockerfile =~ "FROM toolchain AS worker"
