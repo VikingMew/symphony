@@ -53,6 +53,7 @@ other documents link instead of restating.
 | [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | landed |
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
+| [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
 
 ## L4 — Normative Contracts
 
@@ -73,6 +74,8 @@ other documents link instead of restating.
 | [pull-request-body.md](pull-request-body.md) | Pull request body headings, content shape, and Linear closing-reference contract. |
 | [test_database_isolation.md](test_database_isolation.md) | Test database-isolation contract. |
 | [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
+| [spec-agent-facing-code.md](spec-agent-facing-code.md) | Agent-facing code definitions, threshold semantics, evidence classes, conformance levels, declaration, and sources. |
+| [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 36-unit constitution audit with reproducible repository evidence. |
 
 ## L5 — Operational Guides
 

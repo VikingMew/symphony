@@ -1,0 +1,18 @@
+schema: agent-facing-code-exemptions
+owner: docs/agent-facing-code-design.md
+exemptions:
+  - rule: file_lines
+    target: lib/symphony_elixir/orchestrator.ex
+    owner: Symphony maintainers
+    reason: "The 4239-line stateful orchestrator predates this contract; splitting it safely is separate concurrency-sensitive behavior work."
+    expires_on: 2026-12-31
+  - rule: file_lines
+    target: test/symphony_elixir/orchestrator_status_test.exs
+    owner: Symphony maintainers
+    reason: "The 2221-line orchestrator status suite predates this contract and must be split alongside the owned behavior seams."
+    expires_on: 2026-12-31
+  - rule: resident_rule_lines
+    target: AGENTS.md
+    owner: Symphony maintainers
+    reason: "The 146-line repository governance contract predates the resident-rule budget; reducing it requires a dedicated governance review."
+    expires_on: 2026-12-31
