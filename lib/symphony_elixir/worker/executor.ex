@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.Worker.Executor do
   @moduledoc "Lease-owned preparation, execution, validation, and handoff pipeline."
 
@@ -114,9 +115,7 @@ defmodule SymphonyElixir.Worker.Executor do
               task_id: Map.fetch!(claim, "task_id"),
               graphql: &worker_graphql/2,
               pull_request_proof_secret: proof_secret,
-              pull_request_creator: fn issue, rendered, _opts ->
-                PullRequest.ensure_open(issue, RuntimeConfig.settings!().project, rendered, [])
-              end
+              pull_request_creator: pull_request_creator(RuntimeConfig.settings!().project)
             ]
           ]
 
@@ -150,6 +149,10 @@ defmodule SymphonyElixir.Worker.Executor do
       {:error, reason} ->
         %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: inspect(reason)}
     end
+  end
+
+  defp pull_request_creator(project) do
+    fn issue, rendered, _opts -> PullRequest.ensure_open(issue, project, rendered, []) end
   end
 
   defp run_app_server(workspace, prompt, issue, opts, session_observer) do

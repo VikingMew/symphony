@@ -28,6 +28,11 @@ This directory contains the Elixir agent orchestration service that polls Linear
   - Workspaces must stay under configured workspace root.
 - Orchestrator behavior is stateful and concurrency-sensitive; preserve retry, reconciliation, and cleanup semantics.
 - Follow `docs/logging.md` for logging conventions and required issue/session context fields.
+- Keep each file focused enough to understand one concept without navigating elsewhere; record the deterministic locality sample in `docs/code-locality.md`.
+- Do not cross module boundaries through three or more implicit remote calls; name intermediate values or use an explicit pipeline.
+- Give repeated or policy-bearing literals a named constant or existing `SymphonyElixir.Config` setting, and classify intentional literals in the locality audit.
+- Track generated code/assets only with a canonical manifest entry plus `Generated from:` and `DO NOT EDIT` in the first five non-empty lines.
+- Keep the locality split index beside every temporary overlong clause and update its owner, cut, measured lines, and due date in the canonical manifest.
 
 ## Code Value Principles (Linus & Carmack)
 

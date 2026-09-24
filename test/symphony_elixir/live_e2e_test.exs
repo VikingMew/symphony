@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.LiveE2ETest do
   use SymphonyElixir.TestSupport
 
