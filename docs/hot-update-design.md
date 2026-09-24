@@ -33,8 +33,9 @@ Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` �
 关键路径：
 
 - `/settings/import` 导入 combined portable package，并拆分为 instance/project durable scopes。
-- base prompt、profiles 与 Codex runtime selectors 属于 instance singleton。当前 Agents/Runtime 字段仍
-  显示，但普通 project save 携带这些字段会在 persistence boundary 收到 typed rejection；字段收敛由后续 UI 工作负责。
+- base prompt、profiles 与 Runtime workspace/hooks/Codex selectors 属于 instance singleton。
+  Agents/Runtime 直接保存 singleton，不要求 project，也不随 project selector 改变。Projects form 只包含
+  tracker/repository/source/setup/cleanup，因此 project save 不会提交或改变 instance 字段。
 - Runtime model/effort 可选集来自 `SymphonyElixir.Codex.ModelCatalog`。该 code-owned catalog
   与 `Dockerfile` 的 bundled Codex CLI pin 同步派生；升级 CLI 需要重建镜像并同步 catalog，
   而从当前 catalog 选择并保存值仍属于 workflow 配置热更新。
@@ -79,7 +80,9 @@ http://127.0.0.1:4000/settings
 修改配置后点击对应页面的保存按钮：
 
 - Projects 页面：保存 project 字段，例如 Linear project slug、repository URL、default branch。
-- Import 页面：导入 singleton runtime/profile policy 与所选 project slice。
+- Agents 页面：保存 installation-wide base prompt 与 profiles。
+- Runtime 页面：保存 installation-wide workspace、hooks 与 Codex selectors。
+- Import 页面：分组预览 singleton 与显式选择的 project slice；combined confirm 原子写两个 scope。
 
 保存成功后，页面会显示 saved 反馈；Linear 相关配置建议再打开 `/diagnostics/linear` 验证。
 

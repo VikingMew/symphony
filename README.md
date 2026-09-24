@@ -140,11 +140,13 @@ mise exec -- ./bin/symphony --port 4000
 
 Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
-1. Settings / Projects: Linear project slug and repository URL.
-2. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
-3. Settings / Runtime: execution mode, runtime checklist, and Codex model/reasoning effort selectors.
-4. Settings / Import: optional workflow/profile package import with preview before applying, including
-   bootstrap, hooks, polling, and state lists. Routing and transitions are an immutable code contract.
+1. Settings / Projects: per-project tracker, repository, source, setup, and cleanup settings.
+2. Settings / Agents: installation-wide base prompt, profile prompts, allowed updates, and target states.
+3. Settings / Runtime: installation-wide workspace roots, initialization/disk thresholds, lifecycle hooks,
+   and Codex model/reasoning/sandbox selectors.
+4. Settings / Import: workflow/profile package review grouped into Instance and an explicitly selected
+   Project. Confirming a combined package writes both scopes atomically. Routing and transitions remain
+   an immutable code contract.
 
 If PostgreSQL lacks either `app_settings["instance_workflow"]` or an enabled project workflow slice,
 Symphony starts in setup-required mode and does not listen for Linear work until an explicit import creates both.
@@ -184,8 +186,9 @@ mise exec -- ./bin/symphony \
 
 The split package is organized by concern: `workflow.yml` contains project tracker/source fields plus
 instance runtime settings and a non-runtime workflow-policy example; `profiles.yml` contains the base
-prompt and instance-owned profiles. Import validates the combined package, then writes the two durable
-scopes separately. A project repository URL is required before polling and agent work can begin.
+prompt and instance-owned profiles. Import previews Instance and Project separately; Project changes require
+an explicit target, and combined confirmation writes both durable scopes atomically. A project repository URL
+is required before polling and agent work can begin.
 
 Common environment variables:
 

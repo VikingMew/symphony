@@ -5,7 +5,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
 
   import Phoenix.LiveView, only: [put_flash: 3]
 
-  alias SymphonyElixir.PersistenceProvider
+  alias SymphonyElixir.{PersistenceProvider, Workflow, WorkflowForm}
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
   alias SymphonyElixirWeb.AdminLive.{State, WorkflowState}
 
@@ -41,6 +41,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
 
       <div class="workflow-profile-grid">
         <article :for={project <- @projects} class="workflow-profile-panel">
+          <% project_form = Map.fetch!(@project_workflow_forms, project.id) %>
           <header class="workflow-profile-header">
             <div>
               <h4><%= project.name %></h4>
@@ -82,6 +83,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
                 <input type="hidden" name="project[worktree_cleanup]" value="false" />
                 <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked={ProjectSettings.value(project, :worktree_cleanup) != false} /> Clean stale worktree</label>
               </div>
+              <label class="settings-field"><span class="metric-label">Tracker assignee</span><input name="project[tracker_assignee]" value={project_form["tracker_assignee"]} /></label>
+              <label class="settings-field"><span class="metric-label">Active states</span><textarea name="project[active_states]" rows="4"><%= project_form["active_states"] %></textarea></label>
+              <label class="settings-field"><span class="metric-label">Terminal states</span><textarea name="project[terminal_states]" rows="4"><%= project_form["terminal_states"] %></textarea></label>
+              <label class="settings-field"><span class="metric-label">Setup commands</span><textarea name="project[project_setup_commands]" rows="4"><%= project_form["project_setup_commands"] %></textarea></label>
+              <label class="settings-field"><span class="metric-label">Cleanup commands</span><textarea name="project[project_cleanup_commands]" rows="4"><%= project_form["project_cleanup_commands"] %></textarea></label>
               <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" value={ProjectSettings.value(project, :description)} /></label>
               <div class="workflow-checkbox-row">
                 <input type="hidden" name="project[enabled]" value="false" />
@@ -116,6 +122,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
               <input type="hidden" name="project[worktree_cleanup]" value="false" />
               <label><input type="checkbox" name="project[worktree_cleanup]" value="true" checked /> Clean stale worktree</label>
             </div>
+            <label class="settings-field"><span class="metric-label">Tracker assignee</span><input name="project[tracker_assignee]" /></label>
+            <label class="settings-field"><span class="metric-label">Active states</span><textarea name="project[active_states]" rows="4"><%= WorkflowForm.empty()["active_states"] %></textarea></label>
+            <label class="settings-field"><span class="metric-label">Terminal states</span><textarea name="project[terminal_states]" rows="4"><%= WorkflowForm.empty()["terminal_states"] %></textarea></label>
+            <label class="settings-field"><span class="metric-label">Setup commands</span><textarea name="project[project_setup_commands]" rows="4"></textarea></label>
+            <label class="settings-field"><span class="metric-label">Cleanup commands</span><textarea name="project[project_cleanup_commands]" rows="4"></textarea></label>
             <label class="settings-field"><span class="metric-label">Description</span><input name="project[description]" /></label>
             <div class="workflow-checkbox-row">
               <input type="hidden" name="project[enabled]" value="false" />
@@ -133,24 +144,27 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
   def save(params, socket) do
     id = SymphonyElixir.Text.blank_as_nil(Map.get(params, "id"))
     attrs = ProjectSettings.attrs(params)
+    current_form = Map.get(socket.assigns.project_workflow_forms, id, WorkflowForm.empty())
 
     result =
-      case id do
-        nil -> persistence().create_project(attrs) |> PersistenceProvider.publish_runtime_mutation()
-        id -> maybe_update_project(id, attrs, socket)
+      with {:ok, project} <- persist_project(id, attrs, socket),
+           draft = ProjectSettings.workflow_draft(current_form, params, project),
+           {:ok, _instance, project_config} <- WorkflowForm.to_scopes(draft),
+           raw = Workflow.to_markdown(project_config, ""),
+           {:ok, workflow} <- persist_project_workflow(project, raw) do
+        {:ok, project, workflow}
       end
 
     socket =
       case result do
-        :unchanged ->
-          socket
-          |> put_flash(:info, "Project settings already up to date.")
-          |> WorkflowState.assign_save_notice(:info, "Project settings already up to date", "No changes to save.")
-
-        {:ok, project} ->
+        {:ok, project, _workflow} ->
           socket
           |> put_flash(:info, "Project settings saved.")
-          |> WorkflowState.assign_save_notice(:success, "Project settings saved", "#{project.name} is available in Settings.")
+          |> WorkflowState.assign_save_notice(
+            :success,
+            "Project settings saved",
+            "#{ProjectSettings.value(project, :name)} project record and tracker/repository slice were updated."
+          )
           |> State.refresh()
 
         {:error, reason} ->
@@ -237,8 +251,22 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
       project ->
         if ProjectSettings.changed?(project, attrs),
           do: persistence().update_project(id, attrs) |> PersistenceProvider.publish_runtime_mutation(),
-          else: :unchanged
+          else: {:ok, project}
     end
+  end
+
+  defp persist_project(nil, attrs, _socket) do
+    attrs
+    |> persistence().create_project()
+    |> PersistenceProvider.publish_runtime_mutation()
+  end
+
+  defp persist_project(id, attrs, socket), do: maybe_update_project(id, attrs, socket)
+
+  defp persist_project_workflow(project, raw) do
+    project
+    |> persistence().import_workflow(raw, "web_project_settings")
+    |> PersistenceProvider.publish_runtime_mutation()
   end
 
   defp changeset_or_reason(%Ecto.Changeset{} = changeset) do

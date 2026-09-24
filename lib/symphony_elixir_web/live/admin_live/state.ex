@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias SymphonyElixir.{Config, PersistenceProvider, WorkflowStore}
+  alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore}
   alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixirWeb.Admin.ProjectSettings
 
@@ -20,6 +20,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     {projects, projects_error} = projects()
     {default_project, default_project_error} = default_project()
     selected_project = selected_project(socket, projects)
+    explicit_project = explicit_project(socket, projects)
 
     socket =
       if is_nil(projects_error),
@@ -27,10 +28,15 @@ defmodule SymphonyElixirWeb.AdminLive.State do
         else: socket
 
     {workflow, workflow_error} = current_workflow(selected_project)
+    {instance_workflow, instance_error} = instance_workflow()
+    {legacy_status, legacy_status_error} = legacy_instance_workflow_status()
     runtime = WorkflowStore.current_with_source()
-    {loaded_workflow_form, workflow_setup_required} = WorkflowState.load_form(workflow, runtime)
+    loaded_workflow_form = WorkflowState.load_instance_form(instance_workflow)
     workflow_form = WorkflowState.refreshed_form(socket, loaded_workflow_form)
-    persistence_error = projects_error || default_project_error || workflow_error
+    workflow_setup_required = is_nil(workflow)
+
+    persistence_error =
+      projects_error || default_project_error || workflow_error || instance_error || legacy_status_error
 
     configuration_items =
       ProjectSettings.configuration_missing_items(workflow_setup_required, selected_project)
@@ -40,7 +46,13 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:persistence_error, persistence_error)
     |> assign(:default_project, default_project)
     |> assign(:selected_project, selected_project)
+    |> assign(:explicit_project, explicit_project)
     |> assign(:current_workflow, workflow)
+    |> assign(:current_instance_workflow, instance_workflow)
+    |> assign(:project_workflow_forms, project_workflow_forms(projects, instance_workflow))
+    |> assign(:settings_import_form, import_form(instance_workflow, explicit_project))
+    |> assign(:legacy_instance_workflow_status, legacy_status)
+    |> assign(:legacy_reconciliation_notice, Map.get(socket.assigns, :legacy_reconciliation_notice))
     |> Runs.assign_page(reset: true)
     |> Events.assign_data()
     |> assign(:assignment, AssignmentManager.current_assignment())
@@ -89,6 +101,20 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     end
   end
 
+  defp instance_workflow do
+    case PersistenceProvider.read(fn -> persistence().instance_workflow() end) do
+      {:error, reason} -> {nil, reason}
+      instance -> {instance, nil}
+    end
+  end
+
+  defp legacy_instance_workflow_status do
+    case PersistenceProvider.read(fn -> persistence().legacy_instance_workflow_status() end) do
+      {:ok, status} -> {status, nil}
+      {:error, reason} -> {nil, reason}
+    end
+  end
+
   defp selected_project(%{assigns: %{route_params: params}}, projects) do
     first_enabled_project = Enum.find(projects, &(ProjectSettings.value(&1, :enabled) == true))
 
@@ -104,6 +130,15 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   defp selected_project(_socket, projects) do
     Enum.find(projects, &(ProjectSettings.value(&1, :enabled) == true))
   end
+
+  defp explicit_project(%{assigns: %{route_params: params}}, projects) do
+    case SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", "")) do
+      nil -> nil
+      project_id -> Enum.find(projects, &(ProjectSettings.value(&1, :id) == project_id))
+    end
+  end
+
+  defp explicit_project(_socket, _projects), do: nil
 
   defp normalize_project_selection(%{assigns: %{route_params: params}} = socket, projects, selected_project) do
     project_id = SymphonyElixir.Text.blank_as_nil(Map.get(params, "project", ""))
@@ -139,6 +174,44 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   defp source_detail(%{type: :database}), do: "current workflow"
   defp source_detail(%{type: :setup_required}), do: "setup required"
   defp source_detail(_source), do: "n/a"
+
+  defp project_workflow_forms(projects, instance_workflow) do
+    Map.new(projects, fn project ->
+      {ProjectSettings.value(project, :id), project_workflow_form(project, instance_workflow)}
+    end)
+  end
+
+  defp project_workflow_form(project, instance_workflow) do
+    draft =
+      case persistence().current_workflow(project) do
+        workflow when is_map(workflow) -> loaded_project_form(instance_workflow, workflow)
+        _workflow -> WorkflowForm.empty()
+      end
+
+    ProjectSettings.apply_to_workflow_draft(draft, project)
+  end
+
+  defp loaded_project_form(instance_workflow, workflow) when is_map(instance_workflow) do
+    {:ok, loaded} = persistence().workflow_to_loaded(instance_workflow, workflow)
+    WorkflowForm.from_loaded(loaded)
+  end
+
+  defp loaded_project_form(_instance_workflow, workflow) do
+    case persistence().export_workflow(workflow) do
+      {:ok, raw} ->
+        {:ok, draft} = WorkflowForm.from_raw(raw)
+        draft
+
+      {:error, _reason} ->
+        WorkflowForm.empty()
+    end
+  end
+
+  defp import_form(instance_workflow, nil), do: WorkflowState.load_instance_form(instance_workflow)
+
+  defp import_form(instance_workflow, project) do
+    project_workflow_form(project, instance_workflow)
+  end
 
   defp persistence, do: PersistenceProvider.module()
 end

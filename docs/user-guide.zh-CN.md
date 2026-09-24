@@ -184,10 +184,12 @@ profiles.yml
 ```
 
 空数据库第一次配置时，在 Settings 的 Import 页面逐个粘贴 `workflow.yml` 或
-`profiles.yml` 的内容导入到结构化 draft。Symphony 会根据 YAML
+`profiles.yml`。Symphony 会根据 YAML
 顶层字段自动识别 package 类型：包含 `profiles` 或 `base_prompt` 的文档按 `profiles.yml` 导入，其余
-有效 workflow mapping 按 `workflow.yml` 导入。导入只填充页面上的 draft，不会立即激活运行时；确认校验提示后，
-再点 Save；Symphony 在一个事务中写 instance singleton 和所选 project slice。
+有效 workflow mapping 按 `workflow.yml` 导入。review 把 before/after 固定分成 Instance 与 Project；
+Project 标题显示明确选择的 project identity。含 Project 变化时必须先在顶部 selector 选择 target，
+否则确认返回 `project_target_required`；确认 combined package 后 Symphony 在一个事务中写 instance
+singleton 和所选 project slice。只含 base prompt/profiles 的 package 可直接写 singleton。
 setup-required 页面里的提示文案只是系统状态提示，不是 base prompt。正确的 base prompt 来自
 `profiles.yml` 的 `base_prompt`。
 
@@ -291,14 +293,15 @@ profiles:
 `project.repository_url` 指向的仓库 clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
 workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动 agent。
 `workspace.initialize_timeout_ms` 控制项目初始化阶段的超时，包括 clone/worktree 准备和
-`project.setup_commands`；这些 workflow-only 字段可通过 Settings / Import 导入 workflow package。
+`project.setup_commands`；这些 project-owned 字段可在 Settings / Projects 编辑，也可通过
+Settings / Import 导入 workflow package。
 `hooks.timeout_ms` 只控制
 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 
 如果同一个本地机器会同时处理很多同仓库任务，可以在 Project Settings 里把 source strategy 设为
 `worktree`。长期路径模型见 `docs/workspace-source-layout-design.md`：共享 Workspace/Runtime Settings
-应分别配置 repository base root 和 worktree base root。Project Settings 只配置 repository URL、
-default branch、checkout depth、source strategy 等项目自身信息。Symphony 会把 `project.repository_url` clone/fetch 到
+应分别配置 repository base root 和 worktree base root。Project Settings 只配置 tracker、repository URL、
+default branch、checkout depth、source strategy、setup/cleanup 等项目自身信息。Symphony 会把 `project.repository_url` clone/fetch 到
 `repository_base_root / repo_cache_name`，再为每个 issue 创建
 `worktree_base_root / issue_identifier`。clone/worktree 命令不应该写进 `hooks.after_create` 或
 `hooks.before_run`。如果启用了 Fetch before worktree，每次 agent start 都会先 fetch 配置的
@@ -489,10 +492,10 @@ mise exec -- ./bin/symphony \
 /runs         持久化 run 历史（支持按 project 过滤）
 /workers      worker、task、lease 状态；集中式部署下可为空
 /settings     Settings 入口，默认打开 Projects tab
-/settings/projects 多 project 配置；每个 project 有自己的 Linear slug、repo URL、default branch；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
-/settings/import workflow package 导入（顶部 project 选择器限定到指定 project）
-/settings/agents agent profile、base prompt、profile prompt、allowed updates 配置（project 选择器限定）
-/settings/runtime runtime 摘要与 Codex model/reasoning effort selector（project 选择器限定）
+/settings/projects 多 project 配置；每个 project 有自己的 tracker、repository/source、setup/cleanup；也提供 Linear discovery 辅助复制 project slug 和 workflow state 名称
+/settings/import workflow package 的 Instance/Project 分组预览与原子确认；Project 变化要求顶部 selector 显式选择 target
+/settings/agents installation-wide base prompt、profiles、profile prompt、allowed updates；project selector 不改变值或保存目标
+/settings/runtime installation-wide workspace、初始化/磁盘阈值、lifecycle hooks 与 Codex model/reasoning/sandbox；也提供 legacy drift 显式对账入口
 /diagnostics/linear Linear API、project、workflow states 和候选 issue 诊断
 /api/v1/state JSON 状态 API
 /api/v1/:issue_identifier 当前 live 状态；inactive issue 会回退到持久化状态和最近结果

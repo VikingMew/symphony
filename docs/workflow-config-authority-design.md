@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-09-24
 design_status: landed
 ---
 
@@ -24,6 +24,11 @@ design_status: landed
 - instance singleton 独占 `polling`、`workspace`、`hooks`、`agent`、`codex`、`observability`、
   `analytics`、`server`、`worker`、base prompt 和 `profiles`。project workflow 只接受 tracker 的
   kind/endpoint/project slug/assignee/state lists，以及 repository/source/setup/cleanup 字段。
+- Settings 按同一 durable ownership 分页：`/settings/runtime` 直接读写 singleton 的 workspace、
+  初始化/磁盘阈值、lifecycle hooks 与 Codex model/reasoning/sandbox；`/settings/agents` 直接读写
+  singleton 的 base prompt/profiles。两个页面不依赖所选 project，保存后重新发布所有 enabled
+  project 的 future runtime snapshot。`/settings/projects` 只提交 project metadata 与
+  tracker/repository/source/setup/cleanup slice，不能携带 instance 字段。
 - `workflow.states`、`allowed_transitions`、`human_review_states` 与 `tool_policy` 只来自
   `Schema.default_workflow_policy/0`；`tracker.api_key` 只按环境 secret contract 在运行时解析。
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret
@@ -41,17 +46,18 @@ design_status: landed
   current workflow。
 - 不存在 package 同步命令、不存在幂等的包覆盖流程、不存在仓库文件与数据库之间的 drift 契约。
   operator 在 Settings 里的改动就是最终改动；仓库示例文件不随之更新不是缺陷。
-- Settings / Import 是 portable combined package 的受支持路径：解析文件、预览合并后的 draft、
-  保存时分别写入 singleton 与所选 project。空库冷启动使用同一显式双 scope 导入；拒绝导入、缺少
+- Settings / Import 是 portable combined package 的受支持路径：解析文件、按 Instance 与具名 Project
+  预览合并后的 draft，并在一次确认中原子写入 singleton 与显式选择的 project。空库冷启动使用同一
+  显式双 scope 导入；拒绝导入、缺少 project target、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
-- Settings / Import 在生成 editable draft 前转换已知的 legacy Codex command selector：
+- Settings / Import 在生成 staged preview 前转换已知的 legacy Codex command selector：
   `-c` / `--config` 中的 `model`、`model_reasoning_effort` 以及 `-m` / `--model` 会填入尚未显式
   配置的 `codex.model` / `codex.reasoning_effort`，显式 selector 始终优先，随后从 command 删除这些
   参数。staged diff 同时展示 command 清理和 selector 提升；保存到 PostgreSQL current workflow 的
   结果只有结构化 selector 与干净的 app-server launch command。该转换只属于 import，不属于 launch、
   dispatch 或 turn 创建时的 command 解释。
 - 修改 split package 中的 implementation prompt 时，worker 交付只验证 rendered prompt 与 package
-  artifact。release record 记录 merge 后宿主访问 `/settings/import`、导入 package 并 Save；预期结果是
+  artifact。release record 记录 merge 后宿主访问 `/settings/import`、导入并确认 package；预期结果是
   import validation 成功，且保存后的 instance singleton 包含新 prompt。worker 不执行该发布，
   不把宿主路径不可用视为 blocker/retry，也不把 checked-in YAML 报告为 live runtime effect。
 - 运行时代码 MUST NOT 从源码 checkout 读取配置。
@@ -84,6 +90,10 @@ design_status: landed
   `runtime_publication_failed` 且不回滚 singleton；already-converged 重试可以再次发布。OTP release
   eval 只启动 release database lifecycle，不启动业务 supervision tree，也不尝试跨 VM force reload；
   已运行 Panel 由现有一秒 background refresh 发布 durable 结果，未运行 Panel 在启动时加载它。
+- Runtime 的 configuration check 展示 typed conflict 中每个 differing path 与全部 contributor；
+  Settings project selector 是显式 source selection。未选择 contributor 时 action 禁用，系统不自动
+  选择来源；`Use selected project's instance settings` 调用同一个 typed reconciliation operation，
+  成功后刷新 singleton、runtime snapshot 与 configuration check。
 - 停止状态的 legacy SQLite cutover 在写入已经完成 migration 的 PostgreSQL schema 前应用同一候选与
   rewrite 规则；旧 hook columns 只从 import source 读取，不会在 current project schema 中重建。
 - 显式 PostgreSQL smoke 在隔离数据库中为零候选、单候选、多候选等值、多候选不等和已存在 singleton

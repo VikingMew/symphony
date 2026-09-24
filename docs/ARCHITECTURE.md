@@ -256,7 +256,7 @@ port is configured, the service provides:
 - `/api/v1/runs?issue_identifier=<identifier>`: bounded newest-first runs and event timeline
 - `/api/v1/refresh`: manual refresh endpoint
 - `/runs`, `/events`, `/workers`, `/settings/*`: management pages
-- `/settings/import`: staged split-package import and diff review before applying to editable Settings draft
+- `/settings/import`: Instance/Project split-package review and confirmed durable import; Project changes require an explicit target
 - `/diagnostics/linear`: validation for the active Linear runtime configuration
 
 ### 6.10 Persistence and Worker API
