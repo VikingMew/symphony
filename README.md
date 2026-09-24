@@ -342,11 +342,12 @@ export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony_smoke
 mise exec -- mix symphony.postgres_smoke
 ```
 
-Make is reserved for build and image targets. Run quality checks independently with
-`scripts/check.sh` (format, lint, compile), `scripts/unit.sh` (85% coverage-bearing unit suite),
-and `scripts/dialyzer.sh` (static analysis). CI runs the fast, unit, static, and PR description
-lint gates; publication uses only the fast check gate. `scripts/e2e.sh` remains a credentialed
-manual live integration suite and is not currently connected to CI.
+Make is reserved for build and image targets. Run the complete local quality gate with
+`scripts/quality.sh`; it covers `scripts/check.sh` (agent-facing conformance, format, lint,
+compile), `scripts/unit.sh` (85% coverage-bearing unit suite), and `scripts/dialyzer.sh` (static
+analysis). CI runs the same three component gates plus PR description lint; publication uses only
+the fast check gate. `scripts/e2e.sh` remains a credentialed manual live integration suite and is
+not currently connected to CI.
 
 The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
 run it only with explicit credentials:

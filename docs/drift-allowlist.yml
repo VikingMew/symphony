@@ -1,5 +1,11 @@
 entries:
   - document: docs/compose.md
+    token: SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE
+    reason: Compose interpolation variable declared outside the runtime lib/config identifier scan.
+  - document: docs/execution-worker-operations.md
+    token: SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE
+    reason: Compose interpolation variable declared outside the runtime lib/config identifier scan.
+  - document: docs/compose.md
     token: SYMPHONY_EMBED_CODEX
     reason: Build argument declared in the root Dockerfile, outside the runtime lib/config scan.
   - document: docs/compose.md

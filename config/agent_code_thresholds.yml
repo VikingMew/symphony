@@ -1,0 +1,149 @@
+schema: agent-facing-code-thresholds
+owner: docs/agent-facing-code-design.md
+rules:
+  - id: file_lines
+    kind: file_lines
+    scope:
+      paths: ["lib/**/*.ex", "test/**/*.exs"]
+      language: Elixir
+      exclusions:
+        - path: "deps/**"
+          reason: Third-party dependency sources are not repository-owned code.
+        - path: "_build/**"
+          reason: Compiler output is generated and is not repository-owned source.
+        - path: "priv/static/assets/**"
+          reason: Bundled static output is generated from repository web sources.
+    unit: physical lines
+    redline: 2000
+    default: 500
+    source_nature: "引用：2000 行来自 agent CLI 单次读取默认上限；500 行是来源模板建议值。"
+    evidence_mode: machine
+    status: enforced
+    default_exceedance_reason: "The pre-existing file is an identified decomposition candidate; this ticket records rather than performs unrelated module splits."
+    calibration:
+      method: "find lib test -type f matching *.ex or *.exs, then count physical lines with wc -l"
+      sample: "2026-09-24 baseline: 77216 physical lines; maximum 4239 in lib/symphony_elixir/orchestrator.ex."
+      sample_value: 4239
+      date: 2026-09-24
+  - id: function_lines
+    kind: function_lines
+    scope:
+      paths: ["lib/**/*.ex", "test/**/*.exs"]
+      language: Elixir AST
+      exclusions:
+        - path: "deps/**"
+          reason: Third-party dependency sources are not repository-owned code.
+        - path: "_build/**"
+          reason: Compiler output is generated and is not repository-owned source.
+    unit: source lines per def or defp
+    redline: 40
+    default: 20
+    source_nature: "引用＋本规范设定：4 至 20 行来自来源建议区间；40 行红线由本规范设定。"
+    evidence_mode: machine
+    status: record_only
+    default_exceedance_reason: "The repository calibration is not complete, so this threshold records observations and cannot support a conformance conclusion."
+    calibration:
+      method: "Parse Elixir with token metadata and measure each def/defp from opening line through end metadata."
+      sample: "2026-09-24 scan: 5425 def/defp declarations; maximum span 431 lines at dashboard_live.ex render/1."
+      sample_value: 431
+      date: 2026-09-24
+  - id: nesting_depth
+    kind: nesting_depth
+    scope:
+      paths: ["lib/**/*.ex", "test/**/*.exs"]
+      language: Elixir AST
+      exclusions:
+        - path: "deps/**"
+          reason: Third-party dependency sources are not repository-owned code.
+        - path: "_build/**"
+          reason: Compiler output is generated and is not repository-owned source.
+    unit: maximum nested control forms per function
+    redline: 4
+    default: 2
+    source_nature: "引用＋本规范设定：2 层来自来源模板建议；4 层红线由本规范设定。"
+    evidence_mode: machine
+    status: record_only
+    default_exceedance_reason: "The repository calibration is not complete, so this threshold records observations and cannot support a conformance conclusion."
+    calibration:
+      method: "Parse Elixir and count nested case/cond/for/fn/if/receive/try/unless/with forms within each def/defp."
+      sample: "2026-09-24 scan: 5425 def/defp declarations; maximum configured control-form depth 4 at app_server.ex run_turn/4."
+      sample_value: 4
+      date: 2026-09-24
+  - id: identifier_occurrences
+    kind: identifier_occurrences
+    scope:
+      paths: ["lib/**/*.ex", "test/**/*.exs"]
+      language: Elixir declarations
+      exclusions:
+        - path: "deps/**"
+          reason: Third-party dependency sources are not repository-owned code.
+        - path: "_build/**"
+          reason: Compiler output is generated and is not repository-owned source.
+    unit: repository-wide declarations sharing one module-tail or function name
+    redline: 5
+    default: 1
+    source_nature: "引用：来源建议可检索名字少于 5 个命中；唯一命中由本规范设为默认值。"
+    evidence_mode: machine
+    status: record_only
+    default_exceedance_reason: "Declaration-name counting is deterministic, but its repository calibration and grouped-clause semantics are not complete."
+    calibration:
+      method: "Parse Elixir and count equal module-tail and def/defp declaration names across the configured scope."
+      sample: "2026-09-24 scan: 3278 distinct declaration names; maximum shared name count 60 for restore_app_env."
+      sample_value: 60
+      date: 2026-09-24
+  - id: resident_rule_lines
+    kind: resident_rule_lines
+    scope:
+      paths: ["AGENTS.md"]
+      language: Markdown resident agent rules
+      exclusions: []
+    unit: physical lines
+    redline: 50
+    default: 32
+    source_nature: "对照＋本规范设定：47 与 32 行来自同体裁规则包；50 行红线由本规范设定。"
+    evidence_mode: machine
+    status: enforced
+    default_exceedance_reason: "AGENTS.md contains the existing repository governance contract; its reduction requires a dedicated governance edit rather than silent deletion."
+    calibration:
+      method: "wc -l AGENTS.md"
+      sample: "2026-09-24 baseline: AGENTS.md has 146 physical lines; this ticket adds zero lines."
+      sample_value: 146
+      date: 2026-09-24
+  - id: full_gate_minutes
+    kind: recorded_sample
+    scope:
+      paths: ["scripts/quality.sh"]
+      language: Bash quality entrypoint
+      exclusions: []
+    unit: elapsed minutes
+    redline: 10
+    default: 5
+    source_nature: "本规范设定；必须以本仓实测覆盖后才可用于符合性判定。"
+    evidence_mode: machine
+    status: record_only
+    default_exceedance_reason: "The timing threshold remains record-only until repeatable repository samples establish a stable merge-gate bound."
+    calibration:
+      method: "TIMEFORMAT='ELAPSED_SECONDS=%R'; time scripts/quality.sh on the implementation workspace; CI equivalence is checked statically."
+      sample: "2026-09-24 final green implementation-host sample: 68.144 seconds with a warm Dialyzer PLT."
+      sample_value: 1.1357
+      date: 2026-09-24
+  - id: change_lines
+    kind: recorded_sample
+    scope:
+      paths: ["git diff --numstat origin/main...HEAD"]
+      language: Git added plus deleted lines
+      exclusions:
+        - path: "binary files"
+          reason: Git numstat does not provide meaningful line counts for binary content.
+    unit: added plus deleted lines
+    redline: pending
+    default: pending
+    source_nature: "本规范设定：本仓标定前不作判定，只记录。"
+    evidence_mode: machine
+    status: record_only
+    default_exceedance_reason: "No repository-calibrated default or redline exists, so change size cannot support a conformance conclusion."
+    calibration:
+      method: "Sum added and deleted numeric fields from git diff --numstat origin/main...HEAD."
+      sample: "2026-09-24 SYM-140 staged implementation sample: 1176 added plus 5 deleted lines, 1181 total."
+      sample_value: 1181
+      date: 2026-09-24
