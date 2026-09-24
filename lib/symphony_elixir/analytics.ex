@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.Analytics do
   @moduledoc "Database-backed historical and issue-flow analytics read model."
   alias SymphonyElixir.Codex.TokenUsage

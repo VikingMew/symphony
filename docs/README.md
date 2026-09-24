@@ -55,6 +55,7 @@ other documents link instead of restating.
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
+| [code-locality-design.md](code-locality-design.md) | Repository-wide code locality ownership and enforcement architecture. | landed |
 | [repository-verification-design.md](repository-verification-design.md) | Repository setup, gate artifacts, offline tests and V-group audit. | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |
 | [issue-persistence-design.md](issue-persistence-design.md) | Persisted issue identity, poll snapshots, worker-owned state, and history projection. | landed |
@@ -84,6 +85,7 @@ other documents link instead of restating.
 | [agent-facing-code-n-conformance.md](agent-facing-code-n-conformance.md) | Current N-01 through N-09 navigation facts, glossary, deterministic rules, and ratchet waterline. |
 | [agent-facing-code-x-conformance.md](agent-facing-code-x-conformance.md) | Current X-01 through X-05 test-governance facts, checker calibration, and hard-gate waterline. |
 | [agent-facing-code-o-conformance.md](agent-facing-code-o-conformance.md) | Current O-01 through O-08 observability/error evidence and ratchet waterline. |
+| [code-locality.md](code-locality.md) | Code locality thresholds, scan/exclusion contract, dateless clause baseline, waterline, and L-01–L-08 audit. |
 
 ## L5 — Operational Guides
 
