@@ -120,6 +120,20 @@ defmodule SymphonyElixir.Config.SchemaTest do
     assert Schema.to_external_config(settings)["codex"]["model"] == "gpt-6-astra"
     assert Schema.to_external_config(settings)["codex"]["reasoning_effort"] == "ultra"
 
+    for {model, effort} <- [{"gpt-6-sol", "ultra"}, {"gpt-6-luna", "max"}] do
+      assert {:ok, settings} =
+               Schema.parse(%{
+                 "codex" => %{
+                   "command" => "codex app-server",
+                   "model" => model,
+                   "reasoning_effort" => effort
+                 }
+               })
+
+      assert settings.codex.model == model
+      assert settings.codex.reasoning_effort == effort
+    end
+
     assert {:ok, settings} =
              Schema.parse(%{
                "codex" => %{
@@ -137,6 +151,16 @@ defmodule SymphonyElixir.Config.SchemaTest do
   end
 
   test "codex model and reasoning effort validation rejects invalid catalog values" do
+    assert {:error, {:invalid_workflow_config, retired_message}} =
+             Schema.parse(%{
+               "codex" => %{
+                 "command" => "codex app-server",
+                 "model" => "gpt-5.3-codex-spark"
+               }
+             })
+
+    assert retired_message =~ "codex.model must be one of:"
+
     assert {:error, {:invalid_workflow_config, message}} =
              Schema.parse(%{"codex" => %{"command" => "codex app-server", "model" => "gpt-future"}})
 
@@ -159,6 +183,17 @@ defmodule SymphonyElixir.Config.SchemaTest do
              })
 
     assert message =~ "codex.reasoning_effort must be one of low, medium, high, xhigh for model gpt-5.5"
+
+    assert {:error, {:invalid_workflow_config, message}} =
+             Schema.parse(%{
+               "codex" => %{
+                 "command" => "codex app-server",
+                 "model" => "gpt-6-luna",
+                 "reasoning_effort" => "ultra"
+               }
+             })
+
+    assert message =~ "codex.reasoning_effort must be one of low, medium, high, xhigh, max for model gpt-6-luna"
   end
 
   test "codex command rejects model and reasoning effort overrides" do

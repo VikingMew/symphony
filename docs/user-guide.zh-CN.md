@@ -321,11 +321,12 @@ default branch、checkout depth、source strategy 等项目自身信息。Sympho
 这些命令和最终 `codex.command` 在同一个 shell 里执行，因此 `source ~/.nvs/nvs.sh`、
 `nvs use 22 >/dev/null`、`export PATH="$HOME/.local/bin:$PATH"` 这类环境准备会影响后续
 `codex app-server`。`codex.command` 只负责启动 app-server；Codex model 与 reasoning effort
-可以在 Settings / Runtime 用枚举 selector 保存，也可以通过 `workflow.yml` 的
-`codex.model` / `codex.reasoning_effort` 导入，保存后只影响后续 turn/session。selector 与
-workflow validation 共用随 bundled `codex-cli 0.154.0` pin 派生的 code-owned catalog；当前六行
-依次为 `gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` 和
-`gpt-5.3-codex-spark`：
+在 Settings / Runtime 通过枚举 selector 呈现并联动，通过 Settings / Import 导入
+`workflow.yml` 的 `codex.model` / `codex.reasoning_effort` 后保存。普通 Runtime submit 会以
+typed rejection 拒绝 instance-owned `codex` 字段；Import 保存后重载 Runtime 可回读，且只影响
+后续 turn/session。selector 与 workflow validation 共用随 bundled `codex-cli 0.156.0` pin 派生的
+code-owned catalog；当前七行依次为 `gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 和 `gpt-5.5`：
 
 不要在 `codex.command` 使用 `-c` / `--config model=...`、
 `-c` / `--config model_reasoning_effort=...` 或 `-m` / `--model`。workflow validation 会把它作为
