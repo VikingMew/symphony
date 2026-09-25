@@ -278,15 +278,27 @@ profiles:
     prompt:
       mode: extend
       template: |
-        Implement, test, verify, commit, and push the exact Linear branch. Submit the final
-        call create_pull_request with a docs/pull-request-body.md-conformant title/body, then submit
-        comment/result/references with its URL and explicitly request Ready to Merge.
+        Implement, test, verify, and commit the exact Linear branch. If the issue description's
+        first non-empty line is exactly `交付路径:宿主 push`, write a complete binary-safe root
+        `<issue-identifier>.patch`, do not push or call create_pull_request, and report
+        `需宿主 push`. Otherwise push the exact branch, call create_pull_request with a
+        docs/pull-request-body.md-conformant title/body, and submit the handoff evidence.
     allowed_updates:
       description: false
       comment: true
       result: true
       target_states: ["In Progress", "Ready to Merge"]
 ```
+
+operator 判断 implementation 交付路径时，以 issue description 的首个非空行是否精确等于
+`交付路径:宿主 push` 为准，必须使用 ASCII 冒号。普通路径由 worker push 精确 Linear branch、调用
+`create_pull_request` 并提交 handoff evidence，门禁通过后进入 `Ready to Merge`。host-push 路径还要求
+workspace 根存在完整、binary-safe 的 `<issue-identifier>.patch`；worker 完成本地 commit 与允许的
+validation 后不 push、不创建 PR，也不会成功 handoff 或进入 `Ready to Merge`。executor 会记录包含
+根相对 patch 路径与 `需宿主 push` 的 blocked / `handoff_failed` 证据；宿主据此接续 push 分支并创建
+PR。精确判据和证据格式以
+[Codex/Linear implementation workflow design](codex-linear-implementation-workflow-design.md) 与
+[execution runtime design](execution-runtime-design.md) 为准。
 
 `workspace.root` 是 Symphony 管理 issue workspace 的根目录，不是你的项目仓库目录。默认
 `source_strategy: clone` 会在这个目录下为每个 Linear issue 创建子目录，然后把
@@ -312,11 +324,11 @@ default branch、checkout depth、source strategy、setup/cleanup 等项目自�
 这些命令和最终 `codex.command` 在同一个 shell 里执行，因此 `source ~/.nvs/nvs.sh`、
 `nvs use 22 >/dev/null`、`export PATH="$HOME/.local/bin:$PATH"` 这类环境准备会影响后续
 `codex app-server`。`codex.command` 只负责启动 app-server；Codex model 与 reasoning effort
-可以在 Settings / Runtime 用枚举 selector 保存，也可以通过 `workflow.yml` 的
-`codex.model` / `codex.reasoning_effort` 导入，保存后只影响后续 turn/session。selector 与
-workflow validation 共用随 bundled `codex-cli 0.154.0` pin 派生的 code-owned catalog；当前六行
-依次为 `gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`、`gpt-5.5` 和
-`gpt-5.3-codex-spark`：
+在 Settings / Runtime 通过枚举 selector 呈现、联动并直接保存，也可以通过 Settings / Import 导入
+`workflow.yml` 的 `codex.model` / `codex.reasoning_effort`。两条路径都写入 instance singleton，
+并且只影响后续 turn/session。selector 与 workflow validation 共用随 bundled `codex-cli 0.156.0` pin 派生的
+code-owned catalog；当前七行依次为 `gpt-6-astra`、`gpt-6-sol`、`gpt-6-luna`、
+`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna` 和 `gpt-5.5`：
 
 不要在 `codex.command` 使用 `-c` / `--config model=...`、
 `-c` / `--config model_reasoning_effort=...` 或 `-m` / `--model`。workflow validation 会把它作为
@@ -369,21 +381,21 @@ source strategy 会先完成 source preparation，`project.setup_commands` 再�
 `hooks.after_create` 作为附加自定义命令执行。
 hooks 和 setup commands 都会在 worker 机器上执行，保存前应确认命令安全。
 
-Web UI 不提供独立的 workflow/routing 编辑 tab；路由始终来自 code-owned policy。当前
-`/settings/agents` 与 `/settings/runtime` 仍展示 instance-owned 字段，但普通 project save 携带这些
-字段会返回 typed rejection，不会修改 singleton；显式 `/settings/import` 才会把 combined package
-拆分保存。`/settings/projects` 只保存 project-owned tracker/repository/source 字段，并始终列出全部
-project。`profiles.yml` 的 `base_prompt` 导入后保存在 instance singleton，供所有 project 共用。
+Web UI 不提供独立的 workflow/routing 编辑 tab；路由始终来自 code-owned policy。
+`/settings/agents` 直接保存 installation-wide base prompt/profiles，`/settings/runtime` 直接保存
+installation-wide workspace、hooks 与 Codex selectors；两页都不依赖 project selector。
+`/settings/projects` 只保存 project-owned tracker/repository/source/setup/cleanup 字段，并始终列出全部
+project。`/settings/import` 把 combined package 拆成 Instance 与显式选择的 Project 两组后原子保存。
 
 `codex.approval_policy` 是 Codex app-server 协议枚举，不再使用旧的结构化
 `reject` map。当前支持值是 `untrusted`、`on-failure`、`on-request`、`granular` 和
-`never`，默认值为 `never`。这个字段通过 `workflow.yml` 导入；如果
+`never`，默认值为 `never`。这个字段可在 Settings / Runtime 保存或通过 `workflow.yml` 导入；如果
 Codex 在启动握手阶段拒绝 `approvalPolicy`，错误会指向该设置项。
 
 `codex.thread_sandbox` 和 `codex.turn_sandbox_policy` 是两个不同设置。前者用于 Codex
 thread 启动，后者会作为每次 `turn/start` 的 `sandboxPolicy` 发送，实际影响 agent turn
 是否能做网络操作，例如 `git push` 或 fetch。需要让 agent turn 访问网络时，在
-在 `workflow.yml` 中把 Turn sandbox 设为 workspace write with network 或 danger full
+Settings / Runtime 或 `workflow.yml` 中把 Turn sandbox 设为 workspace write with network 或 danger full
 access；保留未来 Codex sandbox 形状时使用 custom JSON。
 
 当前默认 Linear 状态流是：

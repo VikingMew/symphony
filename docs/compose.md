@@ -152,7 +152,7 @@ printed. Never use `git credential fill` as a display command because its output
 resolved credential.
 
 The Dockerfile defaults the shared `CODEX_VERSION` build argument to the exact supported Codex
-CLI release, `0.154.0`. The default `symphony` build, SSH `worker`, and `execution-worker` targets
+CLI release, `0.156.0`. The default `symphony` build, SSH `worker`, and `execution-worker` targets
 copy the same installation from that stage. `SYMPHONY_EMBED_CODEX` defaults to `true` so local
 centralized builds retain their local-worker toolchain; only the published worker Panel sets it to
 `false`. Override either argument only as an explicit, validated image change; builds never follow
@@ -399,8 +399,9 @@ After the catalog checks pass, start the upgraded services:
 docker compose up -d
 ```
 
-6. Open `/settings/runtime`, save one non-default model and reasoning-effort pair, trigger the next
-   issue turn, and confirm its `turn/start.params` contains that exact `model` and `effort`.
+6. Save one non-default model and reasoning-effort pair through `/settings/runtime` or
+   `/settings/import`, reload Runtime to confirm the selectors, trigger the next issue turn, and
+   confirm its `turn/start.params` contains that exact `model` and `effort`.
 
 The migration job runs before the new service. Verify both health endpoints and recent
 project/run/event state. To roll application code back, restore the prior image tag in Compose (or

@@ -4,7 +4,7 @@ genre: architecture
 domain: [architecture, runtime]
 status: current
 language: en
-updated: 2026-09-14
+updated: 2026-09-23
 owner: SymphonyElixir.Orchestrator
 ---
 
@@ -91,6 +91,7 @@ sequenceDiagram
     participant WS as Workspace
     participant Codex as Codex App Server
     participant GitHub as GitHub
+    participant Host as Delivery Host
 
     CLI->>Workflow: Select active database workflow source
     CLI->>Orch: Start application supervision tree
@@ -115,11 +116,30 @@ sequenceDiagram
             Orch->>Orch: Persist run/task in PostgreSQL
             Orch->>Orch: External worker claims task through HTTP API
             Orch->>Codex: Worker launches app-server and sends one JSON-RPC turn
-            Codex-->>Orch: Worker reports session, validation, and handoff evidence
+            Codex->>WS: Modify code, run allowed validation, and commit exact Linear branch
+            alt normal worker delivery
+                Codex->>GitHub: Push exact Linear branch
+                Codex->>Orch: Call create_pull_request and submit handoff evidence
+                Orch->>GitHub: Find or create open PR for repository/base/head
+                Orch->>Orch: Run required gates against captured handoff
+                Orch->>Linear: Attach PR, post final result, move to Ready to Merge
+            else host-push delivery
+                Note over Codex,WS: First non-empty issue line is exactly 交付路径:宿主 push
+                Codex->>WS: Write binary-safe root <issue-identifier>.patch
+                Codex-->>Orch: Stop without worker push or PR creation
+                Orch->>Orch: Run required gates; classify blocked / handoff_failed
+                Orch->>Linear: Record root patch path and 需宿主 push evidence
+                Host->>GitHub: Continue delivery by pushing the branch and opening the PR
+            end
         end
         Orch->>Orch: Continue, retry, release, stop, or clean up
     end
 ```
+
+The host-push branch is a blocked worker terminal outcome, not a successful handoff or a
+`Ready to Merge` transition. The exact predicate, evidence boundary, and host continuation contract
+are owned by [the implementation workflow design](codex-linear-implementation-workflow-design.md)
+and [the execution runtime design](execution-runtime-design.md).
 
 ## 6. Main Components
 

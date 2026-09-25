@@ -37,8 +37,8 @@ Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` �
   Agents/Runtime 直接保存 singleton，不要求 project，也不随 project selector 改变。Projects form 只包含
   tracker/repository/source/setup/cleanup，因此 project save 不会提交或改变 instance 字段。
 - Runtime model/effort 可选集来自 `SymphonyElixir.Codex.ModelCatalog`。该 code-owned catalog
-  与 `Dockerfile` 的 bundled Codex CLI pin 同步派生；升级 CLI 需要重建镜像并同步 catalog，
-  而从当前 catalog 选择并保存值仍属于 workflow 配置热更新。
+  与 `Dockerfile` 的 exact bundled `CODEX_VERSION` pin（当前 `0.156.0`）同步派生；升级 CLI
+  需要重建镜像并同步 catalog。从 Runtime 或 Import 保存当前 catalog 的值属于 workflow 配置热更新。
 - 保存成功后，持久化边界在返回成功前发布所有 project 的完整 derived snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
@@ -100,7 +100,8 @@ http://127.0.0.1:4000/settings
   的 `model` / `model_reasoning_effort` 或 `-m` / `--model` 建立第二份 authority。显式 selector 只影响
   后续 turn/session，不改写已经启动的 turn。
 - Runtime selector 与 workflow validation 读取同一个 `ModelCatalog`，因此页面可选的
-  model/effort 组合与 bundled CLI pin 对应的 code-owned 快照保持一致。
+  model/effort 组合与 bundled CLI pin 对应的 code-owned 快照保持一致。Runtime 或 Import 持久化后，
+  Runtime 显示该值，后续 turn/session 才读取并发送对应 override。
 - worker claim 每次从最新 workflow 构造 ephemeral payload；不存在尚未 claim 的 persisted task，
   payload 会携带当次 snapshot 中的 Codex model/effort selector；已发放的当前 assignment
   不在保存时改写。

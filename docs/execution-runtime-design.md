@@ -98,8 +98,9 @@ Terminal events, cancellation, expiry, and stale-run reconciliation leave `runni
 cancelled endings clear the current entry, failed endings either enter orchestrator retry state or,
 when exhausted, persistent blocking, and blocked endings create the same persistent blocker path as
 centralized blocked outcomes. An implementation with no handoff is classified as host-push only
-when the payload issue description's first non-empty line is exactly `交付路径:宿主 push` and the
-workspace root contains `<issue-identifier>.patch`. After required gates run, the worker emits
+when the payload issue description's first line that is non-empty after trimming, itself trimmed of
+surrounding whitespace, is exactly `交付路径:宿主 push` and the workspace root contains
+`<issue-identifier>.patch`. After required gates run, the worker emits
 `blocked` / `handoff_failed` with only that root-relative path and `需宿主 push`; self-reported
 blocked payloads, marker-only, patch-only, and permission-detail-only signals do not qualify.
 

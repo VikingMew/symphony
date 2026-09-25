@@ -50,10 +50,26 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     File.write!(Path.join(workspace, "SYM-68.patch"), "binary-safe patch")
 
-    assert {:ok, {:blocked, {:handoff_failed, {:host_push_required, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}}, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}} =
-             Executor.handoff_requirement(payload, missing_handoff, workspace)
+    for description <- [
+          "\n\n交付路径:宿主 push\nImplement the task.",
+          "  交付路径:宿主 push  ",
+          "交付路径:宿主 push ",
+          "交付路径:宿主 push\r\n"
+        ] do
+      assert {:ok, {:blocked, {:handoff_failed, {:host_push_required, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}}, %{"marker" => "需宿主 push", "patch_path" => "SYM-68.patch"}}} =
+               payload
+               |> put_in(
+                 [Access.key!(:codex), Access.key!(:issue), Access.key!(:description)],
+                 description
+               )
+               |> Executor.handoff_requirement(missing_handoff, workspace)
+    end
 
-    for description <- ["交付路径:宿主 push ", "Implement the task."] do
+    for description <- [
+          "Implement the task.",
+          "交付路径:宿主  push",
+          "交付路径:宿主 Push"
+        ] do
       assert {:error, {:handoff_failed, :missing_handoff}, _evidence} =
                payload
                |> put_in([Access.key!(:codex), Access.key!(:issue), Access.key!(:description)], description)
