@@ -142,9 +142,11 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 1. Settings / Projects: Linear project slug and repository URL.
 2. Settings / Agents: base prompt, profile prompts, allowed updates, and target states.
-3. Settings / Runtime: execution mode, runtime checklist, and Codex model/reasoning effort selectors.
-4. Settings / Import: optional workflow/profile package import with preview before applying, including
-   bootstrap, hooks, polling, and state lists. Routing and transitions are an immutable code contract.
+3. Settings / Runtime: execution mode, runtime checklist, and the current Codex model/reasoning
+   effort selectors.
+4. Settings / Import: workflow/profile package import with preview before applying, including the
+   supported save path for instance-owned Codex selectors, bootstrap, hooks, polling, and state
+   lists. Routing and transitions are an immutable code contract.
 
 If PostgreSQL lacks either `app_settings["instance_workflow"]` or an enabled project workflow slice,
 Symphony starts in setup-required mode and does not listen for Linear work until an explicit import creates both.
@@ -296,14 +298,16 @@ The final image contains Codex CLI, `gh`, git, SSH, ripgrep, certificates, Postg
 SQLite cutover tooling, and the repository-pinned Elixir quality-gate toolchain. The separate
 `worker` target remains available for SSH-reachable Codex workers.
 
-Builds pin Codex CLI to `0.154.0` through the shared `CODEX_VERSION` build argument, so the
+Builds pin Codex CLI to `0.156.0` through the shared `CODEX_VERSION` build argument, so the
 `symphony`, SSH `worker`, and `execution-worker` targets use the same release. All three targets
 also inherit mise `2025.8.16`, Erlang `28`, Elixir `1.19.5-otp-28`, Mix, Make, and native build
 dependencies from one build-time stage. The language versions match `mise.toml`; mise links the
 preinstalled runtimes during the image build, so `mise exec` does not install them in an issue
-workspace. The matching six-row code-owned catalog exposes `gpt-6-astra`, `gpt-5.6-sol`,
-`gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, and `gpt-5.3-codex-spark` to workflow validation and
-Settings / Runtime. Mutable Mix, Hex, mise, and XDG-aware build-tool caches live under each target's
+workspace. The matching seven-row code-owned catalog exposes `gpt-6-astra`, `gpt-6-sol`,
+`gpt-6-luna`, `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, and `gpt-5.5` to workflow validation
+and Settings / Runtime. Save instance-owned selector changes through Settings / Import; a later
+Runtime reload and subsequent turns read the persisted values. Mutable Mix, Hex, mise, and
+XDG-aware build-tool caches live under each target's
 existing writable workspace/cache volume and remain usable with the read-only root filesystem.
 Builds also accept
 `ELIXIR_IMAGE`, `NODE_IMAGE`, `APT_DEBIAN_MIRROR`, `APT_SECURITY_MIRROR`, `NPM_REGISTRY`, and
@@ -342,11 +346,12 @@ export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony_smoke
 mise exec -- mix symphony.postgres_smoke
 ```
 
-Make is reserved for build and image targets. Run quality checks independently with
-`scripts/check.sh` (format, lint, compile), `scripts/unit.sh` (85% coverage-bearing unit suite),
-and `scripts/dialyzer.sh` (static analysis). CI runs the fast, unit, static, and PR description
-lint gates; publication uses only the fast check gate. `scripts/e2e.sh` remains a credentialed
-manual live integration suite and is not currently connected to CI.
+Make is reserved for build and image targets. Run the complete local quality gate with
+`scripts/quality.sh`; it covers `scripts/check.sh` (agent-facing conformance, format, lint,
+compile), `scripts/unit.sh` (85% coverage-bearing unit suite), and `scripts/dialyzer.sh` (static
+analysis). CI runs the same three component gates plus PR description lint; publication uses only
+the fast check gate. `scripts/e2e.sh` remains a credentialed manual live integration suite and is
+not currently connected to CI.
 
 The live end-to-end suite creates disposable Linear resources and starts a real Codex session, so
 run it only with explicit credentials:

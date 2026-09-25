@@ -4,7 +4,7 @@ genre: roadmap
 domain: [roadmap, strategy]
 status: current
 language: zh-CN
-updated: 2026-08-27
+updated: 2026-09-23
 ---
 
 # Symphony 长期开发方向与技术选型
@@ -373,8 +373,10 @@ profiles:
     prompt:
       mode: extend
       template: |
-        Implement, test, verify, commit, and push the exact Linear branch. Submit final
-        comment/result/references and explicitly request Ready to Merge.
+        Implement, test, verify, and commit the exact Linear branch. If the issue description's
+        first non-empty line is exactly `交付路径:宿主 push`, write a complete binary-safe root
+        `<issue-identifier>.patch`, do not push or create a PR, and report `需宿主 push` for host
+        delivery. Otherwise push the exact branch, create the PR, and submit the handoff evidence.
     allowed_updates:
       description: false
       comment: true
@@ -397,11 +399,18 @@ profiles:
 这个契约已落地并由 profile schema 和 prompt builder 的测试覆盖。
 
 现状对齐：profile schema、state -> profile 路由、prompt mode、allowed updates 和
-`codex_agent` 执行路径已经落地。实现 validation、commit、push 后，Codex 按规范调用受限
-`create_pull_request`；`AgentRunner` backend 使用 service environment 中的 `gh`，或在环境 token
-存在时使用 REST fallback，lookup/create 精确 repository/base/head 的 open PR。Codex 把返回 URL
-放入显式 `Ready to Merge` 请求。只有 PR 成功后才写 Linear completion；普通 turn exit/max turns
-不会触发 handoff。`Ready to Merge -> In Progress` 返工会更新同一 branch/PR。
+`codex_agent` 执行路径已经落地。普通 worker 路径在 validation、commit、push 后调用受限
+`create_pull_request`，提交 handoff evidence；backend lookup/create 精确 repository/base/head 的
+open PR，门禁通过后才写 Linear completion 并进入 `Ready to Merge`。
+
+worker host-push 路径只在 issue description 首个非空行精确等于 `交付路径:宿主 push`，且
+workspace 根存在完整、binary-safe 的 `<issue-identifier>.patch` 时成立。worker 完成本地 commit
+与允许的 validation 后不 push、不创建 PR，也不声称成功 handoff 或进入 `Ready to Merge`；executor
+产生携带根相对 patch 路径和 `需宿主 push` 的 blocked / `handoff_failed` 证据，由宿主继续 push
+分支并创建 PR。判据和终态细节以
+[Codex/Linear implementation workflow design](codex-linear-implementation-workflow-design.md) 与
+[execution runtime design](execution-runtime-design.md) 为准。普通 turn exit/max turns 不会触发
+handoff；`Ready to Merge -> In Progress` 返工仍更新同一 branch/PR。
 
 ### 阶段 2.1：项目模板和 bootstrap 配置解耦
 

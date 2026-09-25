@@ -4,7 +4,7 @@ genre: design
 domain: [meta, documentation]
 status: current
 language: zh-CN
-updated: 2026-09-19
+updated: 2026-09-23
 design_status: landed
 ---
 
@@ -92,7 +92,7 @@ translation_of: <path>       # 可选
 
 ## 9. 漂移信号(docs-drift)
 
-`mix docs.drift` 从 `docs/README.md` 的 L4/L5 表格解析目标 Markdown 路径，
+`mix docs.drift` 从 `docs/README.md` 的 L1/L4/L5 表格解析目标 Markdown 路径，
 并始终纳入 `docs/documentation-alignment.md`；L3 功能设计不在扫描范围内。
 索引是唯一 registry，不维护第二份文档清单。
 

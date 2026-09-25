@@ -478,25 +478,35 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ ~s(id="workflow-codex-model")
     assert html =~ ~s(name="workflow[codex_model]")
     assert html =~ "GPT-6-Astra (default medium)"
+    assert html =~ "GPT-6-Sol (default medium)"
+    assert html =~ "GPT-6-Luna (default medium)"
     assert html =~ "GPT-5.5"
+    assert html =~ "GPT-5.3-Codex-Spark" == false
     assert html =~ "Use Codex default"
     assert html =~ "Use selected model or Codex default"
     assert html =~ ~s(id="workflow-codex-reasoning-effort")
     assert html =~ ~s(name="workflow[codex_reasoning_effort]")
     assert html =~ "ultra - Maximum reasoning with automatic task delegation"
 
-    scoped_html =
+    sol_html =
       view
-      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-6-astra", "codex_reasoning_effort" => ""})
+      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-6-sol", "codex_reasoning_effort" => ""})
       |> render_change()
 
-    assert reasoning_effort_values(scoped_html) == ["", "low", "medium", "high", "xhigh", "max", "ultra"]
+    assert reasoning_effort_values(sol_html) == ["", "low", "medium", "high", "xhigh", "max", "ultra"]
+
+    luna_html =
+      view
+      |> form(".runtime-settings-form", workflow: %{"codex_model" => "gpt-6-luna", "codex_reasoning_effort" => ""})
+      |> render_change()
+
+    assert reasoning_effort_values(luna_html) == ["", "low", "medium", "high", "xhigh", "max"]
     instance_before_save = FakePersistence.instance_workflow()
 
     saved_html =
       view
       |> form(".runtime-settings-form",
-        workflow: %{"codex_model" => "gpt-6-astra", "codex_reasoning_effort" => "ultra"}
+        workflow: %{"codex_model" => "gpt-6-luna", "codex_reasoning_effort" => "max"}
       )
       |> render_submit()
 
@@ -509,6 +519,41 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
     assert reloaded_html =~ ~s(id="workflow-codex-model")
     assert reloaded_html =~ ~s(id="workflow-codex-reasoning-effort")
+  end
+
+  test "settings import saves a new Codex model and Runtime reloads it" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']",
+        import: %{"yaml" => workflow_yaml_with_codex("gpt-6-sol", "ultra")}
+      )
+      |> render_submit()
+
+    assert staged_html =~ "workflow.yml staged"
+    assert staged_html =~ "gpt-6-sol"
+    render_click(view, "confirm_settings_import")
+
+    render_patch(view, "/settings/runtime")
+
+    saved_html =
+      view
+      |> form(".runtime-settings-form",
+        workflow: %{"codex_model" => "gpt-6-sol", "codex_reasoning_effort" => "ultra"}
+      )
+      |> render_submit()
+
+    assert saved_html =~ "Workflow settings saved"
+    assert get_in(FakePersistence.instance_workflow(), [:config, "codex", "model"]) == "gpt-6-sol"
+    assert get_in(FakePersistence.instance_workflow(), [:config, "codex", "reasoning_effort"]) == "ultra"
+
+    {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
+    assert selected_value(reloaded_html, "#workflow-codex-model") == "gpt-6-sol"
+    assert selected_value(reloaded_html, "#workflow-codex-reasoning-effort") == "ultra"
   end
 
   test "Runtime renders Codex command failures on the implicated selectors" do
@@ -847,11 +892,27 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     WorkflowFixtures.settings_profiles_yaml()
   end
 
+  defp workflow_yaml_with_codex(model, effort) do
+    String.replace(
+      WorkflowFixtures.settings_workflow_yaml(),
+      ~s(command: "codex app-server"),
+      ~s(command: "codex app-server", model: "#{model}", reasoning_effort: "#{effort}")
+    )
+  end
+
   defp reasoning_effort_values(html) do
     html
     |> Floki.parse_document!()
     |> Floki.find("#workflow-codex-reasoning-effort option")
     |> Floki.attribute("value")
+  end
+
+  defp selected_value(html, selector) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find("#{selector} option[selected]")
+    |> Floki.attribute("value")
+    |> List.first()
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

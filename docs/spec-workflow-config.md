@@ -238,8 +238,8 @@ fields locally if they want stricter startup checks.
 
 `codex.model` and `codex.reasoning_effort` are Symphony-owned workflow selectors backed by one
 code-owned Codex catalog snapshot. The app-server protocol field shape comes from
-`codex-cli 0.154.0` generated schema evidence captured with
-`codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913`:
+`codex-cli 0.156.0` generated schema evidence captured with
+`codex app-server generate-json-schema --out tmp/codex-schema-sym-151-20260923`:
 
 - `TurnStartParams.model` is nullable string and overrides the model for the current and
   subsequent turns.
@@ -248,6 +248,10 @@ code-owned Codex catalog snapshot. The app-server protocol field shape comes fro
 - `ReasoningEffort` is a non-empty string, not a closed JSON Schema enum.
 - `model/list` returns `ModelListResponse`; each row exposes `id`, `model`, `displayName`,
   `defaultReasoningEffort`, and `supportedReasoningEfforts`.
+
+The consumed contracts above are unchanged from the prior pin. The schema delta is confined to
+protocol definitions Symphony does not consume: `ThreadAttachment*`, `ThreadRollback*`, optional
+`disabledPluginIds`, the deprecated `personality` description, and model access program metadata.
 
 The selector values come from `SymphonyElixir.Codex.ModelCatalog`, captured from the same target
 Codex version by an initialized `codex app-server` `model/list` request with
@@ -263,11 +267,12 @@ and schema-generation command in the evidence above. Follow the Codex version-bu
 | model | label | default effort | supported efforts |
 | --- | --- | --- | --- |
 | `gpt-6-astra` | GPT-6-Astra | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `gpt-6-sol` | GPT-6-Sol | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
+| `gpt-6-luna` | GPT-6-Luna | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `gpt-5.6-sol` | GPT-5.6-Sol | `low` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `gpt-5.6-terra` | GPT-5.6-Terra | `medium` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `gpt-5.6-luna` | GPT-5.6-Luna | `medium` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `gpt-5.5` | GPT-5.5 | `medium` | `low`, `medium`, `high`, `xhigh` |
-| `gpt-5.3-codex-spark` | GPT-5.3-Codex-Spark | `high` | `low`, `medium`, `high`, `xhigh` |
 
 Validation rules:
 

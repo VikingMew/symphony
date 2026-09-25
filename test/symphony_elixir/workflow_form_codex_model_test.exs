@@ -4,22 +4,24 @@ defmodule SymphonyElixir.WorkflowFormCodexModelTest do
   alias SymphonyElixir.WorkflowForm
 
   test "round-trips codex model and reasoning effort through workflow raw content" do
-    draft =
-      WorkflowForm.empty()
-      |> Map.put("codex_model", "gpt-6-astra")
-      |> Map.put("codex_reasoning_effort", "ultra")
+    for {model, effort} <- [{"gpt-6-astra", "ultra"}, {"gpt-6-sol", "ultra"}, {"gpt-6-luna", "max"}] do
+      draft =
+        WorkflowForm.empty()
+        |> Map.put("codex_model", model)
+        |> Map.put("codex_reasoning_effort", effort)
 
-    assert {:ok, config} = WorkflowForm.to_config(draft)
-    assert get_in(config, ["codex", "model"]) == "gpt-6-astra"
-    assert get_in(config, ["codex", "reasoning_effort"]) == "ultra"
+      assert {:ok, config} = WorkflowForm.to_config(draft)
+      assert get_in(config, ["codex", "model"]) == model
+      assert get_in(config, ["codex", "reasoning_effort"]) == effort
 
-    assert {:ok, raw} = WorkflowForm.to_raw(draft)
-    assert raw =~ ~s(model: "gpt-6-astra")
-    assert raw =~ ~s(reasoning_effort: "ultra")
+      assert {:ok, raw} = WorkflowForm.to_raw(draft)
+      assert raw =~ ~s(model: "#{model}")
+      assert raw =~ ~s(reasoning_effort: "#{effort}")
 
-    assert {:ok, round_tripped} = WorkflowForm.from_raw(raw)
-    assert round_tripped["codex_model"] == "gpt-6-astra"
-    assert round_tripped["codex_reasoning_effort"] == "ultra"
+      assert {:ok, round_tripped} = WorkflowForm.from_raw(raw)
+      assert round_tripped["codex_model"] == model
+      assert round_tripped["codex_reasoning_effort"] == effort
+    end
   end
 
   test "blank selectors clear model and reasoning effort instead of preserving base values" do
@@ -43,6 +45,14 @@ defmodule SymphonyElixir.WorkflowFormCodexModelTest do
   end
 
   test "codex selector field errors reject unknown values and unsupported combinations" do
+    retired =
+      WorkflowForm.empty()
+      |> Map.put("codex_model", "gpt-5.3-codex-spark")
+
+    assert WorkflowForm.field_errors(retired)["codex_model"] =~ "Codex model must be one of:"
+    assert {:error, retired_message} = WorkflowForm.to_config(retired)
+    assert retired_message =~ "Codex model must be one of:"
+
     invalid_model =
       WorkflowForm.empty()
       |> Map.put("codex_model", "gpt-future")
@@ -69,5 +79,13 @@ defmodule SymphonyElixir.WorkflowFormCodexModelTest do
 
     assert {:error, message} = WorkflowForm.to_config(unsupported)
     assert message == "Codex reasoning effort must be one of low, medium, high, xhigh for model gpt-5.5"
+
+    luna_unsupported =
+      WorkflowForm.empty()
+      |> Map.put("codex_model", "gpt-6-luna")
+      |> Map.put("codex_reasoning_effort", "ultra")
+
+    assert WorkflowForm.field_errors(luna_unsupported)["codex_reasoning_effort"] ==
+             "Codex reasoning effort must be one of low, medium, high, xhigh, max for model gpt-6-luna"
   end
 end

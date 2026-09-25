@@ -4,14 +4,15 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
 
   Snapshot evidence:
 
-  - `codex --version`: `codex-cli 0.154.0`
-  - `codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913`
+  - `codex --version`: `codex-cli 0.156.0`
+  - `codex app-server generate-json-schema --out tmp/codex-schema-sym-151-20260923`
     shows `TurnStartParams.model` as nullable string, `TurnStartParams.effort`
-    as nullable `ReasoningEffort`, `ReasoningEffort` as a non-empty string,
-    and `model/list` returning `ModelListResponse`.
+    as nullable `ReasoningEffort`, and `model/list` returning
+    `ModelListResponse` with the consumed row fields unchanged. Schema changes
+    affect only protocol definitions that Symphony does not consume.
   - An initialized `codex app-server` `model/list` request with
     `%{"includeHidden" => false, "limit" => 100}` returned the rows captured
-    below on 2026-09-13.
+    below on 2026-09-23.
   """
 
   @type effort :: %{
@@ -30,10 +31,10 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
   @type option :: {String.t(), String.t()}
 
   @snapshot %{
-    codex_version: "codex-cli 0.154.0",
-    generated_schema_command: "codex app-server generate-json-schema --out tmp/codex-schema-sym-115-20260913",
+    codex_version: "codex-cli 0.156.0",
+    generated_schema_command: "codex app-server generate-json-schema --out tmp/codex-schema-sym-151-20260923",
     model_list_request: %{"includeHidden" => false, "limit" => 100},
-    captured_at: "2026-09-13"
+    captured_at: "2026-09-23"
   }
 
   @effort_descriptions %{
@@ -52,6 +53,20 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
       display_name: "GPT-6-Astra",
       default_reasoning_effort: "medium",
       supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+    },
+    %{
+      id: "gpt-6-sol",
+      model: "gpt-6-sol",
+      display_name: "GPT-6-Sol",
+      default_reasoning_effort: "medium",
+      supported_reasoning_efforts: ~w(low medium high xhigh max ultra)
+    },
+    %{
+      id: "gpt-6-luna",
+      model: "gpt-6-luna",
+      display_name: "GPT-6-Luna",
+      default_reasoning_effort: "medium",
+      supported_reasoning_efforts: ~w(low medium high xhigh max)
     },
     %{
       id: "gpt-5.6-sol",
@@ -79,13 +94,6 @@ defmodule SymphonyElixir.Codex.ModelCatalog do
       model: "gpt-5.5",
       display_name: "GPT-5.5",
       default_reasoning_effort: "medium",
-      supported_reasoning_efforts: ~w(low medium high xhigh)
-    },
-    %{
-      id: "gpt-5.3-codex-spark",
-      model: "gpt-5.3-codex-spark",
-      display_name: "GPT-5.3-Codex-Spark",
-      default_reasoning_effort: "high",
       supported_reasoning_efforts: ~w(low medium high xhigh)
     }
   ]

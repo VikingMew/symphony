@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-09-19
+updated: 2026-09-23
 ---
 
 # Documentation Index
@@ -53,6 +53,7 @@ other documents link instead of restating.
 | [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | landed |
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
+| [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
 
 ## L4 — Normative Contracts
 
@@ -73,6 +74,8 @@ other documents link instead of restating.
 | [pull-request-body.md](pull-request-body.md) | Pull request body headings, content shape, and Linear closing-reference contract. |
 | [test_database_isolation.md](test_database_isolation.md) | Test database-isolation contract. |
 | [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
+| [spec-agent-facing-code.md](spec-agent-facing-code.md) | Agent-facing code definitions, threshold semantics, evidence classes, conformance levels, declaration, and sources. |
+| [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 36-unit constitution audit with reproducible repository evidence. |
 
 ## L5 — Operational Guides
 
@@ -90,7 +93,7 @@ other documents link instead of restating.
   [documentation-system-design.md](documentation-system-design.md) §4), add frontmatter, and
   register here. `mise exec -- mix docs.check` enforces structure, genre/status legality, index
   registration, and owner anchors.
-- Drift signals: `mise exec -- mix docs.drift` checks current L4/L5 documents plus
+- Drift signals: `mise exec -- mix docs.drift` checks current L1/L4/L5 documents plus
   `documentation-alignment.md` for still-existing module, path, and config identifier references
   and reports owner Git-history freshness (`--freshness-days N`, `--format json`; see
   [documentation-system-design.md](documentation-system-design.md) §9).
