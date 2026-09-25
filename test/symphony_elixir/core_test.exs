@@ -344,7 +344,7 @@ defmodule SymphonyElixir.CoreTest do
     on_exit(fn -> Workflow.set_workflow_file_path(original_workflow_path) end)
     Workflow.clear_workflow_file_path()
 
-    assert {:ok, %{config: config, prompt: prompt}} = Workflow.load()
+    assert {:ok, %{config: config, prompt: prompt}} = Workflow.load_example_package()
     assert is_map(config)
 
     tracker = Map.get(config, "tracker", %{})
@@ -662,7 +662,7 @@ defmodule SymphonyElixir.CoreTest do
     assert log =~ "Run-start persistence failed action=skip_dispatch"
   end
 
-  test "workflow file path defaults to the checked-in example when app env is unset" do
+  test "workflow file path requires explicit app configuration" do
     original_workflow_path = Workflow.workflow_file_path()
 
     on_exit(fn ->
@@ -671,8 +671,9 @@ defmodule SymphonyElixir.CoreTest do
 
     Workflow.clear_workflow_file_path()
 
-    assert Workflow.workflow_file_path() ==
-             Path.join([File.cwd!(), "docs", "examples", "workflow.yml"])
+    assert_raise ArgumentError, fn -> Workflow.workflow_file_path() end
+    assert {:ok, loaded} = Workflow.load_example_package()
+    assert get_in(loaded.config, ["tracker", "project_slug"]) == "symphony-0c79b11b75ea"
   end
 
   test "workflow file path resolves from app env when set" do

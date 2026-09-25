@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.TestSupport.FakePersistence do
   @moduledoc false
 
-  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectIdentity, WorkflowScopes}
 
   @name __MODULE__
 
@@ -151,7 +151,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
     with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
          {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
-      workflow = project_workflow(project, project_config, source)
+      workflow = project_workflow(project, ProjectIdentity.put(project_config, project), source)
 
       result =
         Agent.get_and_update(
@@ -241,6 +241,31 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   def fail_next_legacy_reconciliation!(reason) do
     ensure_started()
     Agent.update(@name, &Map.put(&1, :next_legacy_reconciliation_error, reason))
+  end
+
+  def fail_next_project_identity_reconciliation!(reason) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :next_project_identity_reconciliation_error, reason))
+  end
+
+  def project_identity_status do
+    ensure_started()
+    Agent.get(@name, &{:ok, project_identity_status(&1)})
+  end
+
+  def reconcile_project_identities do
+    ensure_started()
+
+    result =
+      Agent.get_and_update(@name, fn state ->
+        case state.next_project_identity_reconciliation_error do
+          nil -> reconcile_project_identities_state(state)
+          reason -> {{:error, reason}, %{state | next_project_identity_reconciliation_error: nil}}
+        end
+      end)
+
+    if match?({:ok, _result}, result), do: maybe_publish_runtime()
+    result
   end
 
   def legacy_instance_workflow_status do
@@ -936,6 +961,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       instance_workflow: nil,
       legacy_instance_workflow_candidates: nil,
       next_legacy_reconciliation_error: nil,
+      next_project_identity_reconciliation_error: nil,
       next_import_workflow_error: nil,
       users: %{}
     }
@@ -981,6 +1007,41 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       {:error, _reason} = error ->
         {error, state}
     end
+  end
+
+  defp reconcile_project_identities_state(state) do
+    mismatches = project_identity_mismatches(state)
+
+    workflows =
+      Enum.reduce(mismatches, state.workflows, fn {workflow, project}, workflows ->
+        updated = Map.merge(workflow, ProjectIdentity.workflow_attrs(workflow, project))
+        put_workflow_record(workflows, updated)
+      end)
+
+    next_state = %{state | workflows: workflows}
+    result = %{updated: length(mismatches), status: project_identity_status(next_state)}
+    {{:ok, result}, next_state}
+  end
+
+  defp project_identity_status(state) do
+    workflows =
+      state
+      |> project_identity_mismatches()
+      |> Enum.map(fn {workflow, project} ->
+        %{workflow_id: workflow.id, project_id: project.id, project_slug: project.slug}
+      end)
+
+    %{mismatch_count: length(workflows), workflows: workflows}
+  end
+
+  defp project_identity_mismatches(state) do
+    Enum.flat_map(state.workflows, fn workflow ->
+      project = Enum.find(state.projects, &(Map.fetch!(&1, :id) == Map.fetch!(workflow, :project_id)))
+
+      if ProjectIdentity.workflow_matches?(workflow, project),
+        do: [],
+        else: [{workflow, project}]
+    end)
   end
 
   defp put_workflow_record(workflows, nil), do: workflows

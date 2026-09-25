@@ -3,7 +3,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
 
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.TestSupport.WorkflowFixtures
-  alias SymphonyElixir.{WorkflowForm, WorkflowSettingsPackage}
+  alias SymphonyElixir.{Workflow, WorkflowForm, WorkflowSettingsPackage}
 
   test "imports workflow yaml without replacing profiles or prompt" do
     current =
@@ -66,7 +66,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   end
 
   test "profiles package round trip preserves the default operator profiles" do
-    profiles_yaml = File.read!("docs/examples/profiles.yml")
+    profiles_yaml = File.read!(Path.join(Workflow.example_package_root(), "profiles.yml"))
 
     assert {:ok, "profiles.yml", imported_draft} =
              WorkflowSettingsPackage.import_draft(profiles_yaml, WorkflowForm.empty())
@@ -82,7 +82,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   end
 
   test "default profiles and package carry the owning-design contract" do
-    profiles_yaml = File.read!("docs/examples/profiles.yml")
+    profiles_yaml = File.read!(Path.join(Workflow.example_package_root(), "profiles.yml"))
     defaults = Schema.default_profiles()
 
     for source <- [profiles_yaml, defaults["refinement"]["prompt"]["template"]] do
@@ -100,7 +100,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
   end
 
   test "workflow package round trip preserves analytics thresholds" do
-    workflow_yaml = File.read!("docs/examples/workflow.yml")
+    workflow_yaml = File.read!(Path.join(Workflow.example_package_root(), "workflow.yml"))
 
     assert workflow_yaml =~ "Implementation completion uses the `handoff`"
 

@@ -124,7 +124,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   end
 
   defp seed_codex_selector_fixture!(repo) do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     missing =
       put_in(
@@ -231,7 +231,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   defp seed_legacy_fixture!(_repo, :zero), do: []
 
   defp seed_legacy_fixture!(repo, scenario) do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     rows =
       case scenario do

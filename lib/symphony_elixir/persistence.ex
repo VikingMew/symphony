@@ -117,6 +117,17 @@ defmodule SymphonyElixir.Persistence do
           {:ok, SymphonyElixir.Config.LegacyWorkflowConvergence.status()} | {:error, term()}
   defdelegate legacy_instance_workflow_status(), to: WorkflowStore
 
+  @spec project_identity_status() ::
+          {:ok, WorkflowStore.project_identity_status()} | {:error, :repo_unavailable}
+  defdelegate project_identity_status(), to: WorkflowStore
+
+  @spec reconcile_project_identities() ::
+          {:ok, map()} | {:error, :repo_unavailable | {:runtime_publication_failed, map(), term()}}
+  def reconcile_project_identities do
+    WorkflowStore.reconcile_project_identities()
+    |> publish_runtime_snapshot()
+  end
+
   @spec reconcile_legacy_instance_workflow(String.t()) ::
           {:ok, WorkflowStore.legacy_reconciliation_result()}
           | {:error,

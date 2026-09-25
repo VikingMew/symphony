@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-23
+updated: 2026-09-24
 ---
 
 # Workflow and Configuration Specification
@@ -50,6 +50,16 @@ Loader behavior:
   there is no package synchronization command and no drift contract between those files and the
   database. Manual workflow-table updates are outside the supported lifecycle; Settings / Import is
   the supported operator path.
+- Values in `docs/examples/` are not project identity or runtime configuration authority. Generic
+  loaders MUST NOT fall back to that directory. Code that intentionally consumes the example package
+  MUST use the explicitly named example-package loader or root.
+- A persisted project workflow's `tracker.project_slug` and `project.repository_url` MUST equal the
+  associated project record's `linear_project_slug` and `repository_url`. `import_package/3` applies
+  that identity at the persistence boundary for first-run, Settings / Import, and direct callers.
+  Different portable-package values do not cause a mismatch rejection.
+- First-run import requires an operator-selected enabled project. It preserves an existing singleton
+  workspace root, or uses the `Schema` default when no singleton exists; the example workspace root
+  is never the first-run durable source.
 
 ### 5.2 Package Format
 
@@ -64,6 +74,8 @@ Design note:
 - A package SHOULD be self-contained enough to recreate the instance policy and one project's settings.
 - The package under `docs/examples/` is example and import material. Runtime code MUST read the
   project's PostgreSQL snapshot rather than files from the source checkout.
+- Package tracker slug and repository URL are portable metadata until a project is selected. The
+  persistence boundary replaces them with that project's authoritative record values.
 - `workflow` keys are portable example metadata only. Durable instance and project slices MUST NOT
   persist them; runtime dispatch, transition validation, human-review classification, and profile
   routing MUST use `Schema.default_workflow_policy/0`.
@@ -442,6 +454,12 @@ Value coercion semantics:
     arbitrary shell command strings.
 - Relative `workspace.root` values resolve relative to the implementation-defined runtime base
   directory.
+
+Stored project identity convergence is an explicit operator action. The read-only release status
+reports rows whose `yaml_config` or `raw_workflow_md` identity differs from the associated project.
+The release apply locks and updates all mismatches in one transaction, is idempotent, and changes only
+the two identity fields in both stored representations. It never runs at startup and never modifies
+projects, enabled/listening state, the instance singleton, or unrelated workflow fields.
 
 ### 6.2 Dynamic Reload Semantics
 
