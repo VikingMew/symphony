@@ -136,6 +136,7 @@ defmodule SymphonyElixir.Orchestrator do
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
+      :worker_capacity_query,
       running: %{},
       blocked: %{},
       completed: MapSet.new(),
@@ -189,8 +190,9 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     now_ms = System.monotonic_time(:millisecond)
+    worker_capacity_query = Keyword.get(opts, :worker_capacity_query, &AssignmentManager.available_worker_slots/0)
 
     state =
       case runtime_config() do
@@ -205,6 +207,7 @@ defmodule SymphonyElixir.Orchestrator do
             poll_check_in_progress: false,
             tick_timer_ref: nil,
             tick_token: nil,
+            worker_capacity_query: worker_capacity_query,
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
             codex_rate_limit_observation: nil
@@ -222,6 +225,7 @@ defmodule SymphonyElixir.Orchestrator do
             poll_check_in_progress: false,
             tick_timer_ref: nil,
             tick_token: nil,
+            worker_capacity_query: worker_capacity_query,
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
             codex_rate_limit_observation: nil,
@@ -2291,15 +2295,15 @@ defmodule SymphonyElixir.Orchestrator do
   defp refresh_deployment_capacity(%State{} = state) do
     capacity =
       case Config.execution_mode() do
-        :worker -> worker_deployment_capacity()
+        :worker -> worker_deployment_capacity(state.worker_capacity_query)
         :centralized -> Config.panel_max_concurrent_agents()
       end
 
     %{state | max_concurrent_agents: capacity}
   end
 
-  defp worker_deployment_capacity do
-    AssignmentManager.available_worker_slots()
+  defp worker_deployment_capacity(worker_capacity_query) do
+    worker_capacity_query.()
   catch
     :exit, {:timeout, {GenServer, :call, [AssignmentManager, :available_worker_slots, @capacity_query_timeout_ms]}} ->
       Logger.warning("event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0")
