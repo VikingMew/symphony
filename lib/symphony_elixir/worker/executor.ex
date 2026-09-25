@@ -420,7 +420,8 @@ defmodule SymphonyElixir.Worker.Executor do
   defp host_push_directive?(description) do
     description
     |> String.split("\n")
-    |> Enum.find(&(String.trim(&1) != ""))
+    |> Stream.map(&String.trim/1)
+    |> Enum.find(&(&1 != ""))
     |> Kernel.==("交付路径:宿主 push")
   end
 
