@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixirWeb.AnalyticsLive do
   @moduledoc """
   Historical runtime analytics page backed by persisted records.

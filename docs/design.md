@@ -5,7 +5,7 @@ domain: [backend, layout, conventions]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-27
+updated: 2026-09-24
 ---
 
 ## Feature Design Index
@@ -26,6 +26,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | Workflow configuration authority | landed |
 | [execution-runtime-design.md](execution-runtime-design.md) | External execution runtime and container credential boundary | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code conformance and merge-gate behavior | landed |
+| [code-locality-design.md](code-locality-design.md) | Repository-wide code locality ownership and enforcement | landed |
 
 This document (L2) owns implementation conventions — repository layout, package rules, and the
 module map below. System topology, boundaries, and direction are owned by
@@ -149,7 +150,9 @@ lib/symphony_elixir/
 ├── config/schema.ex
 ├── http_server.ex
 ├── log_file.ex
+├── locality.ex
 ├── orchestrator.ex
+├── orchestrator/sections/
 ├── path_safety.ex
 ├── persistence.ex
 ├── persistence/
@@ -164,7 +167,8 @@ lib/symphony_elixir/
 ├── tracker.ex
 ├── workflow.ex
 ├── workflow_store.ex
-└── workspace.ex
+├── workspace.ex
+└── workspace/sections/
 ```
 
 | Module | File | Responsibility |
@@ -176,9 +180,10 @@ lib/symphony_elixir/
 | `SymphonyElixir.ObservabilityHistory` | `observability_history.ex` | Runs bounded persistence-provider reads and exposes explicit issue/run/event JSON projections. |
 | `SymphonyElixir.Config` | `config.ex` | Typed accessors for workflow configuration and defaults. |
 | `SymphonyElixir.Config.Schema` | `config/schema.ex` | Configuration schema and validation rules. |
-| `SymphonyElixir.Orchestrator` | `orchestrator.ex` | Polling, dispatch, active-run tracking, retries, cleanup, status generation. |
+| `SymphonyElixir.Locality` | `locality.ex` | Deterministic tracked-file, AST, manifest, and generated-header locality checks. |
+| `SymphonyElixir.Orchestrator` | `orchestrator.ex`, `orchestrator/sections/*` | One GenServer/state owner composed from lifecycle, completion, reconciliation, dispatch, control, runtime/status, and persistence sections. |
 | `SymphonyElixir.Tracker` | `tracker.ex` | Tracker behavior/abstraction used by the orchestrator. |
-| `SymphonyElixir.Workspace` | `workspace.ex` | Workspace path resolution, creation, hooks, and cleanup. |
+| `SymphonyElixir.Workspace` | `workspace.ex`, `workspace/sections/*` | One public workspace module composed from lifecycle and hook sections. |
 | `SymphonyElixir.PathSafety` | `path_safety.ex` | Path validation helpers for workspace safety. |
 | `SymphonyElixir.AgentRunner` | `agent_runner.ex` | Creates prompts and runs Codex App Server sessions for issues. |
 | `SymphonyElixir.PromptBuilder` | `prompt_builder.ex` | Renders issue data into the workflow prompt template. |
@@ -322,6 +327,7 @@ lib/mix/tasks/
 | `mix symphony.build` | Builds the escript executable used by `mix build`. |
 | `mix workspace.before_remove` | Hook task intended for workspace cleanup before removal. |
 | `mix docs.check` | Validates documentation frontmatter, layer registration, and owner anchors. |
+| `mix locality.check` | Enforces the L4 code-locality contract from `config/locality.exs`. |
 
 ## 10. Tests
 
@@ -350,7 +356,7 @@ test/
 | `test/symphony_elixir/ssh_test.exs` | SSH worker behavior. |
 | `test/symphony_elixir/live_e2e_test.exs` | Manual live external end-to-end test with Linear and Codex. |
 | `test/mix/tasks/*_test.exs` | Tests for custom Mix tasks. |
-| `test/support/*` | Shared test helpers. |
+| `test/support/*` | Shared test helpers and responsibility-grouped compile-time test sections. |
 
 ## 11. Main Call Chain
 
@@ -404,6 +410,7 @@ SymphonyElixir.Orchestrator
 | Change auth behavior | `symphony_elixir_web/auth_plug.ex`, `controllers/session_controller.ex` |
 | Change terminal status display | `status_dashboard.ex` |
 | Change tests for orchestration | `test/symphony_elixir/core_test.exs` |
+| Change locality thresholds, exclusions, or audit enforcement | `config/locality.exs`, `lib/symphony_elixir/locality.ex`, `docs/code-locality.md` |
 
 ## 13. Development Commands
 

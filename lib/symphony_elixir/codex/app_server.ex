@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.Codex.AppServer do
   @moduledoc """
   Minimal client for the Codex app-server JSON-RPC 2.0 stream over stdio.
@@ -115,35 +116,26 @@ defmodule SymphonyElixir.Codex.AppServer do
         pull_request_key = {:codex_pull_request, make_ref()}
         review_key = {:codex_review, make_ref()}
 
-        tool_executor =
-          Keyword.get(opts, :tool_executor, fn tool, arguments ->
-            core_tool_opts = [
-              issue: issue,
-              profile: tool_profile,
-              workspace: Keyword.get(opts, :workspace, workspace),
-              run_id: Keyword.get(opts, :run_id),
-              operator_kind: Keyword.get(opts, :operator_kind),
-              session_id: session_id,
-              thread_id: thread_id,
-              turn_id: turn_id,
-              handoff_submitter: fn payload ->
-                Process.put(handoff_key, payload)
-                :ok
-              end,
-              pull_request_observer: &Process.put(pull_request_key, &1),
-              pull_request_result: fn -> Process.get(pull_request_key) end,
-              review_submitter: fn result ->
-                if Process.get(review_key) do
-                  {:error, :review_already_submitted}
-                else
-                  Process.put(review_key, result)
-                  :ok
-                end
-              end
-            ]
+        dynamic_tool_context = %{
+          opts: opts,
+          dynamic_tool_opts: dynamic_tool_opts,
+          issue: issue,
+          tool_profile: tool_profile,
+          workspace: workspace,
+          session_id: session_id,
+          thread_id: thread_id,
+          turn_id: turn_id,
+          handoff_key: handoff_key,
+          pull_request_key: pull_request_key,
+          review_key: review_key
+        }
 
-            DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
-          end)
+        tool_executor =
+          Keyword.get(
+            opts,
+            :tool_executor,
+            dynamic_tool_executor(dynamic_tool_context)
+          )
 
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
 
@@ -199,6 +191,45 @@ defmodule SymphonyElixir.Codex.AppServer do
         Logger.error("Codex session failed for #{issue_context(issue)}: #{inspect(reason)}")
         emit_message(on_message, :startup_failed, %{reason: reason}, metadata)
         {:error, reason}
+    end
+  end
+
+  defp dynamic_tool_executor(context) do
+    fn tool, arguments ->
+      core_tool_opts = [
+        issue: context.issue,
+        profile: context.tool_profile,
+        workspace: Keyword.get(context.opts, :workspace, context.workspace),
+        run_id: Keyword.get(context.opts, :run_id),
+        operator_kind: Keyword.get(context.opts, :operator_kind),
+        session_id: context.session_id,
+        thread_id: context.thread_id,
+        turn_id: context.turn_id,
+        handoff_submitter: &submit_handoff(context.handoff_key, &1),
+        pull_request_observer: &Process.put(context.pull_request_key, &1),
+        pull_request_result: fn -> Process.get(context.pull_request_key) end,
+        review_submitter: &submit_review(context.review_key, &1)
+      ]
+
+      DynamicTool.execute(
+        tool,
+        arguments,
+        Keyword.merge(context.dynamic_tool_opts, core_tool_opts)
+      )
+    end
+  end
+
+  defp submit_handoff(handoff_key, payload) do
+    Process.put(handoff_key, payload)
+    :ok
+  end
+
+  defp submit_review(review_key, result) do
+    if Process.get(review_key) do
+      {:error, :review_already_submitted}
+    else
+      Process.put(review_key, result)
+      :ok
     end
   end
 

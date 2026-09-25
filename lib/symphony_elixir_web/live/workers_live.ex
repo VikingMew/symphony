@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixirWeb.WorkersLive do
   @moduledoc """
   Worker registry, current assignment, and worker execution history.

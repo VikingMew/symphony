@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-09-24
 ---
 
 # Documentation Index
@@ -54,6 +54,7 @@ other documents link instead of restating.
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
+| [code-locality-design.md](code-locality-design.md) | Repository-wide code locality ownership and enforcement architecture. | landed |
 
 ## L4 — Normative Contracts
 
@@ -76,6 +77,7 @@ other documents link instead of restating.
 | [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
 | [spec-agent-facing-code.md](spec-agent-facing-code.md) | Agent-facing code definitions, threshold semantics, evidence classes, conformance levels, declaration, and sources. |
 | [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 36-unit constitution audit with reproducible repository evidence. |
+| [code-locality.md](code-locality.md) | Code locality thresholds, scan/exclusion contract, temporary clause register, and L-01–L-08 audit. |
 
 ## L5 — Operational Guides
 

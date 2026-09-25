@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.MixProject do
   use Mix.Project
 
@@ -217,7 +218,7 @@ defmodule SymphonyElixir.MixProject do
     [
       setup: ["deps.get"],
       build: ["symphony.build"],
-      lint: ["specs.check", "credo --strict"],
+      lint: ["specs.check", "locality.check", "credo --strict"],
       "symphony.pg_smoke": ["symphony.postgres_smoke"]
     ]
   end
