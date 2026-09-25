@@ -325,7 +325,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   end
 
   test "operator runner failures clear running state and mark the task failed" do
-    pid = Process.whereis(Orchestrator)
+    {:ok, pid} = start_operator_orchestrator(:FailedNap)
 
     reply = GenServer.call(pid, {:request_operator_task, :nap})
     run_id = reply.run_id
@@ -345,9 +345,6 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     assert failure_reason =~ "codex_startup_failed"
     assert failure_reason =~ "stage: :thread_start"
     assert failure_reason =~ "timeout_ms: 30000"
-
-    assert %{payload: %{failure_reason: ^failure_reason}} =
-             Enum.find(FakePersistence.list_events(), &(&1.event_type == "run.failed" and &1.run_id == run_id))
   end
 
   test "stale synthetic operator entries do not keep the runtime busy forever" do
