@@ -12,9 +12,6 @@ entries:
     token: SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION
     reason: Compose interpolation variable declared in compose.yaml and mapped to the worker runtime source revision.
   - document: docs/compose.md
-    token: SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE
-    reason: Compose interpolation variable declared in compose.host-override.yaml and documented in .env.example, outside the runtime lib/config scan.
-  - document: docs/compose.md
     token: SYMPHONY_IMAGE
     reason: Image selection is declared in compose.yaml, outside the runtime lib/config scan.
   - document: docs/documentation-alignment.md
@@ -26,9 +23,6 @@ entries:
   - document: docs/execution-worker-operations.md
     token: SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION
     reason: Compose interpolation variable declared in compose.yaml and mapped to the worker runtime source revision.
-  - document: docs/execution-worker-operations.md
-    token: SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE
-    reason: Compose interpolation variable declared in compose.host-override.yaml and documented in .env.example, outside the runtime lib/config scan.
   - document: docs/execution-worker-operations.md
     token: SYMPHONY_EXECUTION_WORKER_NO_PROXY
     reason: Compose interpolation variable mapped to NO_PROXY in compose.yaml.

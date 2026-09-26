@@ -261,6 +261,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     ensure_started()
 
     Agent.get_and_update(@name, fn state ->
+      state = record_call(state, {:reconcile_legacy_instance_workflow, project_slug})
+
       case state.next_legacy_reconciliation_error do
         nil -> reconcile_legacy_state(state, project_slug)
         reason -> {{:error, {:transaction_failed, reason}}, %{state | next_legacy_reconciliation_error: nil}}

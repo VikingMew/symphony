@@ -5,6 +5,7 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
   import Phoenix.LiveViewTest
 
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.TestSupport.WorkflowFixtures
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -46,11 +47,35 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
            end) == false
   end
 
-  test "legacy Codex command import stages conversion details and applies selector values" do
+  test "project-scope import requires an explicit target" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']",
+        import: %{"yaml" => WorkflowFixtures.settings_workflow_yaml()}
+      )
+      |> render_submit()
+
+    assert staged_html =~ "Project — no target selected"
+    rejected_html = render_click(view, "confirm_settings_import")
+    assert rejected_html =~ "Project target required"
+    assert rejected_html =~ "project_target_required"
+
+    assert Enum.all?(FakePersistence.calls(), fn
+             {:import_package, _project, _raw, _source} -> false
+             _ -> true
+           end)
+  end
+
+  test "legacy Codex command import stages conversion details and applies selector values" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
 
     legacy_yaml = """
     codex:
@@ -74,7 +99,6 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
     |> element("button[phx-click='confirm_settings_import']")
     |> render_click()
 
-    assert_patch(view, "/settings")
     runtime_html = render_patch(view, "/settings/runtime")
 
     assert has_element?(view, "#workflow-codex-model option[selected][value='gpt-5.5']")

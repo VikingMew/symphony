@@ -399,10 +399,9 @@ After the catalog checks pass, start the upgraded services:
 docker compose up -d
 ```
 
-6. Save one non-default model and reasoning-effort pair through `/settings/import`, reload
-   `/settings/runtime` to confirm the selectors, trigger the next issue turn, and confirm its
-   `turn/start.params` contains that exact `model` and `effort`. A direct Runtime submit remains a
-   typed rejection for instance-owned `codex` fields.
+6. Save one non-default model and reasoning-effort pair through `/settings/runtime` or
+   `/settings/import`, reload Runtime to confirm the selectors, trigger the next issue turn, and
+   confirm its `turn/start.params` contains that exact `model` and `effort`.
 
 The migration job runs before the new service. Verify both health endpoints and recent
 project/run/event state. To roll application code back, restore the prior image tag in Compose (or

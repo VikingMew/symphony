@@ -5,6 +5,32 @@ defmodule SymphonyElixirWeb.Admin.SettingsCheck do
 
   alias SymphonyElixir.Config.CodexCommand
 
+  @spec legacy_instance_drift(term()) :: map() | nil
+  def legacy_instance_drift({:conflict, %{"candidates" => candidates, "differing_paths" => paths}}) do
+    %{
+      projects:
+        Enum.map(candidates, fn candidate ->
+          %{id: candidate["project_id"], slug: candidate["project_slug"]}
+        end),
+      paths:
+        Enum.map(paths, fn path ->
+          %{
+            path: path["path"],
+            contributors:
+              Enum.map(path["contributors"], fn contributor ->
+                %{
+                  project_id: contributor["project_id"],
+                  project_slug: contributor["project_slug"],
+                  value: contribution_value(contributor)
+                }
+              end)
+          }
+        end)
+    }
+  end
+
+  def legacy_instance_drift(_status), do: nil
+
   @spec workflow_check_targets(map(), term()) :: [map()]
   def workflow_check_targets(draft, message) do
     text = to_string(message)
@@ -219,4 +245,7 @@ defmodule SymphonyElixirWeb.Admin.SettingsCheck do
   defp normalize_scope(scope), do: to_string(scope)
 
   defp project_item_present?(items, title), do: Enum.any?(items, &(Map.get(&1, :title) == title))
+
+  defp contribution_value(%{"present" => false}), do: "not set"
+  defp contribution_value(%{"value" => value}), do: inspect(value)
 end

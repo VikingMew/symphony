@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, operator, profiles]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-09-24
 design_status: landed
 ---
 
@@ -104,6 +104,9 @@ nap 是「提出删除/优化方向的方法」，不是删除本身。发现路
 1. **代码默认值** `schema.ex`:nap / day_dreaming 标准 prompt(§3)落在此处。
 2. **profiles.yml**:从标准模板生成,补 nap / day_dreaming 段,随 combined import/export 包迁移。
 3. **DB singleton 初始化**:新建 instance workflow 时从标准模板填充；显式 singleton 配置允许覆盖。
+4. **Settings / Agents**：installation-wide base prompt 与全部 profiles 的唯一编辑页，直接保存
+   `app_settings["instance_workflow"]`。project selector 只保留 Settings 导航上下文，切换 project
+   不改变 draft、保存目标或任一 profile 值。
 
 改动巡检标准时,只改代码默认值一处；profiles.yml 由导出流程再生成；DB singleton 通过显式导入收敛。
 
@@ -121,6 +124,8 @@ nap 是「提出删除/优化方向的方法」，不是删除本身。发现路
 - [ ] `profiles.yml` 含 nap / day_dreaming 段,内容与代码默认值一致。
 - [ ] 新建 instance workflow 的巡检 profile 默认值来自标准模板(测试覆盖)。
 - [ ] import/export 包往返后 nap / day_dreaming 完整保留(测试覆盖)。
+- [ ] Settings / Agents 在零 project 时仍可保存 singleton，切换 project selector 后继续显示同一
+  base prompt/profile set，且 project workflow 不发生写入。
 - [ ] `schema.ex` 中 nap 默认 prompt 含 2026-08-16 审计方法论全部要素（机械扫描前置、豁免 stale、无消费者 API、文档生成化、防复发门禁、产出格式含发现路径与验证方式、防误报纪律）。
 - [ ] `mix specs.check` 通过。
 - [ ] `scripts/check.sh`、`scripts/unit.sh` 与 `scripts/dialyzer.sh` 通过。
