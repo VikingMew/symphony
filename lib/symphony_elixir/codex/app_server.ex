@@ -23,6 +23,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   @initialize_id 1
   @thread_start_id 2
   @turn_start_id 3
+  @startup_timeout_ms 30_000
   @port_line_bytes 1_048_576
   @os_process_shutdown_grace_ms 5_000
   @os_process_shutdown_poll_ms 50
@@ -489,7 +490,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp await_startup_response(port, request_id, stage, context) do
-    with_timeout_startup_response(port, request_id, Config.settings!().codex.read_timeout_ms, "", "", stage, context)
+    with_timeout_startup_response(port, request_id, @startup_timeout_ms, "", "", stage, context)
   end
 
   defp with_timeout_startup_response(port, request_id, timeout_ms, pending_line, output, stage, context) do

@@ -67,12 +67,15 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     run = %{id: "run-1"}
     running_entry = %{identifier: "MT-1", run_id: "run-1", workspace_path: "/tmp/work", worker_host: "worker-a"}
 
+    failure_reason =
+      "class=agent_domain_failure reason={:codex_startup_failed, %{stage: :thread_start, timeout_ms: 30000}}"
+
     assert Events.run_started_event(issue, run, "worker-a") ==
              Events.event_attrs("run.started", "MT-1", %{issue_id: "issue-1", run_id: "run-1", worker_host: "worker-a"}, "run-1")
 
-    assert Events.run_finished_event(running_entry, "failed", "boom").payload == %{
+    assert Events.run_finished_event(running_entry, "failed", failure_reason).payload == %{
              run_id: "run-1",
-             failure_reason: "boom"
+             failure_reason: failure_reason
            }
 
     assert Events.workspace_attrs(running_entry) == %{

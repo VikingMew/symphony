@@ -331,14 +331,20 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     run_id = reply.run_id
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
 
-    send(runner_pid, {:finish_operator_runner, {:error, {:codex_startup_failed, %{reason: :boom}}}})
+    startup_failure =
+      {:codex_startup_failed, %{reason: :response_timeout, stage: :thread_start, timeout_ms: 30_000}}
+
+    send(runner_pid, {:finish_operator_runner, {:error, startup_failure}})
 
     snapshot =
       wait_for_snapshot(pid, fn snapshot ->
         snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "failed"
       end)
 
-    assert snapshot.operator_tasks.nap.failure_reason =~ "codex_startup_failed"
+    failure_reason = snapshot.operator_tasks.nap.failure_reason
+    assert failure_reason =~ "codex_startup_failed"
+    assert failure_reason =~ "stage: :thread_start"
+    assert failure_reason =~ "timeout_ms: 30000"
   end
 
   test "stale synthetic operator entries do not keep the runtime busy forever" do

@@ -106,7 +106,9 @@ defmodule SymphonyElixir.Codex.Startup do
     end
   end
 
-  def hint(:response_timeout), do: "Codex app-server did not respond before codex.read_timeout_ms; increase read_timeout_ms or reduce shell startup work."
+  def hint(:response_timeout),
+    do: "Codex app-server did not respond within the fixed 30-second startup handshake budget. Check the Codex command, authentication, and pre-start shell work."
+
   def hint(_reason), do: "Codex app-server startup failed before the session handshake completed."
 
   defp startup_reason({:port_exit, _status}), do: :port_exit
