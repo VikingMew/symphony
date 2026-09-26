@@ -6,6 +6,7 @@ defmodule SymphonyElixir.BlockingDecision do
   alias SymphonyElixir.{PersistenceProvider, Tracker}
 
   @type reason :: term()
+  @type stale_reason :: :state_mismatch | :run_superseded
 
   @doc """
   Normalizes blocker evidence for orchestration decisions.
@@ -25,6 +26,36 @@ defmodule SymphonyElixir.BlockingDecision do
   end
 
   def normalize_blocker(value), do: value |> inspect() |> normalize_blocker()
+
+  @doc "Builds the canonical persisted blocking-decision representation."
+  @spec new(reason(), term(), String.t() | nil, String.t(), map(), map()) :: map()
+  def new(reason, evidence, run_id, origin_state, references \\ %{}, metadata \\ %{}) do
+    Map.merge(metadata, %{
+      "reason" => decision_text(reason),
+      "evidence" => decision_text(evidence),
+      "run_id" => run_id,
+      "origin_state" => origin_state,
+      "decided_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+      "references" => references,
+      "comment_status" => "pending",
+      "transition_status" => "pending"
+    })
+  end
+
+  @doc "Checks a canonical decision against the live Linear state and latest persisted run."
+  @spec validity(map(), String.t(), String.t() | nil) :: :valid | {:stale, stale_reason()}
+  def validity(decision, live_state, latest_run_id) do
+    expected_state =
+      if decision["transition_status"] == "completed",
+        do: "Blocked",
+        else: Map.fetch!(decision, "origin_state")
+
+    cond do
+      live_state != expected_state -> {:stale, :state_mismatch}
+      is_nil(latest_run_id) or decision["run_id"] != latest_run_id -> {:stale, :run_superseded}
+      true -> :valid
+    end
+  end
 
   @spec decide(String.t(), reason(), term(), String.t() | nil, map()) ::
           {:ok, map()} | {:error, term()}
@@ -81,10 +112,8 @@ defmodule SymphonyElixir.BlockingDecision do
     end
   end
 
-  @spec clear(String.t()) :: :ok | {:error, term()}
-  def clear(identifier) do
-    persistence = PersistenceProvider.module()
-
+  @spec clear(String.t(), module()) :: :ok | {:error, term()}
+  def clear(identifier, persistence \\ PersistenceProvider.module()) do
     case PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end) do
       issue when is_map(issue) ->
         case persistence.update_issue(issue, %{blocking_decision: nil, no_progress_streak: 0}) do
@@ -97,6 +126,36 @@ defmodule SymphonyElixir.BlockingDecision do
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  @doc "Clears a stale decision and records its original scope as a durable event."
+  @spec clear_stale(String.t(), map(), String.t(), stale_reason(), module()) ::
+          {:ok, map()} | {:error, term()}
+  def clear_stale(identifier, decision, source, cause, persistence \\ PersistenceProvider.module()) do
+    with issue when is_map(issue) <-
+           PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end),
+         {:ok, _issue} <-
+           persistence.update_issue(issue, %{blocking_decision: nil, no_progress_streak: 0}),
+         {:ok, event} <-
+           persistence.record_event(%{
+             run_id: decision["run_id"],
+             issue_identifier: identifier,
+             event_type: "issue.blocking_decision_cleared",
+             payload: %{
+               "source" => source,
+               "cause" => Atom.to_string(cause),
+               "issue_id" => Map.get(issue, :tracker_issue_id),
+               "reason" => decision["reason"],
+               "origin_state" => decision["origin_state"],
+               "run_id" => decision["run_id"],
+               "decided_at" => decision["decided_at"]
+             }
+           }) do
+      {:ok, event}
+    else
+      nil -> {:error, :issue_not_persisted}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -183,15 +242,7 @@ defmodule SymphonyElixir.BlockingDecision do
   end
 
   defp persist_decision(persistence, issue, reason, evidence, run_id, references) do
-    decision = %{
-      "reason" => decision_text(reason),
-      "evidence" => decision_text(evidence),
-      "run_id" => run_id,
-      "decided_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
-      "references" => references,
-      "comment_status" => "pending",
-      "transition_status" => "pending"
-    }
+    decision = new(reason, evidence, run_id, Map.fetch!(issue, :state), references)
 
     case persistence.update_issue(issue, %{blocking_decision: decision}) do
       {:ok, _issue} -> {:ok, decision}

@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.PRReview.Delivery do
   @moduledoc "Idempotently delivers one review result to Linear."
 
-  alias SymphonyElixir.{PersistenceProvider, PRReview, Tracker}
+  alias SymphonyElixir.{BlockingDecision, PersistenceProvider, PRReview, Tracker}
   alias SymphonyElixir.PRReview.Store
 
   @spec deliver(map()) :: {:ok, map()} | {:error, term()}
@@ -35,11 +35,12 @@ defmodule SymphonyElixir.PRReview.Delivery do
         end
 
       nil ->
-        decision = review_decision(job)
+        decision = decision(job, issue.state)
 
         with {:ok, _issue} <- persistence.update_issue(issue, %{blocking_decision: decision}),
              {:ok, job} <- Store.update(job, %{delivery: Map.put(job.delivery, "decision", "completed")}),
              {:ok, job} <- deliver_comment(job),
+             {:ok, job} <- complete_decision_comment(job),
              {:ok, job} <- deliver_transition(job) do
           Store.update(job, %{status: "completed", finished_at: DateTime.utc_now()})
         end
@@ -61,8 +62,24 @@ defmodule SymphonyElixir.PRReview.Delivery do
     with :ok <- Tracker.update_issue_state(job.tracker_issue_id, "Blocked"),
          {:ok, job} <- Store.update(job, %{delivery: Map.put(job.delivery, "transition", "completed")}),
          issue <- PersistenceProvider.module().get_issue(job.project_id, job.issue_identifier),
-         {:ok, _issue} <- PersistenceProvider.module().update_issue(issue, %{state: "Blocked"}) do
+         decision = Map.put(issue.blocking_decision, "transition_status", "completed"),
+         {:ok, _issue} <-
+           PersistenceProvider.module().update_issue(issue, %{
+             state: "Blocked",
+             blocking_decision: decision
+           }) do
       {:ok, job}
+    end
+  end
+
+  defp complete_decision_comment(job) do
+    persistence = PersistenceProvider.module()
+    issue = persistence.get_issue(job.project_id, job.issue_identifier)
+    decision = Map.put(issue.blocking_decision, "comment_status", "completed")
+
+    case persistence.update_issue(issue, %{blocking_decision: decision}) do
+      {:ok, _issue} -> {:ok, job}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -71,17 +88,19 @@ defmodule SymphonyElixir.PRReview.Delivery do
     result
   end
 
-  defp review_decision(job) do
-    %{
-      "reason" => "pr_review",
-      "evidence" => PRReview.comment(normalized_result(job)),
-      "run_id" => job.run_id,
-      "review_job_id" => job.id,
-      "review_head_oid" => job.head_oid,
-      "decided_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
-      "references" => %{"pr_url" => job.pr_url},
-      "comment_status" => "pending",
-      "transition_status" => "pending"
-    }
+  @doc false
+  @spec decision(map(), String.t()) :: map()
+  def decision(job, origin_state) do
+    BlockingDecision.new(
+      :pr_review,
+      PRReview.comment(normalized_result(job)),
+      job.run_id,
+      origin_state,
+      %{"pr_url" => job.pr_url},
+      %{
+        "review_job_id" => job.id,
+        "review_head_oid" => job.head_oid
+      }
+    )
   end
 end

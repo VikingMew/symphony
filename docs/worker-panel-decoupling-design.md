@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-19
+updated: 2026-09-26
 design_status: landed
 ---
 
@@ -28,7 +28,9 @@ entry 会拒绝当前 claim，但该请求可刷新下一次 claim 的 last-seen
 准入依据。claim admission 顺序是：Orchestrator listening gate、内存 session freshness、调用方
 `available_slots > 0`、environment failure circuit、当前 assignment，然后才实时读取 Linear candidates，
 按 priority、created_at、identifier 排序，再按 issue id 读取 Linear 并重新验证状态、依赖、
-routing/profile、listening mode 和未清除的持久 `blocking_decision`。三种 mode 的规则为：
+routing/profile、listening mode 和持久 `blocking_decision`。candidate selection 与 tracker revalidation
+调用同一有效性检查：`transition_status = completed` 时预期实时状态为 `Blocked`，否则预期
+`origin_state`；同时 decision `run_id` 必须等于该 issue 最新持久 run id。任一不匹配即陈旧。三种 mode 的规则为：
 
 - `not_listening` 在 Linear candidate read、run 创建、issue 迁移和 `task.accepted` 写入前返回空 claim。
 - `listening_refine_only` 在排序后的逐候选 admission 中只接受 refinement state；过滤靠前的
@@ -54,9 +56,15 @@ worker run 仍是非终态时不得重复派发。默认 `tracker.active_states`
 仅在存在 fresh 内存 entry、调用方有 slot 且无当前 assignment 时为 1，否则为 0。没有合格 issue、
 已有 assignment、内存 session 缺失/过期或没有 slot 时返回 `{task: null}`，并附带可测试的 structured
 admission reason（capacity 0/1 与拒绝原因）。若候选 issue 已有未清除的
-`blocking_decision`，claim 返回 `admission.reason = blocking_decision`，并记录包含 issue、worker/session
-和 blocking reason 的 `event=worker_claim_skip` 日志；这不同于状态不匹配、依赖阻塞、human review、run
-history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的连续空 claim 由
+`blocking_decision` 且 state/run scope 仍匹配，claim 返回 `admission.reason = blocking_decision`，并记录包含
+issue、worker/session、blocking reason、origin state、run id 和 decision time 的
+`event=worker_claim_skip` 日志；这不同于状态不匹配、依赖阻塞、human review、run history、capacity 或
+session freshness 的拒绝。state 或 run scope 不匹配时，同一次 claim 把 decision / no-progress streak
+写为 `NULL` / `0`，持久化带 selection/revalidation source 和旧 decision context 的 clear event，并通过
+Orchestrator mailbox 清除旧 run 的 blocked、retry、failure 与 stale claimed 投影，再继续后续 gate。若
+该 claim 创建新 run，消息顺序和 run identity 保证新 run 的 claimed/running 投影不被旧 decision 清理。
+人工重新触发产生的较新 run 表示显式重试，因此即使 state 不变也使旧 decision 作废。真正访问 tracker
+后的连续空 claim 由
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。

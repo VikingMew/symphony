@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   require Logger
 
   alias SymphonyElixir.{
+    BlockingDecision,
     Config,
     EnvironmentFailureCircuit,
     Orchestrator,
@@ -365,8 +366,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp claim_from_workflow(state, worker, session, workflow, dispatch_settings) do
     with {:ok, candidates} <- state.tracker.fetch_candidate_issues(),
-         {:ok, %Issue{} = candidate} <- select_candidate(candidates, state.persistence, dispatch_settings),
-         {:ok, %Issue{} = issue} <- revalidate(candidate, state.tracker, state.persistence, dispatch_settings),
+         {:ok, %Issue{} = candidate} <-
+           select_candidate(candidates, state.persistence, state.orchestrator, dispatch_settings),
+         {:ok, %Issue{} = issue} <-
+           revalidate(candidate, state.tracker, state.persistence, state.orchestrator, dispatch_settings),
          {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue) do
       {:ok, assignment}
     else
@@ -379,7 +382,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp select_candidate(candidates, persistence, dispatch_settings) do
+  defp select_candidate(candidates, persistence, orchestrator, dispatch_settings) do
     listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
 
     candidates
@@ -387,7 +390,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     |> Enum.reduce_while(
       {:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate, listening_mode)},
       fn issue, skip ->
-        case candidate_admission(issue, persistence, dispatch_settings) do
+        case candidate_admission(
+               issue,
+               persistence,
+               orchestrator,
+               dispatch_settings,
+               "candidate_selection"
+             ) do
           :ok -> {:halt, {:ok, issue}}
           {:skip, :blocking_decision, _evidence} = blocking -> {:cont, merge_candidate_skip(skip, blocking)}
           {:skip, :listening_mode, _evidence} = filtered -> {:cont, merge_candidate_skip(skip, filtered)}
@@ -398,12 +407,19 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     )
   end
 
-  defp candidate_admission(%Issue{} = issue, persistence, dispatch_settings) do
+  defp candidate_admission(%Issue{} = issue, persistence, orchestrator, dispatch_settings, clear_source) do
     listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
 
     with true <- DispatchPolicy.allowed_by_listening_mode?(issue.state, dispatch_settings),
          :ok <- live_issue_admission(issue, listening_mode),
-         :ok <- blocking_decision_admission(issue, persistence, listening_mode) do
+         :ok <-
+           blocking_decision_admission(
+             issue,
+             persistence,
+             orchestrator,
+             listening_mode,
+             clear_source
+           ) do
       if dispatchable_from_history?(issue, persistence),
         do: :ok,
         else: {:skip, :run_history, admission_evidence(:run_history, listening_mode)}
@@ -440,10 +456,23 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp blocking_decision_admission(%Issue{} = issue, persistence, listening_mode) do
+  defp blocking_decision_admission(
+         %Issue{} = issue,
+         persistence,
+         orchestrator,
+         listening_mode,
+         clear_source
+       ) do
     case persistence.get_issue_by_identifier(issue.identifier) do
       %{blocking_decision: %{} = decision} ->
-        {:skip, :blocking_decision, blocking_decision_evidence(issue, decision, listening_mode)}
+        scoped_blocking_decision_admission(
+          issue,
+          decision,
+          persistence,
+          orchestrator,
+          listening_mode,
+          clear_source
+        )
 
       %{} ->
         :ok
@@ -456,10 +485,110 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp revalidate(%Issue{id: issue_id}, tracker, persistence, dispatch_settings) do
+  defp scoped_blocking_decision_admission(
+         issue,
+         decision,
+         persistence,
+         orchestrator,
+         listening_mode,
+         clear_source
+       ) do
+    with {:ok, latest_run_id} <- latest_run_id(persistence, issue.identifier) do
+      decision
+      |> BlockingDecision.validity(issue.state, latest_run_id)
+      |> apply_blocking_decision_validity(
+        issue,
+        decision,
+        persistence,
+        orchestrator,
+        listening_mode,
+        clear_source
+      )
+    end
+  end
+
+  defp apply_blocking_decision_validity(
+         :valid,
+         issue,
+         decision,
+         _persistence,
+         _orchestrator,
+         listening_mode,
+         _clear_source
+       ) do
+    {:skip, :blocking_decision, blocking_decision_evidence(issue, decision, listening_mode)}
+  end
+
+  defp apply_blocking_decision_validity(
+         {:stale, cause},
+         issue,
+         decision,
+         persistence,
+         orchestrator,
+         _listening_mode,
+         clear_source
+       ) do
+    clear_stale_blocking_decision(
+      issue,
+      decision,
+      clear_source,
+      cause,
+      persistence,
+      orchestrator
+    )
+  end
+
+  defp latest_run_id(persistence, identifier) do
+    case persistence.list_runs_for_issue(identifier, limit: 1) do
+      [%{id: run_id} | _runs] -> {:ok, run_id}
+      [] -> {:ok, nil}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp clear_stale_blocking_decision(
+         issue,
+         decision,
+         source,
+         cause,
+         persistence,
+         orchestrator
+       ) do
+    case BlockingDecision.clear_stale(
+           issue.identifier,
+           decision,
+           source,
+           cause,
+           persistence
+         ) do
+      {:ok, _event} ->
+        Orchestrator.blocking_decision_cleared(
+          issue.id,
+          decision["run_id"],
+          orchestrator
+        )
+
+        Logger.info(
+          "event=blocking_decision_cleared issue_id=#{issue.id} issue_identifier=#{issue.identifier} clear_source=#{source} clear_cause=#{cause} blocking_reason=#{inspect(decision["reason"])} origin_state=#{inspect(decision["origin_state"])} run_id=#{inspect(decision["run_id"])} decided_at=#{inspect(decision["decided_at"])}"
+        )
+
+        :ok
+
+      {:error, reason} ->
+        {:error, {:blocking_decision_clear_failed, reason}}
+    end
+  end
+
+  defp revalidate(%Issue{id: issue_id}, tracker, persistence, orchestrator, dispatch_settings) do
     case tracker.fetch_issue_states_by_ids([issue_id]) do
       {:ok, [%Issue{} = issue | _]} ->
-        case candidate_admission(issue, persistence, dispatch_settings) do
+        case candidate_admission(
+               issue,
+               persistence,
+               orchestrator,
+               dispatch_settings,
+               "tracker_revalidation"
+             ) do
           :ok -> {:ok, issue}
           other -> other
         end
@@ -782,7 +911,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     |> Map.merge(%{
       issue_id: issue.id,
       issue_identifier: issue.identifier,
-      blocking_decision: Map.take(decision, ["decided_at", "reason", "run_id"])
+      blocking_decision: Map.take(decision, ["decided_at", "origin_state", "reason", "run_id"])
     })
   end
 
@@ -798,9 +927,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp log_admission_skip(:blocking_decision, worker_id, session_id, evidence) do
     blocking_reason = get_in(evidence, [:blocking_decision, "reason"])
+    origin_state = get_in(evidence, [:blocking_decision, "origin_state"])
+    run_id = get_in(evidence, [:blocking_decision, "run_id"])
+    decided_at = get_in(evidence, [:blocking_decision, "decided_at"])
 
     Logger.info(
-      "event=worker_claim_skip issue_id=#{evidence.issue_id} issue_identifier=#{evidence.issue_identifier} worker_id=#{worker_id} session_id=#{session_id} skip_reason=blocking_decision blocking_reason=#{inspect(blocking_reason)} listening_mode=#{evidence.listening_mode} capacity=#{evidence.capacity}"
+      "event=worker_claim_skip issue_id=#{evidence.issue_id} issue_identifier=#{evidence.issue_identifier} worker_id=#{worker_id} session_id=#{session_id} skip_reason=blocking_decision blocking_reason=#{inspect(blocking_reason)} origin_state=#{inspect(origin_state)} run_id=#{inspect(run_id)} decided_at=#{inspect(decided_at)} listening_mode=#{evidence.listening_mode} capacity=#{evidence.capacity}"
     )
   end
 

@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-09-26
 design_status: landed
 ---
 
@@ -43,8 +43,16 @@ listening mode before any Linear candidate read. `not_listening` returns an empt
 `listening_refine_only` filters each sorted candidate through the same refinement-state policy used
 by centralized dispatch, so an earlier implementation candidate cannot hide a later refinement
 candidate; `listening_all` admits both profiles. An admitted claim is then created from a live Linear
-candidate read, absence of an uncleared persisted `blocking_decision`, and a second
-state/dependency/routing/listening/blocking-decision check. The Panel
+candidate read, a state/run-scoped persisted `blocking_decision` check, and a second
+state/dependency/routing/listening/blocking-decision check. Both decision checks use the same
+validity rule. A decision whose transition completed expects live Linear state `Blocked`; every
+other decision expects its persisted `origin_state`. It blocks only when that state matches and its
+`run_id` equals the latest persisted issue run. A state mismatch or a newer run makes the decision
+stale. The Panel clears that decision and `no_progress_streak`, emits
+`issue.blocking_decision_cleared` with the old scope and claim phase, asks the Orchestrator to drop
+the old blocked/retry/failure/stale-claimed projection, and continues the remaining gates in the
+same claim. The ordered cleanup message precedes any new assignment projection, and cleanup keyed
+to the old decision run preserves a newer claimed/running run. The Panel
 derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
 contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
 validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state
@@ -164,12 +172,16 @@ Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds
 not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
-later run can start only after a new live Linear claim proves the issue eligible and no uncleared
-`blocking_decision` exists. Manual Blocked, Done, review-state changes, and persisted blocker clears
-therefore take effect at the next check. When a persisted blocker exists, empty claim evidence uses
-`reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
-context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
-routing, and run-history gates pass.
+later run can start only after a new live Linear claim proves the issue eligible and any persisted
+decision is either validly blocking or cleared as stale. Creating a newer run is an explicit manual
+retry: even when Linear state is unchanged, the older run's decision is stale and the new run does
+not inherit it. A valid decision returns empty claim evidence with `reason: blocking_decision`; its
+`event=worker_claim_skip` log includes issue, worker/session, blocking reason, `origin_state`,
+`run_id`, and decision time. Automatic state-mismatch and run-superseded clears reset both existing
+issue fields to `NULL` / `0`, then normal state, dependency, routing, and run-history gates continue.
+The one-time data migration adds `origin_state` to each non-null decision JSON from `issues.state`
+while preserving the JSON content, `run_id`, and the existing `issues.blocking_decision` and
+`issues.no_progress_streak` columns. Runtime code reads only this canonical JSON representation.
 
 Listening rejection evidence is `{reason: not_listening, capacity: 0, listening_mode:
 not_listening}`. A refine-only batch containing no refinement candidate uses `reason:

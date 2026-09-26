@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.LogFile
-updated: 2026-09-19
+updated: 2026-09-26
 ---
 
 # Logging and Observability Specification
@@ -96,10 +96,12 @@ typed reason, evidence/detail, and decision time. All-zero worker-mode counts ar
 when the corresponding in-memory current-state lists are actually empty.
 
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
-Failed external writes remain visible and retryable without creating a new coding-agent run;
-worker claim admission reports `admission.reason = blocking_decision` and logs
-`event=worker_claim_skip` with issue and worker/session context while the decision remains uncleared;
-human recovery emits a decision-cleared event with issue and run context where available.
+Failed external writes remain visible and retryable without creating a new coding-agent run. A
+state/run-valid decision makes worker claim admission report `admission.reason = blocking_decision`;
+`event=worker_claim_skip` includes issue, worker/session, blocking reason, origin state, run id, and
+decision time. Claim-time invalidation emits `issue.blocking_decision_cleared` with `source`
+(`candidate_selection` or `tracker_revalidation`), `cause` (`state_mismatch` or `run_superseded`),
+issue, old reason, origin state, run id, and decision time.
 
 External worker terminal summaries MUST distinguish validation evidence from terminal outcome.
 When validation ran, `validation_status` MUST be its actual `passed`, `failed`, `timed_out`, or

@@ -486,6 +486,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   test "claim admission skips active issues with uncleared blocking decisions", context do
     ready = issue(101)
     persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    persist_run(ready.identifier, "run-blocked", context.now)
     Tracker.put([ready])
 
     log =
@@ -508,6 +509,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                  issue_identifier: ready.identifier,
                  blocking_decision: %{
                    "decided_at" => "2026-09-12T04:15:33Z",
+                   "origin_state" => "Ready",
                    "reason" => "failure_retries_exhausted",
                    "run_id" => "run-blocked"
                  }
@@ -517,7 +519,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert log =~ "event=worker_claim_skip"
     assert log =~ "skip_reason=blocking_decision"
     assert log =~ "issue_identifier=#{ready.identifier}"
-    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert log =~ "origin_state=\"Ready\""
+    assert log =~ "run_id=\"run-blocked\""
+    assert log =~ "decided_at=\"2026-09-12T04:15:33Z\""
+    assert [%{id: "run-blocked"}] = FakePersistence.list_runs_for_issue(ready.identifier)
     assert Tracker.updates() == []
   end
 
@@ -528,6 +533,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     Application.put_env(:symphony_elixir, :assignment_test_revalidate_hook, fn ->
       persist_issue(ready, %{blocking_decision: blocking_decision("human_blocked")})
+      persist_run(ready.identifier, "run-blocked", context.now)
     end)
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision, issue_identifier: "SYM-102"}} =
@@ -540,13 +546,14 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
-    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert [%{id: "run-blocked"}] = FakePersistence.list_runs_for_issue(ready.identifier)
     assert Tracker.updates() == []
   end
 
   test "cleared blocking decisions restore normal claim admission", context do
     ready = issue(103)
     persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    persist_run(ready.identifier, "run-blocked", context.now)
     Tracker.put([ready])
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision}} =
@@ -572,8 +579,109 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert assignment.issue_identifier == ready.identifier
-    assert [_run] = FakePersistence.list_runs_for_issue(ready.identifier)
+
+    assert [_new_run, %{id: "run-blocked"}] =
+             FakePersistence.list_runs_for_issue(ready.identifier)
+
     assert Tracker.updates() == [{ready.id, "In Progress"}]
+  end
+
+  test "state mismatch clears the old decision and projections before claiming the new run", context do
+    orchestrator = start_orchestrator()
+    manager = start_manager(context, orchestrator, context.now)
+    todo = %{issue(104) | state: "Todo"}
+
+    persist_issue(%{todo | state: "In Progress"}, %{
+      blocking_decision: blocking_decision("failure_retries_exhausted", origin_state: "In Progress", run_id: "run-old"),
+      no_progress_streak: 2
+    })
+
+    persist_run(todo.identifier, "run-old", DateTime.add(context.now, -60, :second))
+    Tracker.put([todo])
+
+    :sys.replace_state(orchestrator, fn state ->
+      %{
+        state
+        | blocked: %{todo.id => %{run_id: "run-old"}},
+          retry_attempts: %{todo.id => %{timer_ref: nil}},
+          failure_counts: %{todo.id => 3},
+          claimed: MapSet.put(state.claimed, todo.id)
+      }
+    end)
+
+    assert {:ok, assignment, %{reason: :assigned}} =
+             AssignmentManager.claim_with_policy_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               manager
+             )
+
+    assert assignment.issue.state == "Refining"
+    assert assignment.run_id != "run-old"
+
+    persisted = FakePersistence.get_issue_by_identifier(todo.identifier)
+    assert Map.get(persisted, :blocking_decision) == nil
+    assert Map.get(persisted, :no_progress_streak, 0) == 0
+
+    assert [event] =
+             FakePersistence.list_events(
+               issue_identifier: todo.identifier,
+               event_type: "issue.blocking_decision_cleared"
+             )
+
+    assert event.run_id == "run-old"
+    assert event.payload["source"] == "candidate_selection"
+    assert event.payload["cause"] == "state_mismatch"
+    assert event.payload["origin_state"] == "In Progress"
+
+    state = :sys.get_state(orchestrator)
+    assert state.blocked == %{}
+    assert state.retry_attempts == %{}
+    assert state.failure_counts == %{}
+    assert state.running[todo.id].run_id == assignment.run_id
+    assert MapSet.member?(state.claimed, todo.id)
+  end
+
+  test "a newer manual run invalidates the old decision without a state change", context do
+    ready = issue(105)
+
+    persist_issue(ready, %{
+      blocking_decision: blocking_decision("failure_retries_exhausted", origin_state: "Ready", run_id: "run-old"),
+      no_progress_streak: 2
+    })
+
+    persist_run(ready.identifier, "run-old", DateTime.add(context.now, -60, :second))
+    persist_run(ready.identifier, "run-manual", DateTime.add(context.now, -30, :second))
+    Tracker.put([ready])
+
+    assert {:ok, assignment, %{reason: :assigned}} =
+             AssignmentManager.claim_with_policy_evidence(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               context.manager
+             )
+
+    assert assignment.issue_identifier == ready.identifier
+    assert assignment.run_id not in ["run-old", "run-manual"]
+
+    persisted = FakePersistence.get_issue_by_identifier(ready.identifier)
+    assert Map.get(persisted, :blocking_decision) == nil
+    assert Map.get(persisted, :no_progress_streak, 0) == 0
+
+    assert [event] =
+             FakePersistence.list_events(
+               issue_identifier: ready.identifier,
+               event_type: "issue.blocking_decision_cleared"
+             )
+
+    assert event.payload["cause"] == "run_superseded"
+    assert event.payload["run_id"] == "run-old"
   end
 
   test "surfaces tracker fetch and state transition failures", context do
@@ -1615,13 +1723,25 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     |> FakePersistence.upsert_issue()
   end
 
-  defp blocking_decision(reason) do
+  defp blocking_decision(reason, opts \\ []) do
     %{
       "decided_at" => "2026-09-12T04:15:33Z",
       "evidence" => "test",
       "reason" => reason,
-      "run_id" => "run-blocked"
+      "run_id" => Keyword.get(opts, :run_id, "run-blocked"),
+      "origin_state" => Keyword.get(opts, :origin_state, "Ready"),
+      "comment_status" => "pending",
+      "transition_status" => Keyword.get(opts, :transition_status, "pending")
     }
+  end
+
+  defp persist_run(identifier, id, started_at) do
+    FakePersistence.create_run(%{
+      id: id,
+      issue_identifier: identifier,
+      status: "failed",
+      started_at: started_at
+    })
   end
 
   defp summary(outcome) do

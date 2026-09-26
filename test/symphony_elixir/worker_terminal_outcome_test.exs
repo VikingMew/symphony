@@ -111,6 +111,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
     assert persisted.state == "Blocked"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == "completed"
 

@@ -1422,6 +1422,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       %{
         identifier: "MT-BLOCK",
         tracker_issue_id: issue_id,
+        state: "In Progress",
         blocking_decision: nil,
         no_progress_streak: 0
       }
@@ -2160,6 +2161,50 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              "agent message streaming: writing workpad reconciliation update"
 
     assert MessageHumanizer.humanize_codex_message(fallback_reasoning) == "reasoning update"
+  end
+
+  test "stale decision projection cleanup releases the old run and preserves a newer running run" do
+    name = Module.concat(__MODULE__, "DecisionClear#{System.unique_integer([:positive])}")
+    pid = start_supervised!({Orchestrator, name: name})
+    issue_id = "issue-decision-clear"
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | blocked: %{issue_id => %{run_id: "run-old"}},
+          retry_attempts: %{issue_id => %{timer_ref: nil}},
+          failure_counts: %{issue_id => 3},
+          claimed: MapSet.put(state.claimed, issue_id)
+      }
+    end)
+
+    Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+    cleared = :sys.get_state(pid)
+    assert cleared.blocked == %{}
+    assert cleared.retry_attempts == %{}
+    assert cleared.failure_counts == %{}
+    assert cleared.claimed == MapSet.new()
+
+    newer = %Orchestrator.RunningIssue{run_id: "run-new", identifier: "SYM-NEW"}
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | running: %{issue_id => newer},
+          blocked: %{issue_id => %{run_id: "run-old"}},
+          retry_attempts: %{issue_id => %{timer_ref: nil}},
+          failure_counts: %{issue_id => 1},
+          claimed: MapSet.put(state.claimed, issue_id)
+      }
+    end)
+
+    Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+    preserved = :sys.get_state(pid)
+    assert preserved.running[issue_id].run_id == "run-new"
+    assert MapSet.member?(preserved.claimed, issue_id)
+    assert preserved.blocked == %{}
+    assert preserved.retry_attempts == %{}
+    assert preserved.failure_counts == %{}
   end
 
   test "application stop logs offline status" do

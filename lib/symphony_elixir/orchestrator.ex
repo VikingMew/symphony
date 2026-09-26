@@ -177,6 +177,12 @@ defmodule SymphonyElixir.Orchestrator do
     GenServer.cast(server, {:worker_task_started, assignment})
   end
 
+  @spec blocking_decision_cleared(String.t(), String.t() | nil, GenServer.server()) :: :ok
+  def blocking_decision_cleared(issue_id, decision_run_id, server \\ __MODULE__)
+      when is_binary(issue_id) do
+    GenServer.cast(server, {:blocking_decision_cleared, issue_id, decision_run_id})
+  end
+
   @spec worker_task_progress(String.t(), map(), GenServer.server()) :: :ok
   def worker_task_progress(issue_id, payload, server \\ __MODULE__)
       when is_binary(issue_id) and is_map(payload) do
@@ -237,6 +243,13 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_cast({:worker_task_started, %{issue: %Issue{id: issue_id}} = assignment}, state)
       when is_binary(issue_id) do
     state = handle_worker_task_started(state, assignment)
+    notify_dashboard()
+    {:noreply, state}
+  end
+
+  def handle_cast({:blocking_decision_cleared, issue_id, decision_run_id}, state)
+      when is_binary(issue_id) do
+    state = clear_blocking_decision_projection(state, issue_id, decision_run_id)
     notify_dashboard()
     {:noreply, state}
   end
@@ -1398,6 +1411,33 @@ defmodule SymphonyElixir.Orchestrator do
       | blocked: Map.delete(state.blocked, issue_id),
         claimed: MapSet.delete(state.claimed, issue_id),
         retry_attempts: Map.delete(state.retry_attempts, issue_id)
+    }
+  end
+
+  defp clear_blocking_decision_projection(%State{} = state, issue_id, decision_run_id) do
+    state = cancel_issue_retry(state, issue_id)
+
+    blocked =
+      case Map.get(state.blocked, issue_id) do
+        %{run_id: ^decision_run_id} -> Map.delete(state.blocked, issue_id)
+        _entry -> state.blocked
+      end
+
+    projection_for_newer_run? =
+      Enum.any?([Map.get(state.running, issue_id), Map.get(blocked, issue_id)], fn
+        %{run_id: run_id} -> run_id != decision_run_id
+        _entry -> false
+      end)
+
+    %{
+      state
+      | blocked: blocked,
+        claimed:
+          if(projection_for_newer_run?,
+            do: state.claimed,
+            else: MapSet.delete(state.claimed, issue_id)
+          ),
+        failure_counts: Map.delete(state.failure_counts, issue_id)
     }
   end
 
