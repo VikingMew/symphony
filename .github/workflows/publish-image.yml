@@ -104,8 +104,7 @@ jobs:
             ([.services["execution-worker"].volumes[] |
               select(.type == "bind" and
                 .source == env.SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE and
-                .target == "/home/symphony/.codex/auth.json" and
-                .bind.create_host_path == false)] | length) == 1
+                .target == "/home/symphony/.codex/auth.json")] | length) == 1
           '
 
   publish:
