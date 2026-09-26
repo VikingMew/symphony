@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-19
+updated: 2026-09-25
 design_status: landed
 ---
 
@@ -73,6 +73,13 @@ Orchestrator 的普通 poll 与 active retry 共用 worker-mode deployment capac
 liveness，不复用旧容量。每次 timeout 记录 warning：
 `event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0`。
 其他 exit 不降级，centralized mode 容量语义不变。
+
+Orchestrator 构造时持有 worker capacity query callback；默认 callback 仍为
+`AssignmentManager.available_worker_slots/0`。该 callback 只提供 process-local constructor dependency
+injection，使测试能用显式 `:run_poll_cycle` 和 message-controlled query outcome 逐次验证 timeout 与恢复，
+而不暂停全局 manager 或等待 wall-clock timeout。它不是持久化或 operator-configurable runtime policy；
+传入无效 callback 时显式失败。这个 start option 只改变 dependency construction：默认 callback、
+5000 ms timeout、exact timeout-exit match、fail-closed policy、warning 和 operator-visible behavior 均不变。
 
 `agent.max_retry_backoff_ms` 只限制 Orchestrator 的 failure-retry 排程，不控制 worker claim。
 worker claim request 不携带 prospective issue id，也不保存 per-issue retry/cooldown 状态；再次 claim 的
