@@ -238,7 +238,11 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     assert workflow =~ ~s(.type == "volume" and .target == "/home/symphony/.codex")
     assert workflow =~ ~s(.source == env.SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE)
     assert workflow =~ ~s(.target == "/home/symphony/.codex/auth.json")
-    assert workflow =~ ~s(.bind.create_host_path == false)
+    # Compose v2.x (the CI runner ships 2.38.2) does not render
+    # `bind.create_host_path` in `docker compose config` output, which made the
+    # workflow clause asserting on it always false. The host-bind contract is
+    # pinned by the source/target clauses above instead.
+    refute workflow =~ ~s(.bind.create_host_path)
   end
 
   test "published Compose removes the worker build and requires its image" do
