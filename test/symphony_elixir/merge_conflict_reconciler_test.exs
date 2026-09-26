@@ -60,6 +60,7 @@ defmodule SymphonyElixir.MergeConflictReconcilerTest do
 
     assert decision["reason"] == "merge_conflict"
     assert decision["run_id"] == "run-handoff"
+    assert decision["origin_state"] == "Ready to Merge"
     assert decision["references"]["pr_url"] == "https://github.com/acme/app/pull/17"
     assert_receive {:delivery, "issue-17", "SYM-17"}
 

@@ -2,6 +2,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
   use ExUnit.Case, async: false
 
   alias SymphonyElixir.BlockingDecision
+  alias SymphonyElixir.Persistence.IssueRecord
   alias SymphonyElixir.TestSupport.FakePersistence
 
   setup do
@@ -39,6 +40,41 @@ defmodule SymphonyElixir.BlockingDecisionTest do
              "missing deploy permission"
   end
 
+  test "builds one canonical state and run scoped decision" do
+    decision =
+      BlockingDecision.new(
+        :pr_review,
+        "review findings",
+        "run-17",
+        "Ready to Merge",
+        %{"pr_url" => "https://github.com/acme/app/pull/17"},
+        %{"review_job_id" => "review-17"}
+      )
+
+    assert decision["reason"] == "pr_review"
+    assert decision["evidence"] == "review findings"
+    assert decision["run_id"] == "run-17"
+    assert decision["origin_state"] == "Ready to Merge"
+    assert decision["references"] == %{"pr_url" => "https://github.com/acme/app/pull/17"}
+    assert decision["review_job_id"] == "review-17"
+    assert decision["comment_status"] == "pending"
+    assert decision["transition_status"] == "pending"
+  end
+
+  test "requires both expected Linear state and latest persisted run" do
+    pending = BlockingDecision.new(:reported_blocker, "blocked", "run-1", "In Progress")
+
+    assert BlockingDecision.validity(pending, "In Progress", "run-1") == :valid
+    assert BlockingDecision.validity(pending, "Todo", "run-1") == {:stale, :state_mismatch}
+
+    assert BlockingDecision.validity(pending, "In Progress", "run-2") ==
+             {:stale, :run_superseded}
+
+    completed = Map.put(pending, "transition_status", "completed")
+    assert BlockingDecision.validity(completed, "Blocked", "run-1") == :valid
+    assert BlockingDecision.validity(completed, "In Progress", "run-1") == {:stale, :state_mismatch}
+  end
+
   test "two completed no-progress runs persist a blocking decision without changing attempts" do
     assert {:streak, 1} = BlockingDecision.advance_no_progress("SYM-15", "run-1")
 
@@ -54,6 +90,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
 
     assert decision["reason"] == "no_progress"
     assert decision["run_id"] == "run-2"
+    assert decision["origin_state"] == "Refining"
 
     assert decision["references"] == %{
              "quality_gate" => "refinement_quality_gate_failed"
@@ -80,9 +117,24 @@ defmodule SymphonyElixir.BlockingDecisionTest do
 
     assert decision["reason"] == "reported_blocker"
     assert decision["evidence"] == evidence
+    assert decision["origin_state"] == "Refining"
     assert decision["transition_status"] == "pending"
 
     issue = FakePersistence.get_issue_by_identifier("SYM-15")
     assert issue.blocking_decision == decision
+  end
+
+  test "scope migration preserves the JSON decision columns and adds origin state" do
+    migration =
+      File.read!("priv/repo/migrations/20260926000000_scope_blocking_decisions_to_state_and_run.exs")
+
+    assert migration =~ "SET blocking_decision = jsonb_set("
+    assert migration =~ "'{origin_state}'"
+    assert migration =~ "to_jsonb(state)"
+    assert migration =~ "WHERE blocking_decision IS NOT NULL"
+
+    fields = IssueRecord.__schema__(:fields)
+    assert :blocking_decision in fields
+    assert :no_progress_streak in fields
   end
 end

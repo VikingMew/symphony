@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.PRReviewTest do
   use ExUnit.Case, async: false
 
-  alias SymphonyElixir.{Codex.DynamicTool, Config, Linear.Issue, PRReview, PRReview.Runner}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, Linear.Issue, PRReview, PRReview.Delivery, PRReview.Runner}
 
   @head String.duplicate("a", 40)
 
@@ -199,6 +199,25 @@ defmodule SymphonyElixir.PRReviewTest do
 
     result = %{outcome: :findings, head_sha: @head, summary: "Changes required", findings: ["Add retry coverage"]}
     assert PRReview.comment(result) == "Symphony PR review: FINDINGS (head #{@head})\nChanges required\n\n1. Add retry coverage"
+  end
+
+  test "review findings use the canonical state and run scoped decision" do
+    review_job =
+      Map.put(job(), :result, %{
+        outcome: :findings,
+        head_sha: @head,
+        summary: "Changes required",
+        findings: ["Add retry coverage"]
+      })
+
+    decision = Delivery.decision(review_job, "Ready to Merge")
+
+    assert decision["reason"] == "pr_review"
+    assert decision["run_id"] == "run-1"
+    assert decision["origin_state"] == "Ready to Merge"
+    assert decision["review_job_id"] == "review-1"
+    assert decision["review_head_oid"] == @head
+    assert decision["references"] == %{"pr_url" => "https://github.com/acme/app/pull/1"}
   end
 
   test "review result normalization accepts wire values and rejects malformed findings" do

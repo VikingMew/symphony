@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-19
+updated: 2026-09-26
 ---
 
 # Orchestration Specification
@@ -179,6 +179,15 @@ read repeats listening admission before assignment creation. A successful stop r
 after any earlier in-flight claim and before every later claim; it does not cancel an assignment
 that already exists.
 
+Candidate selection and the second tracker read also apply one persisted-decision validity rule. A
+decision with `transition_status = completed` expects live state `Blocked`; otherwise it expects its
+`origin_state`. The decision blocks only when the live state matches and its `run_id` is the latest
+persisted issue run id. Either mismatch makes it stale. The same claim MUST clear
+`blocking_decision` and `no_progress_streak`, persist `issue.blocking_decision_cleared`, release only
+the old run's Orchestrator blocked/retry/failure/stale-claimed projection, and continue all remaining
+gates. Cleanup MUST preserve a newer run's claimed/running projection. A newer manually started run
+is explicit retry intent and never inherits the older run's blocker.
+
 `Ready to Merge` has no ordinary issue route. The only allowed execution there is a durable
 post-handoff review job, keyed by project, issue, PR URL, and backend-resolved immutable head OID.
 Review jobs have their own positive concurrency limit, remain queued across restarts, and still
@@ -273,6 +282,10 @@ Backoff formula:
 - A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
   After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
   persists a blocking decision and delivers the Linear comment and `Blocked` transition.
+- Every persistent decision uses one JSON representation with `origin_state` and `run_id`.
+  `issues.blocking_decision` remains the decision column and `issues.no_progress_streak` remains the
+  independent streak column; clear writes `NULL` and `0`. The normalization migration adds
+  `origin_state` from `issues.state` without changing existing decision fields or `run_id`.
 - Continuations, capacity requeues, and tracker failures while polling a retry do not consume the
   failure budget. A successful run clears the issue's current failure chain.
 
