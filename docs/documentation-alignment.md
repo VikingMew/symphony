@@ -44,6 +44,7 @@ consistent. `mix docs.check` enforces document structure; this matrix tracks cla
 | GitHub-facing README | root `README.md` | Root README is now the GitHub-style project entrypoint and should remain accurate as product/runtime behavior changes. |
 | Documentation validation | `docs/documentation-system-design.md` | `mix docs.check` owns metadata validation; `mix docs.drift` checks registered current L1/L4/L5 document references plus the alignment matrix and reports owner Git-history freshness. The independent PR workflow adds an advisory implementation/documentation change-linkage signal. See the owning design for registry scope, exceptions, stable JSON fields, and non-blocking freshness/linkage semantics. |
 | Boundary/test refactors | `design.md`, `AGENTS.md` | Boundary extraction and test-split work should update module maps and contributor guidance when ownership changes. |
+| Agent-facing dependency boundaries | `docs/agent-facing-dependency-boundary-design.md` | Direct dependencies have one declared role; external transports stay in explicit boundary modules; core tests have a dependency-prepared offline entry; global writes stay with declared OTP/startup owners; dependency upgrades and uncertain external behavior retain reviewable reasons and contract tests. |
 
 ## Documentation Update Requirements
 

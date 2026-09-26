@@ -53,6 +53,7 @@ other documents link instead of restating.
 | [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | landed |
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
+| [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
 
 ## L4 — Normative Contracts
