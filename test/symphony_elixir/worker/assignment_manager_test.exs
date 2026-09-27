@@ -668,12 +668,44 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
+    run = FakePersistence.get_run(assignment.run_id)
+    assert run.status == "failed"
+    assert run.failure_reason == "validation_failed"
+    assert run.failure_evidence["reason"] == "worker_error"
+    assert run.execution_summary == summary("failed")
+
+    assert [run_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.failed")
+    assert run_event.payload["failure_reason"] == run.failure_reason
+    assert run_event.payload["failure_evidence"] == run.failure_evidence
+
     Tracker.put([])
     assert {:ok, {:empty, 5}} = claim(context)
     Tracker.put([ready])
     assert {:ok, next} = claim(context)
     assert next.id == assignment.id == false
     assert next.run_id == assignment.run_id == false
+  end
+
+  test "legal succeeded worker outcome persists completed without failure fields", context do
+    Tracker.put([issue(1)])
+    assert {:ok, assignment} = claim(context)
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "task.failed",
+               %{"correlation" => assignment.correlation, "summary" => summary("succeeded")},
+               context.manager
+             )
+
+    run = FakePersistence.get_run(assignment.run_id)
+    assert run.status == "completed"
+    assert run.failure_reason == nil
+    assert run.failure_evidence == nil
+    assert run.execution_summary == summary("succeeded")
+    assert [_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.completed")
   end
 
   test "heartbeat renews only the owning assignment and stale events are rejected", context do
@@ -1410,7 +1442,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
 
     [alert] = FakePersistence.list_events(event_type: EnvironmentFailureCircuit.event_type())
-    assert alert.payload.triggering_fingerprint == EnvironmentFailureCircuit.fingerprint("bwrap: No permissions to create a new namespace")
+    assert alert.payload.triggering_fingerprint == "validation_failed"
     assert alert.payload.issue_identifiers == ["SYM-1", "SYM-2", "SYM-3"]
     assert alert.payload.distinct_issue_count == EnvironmentFailureCircuit.threshold()
 

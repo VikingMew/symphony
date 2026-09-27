@@ -27,6 +27,33 @@ defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
     assert RunRecord.changeset(%RunRecord{}, remote_issue).valid? == false
   end
 
+  test "run changeset enforces the terminal failure matrix and rejects historical unknown" do
+    base = %{kind: "issue", issue_identifier: "CCR-1", execution_mode: "centralized"}
+
+    assert RunRecord.changeset(%RunRecord{}, Map.merge(base, %{status: "completed"})).valid?
+
+    refute RunRecord.changeset(
+             %RunRecord{},
+             Map.merge(base, %{status: "completed", failure_reason: "runtime_failure"})
+           ).valid?
+
+    Enum.each(["failed", "blocked", "cancelled", "stopped"], fn status ->
+      attrs =
+        Map.merge(base, %{
+          status: status,
+          failure_reason: "runtime_failure",
+          failure_evidence: %{"reason" => "worker_error"}
+        })
+
+      assert RunRecord.changeset(%RunRecord{}, attrs).valid?
+      refute RunRecord.changeset(%RunRecord{}, Map.delete(attrs, :failure_reason)).valid?
+      refute RunRecord.changeset(%RunRecord{}, Map.put(attrs, :failure_evidence, %{})).valid?
+      refute RunRecord.changeset(%RunRecord{}, Map.put(attrs, :failure_reason, "unknown")).valid?
+    end)
+
+    refute RunRecord.changeset(%RunRecord{}, Map.merge(base, %{status: "succeeded"})).valid?
+  end
+
   test "worker changeset validates identity and lifecycle status" do
     assert Worker.changeset(%Worker{}, %{name: "worker-1", status: "online"}).valid?
 

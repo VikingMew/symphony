@@ -26,7 +26,7 @@ defmodule SymphonyElixir.OrchestratorEnvironmentFailureCircuitTest do
     Enum.each(1..EnvironmentFailureCircuit.threshold(), fn number ->
       EnvironmentFailureCircuit.record_failure(
         "SYM-#{number}",
-        "bwrap: No permissions to create a new namespace",
+        "environment_unavailable",
         %{}
       )
     end)

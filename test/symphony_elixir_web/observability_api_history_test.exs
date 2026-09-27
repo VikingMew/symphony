@@ -90,7 +90,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     ])
 
     FakePersistence.put_runs([
-      run("run-old", "failed", 1, DateTime.add(now, -120, :second), "old failure"),
+      run("run-old", "failed", 1, DateTime.add(now, -120, :second), "runtime_failure"),
       run("run-new", "completed", 2, DateTime.add(now, -60, :second), nil)
     ])
 
@@ -105,6 +105,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     assert Map.has_key?(issue_payload["persisted_issue"], "__meta__") == false
     assert issue_payload["latest_run"]["id"] == "run-new"
     assert Enum.map(issue_payload["recent_runs"], & &1["id"]) == ["run-new", "run-old"]
+    assert Enum.at(issue_payload["recent_runs"], 1)["failure_evidence"] == %{"detail" => "old failure"}
     assert hd(issue_payload["timeline"])["event_type"] == "run.completed"
 
     runs_payload = json_response(get(build_conn(), "/api/v1/runs?issue_identifier=SYM-3&limit=1"), 200)
@@ -285,6 +286,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
       started_at: started_at,
       finished_at: DateTime.add(started_at, 30, :second),
       failure_reason: failure_reason,
+      failure_evidence: if(failure_reason, do: %{"detail" => "old failure"}),
       __meta__: %{internal: true}
     }
   end

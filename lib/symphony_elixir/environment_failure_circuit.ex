@@ -5,6 +5,10 @@ defmodule SymphonyElixir.EnvironmentFailureCircuit do
 
   use GenServer
 
+  alias SymphonyElixir.RunFailure
+
+  @classifications RunFailure.classifications()
+
   @threshold 3
   @window_ms 30 * 60 * 1_000
   @event_type "environment_failure_circuit.opened"
@@ -35,17 +39,13 @@ defmodule SymphonyElixir.EnvironmentFailureCircuit do
   @spec event_type() :: String.t()
   def event_type, do: @event_type
 
-  @spec fingerprint(term()) :: String.t()
-  def fingerprint(reason) do
-    normalized = normalize_reason(reason)
-    digest = :crypto.hash(:sha256, normalized) |> Base.encode16(case: :lower) |> String.slice(0, 16)
-    "env_failure:" <> digest
-  end
+  @spec fingerprint(RunFailure.classification() | String.t()) :: String.t()
+  def fingerprint(classification) when classification in @classifications, do: classification
 
-  @spec record_failure(String.t(), term(), map(), GenServer.server()) :: snapshot()
-  def record_failure(issue_identifier, reason, metadata \\ %{}, server \\ __MODULE__)
-      when is_binary(issue_identifier) and is_map(metadata) do
-    GenServer.call(server, {:record_failure, issue_identifier, fingerprint(reason), metadata})
+  @spec record_failure(String.t(), String.t(), map(), GenServer.server()) :: snapshot()
+  def record_failure(issue_identifier, classification, metadata \\ %{}, server \\ __MODULE__)
+      when is_binary(issue_identifier) and classification in @classifications and is_map(metadata) do
+    GenServer.call(server, {:record_failure, issue_identifier, classification, metadata})
   end
 
   @spec record_success(String.t(), GenServer.server()) :: snapshot()
@@ -193,17 +193,4 @@ defmodule SymphonyElixir.EnvironmentFailureCircuit do
     |> Enum.map(& &1.issue_identifier)
     |> Enum.uniq()
   end
-
-  defp normalize_reason(reason) do
-    reason
-    |> reason_text()
-    |> String.downcase()
-    |> String.replace(~r/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/, "<uuid>")
-    |> String.replace(~r/\b\d+\b/, "<number>")
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-  end
-
-  defp reason_text(reason) when is_binary(reason), do: reason
-  defp reason_text(reason), do: inspect(reason, limit: 20, printable_limit: 1_000)
 end

@@ -55,6 +55,7 @@ other documents link instead of restating.
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
+| [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |
 
 ## L4 — Normative Contracts
 
