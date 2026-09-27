@@ -581,6 +581,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
   defp cleanup_legacy_fixture!(repo) do
     SQL.query!(repo, "DELETE FROM projects", [])
+    SQL.query!(repo, "DELETE FROM runs WHERE issue_identifier LIKE 'FAILURE-SMOKE-%'", [])
 
     SQL.query!(
       repo,
