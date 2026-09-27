@@ -217,7 +217,7 @@ defmodule SymphonyElixir.MixProject do
     [
       setup: ["deps.get"],
       build: ["symphony.build"],
-      lint: ["specs.check", "credo --strict"],
+      lint: ["agent_code_x.check", "specs.check", "credo --strict"],
       "symphony.pg_smoke": ["symphony.postgres_smoke"]
     ]
   end
