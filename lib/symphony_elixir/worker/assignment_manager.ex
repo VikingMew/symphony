@@ -33,6 +33,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   @max_poll_seconds 60
   @heartbeat_timeout_ms 1_000
   @heartbeat_retry_after_seconds 1
+  @tracker_io_timeout_ms 5_000
+  @claim_call_timeout_ms @tracker_io_timeout_ms + 1_000
   @cancel_timeout_ms 30_000
   @cancel_call_timeout_ms @cancel_timeout_ms + 1_000
 
@@ -84,7 +86,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
         server \\ __MODULE__
       ) do
     if process_alive?(server),
-      do: GenServer.call(server, {:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, :infinity),
+      do: GenServer.call(server, {:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, @claim_call_timeout_ms),
       else: {:ok, {:empty, @initial_poll_seconds}, admission_evidence(:worker_dispatch_disabled, listening_mode)}
   end
 
@@ -179,7 +181,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       orchestrator: Keyword.get(opts, :orchestrator, Orchestrator),
       now: Keyword.get(opts, :now, &DateTime.utc_now/0),
       failure_circuit: Keyword.get(opts, :failure_circuit, EnvironmentFailureCircuit),
+      task_supervisor: Keyword.get(opts, :task_supervisor, SymphonyElixir.TaskSupervisor),
+      tracker_io_timeout_ms: Keyword.get(opts, :tracker_io_timeout_ms, @tracker_io_timeout_ms),
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
+      claim_task: nil,
+      reconcile_task: nil,
       empty_claim_streak: 0,
       tracker_error_streak: 0,
       liveness: %{}
@@ -190,7 +196,19 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   @impl true
-  def handle_cast(:reconcile, state), do: {:noreply, reconcile_zombies(state)}
+  def handle_cast(:reconcile, state), do: {:noreply, start_reconciliation(state)}
+
+  def handle_cast({:claim_result, ref, result}, %{claim_task: %{ref: ref}} = state) do
+    {:noreply, complete_claim(state, result)}
+  end
+
+  def handle_cast({:claim_result, _ref, _result}, state), do: {:noreply, state}
+
+  def handle_cast({:reconcile_result, ref, result}, %{reconcile_task: %{ref: ref}} = state) do
+    {:noreply, complete_reconciliation(state, result)}
+  end
+
+  def handle_cast({:reconcile_result, _ref, _result}, state), do: {:noreply, state}
 
   def handle_cast({:observe_liveness, worker_id, session_id, attrs}, state) do
     {:noreply, observe_request_liveness(state, worker_id, session_id, attrs)}
@@ -198,10 +216,30 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   @impl true
   def handle_info(:reconcile, state) do
-    state = reconcile_zombies(state)
+    state = start_reconciliation(state)
     schedule_reconciliation(state)
     {:noreply, state}
   end
+
+  def handle_info({:claim_timeout, ref}, %{claim_task: %{ref: ref} = task} = state) do
+    _ = Task.Supervisor.terminate_child(state.task_supervisor, task.pid)
+
+    Logger.warning("event=worker_claim_tracker_timeout timeout_ms=#{state.tracker_io_timeout_ms}")
+
+    {:noreply, complete_claim(state, {:error, {:linear_api_request, :timeout}})}
+  end
+
+  def handle_info({:claim_timeout, _ref}, state), do: {:noreply, state}
+
+  def handle_info({:reconcile_timeout, ref}, %{reconcile_task: %{ref: ref} = task} = state) do
+    _ = Task.Supervisor.terminate_child(state.task_supervisor, task.pid)
+
+    Logger.warning("event=worker_reconcile_tracker_timeout timeout_ms=#{state.tracker_io_timeout_ms}")
+
+    {:noreply, %{state | reconcile_task: nil}}
+  end
+
+  def handle_info({:reconcile_timeout, _ref}, state), do: {:noreply, state}
 
   def handle_info({:cancel_timeout, ref}, %{assignment: %{cancellation: %{ref: ref} = cancellation} = assignment} = state) do
     result = failed_cancellation(assignment, cancellation_timeout_reason(cancellation), cancellation.project_id)
@@ -238,7 +276,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, _from, state) do
+  def handle_call(
+        {:claim, worker_id, session_id, attrs, listening_mode, _max_concurrent_agents},
+        _from,
+        %{claim_task: %{} = _claim_task} = state
+      ) do
+    state = observe_request_liveness(state, worker_id, session_id, attrs)
+    evidence = admission_evidence(:active_assignment, listening_mode)
+    {:reply, {:ok, {:empty, @initial_poll_seconds}, evidence}, state}
+  end
+
+  def handle_call({:claim, worker_id, session_id, attrs, listening_mode, max_concurrent_agents}, from, state) do
     state = expire_assignment(state)
     liveness = worker_session_liveness(state, worker_id, session_id)
     state = observe_request_liveness(state, worker_id, session_id, attrs)
@@ -248,17 +296,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            true <- available_slots(attrs) > 0,
            :allow <- EnvironmentFailureCircuit.check(state.failure_circuit),
            nil <- state.assignment do
-        case claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents) do
-          {:ok, nil, evidence} ->
-            {:ok, nil, evidence}
-
-          {:ok, assignment} ->
-            Orchestrator.worker_task_started(assignment, state.orchestrator)
-            {:ok, assignment, admission_evidence(:assigned, listening_mode)}
-
-          error ->
-            error
-        end
+        {:claim, worker, session}
       else
         {:block, circuit} ->
           {:bypass, @max_poll_seconds, environment_failure_circuit_evidence(circuit, listening_mode)}
@@ -277,26 +315,14 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       end
 
     case result do
-      {:ok, %{} = assignment, evidence} ->
-        state = %{state | assignment: assignment, empty_claim_streak: 0, tracker_error_streak: 0}
-        {:reply, {:ok, assignment, evidence}, state}
-
-      {:ok, nil, evidence} ->
-        streak = state.empty_claim_streak + 1
-        seconds = empty_poll_seconds(streak)
-        {:reply, {:ok, {:empty, seconds}, evidence}, %{state | empty_claim_streak: streak, tracker_error_streak: 0}}
+      {:claim, worker, session} ->
+        {:noreply, start_claim(state, from, worker, session, listening_mode, max_concurrent_agents)}
 
       {:bypass, seconds, evidence} ->
         {:reply, {:ok, {:empty, seconds}, evidence}, state}
 
-      {:error, reason} = error ->
-        if tracker_backoff_error?(reason) do
-          streak = state.tracker_error_streak + 1
-          seconds = failure_poll_seconds(streak)
-          {:reply, {:error, reason, seconds}, %{state | tracker_error_streak: streak}}
-        else
-          {:reply, error, state}
-        end
+      {:error, _reason} = error ->
+        {:reply, error, state}
     end
   end
 
@@ -331,6 +357,52 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
+    end
+  end
+
+  defp start_claim(state, from, worker, session, listening_mode, max_concurrent_agents) do
+    manager = self()
+    ref = make_ref()
+
+    {:ok, pid} =
+      Task.Supervisor.start_child(state.task_supervisor, fn ->
+        result = claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents)
+        GenServer.cast(manager, {:claim_result, ref, result})
+      end)
+
+    timer = Process.send_after(manager, {:claim_timeout, ref}, state.tracker_io_timeout_ms)
+    %{state | claim_task: %{ref: ref, pid: pid, timer: timer, from: from, listening_mode: listening_mode}}
+  end
+
+  defp complete_claim(%{claim_task: task} = state, result) do
+    _ = Process.cancel_timer(task.timer)
+    state = %{state | claim_task: nil}
+    {reply, state} = claim_result(result, task.listening_mode, state)
+    GenServer.reply(task.from, reply)
+    state
+  end
+
+  defp claim_result({:ok, %{} = assignment}, listening_mode, state) do
+    Orchestrator.worker_task_started(assignment, state.orchestrator)
+    evidence = admission_evidence(:assigned, listening_mode)
+    state = %{state | assignment: assignment, empty_claim_streak: 0, tracker_error_streak: 0}
+    {{:ok, assignment, evidence}, state}
+  end
+
+  defp claim_result({:ok, nil, evidence}, _listening_mode, state) do
+    streak = state.empty_claim_streak + 1
+    seconds = empty_poll_seconds(streak)
+    state = %{state | empty_claim_streak: streak, tracker_error_streak: 0}
+    {{:ok, {:empty, seconds}, evidence}, state}
+  end
+
+  defp claim_result({:error, reason} = error, _listening_mode, state) do
+    if tracker_backoff_error?(reason) do
+      streak = state.tracker_error_streak + 1
+      seconds = failure_poll_seconds(streak)
+      {{:error, reason, seconds}, %{state | tracker_error_streak: streak}}
+    else
+      {error, state}
     end
   end
 
@@ -673,18 +745,57 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp reconcile_zombies(state) do
-    Enum.each(state.workflows.list_enabled(), fn workflow ->
-      Config.with_workflow_context(workflow, fn -> reconcile_workflow_zombies(state) end)
-    end)
+  defp start_reconciliation(state) do
+    state = expire_assignment(state)
 
-    expire_assignment(state)
+    if state.reconcile_task do
+      state
+    else
+      manager = self()
+      ref = make_ref()
+      workflows = state.workflows.list_enabled() |> Enum.uniq_by(&get_in(&1.config, ["tracker", "project_slug"]))
+
+      {:ok, pid} =
+        Task.Supervisor.start_child(state.task_supervisor, fn ->
+          result = Enum.map(workflows, &reconcile_workflow_zombies(state, &1))
+          GenServer.cast(manager, {:reconcile_result, ref, result})
+        end)
+
+      timer = Process.send_after(manager, {:reconcile_timeout, ref}, state.tracker_io_timeout_ms)
+      %{state | reconcile_task: %{ref: ref, pid: pid, timer: timer}}
+    end
   end
 
-  defp reconcile_workflow_zombies(state) do
+  defp complete_reconciliation(%{reconcile_task: task} = state, results) do
+    _ = Process.cancel_timer(task.timer)
+
+    Enum.each(results, fn
+      {:error, project_slug, reason} ->
+        Logger.warning("event=worker_reconcile_tracker_error project_slug=#{project_slug} reason=#{inspect(reason)}")
+
+      {:ok, _project_slug} ->
+        :ok
+    end)
+
+    %{state | reconcile_task: nil}
+  end
+
+  defp reconcile_workflow_zombies(state, workflow) do
+    project_slug = get_in(workflow.config, ["tracker", "project_slug"])
+
+    Config.with_workflow_context(workflow, fn ->
+      fetch_and_reconcile_workflow_zombies(state, project_slug)
+    end)
+  end
+
+  defp fetch_and_reconcile_workflow_zombies(state, project_slug) do
     case state.tracker.fetch_issues_by_states(["In Progress"]) do
-      {:ok, issues} -> Enum.each(issues, &reconcile_zombie(state, &1))
-      {:error, _reason} -> :ok
+      {:ok, issues} ->
+        Enum.each(issues, &reconcile_zombie(state, &1))
+        {:ok, project_slug}
+
+      {:error, reason} ->
+        {:error, project_slug, reason}
     end
   end
 
