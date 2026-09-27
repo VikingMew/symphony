@@ -59,6 +59,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert payload["repository"]["implementation_branch"] == "feature/mt-1"
     assert payload["codex"]["model"] == "gpt-5.5"
     assert payload["codex"]["reasoning_effort"] == "xhigh"
+    assert payload["limits"]["stall_timeout_ms"] == 600_000
     assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 

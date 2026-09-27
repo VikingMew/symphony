@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-09-27
 design_status: landed
 ---
 
@@ -55,6 +55,13 @@ is carried in the existing `task_id` and `lease_id` JSON fields; it is not a dat
 payload contains the issue description, exact branch, source ref, rendered profile prompt, hooks, Codex
 settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
 Linear client nor a Linear credential.
+
+For the stall timeout, the resolved combined workflow field is `codex.stall_timeout_ms`. The Panel
+copies that value into assignment `limits.stall_timeout_ms`, and
+`SymphonyElixir.Worker.ExecutionPayload.from_task_payload/1` maps it to worker-v1
+`codex.stall_timeout_ms` for `SymphonyElixir.Worker.Payload.parse/1`. This boundary defines no second
+timeout source. [Orchestration §8.5](spec-orchestration.md#85-active-run-reconciliation) owns the stall decision
+contract.
 
 History-based duplicate-run gating treats only `Refining` and `In Progress` as worker started
 states. A candidate in either state can be claimed only when the latest worker run is terminal

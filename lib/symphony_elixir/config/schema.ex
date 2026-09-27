@@ -289,7 +289,7 @@ defmodule SymphonyElixir.Config.Schema do
       field(:turn_sandbox_policy, :map)
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:read_timeout_ms, :integer, default: 5_000)
-      field(:stall_timeout_ms, :integer, default: 300_000)
+      field(:stall_timeout_ms, :integer, default: 600_000)
       field(:rate_limit_gate_enabled, :boolean, default: true)
       field(:rate_limit_gate_5h_threshold_percent, :float, default: 5.0)
       field(:rate_limit_gate_7d_threshold_percent, :float, default: 3.0)

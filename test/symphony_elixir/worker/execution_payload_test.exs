@@ -18,6 +18,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["codex"]["thread_sandbox"] == "danger-full-access"
     assert execution["codex"]["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
+    assert execution["codex"]["stall_timeout_ms"] == 600_000
 
     assert execution["codex"]["issue"] == %{
              "identifier" => "SYM-45",
@@ -42,6 +43,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
     assert parsed.codex.prompt == execution["codex"]["prompt"]
+    assert parsed.codex.config["stall_timeout_ms"] == 600_000
 
     assert parsed.codex.issue == %{
              identifier: "SYM-45",
@@ -85,7 +87,7 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
       "limits" => %{
         "turn_timeout_ms" => 3_600_001,
         "read_timeout_ms" => 5_000,
-        "stall_timeout_ms" => 300_000
+        "stall_timeout_ms" => 600_000
       },
       "codex" => %{
         "command" => "codex app-server",
