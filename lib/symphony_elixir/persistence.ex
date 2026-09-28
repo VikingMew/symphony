@@ -188,21 +188,11 @@ defmodule SymphonyElixir.Persistence do
   def update_run(%RunRecord{} = run, attrs),
     do: run |> RunRecord.changeset(attrs) |> Repo.update()
 
-  @spec finish_run(String.t(), String.t(), String.t() | nil, keyword()) ::
+  @spec finish_run(String.t(), String.t(), :completed | SymphonyElixir.RunFailure.t(), keyword()) ::
           {:ok, RunRecord.t()} | {:error, term()}
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ [])
+  def finish_run(run_id, status, terminal, opts \\ [])
       when is_binary(run_id) and is_binary(status) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         %RunRecord{} = run <- Repo.get(RunRecord, run_id) || {:error, :not_found} do
-      update_run(
-        run,
-        RunLifecycle.terminal_attrs(
-          status,
-          failure_reason,
-          Keyword.get(opts, :finished_at, DateTime.utc_now())
-        )
-      )
-    end
+    RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
   end
 
   @spec get_run(String.t()) :: RunRecord.t() | nil

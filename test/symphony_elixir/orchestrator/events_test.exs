@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.Events
+  alias SymphonyElixir.RunFailure
 
   test "issue attrs include the persisted issue snapshot" do
     issue = issue(labels: ["bug"])
@@ -71,9 +72,12 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert Events.run_started_event(issue, run, "worker-a") ==
              Events.event_attrs("run.started", "MT-1", %{issue_id: "issue-1", run_id: "run-1", worker_host: "worker-a"}, "run-1")
 
-    assert Events.run_finished_event(running_entry, "failed", "boom").payload == %{
+    failure = RunFailure.classify({:runtime_failure, %{reason: "worker_error", detail: "boom"}})
+
+    assert Events.run_finished_event(running_entry, "failed", failure).payload == %{
              run_id: "run-1",
-             failure_reason: "boom"
+             failure_reason: "runtime_failure",
+             failure_evidence: %{"detail" => "boom", "reason" => "worker_error"}
            }
 
     assert Events.workspace_attrs(running_entry) == %{

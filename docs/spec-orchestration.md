@@ -257,6 +257,11 @@ is unchanged.
 
 ### 8.4 Retry and Backoff
 
+Persisted terminal runs, retry metadata, and `BlockingDecision.reason` use the classification owned
+by [Run Failure Classification Design](run-failure-classification-design.md). Opaque failure detail
+is retained as structured evidence. Runtime terminal writes pass through `RunLifecycle`; admission
+rejections before run creation remain outside this contract.
+
 Retry entry creation:
 
 - Cancel any existing retry timer for the same issue.

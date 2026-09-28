@@ -179,13 +179,13 @@ defmodule SymphonyElixir.BlockingDecision do
   end
 
   defp comment(identifier, decision) do
-    "Symphony blocked #{identifier}.\n\nReason: #{decision["reason"]}\nEvidence: #{decision["evidence"]}\nRun: #{decision["run_id"] || "n/a"}\nUTC: #{decision["decided_at"]}\nReferences: #{inspect(decision["references"] || %{})}"
+    "Symphony blocked #{identifier}.\n\nReason: #{decision["reason"]}\nEvidence: #{inspect(decision["evidence"])}\nRun: #{decision["run_id"] || "n/a"}\nUTC: #{decision["decided_at"]}\nReferences: #{inspect(decision["references"] || %{})}"
   end
 
   defp persist_decision(persistence, issue, reason, evidence, run_id, references) do
     decision = %{
       "reason" => decision_text(reason),
-      "evidence" => decision_text(evidence),
+      "evidence" => decision_evidence(evidence),
       "run_id" => run_id,
       "decided_at" => DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
       "references" => references,
@@ -202,4 +202,7 @@ defmodule SymphonyElixir.BlockingDecision do
   defp decision_text(value) when is_binary(value), do: String.slice(value, 0, 4_000)
   defp decision_text(value) when is_atom(value), do: Atom.to_string(value)
   defp decision_text(value), do: value |> inspect(limit: 50, printable_limit: 4_000) |> String.slice(0, 4_000)
+
+  defp decision_evidence(value) when is_map(value) or is_list(value), do: value
+  defp decision_evidence(value), do: decision_text(value)
 end

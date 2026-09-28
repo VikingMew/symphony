@@ -16,6 +16,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Orchestrator,
     PersistenceProvider,
     PromptBuilder,
+    RunFailure,
     RunLifecycle,
     Tracker,
     WorkerResult,
@@ -317,10 +318,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       {:ok, assignment} ->
         with :ok <- validate_correlation(payload, assignment.correlation),
              {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
-             {:ok, event} <- persist_event(state.persistence, assignment, event_type, payload, summary),
-             :ok <- transition_run(state.persistence, assignment.run_id, event_type, summary) do
-          record_environment_failure_circuit(state, assignment, event_type, summary)
-          notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), summary)
+             terminal = terminal_result(event_type, summary),
+             terminal_payload = terminal_event_payload(payload, terminal),
+             {:ok, event} <- persist_event(state.persistence, assignment, event_type, terminal_payload, summary),
+             :ok <- transition_run(state.persistence, assignment.run_id, event_type, terminal, summary),
+             :ok <- persist_terminal_run_event(state.persistence, assignment, event_type, terminal, summary) do
+          record_environment_failure_circuit(state, assignment, event_type, terminal)
+          notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), terminal)
           state = complete_pending_cancellation(state, assignment, event_type, :ok)
           {:reply, {:ok, event}, %{state | assignment: assignment_after_event(state, event_type)}}
         else
@@ -614,10 +618,21 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp expire_assignment(state) do
     if DateTime.compare(state.assignment.expires_at, state.now.()) == :lt do
       assignment = state.assignment
+      failure = RunFailure.classify({:assignment_loss, %{reason: "assignment_expired", phase: "lease"}})
 
-      _ = transition_run(state.persistence, assignment.run_id, "task.failed", nil)
-      _ = persist_event(state.persistence, assignment, "task.failed", %{"reason" => "assignment_expired"}, nil)
-      notify_worker_terminal(state, assignment, {:failed, "assignment_expired"})
+      _ = transition_run(state.persistence, assignment.run_id, "task.failed", failure, nil)
+      _ = persist_terminal_run_event(state.persistence, assignment, "task.failed", failure, nil)
+
+      _ =
+        persist_event(
+          state.persistence,
+          assignment,
+          "task.failed",
+          terminal_event_payload(%{"reason" => "assignment_expired"}, failure),
+          nil
+        )
+
+      notify_worker_terminal(state, assignment, {:failed, failure})
       %{state | assignment: nil}
     else
       state
@@ -647,29 +662,28 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     }
   end
 
-  defp transition_run(persistence, run_id, event_type, summary) do
-    attrs = RunLifecycle.run_event_attrs(event_type, DateTime.utc_now())
-    attrs = if summary, do: Map.put(attrs, :execution_summary, summary), else: attrs
+  defp transition_run(_persistence, _run_id, event_type, nil, _summary)
+       when event_type not in @terminal_events,
+       do: :ok
 
-    case {attrs, persistence.get_run(run_id)} do
-      {%{}, _run} when map_size(attrs) == 0 ->
-        :ok
+  defp transition_run(persistence, run_id, event_type, terminal, summary) do
+    status = terminal_status(event_type, terminal, summary)
+    attrs = if summary, do: %{execution_summary: summary}, else: %{}
 
-      {_attrs, nil} ->
-        {:error, :run_not_found}
-
-      {attrs, run} ->
-        case persistence.update_run(run, attrs) do
-          {:ok, _run} -> :ok
-          {:error, reason} -> {:error, reason}
-        end
+    case RunLifecycle.finish_run(persistence, run_id, status, terminal, attrs: attrs) do
+      {:ok, _run} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
   defp close_failed_run(persistence, identifier, reason) do
     case persistence.list_runs_for_issue(identifier, limit: 1) do
-      [run | _] -> persistence.finish_run(run.id, "failed", inspect(reason))
-      _other -> :ok
+      [run | _] ->
+        failure = RunFailure.classify({:claim_transition_failure, reason})
+        persistence.finish_run(run.id, "failed", failure)
+
+      _other ->
+        :ok
     end
   end
 
@@ -701,14 +715,24 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     cutoff = DateTime.add(state.now.(), -state.persistence.worker_lease_duration_seconds(), :second)
 
     if DateTime.compare(started_at, cutoff) == :lt do
+      failure = RunFailure.classify({:assignment_loss, %{reason: "panel_restart_or_worker_loss", phase: "reconciliation"}})
+
       with :ok <- state.tracker.update_issue_state(issue.id, "Ready"),
-           {:ok, _run} <- state.persistence.finish_run(run.id, "failed", "worker_assignment_lost") do
+           {:ok, _run} <- state.persistence.finish_run(run.id, "failed", failure) do
         state.persistence.record_event(%{
           project_id: run.project_id,
           run_id: run.id,
           issue_identifier: issue.identifier,
           event_type: "task.failed",
-          payload: %{"reason" => "panel_restart_or_worker_loss"}
+          payload: terminal_event_payload(%{"reason" => "panel_restart_or_worker_loss"}, failure)
+        })
+
+        state.persistence.record_event(%{
+          project_id: run.project_id,
+          run_id: run.id,
+          issue_identifier: issue.identifier,
+          event_type: "run.failed",
+          payload: terminal_event_payload(%{}, failure)
         })
       end
     end
@@ -817,19 +841,32 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     |> Map.put(:failure_fingerprint, circuit.triggering_fingerprint)
   end
 
-  defp record_environment_failure_circuit(state, assignment, "task.completed", _summary) do
+  defp record_environment_failure_circuit(state, assignment, "task.completed", _terminal) do
     EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
   end
 
-  defp record_environment_failure_circuit(state, assignment, "task.cancelled", _summary) do
+  defp record_environment_failure_circuit(state, assignment, "task.cancelled", _terminal) do
     EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
   end
 
-  defp record_environment_failure_circuit(state, assignment, "task.failed", summary) do
+  defp record_environment_failure_circuit(state, assignment, "task.failed", :completed) do
+    EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
+  end
+
+  defp record_environment_failure_circuit(
+         state,
+         assignment,
+         "task.failed",
+         %RunFailure{classification: "cancelled"}
+       ) do
+    EnvironmentFailureCircuit.record_success(assignment.issue_identifier, state.failure_circuit)
+  end
+
+  defp record_environment_failure_circuit(state, assignment, "task.failed", %RunFailure{} = failure) do
     circuit =
       EnvironmentFailureCircuit.record_failure(
         assignment.issue_identifier,
-        worker_failure_reason(summary),
+        RunFailure.reason(failure),
         %{issue_id: assignment.issue.id, run_id: assignment.run_id},
         state.failure_circuit
       )
@@ -841,18 +878,47 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp record_environment_failure_circuit(_state, _assignment, _event_type, _summary), do: :ok
 
-  defp worker_failure_reason(summary) do
-    Map.get(summary, "detail") || failed_gate_detail(summary) || Map.fetch!(summary, "reason")
+  defp terminal_result(event_type, summary) when event_type in @terminal_events,
+    do: RunFailure.from_worker_summary(event_type, summary)
+
+  defp terminal_result(event_type, _summary) when event_type not in @terminal_events, do: nil
+
+  defp terminal_status("task.completed", :completed, _summary), do: "completed"
+  defp terminal_status("task.failed", :completed, _summary), do: "completed"
+  defp terminal_status("task.failed", %RunFailure{classification: "cancelled"}, _summary), do: "cancelled"
+  defp terminal_status("task.failed", %RunFailure{}, %{"outcome" => "blocked"}), do: "blocked"
+  defp terminal_status("task.failed", %RunFailure{}, _summary), do: "failed"
+  defp terminal_status("task.cancelled", %RunFailure{classification: "cancelled"}, _summary), do: "cancelled"
+
+  defp persist_terminal_run_event(_persistence, _assignment, event_type, nil, _summary)
+       when event_type not in @terminal_events,
+       do: :ok
+
+  defp persist_terminal_run_event(persistence, assignment, event_type, terminal, summary) do
+    status = terminal_status(event_type, terminal, summary)
+    fields = RunFailure.terminal_fields(terminal)
+
+    attrs =
+      assignment_event(assignment, "run.#{status}", %{
+        "failure_reason" => fields.failure_reason,
+        "failure_evidence" => fields.failure_evidence
+      })
+
+    case persistence.record_event(attrs) do
+      {:ok, _event} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
-  defp failed_gate_detail(%{"gates" => gates}) do
-    Enum.find_value(gates, fn
-      %{"status" => "failed", "failure_detail" => detail} when is_binary(detail) -> detail
-      _gate -> nil
-    end)
-  end
+  defp terminal_event_payload(payload, nil), do: payload
 
-  defp failed_gate_detail(_summary), do: nil
+  defp terminal_event_payload(payload, terminal) do
+    fields = RunFailure.terminal_fields(terminal)
+
+    payload
+    |> Map.put("failure_reason", fields.failure_reason)
+    |> Map.put("failure_evidence", fields.failure_evidence)
+  end
 
   defp validate_correlation(payload, correlation) do
     validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)
@@ -1016,9 +1082,30 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Orchestrator.worker_task_progress(assignment.issue.id, payload, state.orchestrator)
   end
 
-  defp notify_orchestrator(state, assignment, event_type, _payload, summary)
+  defp notify_orchestrator(state, assignment, event_type, payload, terminal)
        when event_type in @terminal_events do
-    notify_worker_terminal(state, assignment, WorkerResult.terminal_outcome(event_type, summary))
+    outcome =
+      case {event_type, terminal, get_in(payload, ["summary", "outcome"])} do
+        {"task.completed", :completed, _outcome} ->
+          :success
+
+        {"task.cancelled", %RunFailure{}, _outcome} ->
+          :cancelled
+
+        {"task.failed", :completed, _outcome} ->
+          :success
+
+        {"task.failed", %RunFailure{classification: "cancelled"}, _outcome} ->
+          :cancelled
+
+        {"task.failed", %RunFailure{} = failure, "blocked"} ->
+          {:blocked, failure}
+
+        {"task.failed", %RunFailure{} = failure, _outcome} ->
+          {:failed, failure}
+      end
+
+    notify_worker_terminal(state, assignment, outcome)
   end
 
   defp notify_orchestrator(_state, _assignment, _event_type, _payload, _summary), do: :ok
