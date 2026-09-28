@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-19
+updated: 2026-09-27
 ---
 
 # Orchestration Specification
@@ -322,11 +322,11 @@ Reconciliation runs every tick and has two parts.
 
 Part A: Stall detection
 
-- For each running issue, compute `elapsed_ms` since:
-  - `last_codex_timestamp` if any event has been seen, else
-  - `started_at`
-- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry.
-- If `stall_timeout_ms <= 0`, skip stall detection entirely.
+- For each running issue with a `last_codex_timestamp`, compute `elapsed_ms` from that timestamp.
+- If no `last_codex_timestamp` exists, keep the issue active; `started_at` is not a fallback.
+- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry. Equality remains
+  active.
+- If `codex.stall_timeout_ms <= 0`, skip stall detection entirely.
 
 Part B: Tracker state refresh
 
