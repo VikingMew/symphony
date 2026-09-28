@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-25
+updated: 2026-09-27
 design_status: landed
 ---
 
@@ -17,7 +17,12 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox；Orchestrator 以当下持有的 `listening_mode` 完成整次 claim 调用后才处理下一条
 start/stop 控制消息。`AssignmentManager` 不持久化或缓存另一份 mode。它串行处理已经通过该边界的
-claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。`AssignmentManager` 同时拥有
+claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。通过快速准入的 claim 将 Linear
+candidate fetch、二次校验与 started-state 更新交给一个 supervised task；manager 只保存单个
+in-flight claim 的 ownership，并在结果回投后发布 assignment。同一时刻到达的其他 claim 以现有
+`active_assignment` 空结果返回。task 的 5000 ms 预算超时会终止该 task，并复用
+`{:linear_api_request, :timeout}` 与 30/60 秒 tracker backoff；公开 claim call 使用 6000 ms 有界 timeout，
+不再以 `:infinity` 占用调用方。`AssignmentManager` 同时拥有
 Panel 内存中的 worker/session liveness：每个 entry 以 worker/session 为 key，保存最近一次
 `last_seen_at`、worker/session 身份以及 registration 广告的 `total_slots`。该 entry 只有在
 `last_seen_at` 落在 `worker_heartbeat_interval_seconds() * 3` 窗口内才 fresh；超过窗口即 stale，
@@ -106,7 +111,8 @@ observation 交给 `Worker.HeartbeatHistory`；该进程按 worker/session 合�
 heartbeat 的 HTTP status、`Retry-After`、`worker_api.heartbeat_failed_attempts` 或任何调度/repair
 决策。没有提交 active lease 的 idle heartbeat 不等待 `AssignmentManager` 临界区，直接返回成功和空续期列表。提交 active lease 的 heartbeat 只进入
 `AssignmentManager` 的短临界区尝试续期；只有调用 session 持有当前 assignment、提交匹配 id 且 lease
-未过期时才续期。该内存续期临界区未在 heartbeat 预算内完成时，worker-v1 API 返回 retryable 503，
+未过期时才续期。claim 与 reconciliation 的出站 Linear I/O 都在 supervised task 中，因此该临界区
+只执行内存 lease/cancellation 状态转换。该内存续期临界区未在 heartbeat 预算内完成时，worker-v1 API 返回 retryable 503，
 稳定错误码为 `worker_heartbeat_unavailable`，响应包含正数 `retry_after_seconds` 和 `Retry-After`
 header，且不包含 crash stack。该失败只计入内存 `worker_api.heartbeat_failed_attempts`，不创建 queued
 work、新 assignment、failed run 或自动修复动作。
@@ -151,9 +157,14 @@ claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
-Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。reconciliation 读取
-Linear `In Progress` issue 和最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue
-转回 `Ready` 并失败终结旧 run。回收判据不调用 session heartbeat 过期扫描，也不以
+Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。每轮 reconciliation 先按
+enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 supervised task 中对每个 slug
+各读取一次 Linear `In Progress` issue，并完成对应的 zombie tracker 更新。整个 task 使用 5000 ms
+预算；超时终止本轮，下一轮不与它重叠。结果 cast 携带不可复用的 round reference，manager 只接受
+当前 round 一次；迟到或重复结果不改变状态。tracker error 与 timeout 分别记录
+`worker_reconcile_tracker_error` 和 `worker_reconcile_tracker_timeout`，与 run 的
+`assignment_expired` terminal event 分开归因。reconciliation 结合最新 worker run 时间：lease timeout
+前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结旧 run。回收判据不调用 session heartbeat 过期扫描，也不以
 `worker_sessions.status` 或 `last_heartbeat_at` 作为僵尸回收准入。重启后旧 session row 单独存在时
 不提供 deployment capacity 或 claim admission；到 worker 下一次 registration、heartbeat、claim 或
 当前 assignment task event 记录内存 last-seen 前，Panel 将该 session 视为未知。未知窗口内不重新派发，

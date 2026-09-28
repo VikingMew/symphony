@@ -80,7 +80,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     use Agent
 
     def start_link(_opts) do
-      Agent.start_link(fn -> %{candidates: %{}, current: %{}, fetches: [], updates: []} end, name: __MODULE__)
+      Agent.start_link(fn -> %{candidates: %{}, current: %{}, fetches: [], reconcile_fetches: [], updates: []} end,
+        name: __MODULE__
+      )
     end
 
     def put(candidates_by_slug) do
@@ -94,6 +96,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     end
 
     def fetches, do: Agent.get(__MODULE__, & &1.fetches)
+    def reconcile_fetches, do: Agent.get(__MODULE__, & &1.reconcile_fetches)
 
     def fetch_candidate_issues do
       slug = SymphonyElixir.Config.settings!().tracker.project_slug
@@ -110,7 +113,14 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
        end)}
     end
 
-    def fetch_issues_by_states(states), do: {:ok, Agent.get(__MODULE__, &(&1.current |> Map.values() |> Enum.filter(fn issue -> issue.state in states end)))}
+    def fetch_issues_by_states(states) do
+      slug = SymphonyElixir.Config.settings!().tracker.project_slug
+
+      Agent.get_and_update(__MODULE__, fn state ->
+        issues = state.current |> Map.values() |> Enum.filter(fn issue -> issue.state in states end)
+        {{:ok, issues}, %{state | reconcile_fetches: state.reconcile_fetches ++ [slug]}}
+      end)
+    end
 
     def update_issue_state(id, state) do
       Agent.update(__MODULE__, fn data ->
@@ -130,6 +140,25 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
         :release_reconcile -> {:ok, []}
       end
     end
+  end
+
+  defmodule SlowReconcileTracker do
+    defdelegate fetch_candidate_issues(), to: Tracker
+    defdelegate fetch_issue_states_by_ids(ids), to: Tracker
+    defdelegate update_issue_state(id, state), to: Tracker
+
+    def fetch_issues_by_states(states) do
+      owner = Application.fetch_env!(:symphony_elixir, :assignment_test_owner)
+      send(owner, :slow_reconcile_started)
+      Process.sleep(Application.fetch_env!(:symphony_elixir, :assignment_test_reconcile_delay_ms))
+      result = Tracker.fetch_issues_by_states(states)
+      send(owner, :slow_reconcile_finished)
+      result
+    end
+  end
+
+  defmodule ConfiguredWorkflows do
+    def list_enabled, do: Application.fetch_env!(:symphony_elixir, :assignment_test_workflows)
   end
 
   defmodule ZombieReconcilePersistence do
@@ -197,6 +226,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_workflow)
       Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
       Application.delete_env(:symphony_elixir, :assignment_test_owner)
+      Application.delete_env(:symphony_elixir, :assignment_test_reconcile_delay_ms)
+      Application.delete_env(:symphony_elixir, :assignment_test_workflows)
       Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
       Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
@@ -874,9 +905,205 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert {:ok, heartbeats} = Task.yield(heartbeat, 500)
     assert Enum.all?(heartbeats, &match?({:ok, %{lease_renewals: [], commands: []}}, &1))
-    assert FakePersistence.calls() == calls_before
+
+    assert Enum.all?(FakePersistence.calls() -- calls_before, fn
+             {:heartbeat_worker, _worker_id, _session_id} -> false
+             _call -> true
+           end)
 
     send(blocked_pid, :release_reconcile)
+  end
+
+  test "two-second reconciliation leaves active heartbeat and audit ingestion responsive", context do
+    Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+    Application.put_env(:symphony_elixir, :assignment_test_reconcile_delay_ms, 2_000)
+    name = Module.concat(__MODULE__, "SlowReconcile#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(%{
+        id: name,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: name,
+               tracker: SlowReconcileTracker,
+               persistence: FakePersistence,
+               workflows: Workflows,
+               now: fn -> context.now end,
+               failure_circuit: context.circuit,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+    Tracker.put([issue(1)])
+
+    assert {:ok, assignment} =
+             AssignmentManager.claim_with_policy(
+               context.worker.id,
+               context.session.id,
+               %{"available_slots" => 1},
+               :listening_all,
+               1,
+               manager
+             )
+
+    AssignmentManager.reconcile(manager)
+    assert_receive :slow_reconcile_started, 500
+
+    started_at = System.monotonic_time(:millisecond)
+
+    assert {:ok, %{lease_renewals: [%{lease_id: lease_id}]}} =
+             AssignmentManager.heartbeat(
+               context.worker.id,
+               context.session.id,
+               %{"active_leases" => [assignment.id]},
+               manager,
+               FakePersistence
+             )
+
+    assert lease_id == assignment.id
+    assert System.monotonic_time(:millisecond) - started_at < 1_000
+
+    assert {:ok, event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
+               "linear.tool_call",
+               %{"correlation" => assignment.correlation, "tool" => "linear_task_read", "status" => "success"},
+               manager
+             )
+
+    assert event.event_type == "linear.tool_call"
+    assert_receive :slow_reconcile_finished, 2_500
+    assert FakePersistence.get_run(assignment.run_id).status == "running"
+    assert FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.failed") == []
+  end
+
+  test "reconciliation fetches once per distinct project slug", context do
+    start_supervised!(ProjectTracker)
+    workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
+    other = put_in(workflow.config["tracker"]["project_slug"], "other-project")
+    Application.put_env(:symphony_elixir, :assignment_test_workflows, [workflow, workflow, other])
+    ProjectTracker.put(%{})
+    name = Module.concat(__MODULE__, "DistinctReconcile#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(%{
+        id: name,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: name,
+               tracker: ProjectTracker,
+               persistence: FakePersistence,
+               workflows: ConfiguredWorkflows,
+               now: fn -> context.now end,
+               failure_circuit: context.circuit,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    AssignmentManager.reconcile(manager)
+    eventually(fn -> length(ProjectTracker.reconcile_fetches()) == 2 end)
+    assert ProjectTracker.reconcile_fetches() == [get_in(workflow.config, ["tracker", "project_slug"]), "other-project"]
+  end
+
+  test "reconciliation timeout terminates the round before another round starts", context do
+    Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+    name = Module.concat(__MODULE__, "TimedReconcile#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(%{
+        id: name,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: name,
+               tracker: BlockingReconcileTracker,
+               persistence: FakePersistence,
+               workflows: Workflows,
+               now: fn -> context.now end,
+               failure_circuit: context.circuit,
+               tracker_io_timeout_ms: 50,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    log =
+      capture_log(fn ->
+        AssignmentManager.reconcile(manager)
+        assert_receive {:reconcile_blocked, first_pid}, 500
+        GenServer.cast(manager, {:reconcile_result, make_ref(), []})
+        AssignmentManager.reconcile(manager)
+        refute_receive {:reconcile_blocked, _pid}, 20
+        eventually(fn -> not Process.alive?(first_pid) end)
+        AssignmentManager.reconcile(manager)
+        assert_receive {:reconcile_blocked, second_pid}, 500
+        assert second_pid != first_pid
+        send(second_pid, :release_reconcile)
+      end)
+
+    assert log =~ "event=worker_reconcile_tracker_timeout"
+  end
+
+  test "claim tracker timeout is bounded without occupying the manager mailbox", context do
+    Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+
+    Application.put_env(:symphony_elixir, :assignment_test_fetch_hook, fn ->
+      send(Application.fetch_env!(:symphony_elixir, :assignment_test_owner), {:claim_fetch_blocked, self()})
+
+      receive do
+        :release_claim_fetch -> :ok
+      end
+    end)
+
+    name = Module.concat(__MODULE__, "TimedClaim#{System.unique_integer([:positive])}")
+
+    manager =
+      start_supervised!(%{
+        id: name,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: name,
+               tracker: Tracker,
+               persistence: FakePersistence,
+               workflows: Workflows,
+               now: fn -> context.now end,
+               failure_circuit: context.circuit,
+               tracker_io_timeout_ms: 50,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+
+    claim =
+      Task.async(fn ->
+        AssignmentManager.claim_with_policy(
+          context.worker.id,
+          context.session.id,
+          %{"available_slots" => 1},
+          :listening_all,
+          1,
+          manager
+        )
+      end)
+
+    assert_receive {:claim_fetch_blocked, blocked_pid}, 500
+    assert AssignmentManager.available_worker_slots(manager) == 1
+    assert {:error, {:linear_api_request, :timeout}, 30} = Task.await(claim, 500)
+    eventually(fn -> not Process.alive?(blocked_pid) end)
   end
 
   test "zombie reconciliation uses run lease without expiring worker sessions", context do

@@ -38,6 +38,27 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     def list_enabled, do: []
   end
 
+  defmodule SlowReconcileTracker do
+    @moduledoc false
+
+    def fetch_issues_by_states(_states) do
+      owner = Application.fetch_env!(:symphony_elixir, :web_slow_reconcile_owner)
+      send(owner, :web_slow_reconcile_started)
+      Process.sleep(2_000)
+      send(owner, :web_slow_reconcile_finished)
+      {:ok, []}
+    end
+  end
+
+  defmodule OneWorkflow do
+    @moduledoc false
+
+    def list_enabled do
+      {:ok, workflow} = SymphonyElixir.Workflow.load()
+      [Map.put(workflow, :project_id, "fake-project-id")]
+    end
+  end
+
   defmodule SlowHeartbeatPersistence do
     @moduledoc false
 
@@ -192,6 +213,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     previous_linear_client = Application.get_env(:symphony_elixir, :linear_diagnostics_client_module)
     previous_linear_fake = Application.get_env(:symphony_elixir, :linear_discovery_fake)
     previous_heartbeat_owner = Application.get_env(:symphony_elixir, :heartbeat_test_owner)
+    previous_reconcile_owner = Application.get_env(:symphony_elixir, :web_slow_reconcile_owner)
     previous_linear_api_key = System.get_env("LINEAR_API_KEY")
 
     Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
@@ -208,6 +230,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       restore_app_env(:linear_diagnostics_client_module, previous_linear_client)
       restore_app_env(:linear_discovery_fake, previous_linear_fake)
       restore_app_env(:heartbeat_test_owner, previous_heartbeat_owner)
+      restore_app_env(:web_slow_reconcile_owner, previous_reconcile_owner)
       restore_env("LINEAR_API_KEY", previous_linear_api_key)
     end)
 
@@ -306,6 +329,52 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert_receive {:slow_heartbeat_started, blocked_pid}, 500
     refute_receive {:slow_heartbeat_started, _pid}, 50
     send(blocked_pid, :release_heartbeat)
+  end
+
+  test "active-lease heartbeat HTTP stays successful during a two-second tracker read" do
+    Application.put_env(:symphony_elixir, :web_slow_reconcile_owner, self())
+    start_test_endpoint()
+    start_assignment_manager(FakePersistence, SlowReconcileTracker, OneWorkflow)
+    start_heartbeat_history(coalesce_ms: 0)
+
+    %{"worker_id" => worker_id, "session_id" => session_id} =
+      build_conn()
+      |> put_req_header("authorization", "Bearer #{@worker_token}")
+      |> post("/api/worker/v1/register", worker_registration_payload())
+      |> json_response(200)
+
+    lease_id = "active-lease"
+
+    :sys.replace_state(AssignmentManager, fn state ->
+      assignment = %{
+        id: lease_id,
+        lease_id: lease_id,
+        worker_id: worker_id,
+        session_id: session_id,
+        expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
+      }
+
+      %{state | assignment: assignment}
+    end)
+
+    AssignmentManager.reconcile()
+    assert_receive :web_slow_reconcile_started, 500
+    metrics_before = HeartbeatMetrics.snapshot()
+    started_at = System.monotonic_time(:millisecond)
+
+    conn =
+      build_conn()
+      |> worker_headers(worker_id, session_id)
+      |> post("/api/worker/v1/heartbeat", %{"active_leases" => [lease_id]})
+
+    assert System.monotonic_time(:millisecond) - started_at < 1_000
+    assert Plug.Conn.get_resp_header(conn, "retry-after") == []
+
+    assert %{"ok" => true, "lease_renewals" => [%{"lease_id" => ^lease_id}]} =
+             json_response(conn, 200)
+
+    assert HeartbeatMetrics.snapshot() == metrics_before
+    assert_receive :web_slow_reconcile_finished, 2_500
   end
 
   test "claim observes expired liveness after admission so the following claim is fresh" do
@@ -439,8 +508,8 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
   end
 
-  defp start_assignment_manager(persistence) do
-    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: EmptyTracker, persistence: persistence, workflows: EmptyWorkflows, reconcile_interval_ms: :timer.hours(1)})
+  defp start_assignment_manager(persistence, tracker \\ EmptyTracker, workflows \\ EmptyWorkflows) do
+    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: tracker, persistence: persistence, workflows: workflows, reconcile_interval_ms: :timer.hours(1)})
   end
 
   defp start_heartbeat_history(opts) do
