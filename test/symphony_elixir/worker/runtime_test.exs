@@ -332,6 +332,62 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
+  test "failed Codex completions emit only typed task.failed summaries before validation", %{config: config} do
+    gates = [
+      %{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120},
+      %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_seconds" => 300}
+    ]
+
+    capacity =
+      claim("capacity", false)
+      |> Map.put("failed_reason", :codex_upstream_capacity)
+      |> Map.put("failed_detail", %{
+        "codex_error_info" => "serverOverloaded",
+        "turn_status" => "failed",
+        "will_retry" => false
+      })
+      |> put_required_gates(gates)
+
+    generic =
+      claim("generic", false)
+      |> Map.put("failed_reason", :codex_turn_failed)
+      |> Map.put("failed_detail", %{"turn_status" => "failed"})
+      |> put_required_gates(gates)
+
+    put_claims([capacity, generic])
+    runtime = start_runtime(config)
+
+    assert_receive {:executing, "capacity", _executor}, 1_000
+    eventually(fn -> terminal_count("capacity", "task.failed") == 1 end)
+    send(runtime, :poll)
+    assert_receive {:executing, "generic", _executor}, 1_000
+    eventually(fn -> terminal_count("generic", "task.failed") == 1 end)
+
+    for {task_id, reason} <- [
+          {"capacity", "codex_upstream_capacity"},
+          {"generic", "codex_turn_failed"}
+        ] do
+      summary = terminal_summary(task_id, "task.failed")
+      assert summary["phase"] == "codex"
+      assert summary["outcome"] == "failed"
+      assert summary["reason"] == reason
+      assert summary["validation_status"] == "pending"
+      assert Enum.map(summary["gates"], & &1["status"]) == ["not_run", "not_run"]
+      assert terminal_count(task_id, "task.completed") == 0
+      assert {:ok, _validated} = WorkerResult.validate(summary)
+    end
+
+    assert Jason.decode!(terminal_summary("capacity", "task.failed")["detail"]) == %{
+             "detail" => %{
+               "codex_error_info" => "serverOverloaded",
+               "turn_status" => "failed",
+               "will_retry" => false
+             },
+             "reason" => "codex_upstream_capacity",
+             "status" => "failed"
+           }
+  end
+
   test "source timeout delivers task.failed with structured command evidence", %{config: config} do
     put_claims([Map.put(claim("task-1", false), "source_timeout", true)])
     _runtime = start_runtime(config)

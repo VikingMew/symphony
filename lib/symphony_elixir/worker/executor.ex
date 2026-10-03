@@ -129,7 +129,7 @@ defmodule SymphonyElixir.Worker.Executor do
           ]
 
           result = run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
-          {result, completed_delivery_evidence(Process.delete(audit_key))}
+          {result, completion_evidence(codex.profile, Process.delete(audit_key))}
         end)
       end)
 
@@ -154,6 +154,9 @@ defmodule SymphonyElixir.Worker.Executor do
           proof_secret: proof_secret,
           duration_ms: duration_ms
         }
+
+      {:error, {reason, detail}} when reason in [:codex_upstream_capacity, :codex_turn_failed] ->
+        %{status: :failed, reason: reason, duration_ms: duration_ms, detail: detail}
 
       {:error, reason} ->
         %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: inspect(reason)}
@@ -234,6 +237,10 @@ defmodule SymphonyElixir.Worker.Executor do
   defp codex_failure_reason({:execution_capability_unavailable, _detail}), do: :execution_capability_unavailable
   defp codex_failure_reason(:execution_capability_unavailable), do: :execution_capability_unavailable
   defp codex_failure_reason(_reason), do: :failed
+
+  defp completion_evidence("implementation", events), do: completed_delivery_evidence(events)
+  defp completion_evidence("refinement", events), do: refinement_completion_evidence(events)
+  defp completion_evidence(_profile, _events), do: nil
 
   defp forward_codex_progress(%{event: :session_started, session_id: session_id} = message, progress) do
     progress.("codex_session_started", %{session_id: session_id, codex: message})
@@ -497,6 +504,16 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
+  def handoff_requirement(
+        %{codex: %{profile: "refinement"}},
+        %{delivery_evidence: {:incomplete, evidence}},
+        _workspace
+      ) do
+    detail = Map.put(evidence, "reason", "missing_refinement_completion")
+
+    {:ok, {:blocked, {:handoff_failed, {:missing_refinement_completion, detail}}, detail}}
+  end
+
   def handoff_requirement(_payload, _codex, _workspace), do: {:ok, :ready}
 
   defp validate_handoff_requirement(:ready, config, claim, source, codex, gates, workspace, log_dir) do
@@ -574,6 +591,31 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   defp linear_update_evidence_missing(%{}), do: "linear_task_update.arguments.target_state"
+
+  @doc false
+  @spec refinement_completion_evidence([map()]) :: {:complete | :incomplete, map()}
+  def refinement_completion_evidence(events) do
+    update =
+      Enum.find(events, fn
+        %{
+          tool: "linear_task_update",
+          status: "success",
+          arguments: %{"target_state" => state}
+        } ->
+          StateName.normalize(state) == StateName.normalize("Needs Refinement Review")
+
+        _event ->
+          false
+      end)
+
+    case update do
+      nil ->
+        {:incomplete, %{"missing" => ["linear_task_update(target_state: Needs Refinement Review)"]}}
+
+      _update ->
+        {:complete, %{"linear_state" => "Needs Refinement Review"}}
+    end
+  end
 
   defp handoff(config, claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do
