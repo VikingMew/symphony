@@ -14,7 +14,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
       %{
         identifier: "SYM-15",
         tracker_issue_id: "linear-15",
-        state: "Refining",
+        snapshot: %{"state" => "Refining"},
         blocking_decision: nil,
         no_progress_streak: 0
       }
@@ -88,7 +88,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert {:streak, 1} = BlockingDecision.advance_no_progress("SYM-15", "run-1", "Refining")
 
     first_run = FakePersistence.get_issue_by_identifier("SYM-15")
-    assert first_run.state == "Refining"
+    assert first_run.snapshot["state"] == "Refining"
     assert first_run.no_progress_streak == 1
     assert first_run.blocking_decision == nil
 
@@ -106,7 +106,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
            }
 
     issue = FakePersistence.get_issue_by_identifier("SYM-15")
-    assert issue.state == "Refining"
+    assert issue.snapshot["state"] == "Refining"
     assert issue.no_progress_streak == 2
     assert issue.blocking_decision == decision
 
@@ -218,5 +218,6 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert :blocking_decision in fields
     assert :no_progress_streak in fields
     assert :origin_state not in fields
+    assert :state not in fields
   end
 end

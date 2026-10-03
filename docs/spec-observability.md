@@ -340,7 +340,9 @@ Minimum endpoints:
   - Live runtime state is authoritative when present. Bounded persisted issue, latest-run,
     recent-run, and event history MAY augment it; history failure keeps the live payload and adds an
     explicit history error.
-  - An inactive persisted issue returns `200` with its persisted state and latest outcome.
+  - An inactive persisted issue returns `200` with its last poll-time Linear state projected from
+    the persisted issue snapshot and its latest outcome. This state is historical evidence, not a
+    current Linear lookup.
   - Return `404 issue_not_found` only after successful history lookup finds neither live nor
     persisted issue/run data. If persistence is required but unavailable, failed, or timed out,
     return a typed `503` error instead of collapsing the condition to `404`.

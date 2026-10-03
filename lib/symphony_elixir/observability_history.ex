@@ -108,12 +108,14 @@ defmodule SymphonyElixir.ObservabilityHistory do
   defp issue_payload(nil), do: nil
 
   defp issue_payload(issue) do
+    snapshot = value(issue, :snapshot)
+
     %{
       id: value(issue, :id),
       tracker_issue_id: value(issue, :tracker_issue_id),
       identifier: value(issue, :identifier),
       title: value(issue, :title),
-      state: value(issue, :state),
+      state: snapshot["state"],
       url: value(issue, :url),
       project_id: value(issue, :project_id),
       updated_at: iso8601(value(issue, :updated_at))

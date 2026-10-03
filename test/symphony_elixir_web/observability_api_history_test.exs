@@ -81,7 +81,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
         tracker_issue_id: "linear-db",
         identifier: "SYM-3",
         title: "Memory snapshot",
-        state: "Ready to Merge",
+        snapshot: %{"state" => "Ready to Merge"},
         url: "https://linear.app/issue/SYM-3",
         project_id: "project-db",
         updated_at: now,
@@ -102,6 +102,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
     issue_payload = json_response(get(build_conn(), "/api/v1/SYM-3"), 200)
     assert issue_payload["status"] == "Ready to Merge"
     assert issue_payload["persisted_issue"]["identifier"] == "SYM-3"
+    assert issue_payload["persisted_issue"]["state"] == "Ready to Merge"
     assert Map.has_key?(issue_payload["persisted_issue"], "__meta__") == false
     assert issue_payload["latest_run"]["id"] == "run-new"
     assert Enum.map(issue_payload["recent_runs"], & &1["id"]) == ["run-new", "run-old"]
@@ -116,7 +117,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiHistoryTest do
 
   test "runs route clamps limits and distinguishes invalid, unknown, and unsupported requests" do
     now = DateTime.utc_now()
-    FakePersistence.put_issues([%{id: "issue-many", identifier: "SYM-MANY", state: "Done"}])
+    FakePersistence.put_issues([%{id: "issue-many", identifier: "SYM-MANY", snapshot: %{"state" => "Done"}}])
 
     FakePersistence.put_runs(
       Enum.map(1..60, fn index ->

@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-03
 ---
 
 # Documentation Index
@@ -56,6 +56,7 @@ other documents link instead of restating.
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |
+| [issue-persistence-design.md](issue-persistence-design.md) | Persisted issue identity, poll snapshots, worker-owned state, and history projection. | landed |
 
 ## L4 — Normative Contracts
 

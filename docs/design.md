@@ -5,7 +5,7 @@ domain: [backend, layout, conventions]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-08-27
+updated: 2026-10-03
 ---
 
 ## Feature Design Index
@@ -28,6 +28,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency and boundary governance | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code conformance and merge-gate behavior | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification and evidence contract | landed |
+| [issue-persistence-design.md](issue-persistence-design.md) | Issue persistence and poll-snapshot state boundary | landed |
 
 This document (L2) owns implementation conventions — repository layout, package rules, and the
 module map below. System topology, boundaries, and direction are owned by

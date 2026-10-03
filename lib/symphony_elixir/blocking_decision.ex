@@ -176,12 +176,7 @@ defmodule SymphonyElixir.BlockingDecision do
         |> Map.put("comment_status", delivery_status(comment_result))
         |> Map.put("transition_status", delivery_status(transition_result))
 
-      attrs =
-        if transition_result == :ok,
-          do: %{blocking_decision: updated, state: "Blocked"},
-          else: %{blocking_decision: updated}
-
-      case persistence.update_issue(issue, attrs) do
+      case persistence.update_issue(issue, %{blocking_decision: updated}) do
         {:ok, _issue} ->
           {:ok, %{decision: updated, comment: comment_result, transition: transition_result}}
 

@@ -26,7 +26,6 @@ defmodule SymphonyElixir.Orchestrator.Events do
       tracker_issue_id: issue.id,
       identifier: issue.identifier,
       title: issue.title,
-      state: issue.state,
       url: issue.url,
       labels: %{"values" => issue.labels || []},
       snapshot: issue_snapshot(issue)
