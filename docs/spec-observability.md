@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.LogFile
-updated: 2026-09-26
+updated: 2026-10-03
 ---
 
 # Logging and Observability Specification
@@ -100,8 +100,8 @@ Failed external writes remain visible and retryable without creating a new codin
 state/run-valid decision makes worker claim admission report `admission.reason = blocking_decision`;
 `event=worker_claim_skip` includes issue, worker/session, blocking reason, origin state, run id, and
 decision time. Claim-time invalidation emits `issue.blocking_decision_cleared` with `source`
-(`candidate_selection` or `tracker_revalidation`), `cause` (`state_mismatch` or `run_superseded`),
-issue, old reason, origin state, run id, and decision time.
+(`candidate_selection` or `tracker_revalidation`), `cause` (`missing_scope`, `state_mismatch`, or
+`run_superseded`), issue, old reason, origin state, run id, and decision time.
 
 External worker terminal summaries MUST distinguish validation evidence from terminal outcome.
 When validation ran, `validation_status` MUST be its actual `passed`, `failed`, `timed_out`, or

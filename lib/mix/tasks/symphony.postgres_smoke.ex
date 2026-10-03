@@ -7,8 +7,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   use Mix.Task
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.LegacyWorkflowConvergence
-  alias SymphonyElixir.{Persistence, Repo, SQLiteImporter}
+  alias SymphonyElixir.{BlockingDecision, Config.LegacyWorkflowConvergence, Persistence, Repo, SQLiteImporter}
   alias SymphonyElixir.Persistence.{EventRecord, Project, WorkflowStore}
   alias SymphonyElixir.Workflow
 
@@ -27,6 +26,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @pre_convergence_migration 20_260_907_000_000
   @convergence_migration 20_260_914_000_000
   @codex_selector_migration 20_260_923_000_000
+  @blocking_decision_migration 20_260_926_000_000
   @failure_classification_migration 20_260_927_000_000
   @legacy_project_ids [
     "70000000-0000-0000-0000-000000000001",
@@ -93,6 +93,8 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         rebuild_pre_codex_selector_schema!(repo, migrations_path)
         expected = seed_codex_selector_fixture!(repo)
         migrate_and_verify_codex_selectors!(repo, migrations_path, expected)
+        blocking_decisions = seed_blocking_decision_fixture!(repo)
+        migrate_and_verify_blocking_decisions!(repo, migrations_path, blocking_decisions)
         seed_run_failure_fixture!(repo)
         migrate_and_verify_run_failures!(repo, migrations_path)
         convergence_snapshot!(repo)
@@ -233,6 +235,116 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     "gpt-5.5" = get_in(instance_config, ["codex", "model"])
     "xhigh" = get_in(instance_config, ["codex", "reasoning_effort"])
     Mix.shell().info("smoke codex_selector_migration result=PASS")
+  end
+
+  defp seed_blocking_decision_fixture!(repo) do
+    rows = [
+      legacy_blocking_decision_row(1, "SYM-130", "In Progress", "Todo", "failure_retries_exhausted", "retry budget exhausted"),
+      legacy_blocking_decision_row(2, "SYM-136", "Blocked", "Ready", "reported_blocker", "operator input required"),
+      legacy_blocking_decision_row(3, "SYM-138", "In Progress", "Todo", "handoff_failed", "需宿主 push"),
+      legacy_blocking_decision_row(4, "SYM-139", "Blocked", "Ready", "no_progress", "two runs without progress")
+    ]
+
+    Enum.each(rows, fn row ->
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO issues (
+          id, project_id, tracker_issue_id, identifier, title, state, labels, snapshot,
+          blocking_decision, no_progress_streak, inserted_at, updated_at
+        )
+        VALUES (
+          $1::text::uuid, $2::text::uuid, $3, $4, $5, $6, '{}'::jsonb, '{}'::jsonb,
+          $7::jsonb, 2, NOW(), NOW()
+        )
+        """,
+        [row.issue_id, hd(@legacy_project_ids), row.tracker_issue_id, row.identifier, row.identifier, row.state, row.decision]
+      )
+
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO runs (
+          id, project_id, issue_id, issue_identifier, status, failure_reason, attempt,
+          execution_mode, kind, started_at, inserted_at, updated_at
+        )
+        VALUES (
+          $1::text::uuid, $2::text::uuid, $3::text::uuid, $4, 'failed', $5, 0,
+          'centralized', 'issue', NOW(), NOW(), NOW()
+        )
+        """,
+        [row.run_id, hd(@legacy_project_ids), row.issue_id, row.identifier, row.decision["reason"]]
+      )
+    end)
+
+    rows
+  end
+
+  defp migrate_and_verify_blocking_decisions!(repo, migrations_path, rows) do
+    [@blocking_decision_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @blocking_decision_migration)
+
+    Enum.each(rows, fn row ->
+      %{rows: [[decision, streak]]} =
+        SQL.query!(
+          repo,
+          "SELECT blocking_decision, no_progress_streak FROM issues WHERE identifier = $1",
+          [row.identifier]
+        )
+
+      expected_decision = Map.put(row.decision, "origin_state", row.state)
+      ^expected_decision = decision
+      2 = streak
+      {:stale, :state_mismatch} = BlockingDecision.validity(decision, row.live_state, row.run_id)
+      {:ok, :cleared} = Persistence.compare_and_clear_blocking_decision(row.identifier, decision)
+
+      %{rows: [[nil, 0]]} =
+        SQL.query!(
+          repo,
+          "SELECT blocking_decision, no_progress_streak FROM issues WHERE identifier = $1",
+          [row.identifier]
+        )
+    end)
+
+    %{rows: column_rows} =
+      SQL.query!(
+        repo,
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'issues'
+          AND column_name IN ('blocking_decision', 'no_progress_streak')
+        ORDER BY column_name
+        """,
+        []
+      )
+
+    [["blocking_decision"], ["no_progress_streak"]] = column_rows
+    Mix.shell().info("smoke blocking_decision_migration legacy_rows=4 first_claim=stale result=PASS")
+  end
+
+  defp legacy_blocking_decision_row(index, identifier, state, live_state, reason, evidence) do
+    suffix = String.pad_leading(Integer.to_string(index), 12, "0")
+    run_id = "92000000-0000-0000-0000-#{suffix}"
+
+    %{
+      issue_id: "91000000-0000-0000-0000-#{suffix}",
+      tracker_issue_id: "linear-#{identifier}",
+      identifier: identifier,
+      state: state,
+      live_state: live_state,
+      run_id: run_id,
+      decision: %{
+        "reason" => reason,
+        "evidence" => evidence,
+        "run_id" => run_id,
+        "decided_at" => "2026-09-24T00:00:00Z",
+        "references" => %{"source" => identifier},
+        "comment_status" => "completed",
+        "transition_status" => "pending"
+      }
+    }
   end
 
   defp seed_run_failure_fixture!(repo) do

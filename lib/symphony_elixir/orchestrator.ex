@@ -670,6 +670,7 @@ defmodule SymphonyElixir.Orchestrator do
       case BlockingDecision.advance_no_progress(
              running_entry.identifier,
              running_entry.run_id,
+             running_entry.issue.state,
              run_references(running_entry)
            ) do
         {:blocked, decision} ->
@@ -733,6 +734,7 @@ defmodule SymphonyElixir.Orchestrator do
            reason,
            evidence,
            running_entry.run_id,
+           running_entry.issue.state,
            references
          ) do
       {:ok, decision} ->

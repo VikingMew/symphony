@@ -218,6 +218,23 @@ defmodule SymphonyElixir.PRReviewTest do
     assert decision["review_job_id"] == "review-1"
     assert decision["review_head_oid"] == @head
     assert decision["references"] == %{"pr_url" => "https://github.com/acme/app/pull/1"}
+
+    assert {:ok, live_decision} =
+             Delivery.decision_for_delivery(review_job,
+               state_fetcher: fn ["linear-1"] ->
+                 {:ok, [%Issue{id: "linear-1", identifier: "SYM-26", state: "Ready to Merge"}]}
+               end
+             )
+
+    assert live_decision["origin_state"] == "Ready to Merge"
+    assert live_decision["run_id"] == "run-1"
+
+    assert {:error, :review_issue_not_ready_to_merge} =
+             Delivery.decision_for_delivery(review_job,
+               state_fetcher: fn ["linear-1"] ->
+                 {:ok, [%Issue{id: "linear-1", identifier: "SYM-26", state: "In Progress"}]}
+               end
+             )
   end
 
   test "review result normalization accepts wire values and rejects malformed findings" do

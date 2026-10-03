@@ -1435,6 +1435,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: ref,
+      run_id: "run-input-blocked",
       identifier: "MT-BLOCK",
       issue: %Issue{id: issue_id, identifier: "MT-BLOCK", state: "In Progress"},
       session_id: "thread-block",

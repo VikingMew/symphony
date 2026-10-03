@@ -183,7 +183,8 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "In Progress"
+    assert persisted.state == "Ready"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == %{"failed" => ":transition_down"}
     assert log =~ "Blocking decision delivery step failed"
@@ -214,7 +215,8 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "In Progress"
+    assert persisted.state == "Ready"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert %{"failed" => comment_failure} = persisted.blocking_decision["comment_status"]
     assert %{"failed" => transition_failure} = persisted.blocking_decision["transition_status"]
     assert comment_failure =~ "workflow_context_unavailable"
@@ -253,6 +255,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
     assert remaining_ms <= 10_500
+    retry_token = first.retry_attempts[issue_id].retry_token
 
     assert [
              %{
@@ -305,6 +308,12 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert comment =~ "budget_exhausted"
     assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
+
+    send(pid, {:retry_issue, issue_id, retry_token})
+    after_stale_retry = :sys.get_state(pid)
+    assert after_stale_retry.running == %{}
+    assert after_stale_retry.retry_attempts == %{}
+    assert after_stale_retry.blocked[issue_id].run_id == "run-worker-failed-2"
   end
 
   test "structured handoff blockers persist and deliver immediately without entering the budget" do
@@ -538,7 +547,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       %{
         identifier: identifier,
         tracker_issue_id: issue_id,
-        state: "In Progress",
+        state: "Ready",
         blocking_decision: nil,
         no_progress_streak: 0
       }

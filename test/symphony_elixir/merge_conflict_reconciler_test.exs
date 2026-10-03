@@ -146,6 +146,39 @@ defmodule SymphonyElixir.MergeConflictReconcilerTest do
     assert FakePersistence.get_issue_by_identifier("SYM-17").blocking_decision == nil
   end
 
+  test "does not persist a conflict decision for completed handoff evidence without a run" do
+    FakePersistence.put_events([
+      %{
+        event_type: "run.phase",
+        issue_identifier: "SYM-17",
+        run_id: nil,
+        occurred_at: DateTime.utc_now(),
+        payload: %{
+          phase: "implementation_handoff",
+          status: "completed",
+          url: "https://github.com/acme/app/pull/17"
+        }
+      }
+    ])
+
+    lookup = fn _issue, _project, _opts ->
+      {:ok,
+       %{
+         url: "https://github.com/acme/app/pull/17",
+         repository: "acme/app",
+         base: "main",
+         head: "vikingmew-sym-17",
+         raw_status: "CONFLICTING",
+         conflicting: true
+       }}
+    end
+
+    assert :stale = MergeConflictReconciler.reconcile(issue(), project(), reconcile_opts(lookup))
+    assert FakePersistence.get_issue_by_identifier("SYM-17").blocking_decision == nil
+    assert FakePersistence.list_events(event_type: "issue.merge_conflict_detected") == []
+    refute_receive {:delivery, _, _}
+  end
+
   defp issue do
     %Issue{
       id: "issue-17",

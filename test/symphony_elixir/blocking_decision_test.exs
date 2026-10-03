@@ -59,6 +59,9 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert decision["review_job_id"] == "review-17"
     assert decision["comment_status"] == "pending"
     assert decision["transition_status"] == "pending"
+
+    structured = BlockingDecision.new(:failure_retries_exhausted, %{detail: "failed"}, "run-18", "In Progress")
+    assert structured["evidence"] == %{detail: "failed"}
   end
 
   test "requires both expected Linear state and latest persisted run" do
@@ -73,10 +76,16 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     completed = Map.put(pending, "transition_status", "completed")
     assert BlockingDecision.validity(completed, "Blocked", "run-1") == :valid
     assert BlockingDecision.validity(completed, "In Progress", "run-1") == {:stale, :state_mismatch}
+
+    assert BlockingDecision.validity(Map.delete(pending, "origin_state"), "In Progress", "run-1") ==
+             {:stale, :missing_scope}
+
+    assert BlockingDecision.validity(Map.delete(pending, "run_id"), "In Progress", "run-1") ==
+             {:stale, :missing_scope}
   end
 
   test "two completed no-progress runs persist a blocking decision without changing attempts" do
-    assert {:streak, 1} = BlockingDecision.advance_no_progress("SYM-15", "run-1")
+    assert {:streak, 1} = BlockingDecision.advance_no_progress("SYM-15", "run-1", "Refining")
 
     first_run = FakePersistence.get_issue_by_identifier("SYM-15")
     assert first_run.state == "Refining"
@@ -84,7 +93,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert first_run.blocking_decision == nil
 
     assert {:blocked, decision} =
-             BlockingDecision.advance_no_progress("SYM-15", "run-2", %{
+             BlockingDecision.advance_no_progress("SYM-15", "run-2", "Refining", %{
                "quality_gate" => "refinement_quality_gate_failed"
              })
 
@@ -113,7 +122,7 @@ defmodule SymphonyElixir.BlockingDecisionTest do
       "required image build conflicts with the container-engine validation policy"
 
     assert {:ok, decision} =
-             BlockingDecision.decide("SYM-15", :reported_blocker, evidence, "run-policy")
+             BlockingDecision.decide("SYM-15", :reported_blocker, evidence, "run-policy", "Refining")
 
     assert decision["reason"] == "reported_blocker"
     assert decision["evidence"] == evidence
@@ -124,17 +133,66 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert issue.blocking_decision == decision
   end
 
-  test "scope migration preserves the JSON decision columns and adds origin state" do
-    migration =
-      File.read!("priv/repo/migrations/20260926000000_scope_blocking_decisions_to_state_and_run.exs")
+  test "stale clear atomically resets the decision and no-progress streak" do
+    decision = BlockingDecision.new(:failure_retries_exhausted, "failed", "run-old", "In Progress")
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
 
-    assert migration =~ "SET blocking_decision = jsonb_set("
-    assert migration =~ "'{origin_state}'"
-    assert migration =~ "to_jsonb(state)"
-    assert migration =~ "WHERE blocking_decision IS NOT NULL"
+    {:ok, _issue} =
+      FakePersistence.update_issue(issue, %{
+        blocking_decision: decision,
+        no_progress_streak: 2
+      })
 
+    assert {:ok, event} =
+             BlockingDecision.clear_stale(
+               "SYM-15",
+               decision,
+               "candidate_selection",
+               :state_mismatch,
+               FakePersistence
+             )
+
+    assert event.payload["cause"] == "state_mismatch"
+    assert event.payload["run_id"] == "run-old"
+
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert issue.blocking_decision == nil
+    assert issue.no_progress_streak == 0
+  end
+
+  test "stale clear does not reset a replacement decision or streak" do
+    old = BlockingDecision.new(:failure_retries_exhausted, "old", "run-old", "In Progress")
+    replacement = BlockingDecision.new(:reported_blocker, "new", "run-new", "Todo")
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
+    {:ok, _issue} = FakePersistence.update_issue(issue, %{blocking_decision: old, no_progress_streak: 2})
+
+    Application.put_env(:symphony_elixir, :blocking_decision_cas_hook, fn ->
+      current = FakePersistence.get_issue_by_identifier("SYM-15")
+      {:ok, _issue} = FakePersistence.update_issue(current, %{blocking_decision: replacement, no_progress_streak: 7})
+      Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook)
+    end)
+
+    on_exit(fn -> Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook) end)
+
+    assert :replaced =
+             BlockingDecision.clear_stale(
+               "SYM-15",
+               old,
+               "candidate_selection",
+               :state_mismatch,
+               FakePersistence
+             )
+
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert issue.blocking_decision == replacement
+    assert issue.no_progress_streak == 7
+    assert FakePersistence.list_events(event_type: "issue.blocking_decision_cleared") == []
+  end
+
+  test "blocking decision scope remains JSON-backed without new issue columns" do
     fields = IssueRecord.__schema__(:fields)
     assert :blocking_decision in fields
     assert :no_progress_streak in fields
+    assert :origin_state not in fields
   end
 end

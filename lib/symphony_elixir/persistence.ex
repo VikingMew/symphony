@@ -228,6 +228,27 @@ defmodule SymphonyElixir.Persistence do
   def update_issue(%IssueRecord{} = issue, attrs),
     do: issue |> IssueRecord.changeset(attrs) |> Repo.update()
 
+  @spec compare_and_clear_blocking_decision(String.t(), map()) ::
+          {:ok, :cleared | :replaced} | {:error, :repo_unavailable}
+  def compare_and_clear_blocking_decision(identifier, decision)
+      when is_binary(identifier) and is_map(decision) do
+    if repo_available?() do
+      {count, _rows} =
+        Repo.update_all(
+          from(issue in IssueRecord,
+            where:
+              issue.identifier == ^identifier and
+                issue.blocking_decision == ^decision
+          ),
+          set: [blocking_decision: nil, no_progress_streak: 0]
+        )
+
+      {:ok, if(count == 1, do: :cleared, else: :replaced)}
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
   @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do
     limit = Keyword.get(opts, :limit, 100)

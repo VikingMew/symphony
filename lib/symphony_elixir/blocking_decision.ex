@@ -6,7 +6,7 @@ defmodule SymphonyElixir.BlockingDecision do
   alias SymphonyElixir.{PersistenceProvider, Tracker}
 
   @type reason :: term()
-  @type stale_reason :: :state_mismatch | :run_superseded
+  @type stale_reason :: :missing_scope | :state_mismatch | :run_superseded
 
   @doc """
   Normalizes blocker evidence for orchestration decisions.
@@ -28,8 +28,9 @@ defmodule SymphonyElixir.BlockingDecision do
   def normalize_blocker(value), do: value |> inspect() |> normalize_blocker()
 
   @doc "Builds the canonical persisted blocking-decision representation."
-  @spec new(reason(), term(), String.t() | nil, String.t(), map(), map()) :: map()
-  def new(reason, evidence, run_id, origin_state, references \\ %{}, metadata \\ %{}) do
+  @spec new(reason(), term(), String.t(), String.t(), map(), map()) :: map()
+  def new(reason, evidence, run_id, origin_state, references \\ %{}, metadata \\ %{})
+      when is_binary(run_id) and run_id != "" and is_binary(origin_state) and origin_state != "" do
     Map.merge(metadata, %{
       "reason" => decision_text(reason),
       "evidence" => decision_evidence(evidence),
@@ -44,22 +45,22 @@ defmodule SymphonyElixir.BlockingDecision do
 
   @doc "Checks a canonical decision against the live Linear state and latest persisted run."
   @spec validity(map(), String.t(), String.t() | nil) :: :valid | {:stale, stale_reason()}
-  def validity(decision, live_state, latest_run_id) do
-    expected_state =
-      if decision["transition_status"] == "completed",
-        do: "Blocked",
-        else: Map.fetch!(decision, "origin_state")
+  def validity(%{"origin_state" => origin_state, "run_id" => run_id} = decision, live_state, latest_run_id)
+      when is_binary(origin_state) and origin_state != "" and is_binary(run_id) and run_id != "" do
+    expected_state = if decision["transition_status"] == "completed", do: "Blocked", else: origin_state
 
     cond do
       live_state != expected_state -> {:stale, :state_mismatch}
-      is_nil(latest_run_id) or decision["run_id"] != latest_run_id -> {:stale, :run_superseded}
+      run_id != latest_run_id -> {:stale, :run_superseded}
       true -> :valid
     end
   end
 
-  @spec decide(String.t(), reason(), term(), String.t() | nil, map()) ::
+  def validity(_decision, _live_state, _latest_run_id), do: {:stale, :missing_scope}
+
+  @spec decide(String.t(), reason(), term(), String.t(), String.t(), map()) ::
           {:ok, map()} | {:error, term()}
-  def decide(identifier, reason, evidence, run_id, references \\ %{}) do
+  def decide(identifier, reason, evidence, run_id, origin_state, references \\ %{}) do
     persistence = PersistenceProvider.module()
 
     PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end)
@@ -68,7 +69,7 @@ defmodule SymphonyElixir.BlockingDecision do
         {:ok, existing}
 
       issue when is_map(issue) ->
-        persist_decision(persistence, issue, reason, evidence, run_id, references)
+        persist_decision(persistence, issue, reason, evidence, run_id, origin_state, references)
 
       {:error, reason} ->
         {:error, reason}
@@ -78,23 +79,23 @@ defmodule SymphonyElixir.BlockingDecision do
     end
   end
 
-  @spec advance_no_progress(String.t(), String.t() | nil, map()) ::
+  @spec advance_no_progress(String.t(), String.t(), String.t(), map()) ::
           {:streak, pos_integer()} | {:blocked, map()} | {:error, term()}
-  def advance_no_progress(identifier, run_id, references \\ %{}) do
+  def advance_no_progress(identifier, run_id, origin_state, references \\ %{}) do
     persistence = PersistenceProvider.module()
 
     with issue when is_map(issue) <-
            PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end),
          streak = (Map.get(issue, :no_progress_streak) || 0) + 1,
          {:ok, updated} <- persistence.update_issue(issue, %{no_progress_streak: streak}) do
-      advance_streak(persistence, updated, streak, run_id, references)
+      advance_streak(persistence, updated, streak, run_id, origin_state, references)
     else
       nil -> {:error, :issue_not_persisted}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp advance_streak(persistence, issue, streak, run_id, references) do
+  defp advance_streak(persistence, issue, streak, run_id, origin_state, references) do
     if streak >= 2 do
       case persist_decision(
              persistence,
@@ -102,6 +103,7 @@ defmodule SymphonyElixir.BlockingDecision do
              :no_progress,
              "#{streak} completed runs without progress",
              run_id,
+             origin_state,
              references
            ) do
         {:ok, decision} -> {:blocked, decision}
@@ -131,12 +133,11 @@ defmodule SymphonyElixir.BlockingDecision do
 
   @doc "Clears a stale decision and records its original scope as a durable event."
   @spec clear_stale(String.t(), map(), String.t(), stale_reason(), module()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, map()} | :replaced | {:error, term()}
   def clear_stale(identifier, decision, source, cause, persistence \\ PersistenceProvider.module()) do
     with issue when is_map(issue) <-
            PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end),
-         {:ok, _issue} <-
-           persistence.update_issue(issue, %{blocking_decision: nil, no_progress_streak: 0}),
+         {:ok, :cleared} <- persistence.compare_and_clear_blocking_decision(identifier, decision),
          {:ok, event} <-
            persistence.record_event(%{
              run_id: decision["run_id"],
@@ -155,6 +156,7 @@ defmodule SymphonyElixir.BlockingDecision do
       {:ok, event}
     else
       nil -> {:error, :issue_not_persisted}
+      {:ok, :replaced} -> :replaced
       {:error, reason} -> {:error, reason}
     end
   end
@@ -238,11 +240,11 @@ defmodule SymphonyElixir.BlockingDecision do
   end
 
   defp comment(identifier, decision) do
-    "Symphony blocked #{identifier}.\n\nReason: #{decision["reason"]}\nEvidence: #{decision["evidence"]}\nRun: #{decision["run_id"] || "n/a"}\nUTC: #{decision["decided_at"]}\nReferences: #{inspect(decision["references"] || %{})}"
+    "Symphony blocked #{identifier}.\n\nReason: #{decision["reason"]}\nEvidence: #{inspect(decision["evidence"])}\nRun: #{decision["run_id"]}\nUTC: #{decision["decided_at"]}\nReferences: #{inspect(decision["references"] || %{})}"
   end
 
-  defp persist_decision(persistence, issue, reason, evidence, run_id, references) do
-    decision = new(reason, evidence, run_id, Map.fetch!(issue, :state), references)
+  defp persist_decision(persistence, issue, reason, evidence, run_id, origin_state, references) do
+    decision = new(reason, evidence, run_id, origin_state, references)
 
     case persistence.update_issue(issue, %{blocking_decision: decision}) do
       {:ok, _issue} -> {:ok, decision}

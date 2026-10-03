@@ -601,7 +601,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
          decision,
          persistence,
          orchestrator,
-         _listening_mode,
+         listening_mode,
          clear_source
        ) do
     clear_stale_blocking_decision(
@@ -610,7 +610,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       clear_source,
       cause,
       persistence,
-      orchestrator
+      orchestrator,
+      listening_mode
     )
   end
 
@@ -628,7 +629,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
          source,
          cause,
          persistence,
-         orchestrator
+         orchestrator,
+         listening_mode
        ) do
     case BlockingDecision.clear_stale(
            issue.identifier,
@@ -649,6 +651,15 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
         )
 
         :ok
+
+      :replaced ->
+        blocking_decision_admission(
+          issue,
+          persistence,
+          orchestrator,
+          listening_mode,
+          source
+        )
 
       {:error, reason} ->
         {:error, {:blocking_decision_clear_failed, reason}}

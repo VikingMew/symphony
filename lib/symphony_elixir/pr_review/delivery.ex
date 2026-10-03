@@ -4,11 +4,11 @@ defmodule SymphonyElixir.PRReview.Delivery do
   alias SymphonyElixir.{BlockingDecision, PersistenceProvider, PRReview, Tracker}
   alias SymphonyElixir.PRReview.Store
 
-  @spec deliver(map()) :: {:ok, map()} | {:error, term()}
-  def deliver(job) do
+  @spec deliver(map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def deliver(job, opts \\ []) do
     case job.result["outcome"] || job.result[:outcome] do
       outcome when outcome in ["approve", :approve] -> deliver_approve(job)
-      outcome when outcome in ["findings", :findings] -> deliver_findings(job)
+      outcome when outcome in ["findings", :findings] -> deliver_findings(job, opts)
     end
   end
 
@@ -19,7 +19,7 @@ defmodule SymphonyElixir.PRReview.Delivery do
     end
   end
 
-  defp deliver_findings(job) do
+  defp deliver_findings(job, opts) do
     persistence = PersistenceProvider.module()
     issue = persistence.get_issue(job.project_id, job.issue_identifier)
 
@@ -35,15 +35,32 @@ defmodule SymphonyElixir.PRReview.Delivery do
         end
 
       nil ->
-        decision = decision(job, issue.state)
-
-        with {:ok, _issue} <- persistence.update_issue(issue, %{blocking_decision: decision}),
+        with {:ok, decision} <- decision_for_delivery(job, opts),
+             {:ok, _issue} <- persistence.update_issue(issue, %{blocking_decision: decision}),
              {:ok, job} <- Store.update(job, %{delivery: Map.put(job.delivery, "decision", "completed")}),
              {:ok, job} <- deliver_comment(job),
              {:ok, job} <- complete_decision_comment(job),
              {:ok, job} <- deliver_transition(job) do
           Store.update(job, %{status: "completed", finished_at: DateTime.utc_now()})
         end
+    end
+  end
+
+  @doc false
+  @spec decision_for_delivery(map(), keyword()) :: {:ok, map()} | {:error, term()}
+  def decision_for_delivery(job, opts \\ []) do
+    with {:ok, origin_state} <- live_ready_to_merge_state(job, opts) do
+      {:ok, decision(job, origin_state)}
+    end
+  end
+
+  defp live_ready_to_merge_state(job, opts) do
+    state_fetcher = Keyword.get(opts, :state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
+
+    case state_fetcher.([job.tracker_issue_id]) do
+      {:ok, [%{state: "Ready to Merge"}]} -> {:ok, "Ready to Merge"}
+      {:ok, _issues} -> {:error, :review_issue_not_ready_to_merge}
+      {:error, reason} -> {:error, {:review_issue_state_fetch_failed, reason}}
     end
   end
 

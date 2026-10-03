@@ -17,7 +17,12 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox；Orchestrator 以当下持有的 `listening_mode` 完成整次 claim 调用后才处理下一条
 start/stop 控制消息。`AssignmentManager` 不持久化或缓存另一份 mode。它串行处理已经通过该边界的
-claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。`AssignmentManager` 同时拥有
+claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。通过快速准入的 claim 将 Linear
+candidate fetch、二次校验与 started-state 更新交给一个 supervised task；manager 只保存单个
+in-flight claim 的 ownership，并在结果回投后发布 assignment。同一时刻到达的其他 claim 以现有
+`active_assignment` 空结果返回。task 的 5000 ms 预算超时会终止该 task，并复用
+`{:linear_api_request, :timeout}` 与 30/60 秒 tracker backoff；公开 claim call 使用 6000 ms 有界 timeout，
+不再以 `:infinity` 占用调用方。`AssignmentManager` 同时拥有
 Panel 内存中的 worker/session liveness：每个 entry 以 worker/session 为 key，保存最近一次
 `last_seen_at`、worker/session 身份以及 registration 广告的 `total_slots`。该 entry 只有在
 `last_seen_at` 落在 `worker_heartbeat_interval_seconds() * 3` 窗口内才 fresh；超过窗口即 stale，
@@ -28,9 +33,10 @@ entry 会拒绝当前 claim，但该请求可刷新下一次 claim 的 last-seen
 准入依据。claim admission 顺序是：Orchestrator listening gate、内存 session freshness、调用方
 `available_slots > 0`、environment failure circuit、当前 assignment，然后才实时读取 Linear candidates，
 按 priority、created_at、identifier 排序，再按 issue id 读取 Linear 并重新验证状态、依赖、
-routing/profile、listening mode 和持久 `blocking_decision`。candidate selection 与 tracker revalidation
-调用同一有效性检查：`transition_status = completed` 时预期实时状态为 `Blocked`，否则预期
-`origin_state`；同时 decision `run_id` 必须等于该 issue 最新持久 run id。任一不匹配即陈旧。三种 mode 的规则为：
+routing/profile、listening mode 和持久 `blocking_decision`。candidate selection 与 tracker
+revalidation 共用同一检查：`transition_status = completed` 时预期实时状态为 `Blocked`，否则预期
+`origin_state`；decision 的非空 `run_id` 还必须等于最新持久 run id。缺少任一 scope 返回 typed
+`missing_scope` stale，state/run 不匹配也为陈旧。三种 mode 的规则为：
 
 - `not_listening` 在 Linear candidate read、run 创建、issue 迁移和 `task.accepted` 写入前返回空 claim。
 - `listening_refine_only` 在排序后的逐候选 admission 中只接受 refinement state；过滤靠前的
@@ -55,16 +61,13 @@ worker run 仍是非终态时不得重复派发。默认 `tracker.active_states`
 汇总为 worker-mode deployment capacity，不允许并行发放多个 assignment。有效 admission capacity
 仅在存在 fresh 内存 entry、调用方有 slot 且无当前 assignment 时为 1，否则为 0。没有合格 issue、
 已有 assignment、内存 session 缺失/过期或没有 slot 时返回 `{task: null}`，并附带可测试的 structured
-admission reason（capacity 0/1 与拒绝原因）。若候选 issue 已有未清除的
-`blocking_decision` 且 state/run scope 仍匹配，claim 返回 `admission.reason = blocking_decision`，并记录包含
-issue、worker/session、blocking reason、origin state、run id 和 decision time 的
-`event=worker_claim_skip` 日志；这不同于状态不匹配、依赖阻塞、human review、run history、capacity 或
-session freshness 的拒绝。state 或 run scope 不匹配时，同一次 claim 把 decision / no-progress streak
-写为 `NULL` / `0`，持久化带 selection/revalidation source 和旧 decision context 的 clear event，并通过
-Orchestrator mailbox 清除旧 run 的 blocked、retry、failure 与 stale claimed 投影，再继续后续 gate。若
-该 claim 创建新 run，消息顺序和 run identity 保证新 run 的 claimed/running 投影不被旧 decision 清理。
-人工重新触发产生的较新 run 表示显式重试，因此即使 state 不变也使旧 decision 作废。真正访问 tracker
-后的连续空 claim 由
+admission reason（capacity 0/1 与拒绝原因）。若候选 issue 的 `blocking_decision` state/run scope
+仍匹配，claim 返回 `admission.reason = blocking_decision`，并记录包含 issue、worker/session、blocking
+reason、origin state、run id 和 decision time 的 `event=worker_claim_skip` 日志。若 decision 陈旧，
+同一次 claim 以原 JSON 为 CAS 条件把 decision/streak 写为 `NULL` / `0`，记录带 source、cause 和旧
+scope 的 clear event，清除旧 run 的 blocked/retry/failure/stale-claimed 投影，并继续后续 gate。
+CAS 发现 replacement 时不清 streak、不释放投影，而是立即重读 replacement；同次 claim 创建的
+新 run claimed/running 投影按 run identity 保留。真正访问 tracker 后的连续空 claim 由
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
@@ -81,6 +84,13 @@ Orchestrator 的普通 poll 与 active retry 共用 worker-mode deployment capac
 liveness，不复用旧容量。每次 timeout 记录 warning：
 `event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0`。
 其他 exit 不降级，centralized mode 容量语义不变。
+
+Orchestrator 构造时持有 worker capacity query callback；默认 callback 仍为
+`AssignmentManager.available_worker_slots/0`。该 callback 只提供 process-local constructor dependency
+injection，使测试能用显式 `:run_poll_cycle` 和 message-controlled query outcome 逐次验证 timeout 与恢复，
+而不暂停全局 manager 或等待 wall-clock timeout。它不是持久化或 operator-configurable runtime policy；
+传入无效 callback 时显式失败。这个 start option 只改变 dependency construction：默认 callback、
+5000 ms timeout、exact timeout-exit match、fail-closed policy、warning 和 operator-visible behavior 均不变。
 
 `agent.max_retry_backoff_ms` 只限制 Orchestrator 的 failure-retry 排程，不控制 worker claim。
 worker claim request 不携带 prospective issue id，也不保存 per-issue retry/cooldown 状态；再次 claim 的
@@ -107,7 +117,8 @@ observation 交给 `Worker.HeartbeatHistory`；该进程按 worker/session 合�
 heartbeat 的 HTTP status、`Retry-After`、`worker_api.heartbeat_failed_attempts` 或任何调度/repair
 决策。没有提交 active lease 的 idle heartbeat 不等待 `AssignmentManager` 临界区，直接返回成功和空续期列表。提交 active lease 的 heartbeat 只进入
 `AssignmentManager` 的短临界区尝试续期；只有调用 session 持有当前 assignment、提交匹配 id 且 lease
-未过期时才续期。该内存续期临界区未在 heartbeat 预算内完成时，worker-v1 API 返回 retryable 503，
+未过期时才续期。claim 与 reconciliation 的出站 Linear I/O 都在 supervised task 中，因此该临界区
+只执行内存 lease/cancellation 状态转换。该内存续期临界区未在 heartbeat 预算内完成时，worker-v1 API 返回 retryable 503，
 稳定错误码为 `worker_heartbeat_unavailable`，响应包含正数 `retry_after_seconds` 和 `Retry-After`
 header，且不包含 crash stack。该失败只计入内存 `worker_api.heartbeat_failed_attempts`，不创建 queued
 work、新 assignment、failed run 或自动修复动作。
@@ -145,16 +156,22 @@ commit。两者均在 validation 后落 `blocked`，gate 失败时仍保留 bloc
 self-reported blocked、marker-only、patch-only、permission-detail-only 均不满足 host-push 判据；两种
 结构化证据都不存在时，missing handoff 仍是 `failed` 并消耗普通预算，bounded detail 指明缺失事件或
 PR URL。
-持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
-claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
-才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。
+failure/no-progress producer 使用 running entry 的实时 `Refining` / `In Progress` state 与 run id；
+merge-conflict 只接受带非空 run id 的 completed handoff，并使用第二次 `Ready to Merge` 读取；review
+findings 使用 review job run id 和投递时的实时 `Ready to Merge`。有效 decision 存续期内自动 retry
+被取消和抑制。人工重跑产生较新 run 表示显式重试，即使 state 未变也使旧 decision 作废。
 当 worker 内 Codex 命令执行能力不可用（例如 bwrap/user namespace 创建被拒）时，worker/Codex
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
-Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。reconciliation 读取
-Linear `In Progress` issue 和最新 worker run 时间：lease timeout 前保持不派发；超时后将僵尸 issue
-转回 `Ready` 并失败终结旧 run。回收判据不调用 session heartbeat 过期扫描，也不以
+Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。每轮 reconciliation 先按
+enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 supervised task 中对每个 slug
+各读取一次 Linear `In Progress` issue，并完成对应的 zombie tracker 更新。整个 task 使用 5000 ms
+预算；超时终止本轮，下一轮不与它重叠。结果 cast 携带不可复用的 round reference，manager 只接受
+当前 round 一次；迟到或重复结果不改变状态。tracker error 与 timeout 分别记录
+`worker_reconcile_tracker_error` 和 `worker_reconcile_tracker_timeout`，与 run 的
+`assignment_expired` terminal event 分开归因。reconciliation 结合最新 worker run 时间：lease timeout
+前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结旧 run。回收判据不调用 session heartbeat 过期扫描，也不以
 `worker_sessions.status` 或 `last_heartbeat_at` 作为僵尸回收准入。重启后旧 session row 单独存在时
 不提供 deployment capacity 或 claim admission；到 worker 下一次 registration、heartbeat、claim 或
 当前 assignment task event 记录内存 last-seen 前，Panel 将该 session 视为未知。未知窗口内不重新派发，
