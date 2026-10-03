@@ -242,7 +242,16 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       legacy_blocking_decision_row(1, "SYM-130", "In Progress", "Todo", "failure_retries_exhausted", "retry budget exhausted"),
       legacy_blocking_decision_row(2, "SYM-136", "Blocked", "Ready", "reported_blocker", "operator input required"),
       legacy_blocking_decision_row(3, "SYM-138", "In Progress", "Todo", "handoff_failed", "需宿主 push"),
-      legacy_blocking_decision_row(4, "SYM-139", "Blocked", "Ready", "no_progress", "two runs without progress")
+      legacy_blocking_decision_row(4, "SYM-139", "Blocked", "Ready", "no_progress", "two runs without progress"),
+      legacy_blocking_decision_row(
+        5,
+        "SYM-SCOPED",
+        "Blocked",
+        "Todo",
+        "reported_blocker",
+        "existing canonical scope"
+      )
+      |> put_in([:decision, "origin_state"], "Ready to Merge")
     ]
 
     Enum.each(rows, fn row ->
@@ -284,6 +293,8 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     [@blocking_decision_migration] =
       Ecto.Migrator.run(repo, migrations_path, :up, to: @blocking_decision_migration)
 
+    [] = Ecto.Migrator.run(repo, migrations_path, :up, to: @blocking_decision_migration)
+
     Enum.each(rows, fn row ->
       %{rows: [[decision, streak]]} =
         SQL.query!(
@@ -292,7 +303,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
           [row.identifier]
         )
 
-      expected_decision = Map.put(row.decision, "origin_state", row.state)
+      expected_decision = Map.put_new(row.decision, "origin_state", row.state)
       ^expected_decision = decision
       2 = streak
       {:stale, :state_mismatch} = BlockingDecision.validity(decision, row.live_state, row.run_id)
@@ -321,7 +332,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       )
 
     [["blocking_decision"], ["no_progress_streak"]] = column_rows
-    Mix.shell().info("smoke blocking_decision_migration legacy_rows=4 first_claim=stale result=PASS")
+    Mix.shell().info("smoke blocking_decision_migration legacy_rows=4 existing_scope=preserved rerun=noop first_claim=stale result=PASS")
   end
 
   defp legacy_blocking_decision_row(index, identifier, state, live_state, reason, evidence) do

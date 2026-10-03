@@ -189,6 +189,30 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert FakePersistence.list_events(event_type: "issue.blocking_decision_cleared") == []
   end
 
+  test "equivalent post-cutover legacy fixtures are stale on their first scoped claim" do
+    fixtures = [
+      {"SYM-130", "In Progress", "Todo", "run-130"},
+      {"SYM-136", "Blocked", "Ready", "run-136"},
+      {"SYM-138", "In Progress", "Todo", "run-138"},
+      {"SYM-139", "Blocked", "Ready", "run-139"}
+    ]
+
+    Enum.each(fixtures, fn {_identifier, persisted_state, live_state, run_id} ->
+      legacy = %{
+        "reason" => "legacy blocker",
+        "evidence" => "synthetic equivalent fixture",
+        "run_id" => run_id,
+        "decided_at" => "2026-09-24T00:00:00Z",
+        "transition_status" => "pending"
+      }
+
+      post_cutover = Map.put(legacy, "origin_state", persisted_state)
+
+      assert BlockingDecision.validity(post_cutover, live_state, run_id) ==
+               {:stale, :state_mismatch}
+    end)
+  end
+
   test "blocking decision scope remains JSON-backed without new issue columns" do
     fields = IssueRecord.__schema__(:fields)
     assert :blocking_decision in fields

@@ -195,7 +195,10 @@ and a same-claim newer running projection remains intact. A manually newer run i
 intent. Persisting a terminal blocker cancels pending automatic retry so a valid blocker cannot
 immediately invalidate itself. Valid blocker claims retain `reason: blocking_decision`; their skip
 logs include issue, reason, origin state, run id, and decision time. The one-time migration enriches
-each non-null decision JSON from `issues.state` without removing either existing database column.
+only non-null decision JSON that lacks `origin_state`, using `issues.state`; an already scoped
+decision is unchanged, including on a repeated migrator invocation. Neither existing database
+column is removed. The database-free worker suite covers equivalent post-cutover fixtures, while
+the opt-in PostgreSQL smoke is the host-run proof for the migration and column assertions.
 
 Listening rejection evidence is `{reason: not_listening, capacity: 0, listening_mode:
 not_listening}`. A refine-only batch containing no refinement candidate uses `reason:

@@ -293,8 +293,9 @@ Backoff formula:
 - Every producer writes the same JSON representation with live `origin_state` and owning `run_id`.
   Failure/no-progress use the current running entry; merge conflict uses the second
   `Ready to Merge` read and scoped handoff; review findings use their review run and delivery-time
-  state. The normalization migration adds `origin_state` from `issues.state` while retaining both
-  existing columns and all other decision content.
+  state. The normalization migration adds `origin_state` from `issues.state` only when the JSON key
+  is absent, preserves an existing scope on repeated execution, and retains both existing columns
+  and all other decision content.
 - Persisting a terminal decision cancels the pending automatic retry. Automatic dispatch remains
   suppressed while the decision is valid; a new run is allowed after CAS clear or explicit human
   retry intent invalidates the old run scope.
