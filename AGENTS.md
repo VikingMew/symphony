@@ -87,6 +87,10 @@ Prefer positive assertions of documented behavior and exact expected values.
 Use `refute` only for timing bounds or security/protocol redlines grounded in an
 owning contract, and cite that contract in the adjacent test name or comment.
 
+Code conformance and test conformance are independent; passing either one does not prove the other.
+Tightened gates use a shrinking exact baseline and become one hard path only when that baseline is empty.
+Every unmet or partially met conformance item needs a remediation plan; not-applicable items need a reason.
+
 Symphony agent refinement and implementation must not perform container-engine or image-level
 validation. Review Compose deployment changes against the owning contract in
 [`docs/compose.md`](docs/compose.md); use static source/config tests only.
