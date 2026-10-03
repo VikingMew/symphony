@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-27
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -33,7 +33,10 @@ entry 会拒绝当前 claim，但该请求可刷新下一次 claim 的 last-seen
 准入依据。claim admission 顺序是：Orchestrator listening gate、内存 session freshness、调用方
 `available_slots > 0`、environment failure circuit、当前 assignment，然后才实时读取 Linear candidates，
 按 priority、created_at、identifier 排序，再按 issue id 读取 Linear 并重新验证状态、依赖、
-routing/profile、listening mode 和未清除的持久 `blocking_decision`。三种 mode 的规则为：
+routing/profile、listening mode 和持久 `blocking_decision`。candidate selection 与 tracker
+revalidation 共用同一检查：`transition_status = completed` 时预期实时状态为 `Blocked`，否则预期
+`origin_state`；decision 的非空 `run_id` 还必须等于最新持久 run id。缺少任一 scope 返回 typed
+`missing_scope` stale，state/run 不匹配也为陈旧。三种 mode 的规则为：
 
 - `not_listening` 在 Linear candidate read、run 创建、issue 迁移和 `task.accepted` 写入前返回空 claim。
 - `listening_refine_only` 在排序后的逐候选 admission 中只接受 refinement state；过滤靠前的
@@ -58,10 +61,13 @@ worker run 仍是非终态时不得重复派发。默认 `tracker.active_states`
 汇总为 worker-mode deployment capacity，不允许并行发放多个 assignment。有效 admission capacity
 仅在存在 fresh 内存 entry、调用方有 slot 且无当前 assignment 时为 1，否则为 0。没有合格 issue、
 已有 assignment、内存 session 缺失/过期或没有 slot 时返回 `{task: null}`，并附带可测试的 structured
-admission reason（capacity 0/1 与拒绝原因）。若候选 issue 已有未清除的
-`blocking_decision`，claim 返回 `admission.reason = blocking_decision`，并记录包含 issue、worker/session
-和 blocking reason 的 `event=worker_claim_skip` 日志；这不同于状态不匹配、依赖阻塞、human review、run
-history、capacity 或 session freshness 的拒绝。真正访问 tracker 后的连续空 claim 由
+admission reason（capacity 0/1 与拒绝原因）。若候选 issue 的 `blocking_decision` state/run scope
+仍匹配，claim 返回 `admission.reason = blocking_decision`，并记录包含 issue、worker/session、blocking
+reason、origin state、run id 和 decision time 的 `event=worker_claim_skip` 日志。若 decision 陈旧，
+同一次 claim 以原 JSON 为 CAS 条件把 decision/streak 写为 `NULL` / `0`，记录带 source、cause 和旧
+scope 的 clear event，清除旧 run 的 blocked/retry/failure/stale-claimed 投影，并继续后续 gate。
+CAS 发现 replacement 时不清 streak、不释放投影，而是立即重读 replacement；同次 claim 创建的
+新 run claimed/running 投影按 run identity 保留。真正访问 tracker 后的连续空 claim 由
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
@@ -150,9 +156,10 @@ commit。两者均在 validation 后落 `blocked`，gate 失败时仍保留 bloc
 self-reported blocked、marker-only、patch-only、permission-detail-only 均不满足 host-push 判据；两种
 结构化证据都不存在时，missing handoff 仍是 `failed` 并消耗普通预算，bounded detail 指明缺失事件或
 PR URL。
-持久 decision 一旦存在，即使 Linear comment/state 写入失败且 tracker 仍返回 active state，后续 worker
-claim 也必须停止认领；只有 `BlockingDecision.clear/1` 清除 decision 并重置 no-progress streak 后，issue
-才可在状态、依赖、routing/profile 和 run-history 均通过时重新认领。
+failure/no-progress producer 使用 running entry 的实时 `Refining` / `In Progress` state 与 run id；
+merge-conflict 只接受带非空 run id 的 completed handoff，并使用第二次 `Ready to Merge` 读取；review
+findings 使用 review job run id 和投递时的实时 `Ready to Merge`。有效 decision 存续期内自动 retry
+被取消和抑制。人工重跑产生较新 run 表示显式重试，即使 state 未变也使旧 decision 作废。
 当 worker 内 Codex 命令执行能力不可用（例如 bwrap/user namespace 创建被拒）时，worker/Codex
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。

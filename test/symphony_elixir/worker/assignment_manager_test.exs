@@ -231,6 +231,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
       Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
+      Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook)
     end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
@@ -517,6 +518,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   test "claim admission skips active issues with uncleared blocking decisions", context do
     ready = issue(101)
     persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    persist_run(ready.identifier, "run-blocked", context.now)
     Tracker.put([ready])
 
     log =
@@ -539,6 +541,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                  issue_identifier: ready.identifier,
                  blocking_decision: %{
                    "decided_at" => "2026-09-12T04:15:33Z",
+                   "origin_state" => "Ready",
                    "reason" => "failure_retries_exhausted",
                    "run_id" => "run-blocked"
                  }
@@ -548,7 +551,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert log =~ "event=worker_claim_skip"
     assert log =~ "skip_reason=blocking_decision"
     assert log =~ "issue_identifier=#{ready.identifier}"
-    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert log =~ "origin_state=\"Ready\""
+    assert log =~ "run_id=\"run-blocked\""
+    assert log =~ "decided_at=\"2026-09-12T04:15:33Z\""
+    assert [%{id: "run-blocked"}] = FakePersistence.list_runs_for_issue(ready.identifier)
     assert Tracker.updates() == []
   end
 
@@ -559,6 +565,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     Application.put_env(:symphony_elixir, :assignment_test_revalidate_hook, fn ->
       persist_issue(ready, %{blocking_decision: blocking_decision("human_blocked")})
+      persist_run(ready.identifier, "run-blocked", context.now)
     end)
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision, issue_identifier: "SYM-102"}} =
@@ -571,13 +578,14 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
-    assert FakePersistence.list_runs_for_issue(ready.identifier) == []
+    assert [%{id: "run-blocked"}] = FakePersistence.list_runs_for_issue(ready.identifier)
     assert Tracker.updates() == []
   end
 
   test "cleared blocking decisions restore normal claim admission", context do
     ready = issue(103)
     persist_issue(ready, %{blocking_decision: blocking_decision("failure_retries_exhausted")})
+    persist_run(ready.identifier, "run-blocked", context.now)
     Tracker.put([ready])
 
     assert {:ok, {:empty, 5}, %{reason: :blocking_decision}} =
@@ -603,7 +611,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert assignment.issue_identifier == ready.identifier
-    assert [_run] = FakePersistence.list_runs_for_issue(ready.identifier)
+
+    assert [_new_run, %{id: "run-blocked"}] =
+             FakePersistence.list_runs_for_issue(ready.identifier)
+
     assert Tracker.updates() == [{ready.id, "In Progress"}]
   end
 
@@ -1874,13 +1885,25 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     |> FakePersistence.upsert_issue()
   end
 
-  defp blocking_decision(reason) do
+  defp blocking_decision(reason, opts \\ []) do
     %{
       "decided_at" => "2026-09-12T04:15:33Z",
       "evidence" => "test",
       "reason" => reason,
-      "run_id" => "run-blocked"
+      "run_id" => Keyword.get(opts, :run_id, "run-blocked"),
+      "origin_state" => Keyword.get(opts, :origin_state, "Ready"),
+      "comment_status" => "pending",
+      "transition_status" => Keyword.get(opts, :transition_status, "pending")
     }
+  end
+
+  defp persist_run(identifier, id, started_at) do
+    FakePersistence.create_run(%{
+      id: id,
+      issue_identifier: identifier,
+      status: "failed",
+      started_at: started_at
+    })
   end
 
   defp summary(outcome) do

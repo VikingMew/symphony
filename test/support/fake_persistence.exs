@@ -76,6 +76,23 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     {:ok, updated}
   end
 
+  def compare_and_clear_blocking_decision(identifier, decision) do
+    if hook = Application.get_env(:symphony_elixir, :blocking_decision_cas_hook) do
+      hook.()
+    end
+
+    Agent.get_and_update(@name, fn state ->
+      case Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) do
+        %{blocking_decision: ^decision} = issue ->
+          updated = Map.merge(issue, %{blocking_decision: nil, no_progress_streak: 0})
+          {{:ok, :cleared}, Map.update!(state, :issues, &replace_issue(&1, issue, updated))}
+
+        _replaced ->
+          {{:ok, :replaced}, state}
+      end
+    end)
+  end
+
   defp replace_issue(issues, issue, updated) do
     Enum.map(issues, fn candidate ->
       if Map.get(candidate, :identifier) == Map.get(issue, :identifier),

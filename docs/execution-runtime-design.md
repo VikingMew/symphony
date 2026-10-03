@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-27
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -178,12 +178,27 @@ Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds
 not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
-later run can start only after a new live Linear claim proves the issue eligible and no uncleared
-`blocking_decision` exists. Manual Blocked, Done, review-state changes, and persisted blocker clears
-therefore take effect at the next check. When a persisted blocker exists, empty claim evidence uses
-`reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
-context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
-routing, and run-history gates pass.
+later run can start only after a new live Linear claim proves the issue eligible. Every persistent
+blocker producer uses `BlockingDecision.new/6` with the live Linear state and owning non-empty run
+id: failure and no-progress use the current running entry, merge conflict uses the second
+`Ready to Merge` read plus completed handoff run, and review findings use the review run plus their
+delivery-time `Ready to Merge` read. Persisted issue state is never a producer scope source.
+
+Candidate selection and tracker revalidation share one validity rule. A completed transition
+expects live `Blocked`; every other decision expects `origin_state`. That state and the decision
+`run_id` must match the latest persisted issue run. Missing scope is typed `missing_scope`; a state
+mismatch or newer run also makes the decision stale. The same claim compares the observed JSON and
+atomically clears `blocking_decision` / `no_progress_streak` to `NULL` / `0`, releases only the old
+run's blocked, retry, failure, and stale-claimed projection, records the scoped clear event, and
+continues later gates. A replacement race is re-read without clearing its streak or projections,
+and a same-claim newer running projection remains intact. A manually newer run is explicit retry
+intent. Persisting a terminal blocker cancels pending automatic retry so a valid blocker cannot
+immediately invalidate itself. Valid blocker claims retain `reason: blocking_decision`; their skip
+logs include issue, reason, origin state, run id, and decision time. The one-time migration enriches
+only non-null decision JSON that lacks `origin_state`, using `issues.state`; an already scoped
+decision is unchanged, including on a repeated migrator invocation. Neither existing database
+column is removed. The database-free worker suite covers equivalent post-cutover fixtures, while
+the opt-in PostgreSQL smoke is the host-run proof for the migration and column assertions.
 
 Listening rejection evidence is `{reason: not_listening, capacity: 0, listening_mode:
 not_listening}`. A refine-only batch containing no refinement candidate uses `reason:
