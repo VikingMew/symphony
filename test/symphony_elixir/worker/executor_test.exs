@@ -164,6 +164,49 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
              )
   end
 
+  test "refinement requires a successful review-state update from the current session" do
+    successful_update = %{
+      tool: "linear_task_update",
+      status: "success",
+      arguments: %{"target_state" => "  NEEDS REFINEMENT REVIEW  "},
+      result: %{"requested_state" => "Needs Refinement Review"}
+    }
+
+    assert Executor.refinement_completion_evidence([successful_update]) ==
+             {:complete, %{"linear_state" => "Needs Refinement Review"}}
+
+    assert {:ok, :ready} =
+             Executor.handoff_requirement(
+               refinement_payload(),
+               %{
+                 handoff: nil,
+                 delivery_evidence: {:complete, %{"linear_state" => "Needs Refinement Review"}}
+               },
+               "/tmp"
+             )
+
+    incomplete =
+      Executor.refinement_completion_evidence([
+        %{successful_update | status: "failure"},
+        put_in(successful_update, [:arguments, "target_state"], "Blocked")
+      ])
+
+    evidence = %{
+      "missing" => ["linear_task_update(target_state: Needs Refinement Review)"],
+      "reason" => "missing_refinement_completion"
+    }
+
+    assert incomplete ==
+             {:incomplete, %{"missing" => ["linear_task_update(target_state: Needs Refinement Review)"]}}
+
+    assert {:ok, {:blocked, {:handoff_failed, {:missing_refinement_completion, ^evidence}}, ^evidence}} =
+             Executor.handoff_requirement(
+               refinement_payload(),
+               %{handoff: nil, delivery_evidence: incomplete},
+               "/tmp"
+             )
+  end
+
   test "prepares a new task branch from the latest configured default branch" do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
@@ -503,6 +546,16 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
              panel_payload()
              |> put_in(["issue", "description"], description)
              |> put_in(["handoff", "policy"], "push_pr_then_restricted_linear")
+             |> ExecutionPayload.from_task_payload()
+             |> Payload.parse()
+
+    payload
+  end
+
+  defp refinement_payload do
+    assert {:ok, payload} =
+             panel_payload()
+             |> put_in(["workflow_profile"], "refinement")
              |> ExecutionPayload.from_task_payload()
              |> Payload.parse()
 

@@ -249,6 +249,7 @@ defmodule SymphonyElixir.RunFailure do
   defp json_value(map) when is_map(map), do: json_map(map)
   defp json_value(tuple) when is_tuple(tuple), do: tuple |> Tuple.to_list() |> Enum.map(&json_value/1)
   defp json_value(list) when is_list(list), do: Enum.map(list, &json_value/1)
+  defp json_value(value) when is_boolean(value), do: value
   defp json_value(value) when is_atom(value), do: Atom.to_string(value)
   defp json_value(value) when is_binary(value) or is_number(value) or is_boolean(value) or is_nil(value), do: value
   defp json_value(value), do: inspect(value, limit: 50, printable_limit: 2_000)

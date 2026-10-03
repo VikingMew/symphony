@@ -349,6 +349,7 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp terminal_phase(:completed, _result), do: "complete"
   defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
+  defp terminal_phase(_status, %{reason: reason}) when reason in [:codex_upstream_capacity, :codex_turn_failed], do: "codex"
   defp terminal_phase(_status, _result), do: "validation"
 
   defp reason_for(:cancelled, _), do: "cancelled"
@@ -359,8 +360,15 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp reason_for(_, %{validation: %{overall_status: :timed_out}}), do: "timed_out"
   defp reason_for(_, %{validation: %{overall_status: :cancelled}}), do: "cancelled"
 
-  defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed, :execution_capability_unavailable],
-    do: Atom.to_string(reason)
+  defp reason_for(_, %{reason: reason})
+       when reason in [
+              :timed_out,
+              :handoff_failed,
+              :execution_capability_unavailable,
+              :codex_upstream_capacity,
+              :codex_turn_failed
+            ],
+       do: Atom.to_string(reason)
 
   defp reason_for(_, %{reason: :source_preparation_timeout}), do: "source_preparation_timeout"
 
@@ -426,6 +434,7 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp json_value(value) when is_tuple(value), do: value |> Tuple.to_list() |> Enum.map(&json_value/1)
   defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value) when is_boolean(value), do: value
   defp json_value(value) when is_atom(value), do: Atom.to_string(value)
   defp json_value(value) when is_pid(value), do: "pid"
   defp json_value(value) when is_reference(value), do: "reference"

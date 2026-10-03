@@ -48,7 +48,7 @@ defmodule SymphonyElixir.Codex.AppServerDynamicToolPolicyTest do
             printf '%s\\n' '{"id":101,"method":"item/tool/call","params":{"tool":"some_tool","callId":"call-90","threadId":"thread-90","turnId":"turn-90","arguments":{}}}'
             ;;
           5)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -149,7 +149,7 @@ defmodule SymphonyElixir.Codex.AppServerDynamicToolPolicyTest do
             printf '%s\\n' '{"id":101,"method":"item/tool/call","params":{"tool":"linear_issue_create","callId":"call-create","threadId":"thread-operator","turnId":"turn-operator","arguments":{"title":"Found debt","problem":"Problem","evidence":"Evidence","why_it_matters":"Impact","suggested_direction":"Fix it","category":"debt"}}}'
             ;;
           5)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)

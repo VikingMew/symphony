@@ -32,7 +32,7 @@ defmodule SymphonyElixir.Codex.AppServerProtocolTest do
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-91"}}}'
             ;;
           4)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -96,7 +96,7 @@ defmodule SymphonyElixir.Codex.AppServerProtocolTest do
             ;;
           4)
             printf '%s\\n' 'warning: this is stderr noise' >&2
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -215,6 +215,74 @@ defmodule SymphonyElixir.Codex.AppServerProtocolTest do
     end
   end
 
+  test "failed completion preserves bounded Codex error detail and returns a stable reason" do
+    cases = [
+      {"serverOverloaded", :codex_upstream_capacity},
+      {"internalServerError", :codex_turn_failed}
+    ]
+
+    Enum.each(cases, fn {codex_error_info, expected_reason} ->
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-app-server-failed-completion-#{codex_error_info}-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        workspace_root = Path.join(test_root, "workspaces")
+        workspace = Path.join(workspace_root, "SYM-152")
+        codex_binary = Path.join(test_root, "fake-codex")
+        File.mkdir_p!(workspace)
+
+        File.write!(codex_binary, """
+        #!/bin/sh
+        count=0
+        while IFS= read -r line; do
+          count=$((count + 1))
+
+          case "$count" in
+            1) printf '%s\\n' '{"id":1,"result":{}}' ;;
+            2) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-152"}}}' ;;
+            3) printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-152"}}}' ;;
+            4)
+              printf '%s\\n' '{"method":"error","params":{"error":{"message":"Selected model is at capacity. Please try a different model.","codexErrorInfo":"#{codex_error_info}"},"willRetry":false}}'
+              printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"failed"}}}'
+              exit 0
+              ;;
+          esac
+        done
+        """)
+
+        File.chmod!(codex_binary, 0o755)
+
+        write_workflow_file!(Workflow.workflow_file_path(),
+          workspace_root: workspace_root,
+          codex_command: "#{codex_binary} app-server"
+        )
+
+        issue = %Issue{
+          id: "issue-152",
+          identifier: "SYM-152",
+          title: "Failed completion",
+          description: "Replay the failed turn",
+          state: "Refining",
+          url: "https://example.org/issues/SYM-152",
+          labels: []
+        }
+
+        assert {:error,
+                {^expected_reason,
+                 %{
+                   "codex_error_info" => ^codex_error_info,
+                   "turn_status" => "failed",
+                   "will_retry" => false
+                 }}} = AppServer.run(workspace, "Replay the failed turn", issue)
+      after
+        File.rm_rf(test_root)
+      end
+    end)
+  end
+
   test "app server emits malformed events for JSON-like protocol lines that fail to decode" do
     test_root =
       Path.join(
@@ -246,7 +314,7 @@ defmodule SymphonyElixir.Codex.AppServerProtocolTest do
             ;;
           4)
             printf '%s\\n' '{"method":"turn/completed"'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)

@@ -722,26 +722,37 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert Tracker.updates() == []
   end
 
-  test "failure ends the assignment and the next claim rereads Linear", context do
+  test "Codex capacity failure persists its reason, ends the assignment, and permits another claim", context do
     ready = issue(1)
     Tracker.put([ready])
     assert {:ok, assignment} = claim(context)
 
-    assert {:ok, _event} =
+    terminal_summary =
+      summary("failed")
+      |> Map.merge(%{
+        "phase" => "codex",
+        "reason" => "codex_upstream_capacity",
+        "validation_status" => "pending",
+        "detail" => Jason.encode!(%{"detail" => %{"codex_error_info" => "serverOverloaded", "will_retry" => false}})
+      })
+
+    assert {:ok, task_event} =
              AssignmentManager.record_event(
                context.worker.id,
                context.session.id,
                assignment.id,
                "task.failed",
-               %{"correlation" => assignment.correlation, "summary" => summary("failed")},
+               %{"correlation" => assignment.correlation, "summary" => terminal_summary},
                context.manager
              )
 
     run = FakePersistence.get_run(assignment.run_id)
     assert run.status == "failed"
-    assert run.failure_reason == "validation_failed"
-    assert run.failure_evidence["reason"] == "worker_error"
-    assert run.execution_summary == summary("failed")
+    assert run.failure_reason == "codex_upstream_capacity"
+    assert run.failure_evidence["reason"] == "codex_upstream_capacity"
+    assert get_in(Jason.decode!(run.failure_evidence["detail"]), ["detail", "will_retry"]) == false
+    assert run.execution_summary == terminal_summary
+    assert task_event.payload["failure_reason"] == run.failure_reason
 
     assert [run_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.failed")
     assert run_event.payload["failure_reason"] == run.failure_reason

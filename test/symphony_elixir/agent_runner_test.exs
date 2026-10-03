@@ -87,7 +87,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
             ;;
           4)
             printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}'
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -184,7 +184,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
               printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'
               ;;
             4)
-              printf '%s\\n' '{\"method\":\"turn/completed\"}'
+              printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
               ;;
             *)
               ;;
@@ -277,7 +277,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
             ;;
           4)
             printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-ready\"}}}'
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -414,7 +414,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
           3) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-refinement"}}}' ;;
           4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-refinement"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
         esac
@@ -719,11 +719,11 @@ defmodule SymphonyElixir.AgentRunnerTest do
             ;;
           4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-1"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             ;;
           5)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-2"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             ;;
         esac
       done
@@ -848,11 +848,11 @@ defmodule SymphonyElixir.AgentRunnerTest do
             ;;
           4)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-1"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             ;;
           5)
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-2"}}}'
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             ;;
         esac
       done
@@ -947,7 +947,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
             printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":""},"references":{"branch":"feature/sym-1","pr_url":"https://github.com/acme/app/pull/12","pr_proof":"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U"}}}}'
             ;;
           6)
-            printf '%s\n' '{"method":"turn/completed"}'
+            printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
         esac
