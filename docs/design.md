@@ -25,7 +25,9 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [hot-update-design.md](hot-update-design.md) | Hot-update capability | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | Workflow configuration authority | landed |
 | [execution-runtime-design.md](execution-runtime-design.md) | External execution runtime and container credential boundary | landed |
+| [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency and boundary governance | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code conformance and merge-gate behavior | landed |
+| [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification and evidence contract | landed |
 
 This document (L2) owns implementation conventions — repository layout, package rules, and the
 module map below. System topology, boundaries, and direction are owned by

@@ -107,4 +107,27 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicyTest do
 
     assert RetryPolicy.stall_decision("issue-5", %{last_codex_timestamp: nil}, now, 5_000) == :active
   end
+
+  test "stall_decision applies the ten-minute default boundary strictly" do
+    now = ~U[2026-09-27 00:10:00.000Z]
+
+    running_entry = fn elapsed_ms ->
+      %{last_codex_timestamp: DateTime.add(now, -elapsed_ms, :millisecond)}
+    end
+
+    assert RetryPolicy.stall_decision("issue-6", running_entry.(305_211), now, 600_000) == :active
+    assert RetryPolicy.stall_decision("issue-6", running_entry.(600_000), now, 600_000) == :active
+
+    assert {:stalled, %{elapsed_ms: 600_001}} =
+             RetryPolicy.stall_decision("issue-6", running_entry.(600_001), now, 600_000)
+
+    assert RetryPolicy.stall_decision(
+             "issue-6",
+             %{last_codex_timestamp: nil},
+             now,
+             600_000
+           ) == :active
+
+    assert RetryPolicy.stall_decision("issue-6", running_entry.(600_001), now, 0) == :active
+  end
 end

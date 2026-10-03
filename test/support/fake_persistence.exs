@@ -699,21 +699,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp run_inserted_at(%{started_at: %DateTime{} = started_at}), do: started_at
   defp run_inserted_at(_run), do: ~U[1970-01-01 00:00:00Z]
 
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) do
-    case get_run(run_id) do
-      nil ->
-        {:error, :not_found}
-
-      run ->
-        update_run(
-          run,
-          SymphonyElixir.RunLifecycle.terminal_attrs(
-            status,
-            failure_reason,
-            Keyword.get(opts, :finished_at, DateTime.utc_now())
-          )
-        )
-    end
+  def finish_run(run_id, status, terminal, opts \\ []) do
+    SymphonyElixir.RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
   end
 
   def list_runs_for_issue(identifier, _opts \\ []) do
@@ -1066,6 +1053,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     "execution_mode" => :execution_mode,
     "attempt" => :attempt,
     "failure_reason" => :failure_reason,
+    "failure_evidence" => :failure_evidence,
+    "execution_summary" => :execution_summary,
     "started_at" => :started_at,
     "finished_at" => :finished_at,
     "inserted_at" => :inserted_at,

@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, alignment]
 status: current
 language: en
-updated: 2026-09-26
+updated: 2026-10-03
 ---
 
 # Documentation Alignment Matrix

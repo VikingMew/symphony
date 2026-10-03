@@ -4,7 +4,7 @@ defmodule SymphonyElixir.PRReview.Queue do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, PersistenceEventWriter, PRReview.Delivery, PRReview.Runner, Tracker}
+  alias SymphonyElixir.{Config, PersistenceEventWriter, PRReview.Delivery, PRReview.Runner, RunFailure, Tracker}
   alias SymphonyElixir.PRReview.Store
 
   @reconcile_limit 25
@@ -100,14 +100,15 @@ defmodule SymphonyElixir.PRReview.Queue do
   end
 
   defp finish(_job_id, {:ok, job}, _opts) do
-    finish_run(job, "completed", nil)
+    finish_run(job, "completed", :completed)
     event(job, "completed", %{"outcome" => job.result["outcome"]})
   end
 
   defp finish(job_id, {:superseded, reason}, _opts) do
     job = SymphonyElixir.Repo.get!(SymphonyElixir.Persistence.ReviewJob, job_id)
     {:ok, job} = Store.update(job, %{status: "superseded", finished_at: DateTime.utc_now()})
-    finish_run(job, "cancelled", inspect(reason))
+    failure = RunFailure.classify({:cancelled, %{reason: reason, action: "review_superseded"}})
+    finish_run(job, "cancelled", failure)
     event(job, "superseded", %{"reason" => inspect(reason)})
   end
 
@@ -120,7 +121,12 @@ defmodule SymphonyElixir.PRReview.Queue do
         else: %{status: "failed", finished_at: DateTime.utc_now()}
 
     {:ok, job} = Store.update(job, attrs)
-    if job.status == "failed", do: finish_run(job, "failed", inspect(reason))
+
+    if job.status == "failed" do
+      failure = RunFailure.classify({:operator_domain_failure, %{reason: reason, phase: "pr_review"}})
+      finish_run(job, "failed", failure)
+    end
+
     event(job, "failed", %{"reason" => inspect(reason)})
   end
 
@@ -177,6 +183,26 @@ defmodule SymphonyElixir.PRReview.Queue do
     )
   end
 
-  defp finish_run(job, status, reason),
-    do: SymphonyElixir.Persistence.finish_run(job.run_id, status, reason)
+  defp finish_run(job, status, terminal) do
+    with {:ok, run} <- SymphonyElixir.Persistence.finish_run(job.run_id, status, terminal) do
+      fields = RunFailure.terminal_fields(terminal)
+
+      PersistenceEventWriter.record(
+        %{
+          project_id: job.project_id,
+          run_id: job.run_id,
+          issue_identifier: job.issue_identifier,
+          event_type: "run.#{status}",
+          payload: %{
+            "status" => status,
+            "failure_reason" => fields.failure_reason,
+            "failure_evidence" => fields.failure_evidence
+          }
+        },
+        %{issue_id: job.tracker_issue_id, issue_identifier: job.issue_identifier, run_id: job.run_id}
+      )
+
+      {:ok, run}
+    end
+  end
 end

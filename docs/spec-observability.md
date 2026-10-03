@@ -347,8 +347,10 @@ Minimum endpoints:
 
 - `GET /api/v1/runs?issue_identifier=<identifier>`
   - `issue_identifier` is required. Returns bounded newest-first run projections with `id`, `kind`,
-    `profile`, `status`, `attempt`, `started_at`, `finished_at`, and `failure_reason`, plus a compact
-    bounded event timeline.
+    `profile`, `status`, `attempt`, `started_at`, `finished_at`, `failure_reason`, and bounded
+    `failure_evidence`, plus a compact bounded event timeline. Terminal `run.*` events expose the
+    same reason/evidence pair as the row. Classification and evidence ownership is defined by
+    [Run Failure Classification Design](run-failure-classification-design.md).
   - Caller limits are clamped to an implementation-owned maximum. Unknown history, invalid input,
     Repo unavailability, query failure, and bounded timeout remain distinct JSON errors.
   - The static `/api/v1/runs` route MUST be registered before the dynamic issue route.
@@ -483,7 +485,7 @@ MUST be observable without reading durable history.
 
 - `status`: `allow` or `tripped`
 - `active`: boolean open/closed state
-- `triggering_fingerprint`: the normalized failure fingerprint when open, otherwise `null`
+- `triggering_fingerprint`: the exact run failure classification when open, otherwise `null`
 - `triggered_at`: UTC trigger time when open, otherwise `null`
 - `threshold`: distinct issue threshold
 - `window_ms`: failure window in milliseconds

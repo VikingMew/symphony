@@ -101,6 +101,10 @@ scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
 - `defp` specs are optional.
 - `@impl` callback implementations are exempt from local `@spec` requirement.
 - Keep changes narrowly scoped; avoid unrelated refactors.
+- Keep public interfaces narrow: make required inputs explicit, keep defaults safe, and omit parameters without current consumers.
+- Keep cross-call mutable state in an owned OTP or startup boundary; pass or inject other shared state explicitly.
+- When changing a dependency or tool/action pin, include its lock or pin update and record the upgrade reason in the same change.
+- For uncertain external behavior, add an offline boundary contract test that names the assumed response or failure semantics.
 - Do not add invented version numbers to new or modified documentation or generated content, including
   unsupported title/body versions, badges, or changelog-style labels for one-off plans.
 - Use version numbers only when they carry real release, compatibility, protocol/API, dependency, or

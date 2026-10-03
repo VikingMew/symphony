@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-26
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -52,7 +52,12 @@ stale. The Panel clears that decision and `no_progress_streak`, emits
 `issue.blocking_decision_cleared` with the old scope and claim phase, asks the Orchestrator to drop
 the old blocked/retry/failure/stale-claimed projection, and continues the remaining gates in the
 same claim. The ordered cleanup message precedes any new assignment projection, and cleanup keyed
-to the old decision run preserves a newer claimed/running run. The Panel
+to the old decision run preserves a newer claimed/running run. Candidate fetch, revalidation, and
+the started-state write run in one supervised task under a 5000 ms budget, while the assignment
+manager retains the single in-flight claim reservation and continues serving lease and event calls.
+A timeout terminates that task and returns the existing `{:linear_api_request, :timeout}` tracker
+failure with 30/60-second poll backoff; the public manager claim uses a bounded 6000 ms call timeout
+instead of `:infinity`. The Panel
 derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
 contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
 validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state

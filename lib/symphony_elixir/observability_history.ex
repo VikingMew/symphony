@@ -129,7 +129,8 @@ defmodule SymphonyElixir.ObservabilityHistory do
       attempt: value(run, :attempt),
       started_at: iso8601(value(run, :started_at)),
       finished_at: iso8601(value(run, :finished_at)),
-      failure_reason: value(run, :failure_reason)
+      failure_reason: value(run, :failure_reason),
+      failure_evidence: value(run, :failure_evidence)
     }
   end
 

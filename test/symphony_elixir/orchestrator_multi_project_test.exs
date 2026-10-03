@@ -361,8 +361,6 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     Application.put_env(:symphony_elixir, :execution_mode, :worker)
     on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
 
-    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: MultiProjectLinearClient, persistence: FakePersistence, workflows: WorkflowStore, reconcile_interval_ms: :timer.hours(1)})
-
     {:ok, base} = Workflow.load()
     {:ok, project} = FakePersistence.default_project()
 
@@ -393,33 +391,55 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     assert :ok = WorkflowStore.force_reload()
 
-    {:ok, registration} =
-      FakePersistence.register_worker(%{
-        "worker_name" => "worker-capacity-timeout",
-        "total_slots" => 3
-      })
-
-    :ok = AssignmentManager.observe_session(registration.worker, registration.session)
-
     orchestrator_name =
       Module.concat(__MODULE__, "CapacityTimeoutOrchestrator#{System.unique_integer([:positive])}")
 
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    test_pid = self()
+
+    worker_capacity_query = fn ->
+      ref = make_ref()
+      send(test_pid, {:worker_capacity_query, self(), ref})
+
+      receive do
+        {:worker_capacity_reply, ^ref, {:capacity, capacity}} ->
+          capacity
+
+        {:worker_capacity_reply, ^ref, :timeout} ->
+          exit({:timeout, {GenServer, :call, [AssignmentManager, :available_worker_slots, 5_000]}})
+      end
+    end
+
+    {:ok, pid} =
+      Orchestrator.start_link(
+        name: orchestrator_name,
+        worker_capacity_query: worker_capacity_query
+      )
+
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
-    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
 
-    :sys.replace_state(pid, &%{&1 | max_concurrent_agents: 9})
-    :sys.suspend(AssignmentManager)
+    :sys.replace_state(
+      pid,
+      fn state ->
+        Process.cancel_timer(state.tick_timer_ref)
 
-    on_exit(fn ->
-      if manager = Process.whereis(AssignmentManager), do: :sys.resume(manager)
-    end)
+        %{
+          state
+          | listening_mode: :listening_all,
+            max_concurrent_agents: 9,
+            next_poll_due_at_ms: nil,
+            tick_timer_ref: nil,
+            tick_token: nil
+        }
+      end,
+      5_000
+    )
 
     log =
       capture_log(fn ->
         send(pid, :run_poll_cycle)
-        Process.sleep(5_100)
-        assert :sys.get_state(pid).max_concurrent_agents == 0
+        assert_receive {:worker_capacity_query, ^pid, timeout_ref}, 5_000
+        send(pid, {:worker_capacity_reply, timeout_ref, :timeout})
+        assert :sys.get_state(pid, 5_000).max_concurrent_agents == 0
       end)
 
     assert Process.alive?(pid)
@@ -432,9 +452,10 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert log =~
              "event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0"
 
-    :sys.resume(AssignmentManager)
     send(pid, :run_poll_cycle)
-    eventually(fn -> :sys.get_state(pid).max_concurrent_agents == 3 end)
+    assert_receive {:worker_capacity_query, ^pid, recovery_ref}, 5_000
+    send(pid, {:worker_capacity_reply, recovery_ref, {:capacity, 3}})
+    assert :sys.get_state(pid, 5_000).max_concurrent_agents == 3
   end
 
   test "retry without project context does not crash when multiple projects require explicit context" do

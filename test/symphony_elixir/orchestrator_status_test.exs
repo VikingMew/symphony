@@ -1395,9 +1395,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              attempt: 1,
              due_at_ms: due_at_ms,
              identifier: "MT-STALL",
-             error: "stalled for " <> _
+             error: "budget_exhausted",
+             failure_evidence: %{"elapsed_ms" => elapsed_ms, "timeout_ms" => 1_000}
            } = state.retry_attempts[issue_id]
 
+    assert elapsed_ms > 1_000
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
@@ -1465,11 +1467,12 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.claimed, issue_id)
     assert state.retry_attempts == %{}
-    assert %{reason: "blocked_on_push_auth", detail: detail} = state.blocked[issue_id]
-    assert detail =~ "refresh GitHub credentials"
+    assert %{reason: "runtime_failure", detail: detail} = state.blocked[issue_id]
+    assert detail["reason"] == "blocked_on_push_auth"
+    assert detail["detail"] == %{"action" => "refresh GitHub credentials"}
 
     snapshot = GenServer.call(pid, :snapshot)
-    assert [%{issue_id: ^issue_id, reason: "blocked_on_push_auth"}] = snapshot.blocked
+    assert [%{issue_id: ^issue_id, reason: "runtime_failure"}] = snapshot.blocked
   end
 
   test "stalled sessions consume the failure budget without inspecting protocol events" do

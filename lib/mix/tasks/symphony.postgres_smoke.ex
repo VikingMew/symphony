@@ -27,6 +27,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @pre_convergence_migration 20_260_907_000_000
   @convergence_migration 20_260_914_000_000
   @codex_selector_migration 20_260_923_000_000
+  @failure_classification_migration 20_260_927_000_000
   @legacy_project_ids [
     "70000000-0000-0000-0000-000000000001",
     "70000000-0000-0000-0000-000000000002"
@@ -50,10 +51,13 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @spec run([String.t()]) :: :ok
   def run([]) do
     sqlite_path = Path.join(System.tmp_dir!(), "symphony-pg-smoke-#{System.unique_integer([:positive])}.db")
+    invalid_sqlite_path = sqlite_path <> ".invalid"
 
     try do
       create_sqlite_fixture!(sqlite_path)
+      create_sqlite_fixture!(invalid_sqlite_path, "mystery")
       migrate_and_rebuild!()
+      assert_unknown_import_rejected!(invalid_sqlite_path)
 
       counts = import_and_exercise!(sqlite_path)
 
@@ -65,6 +69,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       :ok
     after
       File.rm(sqlite_path)
+      File.rm(invalid_sqlite_path)
     end
   end
 
@@ -88,6 +93,8 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         rebuild_pre_codex_selector_schema!(repo, migrations_path)
         expected = seed_codex_selector_fixture!(repo)
         migrate_and_verify_codex_selectors!(repo, migrations_path, expected)
+        seed_run_failure_fixture!(repo)
+        migrate_and_verify_run_failures!(repo, migrations_path)
         convergence_snapshot!(repo)
       end)
 
@@ -226,6 +233,144 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     "gpt-5.5" = get_in(instance_config, ["codex", "model"])
     "xhigh" = get_in(instance_config, ["codex", "reasoning_effort"])
     Mix.shell().info("smoke codex_selector_migration result=PASS")
+  end
+
+  defp seed_run_failure_fixture!(repo) do
+    Enum.with_index(run_failure_rows(), 1)
+    |> Enum.each(fn {row, index} ->
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO runs (
+          id, issue_identifier, status, failure_reason, attempt, execution_mode, kind,
+          started_at, inserted_at, updated_at
+        )
+        VALUES ($1::text::uuid, $2, $3, $4, 0, 'centralized', 'issue', NOW(), NOW(), NOW())
+        """,
+        [run_failure_id(index), row.identifier, row.status, row.reason]
+      )
+    end)
+  end
+
+  defp migrate_and_verify_run_failures!(repo, migrations_path) do
+    [@failure_classification_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @failure_classification_migration)
+
+    Enum.each(run_failure_rows(), fn row ->
+      %{rows: [[status, reason, evidence]]} =
+        SQL.query!(
+          repo,
+          "SELECT status, failure_reason, failure_evidence FROM runs WHERE issue_identifier = $1",
+          [row.identifier]
+        )
+
+      ^status = row.expected_status
+      ^reason = row.expected_reason
+      ^evidence = row.expected_evidence
+    end)
+
+    %{rows: grouped} =
+      SQL.query!(
+        repo,
+        """
+        SELECT failure_reason, COUNT(*)
+        FROM runs
+        WHERE issue_identifier LIKE 'FAILURE-SMOKE-%'
+        GROUP BY failure_reason
+        ORDER BY failure_reason NULLS FIRST
+        """,
+        []
+      )
+
+    expected_grouped =
+      run_failure_rows()
+      |> Enum.frequencies_by(& &1.expected_reason)
+      |> Enum.sort_by(fn {reason, _count} -> reason || "" end)
+      |> Enum.map(fn {reason, count} -> [reason, count] end)
+
+    ^expected_grouped = grouped
+    assert_run_failure_checks!(repo)
+    Mix.shell().info("smoke run_failure_migration result=PASS")
+  end
+
+  defp run_failure_rows do
+    [
+      failure_row("running", "ignored", "running", nil, nil),
+      failure_row("completed", "ignored", "completed", nil, nil),
+      failure_row("succeeded", nil, "completed", nil, nil),
+      failure_row("success", "ignored", "completed", nil, nil),
+      failure_row("failed", "runtime_failure", "failed", "runtime_failure", %{
+        "migration" => "historical_classification"
+      }),
+      failure_row("failed", "%File.Error{reason: :erofs}", "failed", "environment_unavailable", %{
+        "kind" => "environment_unavailable",
+        "legacy_failure_reason" => "%File.Error{reason: :erofs}",
+        "migration" => "historical_mapping"
+      }),
+      failure_row("blocked", "checkout timed_out", "blocked", "source_preparation_timeout", %{
+        "legacy_failure_reason" => "checkout timed_out",
+        "migration" => "historical_mapping",
+        "phase" => "checkout"
+      }),
+      failure_row("cancelled", "Linear Req.TransportError timeout", "cancelled", "external_dependency_timeout", %{
+        "dependency" => "linear",
+        "legacy_failure_reason" => "Linear Req.TransportError timeout",
+        "migration" => "historical_mapping"
+      }),
+      failure_row("stopped", nil, "stopped", "unknown", %{"migration" => "missing_failure_reason"}),
+      failure_row("failed", "opaque legacy", "failed", "unknown", %{
+        "legacy_failure_reason" => "opaque legacy",
+        "migration" => "unclassified_legacy_reason"
+      }),
+      failure_row("failed", "clone timeout", "failed", "source_preparation_timeout", %{
+        "legacy_failure_reason" => "clone timeout",
+        "migration" => "historical_mapping",
+        "phase" => "clone"
+      })
+    ]
+    |> Enum.with_index(1)
+    |> Enum.map(fn {row, index} -> Map.put(row, :identifier, "FAILURE-SMOKE-#{index}") end)
+  end
+
+  defp failure_row(status, reason, expected_status, expected_reason, expected_evidence) do
+    %{
+      status: status,
+      reason: reason,
+      expected_status: expected_status,
+      expected_reason: expected_reason,
+      expected_evidence: expected_evidence
+    }
+  end
+
+  defp run_failure_id(index),
+    do: "91000000-0000-0000-0000-#{index |> Integer.to_string() |> String.pad_leading(12, "0")}"
+
+  defp assert_run_failure_checks!(repo) do
+    invalid_rows = [
+      {"mystery", nil, nil},
+      {"completed", "runtime_failure", %{"reason" => "invalid"}},
+      {"failed", nil, %{"reason" => "invalid"}},
+      {"failed", "runtime_failure", nil},
+      {"failed", "outside_vocabulary", %{"reason" => "invalid"}},
+      {"failed", "runtime_failure", %{}},
+      {"failed", "runtime_failure", []}
+    ]
+
+    Enum.with_index(invalid_rows, 100)
+    |> Enum.each(fn {{status, reason, evidence}, index} ->
+      {:error, %Postgrex.Error{postgres: %{code: :check_violation}}} =
+        SQL.query(
+          repo,
+          """
+          INSERT INTO runs (
+            id, issue_identifier, status, failure_reason, failure_evidence,
+            attempt, execution_mode, kind, started_at, inserted_at, updated_at
+          )
+          VALUES ($1::text::uuid, 'FAILURE-CHECK', $2, $3, $4::jsonb, 0, 'centralized', 'issue', NOW(), NOW(), NOW())
+          """,
+          [run_failure_id(index), status, reason, evidence]
+        )
+    end)
   end
 
   defp seed_legacy_fixture!(_repo, :zero), do: []
@@ -436,6 +581,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
   defp cleanup_legacy_fixture!(repo) do
     SQL.query!(repo, "DELETE FROM projects", [])
+    SQL.query!(repo, "DELETE FROM runs WHERE issue_identifier LIKE 'FAILURE-SMOKE-%'", [])
 
     SQL.query!(
       repo,
@@ -501,6 +647,19 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
       %EventRecord{event_type: "smoke.persistence_usable"} = Repo.get!(EventRecord, marker.id)
       counts
+    end)
+  end
+
+  defp assert_unknown_import_rejected!(sqlite_path) do
+    with_repo!(fn repo ->
+      {:error, {:sqlite_import_failed, %RuntimeError{message: "Unknown legacy run status: \"mystery\""}}} =
+        SQLiteImporter.import_backup(repo, sqlite_path)
+
+      Enum.each(SQLiteImporter.app_tables(), fn table ->
+        %{rows: [[0]]} = SQL.query!(repo, "SELECT COUNT(*) FROM #{table}", [])
+      end)
+
+      Mix.shell().info("smoke sqlite_unknown_status_rejected=PASS")
     end)
   end
 
@@ -633,8 +792,36 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         [@project_id]
       )
 
-    %{rows: [[@run_id, @issue_id]]} =
-      SQL.query!(repo, "SELECT id::text, issue_id::text FROM runs WHERE id = $1::text::uuid", [@run_id])
+    %{rows: [[@run_id, @issue_id, "completed", nil, nil]]} =
+      SQL.query!(
+        repo,
+        "SELECT id::text, issue_id::text, status, failure_reason, failure_evidence FROM runs WHERE id = $1::text::uuid",
+        [@run_id]
+      )
+
+    %{rows: legacy_failures} =
+      SQL.query!(
+        repo,
+        """
+        SELECT status, failure_reason, failure_evidence
+        FROM runs
+        WHERE issue_identifier LIKE 'SYM-LEGACY-%'
+        ORDER BY issue_identifier
+        """,
+        []
+      )
+
+    [
+      ["failed", "unknown", %{"import" => "unclassified_legacy_reason", "legacy_failure_reason" => "opaque legacy"}],
+      ["blocked", "unknown", %{"import" => "missing_failure_reason"}],
+      ["cancelled", "environment_unavailable", environment_evidence]
+    ] = legacy_failures
+
+    %{
+      "import" => "historical_mapping",
+      "kind" => "environment_unavailable",
+      "legacy_failure_reason" => "workspace erofs"
+    } = environment_evidence
 
     %{rows: [[@session_id, @worker_id]]} =
       SQL.query!(
@@ -664,16 +851,16 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     end
   end
 
-  defp create_sqlite_fixture!(path) do
+  defp create_sqlite_fixture!(path, run_status \\ "succeeded") do
     sqlite3 = System.find_executable("sqlite3") || Mix.raise("sqlite3 is required for the PostgreSQL smoke test")
 
-    case System.cmd(sqlite3, [path, sqlite_fixture_sql()], stderr_to_stdout: true) do
+    case System.cmd(sqlite3, [path, sqlite_fixture_sql(run_status)], stderr_to_stdout: true) do
       {_output, 0} -> :ok
       {output, status} -> Mix.raise("Failed to create SQLite smoke fixture: exit=#{status} output=#{output}")
     end
   end
 
-  defp sqlite_fixture_sql do
+  defp sqlite_fixture_sql(run_status) do
     """
     PRAGMA foreign_keys = ON;
     CREATE TABLE users (id TEXT, username TEXT, password_hash TEXT, inserted_at TEXT, updated_at TEXT);
@@ -694,7 +881,10 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     INSERT INTO tracker_configs VALUES ('11000000-0000-0000-0000-000000000001', '#{@project_id}', 'linear', 'https://api.linear.app/graphql', 'SYM', NULL, '{"values":["Todo"]}', '{"values":["Done"]}', 1, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workflow_versions VALUES ('#{@workflow_id}', '#{@project_id}', 1, '--- workflow fixture ---', '{"tracker":{"kind":"linear","project_slug":"SYM"},"project":{"repository_url":"https://github.com/example/symphony.git"}}', 'Smoke prompt', 'import', 1, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO issues VALUES ('#{@issue_id}', '#{@project_id}', 'linear-1', 'SYM-2', 'Cut over', 'In Progress', 'https://linear.app/example/SYM-2', '{"values":["migration"]}', '{"priority":1}', '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO runs VALUES ('#{@run_id}', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-2', '/data/workspaces/SYM-2', 'succeeded', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('#{@run_id}', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-2', '/data/workspaces/SYM-2', '#{run_status}', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000002', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-1', NULL, 'failed', 1, 'opaque legacy', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000003', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-2', NULL, 'blocked', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000004', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-3', NULL, 'cancelled', 1, 'workspace erofs', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
     INSERT INTO agent_turns VALUES ('12000000-0000-0000-0000-000000000001', '#{@run_id}', 1, 'succeeded', 'Imported turn', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workspaces VALUES ('13000000-0000-0000-0000-000000000001', '#{@project_id}', 'SYM-2', '/data/workspaces/SYM-2', NULL, 'active', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO events VALUES ('14000000-0000-0000-0000-000000000001', '#{@project_id}', '#{@run_id}', 'SYM-2', 'run.completed', '{"result":"ok"}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');

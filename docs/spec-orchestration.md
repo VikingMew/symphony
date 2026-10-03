@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-26
+updated: 2026-10-03
 ---
 
 # Orchestration Specification

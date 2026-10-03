@@ -1228,7 +1228,13 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent crashed: :boom"} =
+    assert %{
+             attempt: 3,
+             due_at_ms: due_at_ms,
+             identifier: "MT-559",
+             error: "worker_process_termination",
+             failure_evidence: %{"phase" => "agent", "reason" => "boom"}
+           } =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 39_500, 40_500)
@@ -1268,7 +1274,13 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent crashed: :boom"} =
+    assert %{
+             attempt: 1,
+             due_at_ms: due_at_ms,
+             identifier: "MT-560",
+             error: "worker_process_termination",
+             failure_evidence: %{"phase" => "agent", "reason" => "boom"}
+           } =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 9_000, 10_500)

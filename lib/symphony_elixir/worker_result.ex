@@ -8,11 +8,28 @@ defmodule SymphonyElixir.WorkerResult do
   @max_detail 2_048
   @phases ~w(checkout codex hooks validation handoff complete)
   @outcomes ~w(running succeeded blocked failed cancelled)
-  @reasons ~w(in_progress completed non_zero timed_out cancelled lease_lost worker_error handoff_failed)
+  @reasons ~w(
+    in_progress
+    completed
+    non_zero
+    timed_out
+    cancelled
+    lease_lost
+    worker_error
+    handoff_failed
+    missing_handoff
+    source_preparation_failed
+    workspace_unavailable
+    execution_capability_unavailable
+    codex_upstream_capacity
+    codex_turn_failed
+  )
   @validation_statuses ~w(pending passed failed timed_out cancelled)
   @gate_statuses ~w(passed failed timed_out not_run)
   @path_pattern ~r{(?:^|\s)(?:/[^\s]+|[A-Za-z]:\\[^\s]+)}
   @secret_pattern ~r/(?i)(?:api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*\S+/
+
+  alias SymphonyElixir.RunFailure
 
   @spec validate(term()) :: {:ok, map()} | {:error, {:invalid_worker_summary, String.t()}}
   def validate(summary) when is_map(summary) do
@@ -48,30 +65,19 @@ defmodule SymphonyElixir.WorkerResult do
 
   @spec terminal_outcome(String.t(), map()) :: SymphonyElixir.Orchestrator.worker_terminal_outcome()
   def terminal_outcome("task.completed", _summary), do: :success
+  def terminal_outcome("task.cancelled", _summary), do: :cancelled
 
-  def terminal_outcome(event_type, summary)
-      when event_type in ["task.failed", "task.cancelled"] and is_map(summary) do
-    reason = terminal_reason(summary)
-
-    case Map.get(summary, "outcome") do
-      outcome when outcome in ["succeeded", "success"] -> :success
-      "cancelled" -> :cancelled
-      "blocked" -> {:blocked, reason}
-      "failed" -> {:failed, reason}
-      _missing_or_unrecognized -> {:failed, reason}
+  def terminal_outcome("task.failed", summary) when is_map(summary) do
+    case {Map.get(summary, "outcome"), RunFailure.from_worker_summary("task.failed", summary)} do
+      {_outcome, :completed} -> :success
+      {_outcome, %RunFailure{classification: "cancelled"}} -> :cancelled
+      {"blocked", %RunFailure{} = failure} -> {:blocked, failure}
+      {_outcome, %RunFailure{} = failure} -> {:failed, failure}
     end
   end
 
   @spec limits() :: map()
   def limits, do: %{max_gates: @max_gates, max_text: @max_text, max_detail: @max_detail}
-
-  defp terminal_reason(%{"reason" => reason, "detail" => detail})
-       when is_binary(reason) and is_binary(detail),
-       do: reason <> "\n" <> detail
-
-  defp terminal_reason(%{"reason" => reason}) when is_binary(reason), do: reason
-  defp terminal_reason(%{"detail" => detail}) when is_binary(detail), do: detail
-  defp terminal_reason(_summary), do: "worker terminal outcome did not include a reason"
 
   defp runtime(value) when is_map(value) do
     value = stringify_keys(value)

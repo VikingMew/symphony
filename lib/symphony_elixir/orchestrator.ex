@@ -17,6 +17,7 @@ defmodule SymphonyElixir.Orchestrator do
     Nap.Results,
     Payload,
     PersistenceProvider,
+    RunFailure,
     RunLifecycle,
     StatusDashboard,
     Tracker,
@@ -136,6 +137,7 @@ defmodule SymphonyElixir.Orchestrator do
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
+      :worker_capacity_query,
       running: %{},
       blocked: %{},
       completed: MapSet.new(),
@@ -156,7 +158,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @type worker_terminal_outcome ::
-          :success | :cancelled | {:blocked, term()} | {:failed, term()}
+          :success | :cancelled | {:blocked, term() | RunFailure.t()} | {:failed, term() | RunFailure.t()}
   @type listening_mode :: :not_listening | :listening_all | :listening_refine_only
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -195,8 +197,9 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     now_ms = System.monotonic_time(:millisecond)
+    worker_capacity_query = Keyword.get(opts, :worker_capacity_query, &AssignmentManager.available_worker_slots/0)
 
     state =
       case runtime_config() do
@@ -211,6 +214,7 @@ defmodule SymphonyElixir.Orchestrator do
             poll_check_in_progress: false,
             tick_timer_ref: nil,
             tick_token: nil,
+            worker_capacity_query: worker_capacity_query,
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
             codex_rate_limit_observation: nil
@@ -228,6 +232,7 @@ defmodule SymphonyElixir.Orchestrator do
             poll_check_in_progress: false,
             tick_timer_ref: nil,
             tick_token: nil,
+            worker_capacity_query: worker_capacity_query,
             codex_totals: @empty_codex_totals,
             codex_rate_limits: nil,
             codex_rate_limit_observation: nil,
@@ -506,7 +511,7 @@ defmodule SymphonyElixir.Orchestrator do
     |> complete_issue(issue_id)
   end
 
-  defp handle_worker_task_finished(state, issue_id, {:blocked, reason}) do
+  defp handle_worker_task_finished(state, issue_id, {:blocked, %RunFailure{} = failure}) do
     case Map.get(state.running, issue_id) do
       %RunningIssue{} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
@@ -520,8 +525,8 @@ defmodule SymphonyElixir.Orchestrator do
           state,
           issue_id,
           running_entry,
-          reason,
-          reason,
+          RunFailure.reason(failure),
+          RunFailure.evidence(failure),
           references
         )
 
@@ -531,7 +536,62 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
+  defp handle_worker_task_finished(state, issue_id, {:blocked, reason}) do
+    failure = RunFailure.classify({:blocked, %{reason: reason, outcome: "blocked"}})
+
+    case Map.get(state.running, issue_id) do
+      %RunningIssue{} = running_entry ->
+        state = record_session_completion_totals(state, running_entry)
+
+        references =
+          running_entry
+          |> run_references()
+          |> Map.put(:session_id, running_entry.session_id)
+
+        persist_and_block_issue(
+          state,
+          issue_id,
+          running_entry,
+          RunFailure.reason(failure),
+          RunFailure.evidence(failure),
+          references
+        )
+
+      nil ->
+        Logger.warning("Worker reported a blocked terminal outcome without a running entry issue_id=#{issue_id}; releasing claim")
+        complete_issue(state, issue_id)
+    end
+  end
+
+  defp handle_worker_task_finished(state, issue_id, {:failed, %RunFailure{} = failure}) do
+    case Map.get(state.running, issue_id) do
+      %RunningIssue{} = running_entry ->
+        summary = RunFailure.reason(failure)
+
+        Logger.warning("Worker task failed for issue_id=#{issue_id} session_id=#{running_entry.session_id} classification=#{summary}")
+
+        state
+        |> record_session_completion_totals(running_entry)
+        |> fail_or_retry(
+          issue_id,
+          running_entry,
+          summary,
+          :failure_retries_exhausted,
+          RunFailure.evidence(failure),
+          record_environment_failure: false,
+          failure: failure
+        )
+        |> Map.update!(:running, &Map.delete(&1, issue_id))
+
+      nil ->
+        Logger.warning("Worker reported a failed terminal outcome without a running entry issue_id=#{issue_id}; releasing claim")
+        complete_issue(state, issue_id)
+    end
+  end
+
   defp handle_worker_task_finished(state, issue_id, {:failed, reason}) do
+    failure = RunFailure.classify({:agent_domain_failure, %{reason: reason}})
+
     case Map.get(state.running, issue_id) do
       %RunningIssue{} = running_entry ->
         summary = agent_failure_summary(reason)
@@ -546,7 +606,8 @@ defmodule SymphonyElixir.Orchestrator do
           summary,
           :failure_retries_exhausted,
           reason,
-          record_environment_failure: false
+          record_environment_failure: false,
+          failure: failure
         )
         |> Map.update!(:running, &Map.delete(&1, issue_id))
 
@@ -597,7 +658,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp handle_issue_worker_down_reason(state, issue_id, running_entry, :normal, session_id) do
-    persist_run_finished(running_entry, "completed", nil)
+    persist_run_finished(running_entry, "completed", :completed)
     EnvironmentFailureCircuit.record_success(running_entry.identifier)
 
     state = clear_failure_count(state, issue_id)
@@ -637,8 +698,10 @@ defmodule SymphonyElixir.Orchestrator do
 
     summary = "agent crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
-    fail_or_retry(state, issue_id, running_entry, summary, :worker_crash, reason)
-    |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+    failure = RunFailure.classify({:worker_process_termination, %{reason: reason, phase: "agent"}})
+
+    fail_or_retry(state, issue_id, running_entry, summary, :worker_crash, reason, failure: failure)
+    |> tap(fn _state -> persist_run_finished(running_entry, "failed", failure) end)
   end
 
   defp schedule_continuation(state, issue_id, running_entry, session_id) do
@@ -802,7 +865,7 @@ defmodule SymphonyElixir.Orchestrator do
         }
       )
 
-    persist_run_finished(running_entry, "completed", nil)
+    persist_run_finished(running_entry, "completed", :completed)
     finish_operator_task(state, running_entry, :completed, nil)
   end
 
@@ -814,42 +877,49 @@ defmodule SymphonyElixir.Orchestrator do
          session_id
        ) do
     summary = agent_failure_summary(reason)
+    run_kind = running_entry_kind(running_entry)
 
-    Logger.warning("Operator task failed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id} #{summary}")
+    Logger.warning("Operator task failed run_id=#{run_id} kind=#{run_kind} session_id=#{session_id} #{summary}")
 
     running_entry =
       append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
         source: :system,
         run_id: run_id,
-        kind: running_entry_kind(running_entry),
+        kind: run_kind,
         reason: summary
       })
 
-    persist_run_finished(running_entry, "failed", summary)
+    failure = RunFailure.classify({:operator_domain_failure, %{reason: reason, detail: summary, run_kind: run_kind}})
+
+    persist_run_finished(running_entry, "failed", failure)
     finish_operator_task(state, running_entry, :failed, summary)
   end
 
   defp handle_operator_down_reason(state, run_id, running_entry, :normal, session_id) do
     Logger.info("Operator task completed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id}")
 
-    persist_run_finished(running_entry, "completed", nil)
+    persist_run_finished(running_entry, "completed", :completed)
     finish_operator_task(state, running_entry, :completed, nil)
   end
 
   defp handle_operator_down_reason(state, run_id, running_entry, reason, session_id) do
     summary = "operator task crashed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    run_kind = running_entry_kind(running_entry)
 
-    Logger.warning("Operator task crashed run_id=#{run_id} kind=#{running_entry_kind(running_entry)} session_id=#{session_id} #{summary}")
+    Logger.warning("Operator task crashed run_id=#{run_id} kind=#{run_kind} session_id=#{session_id} #{summary}")
 
     running_entry =
       append_session_history(running_entry, :operator_task_failed, "Operator task failed", %{
         source: :system,
         run_id: run_id,
-        kind: running_entry_kind(running_entry),
+        kind: run_kind,
         reason: summary
       })
 
-    persist_run_finished(running_entry, "failed", summary)
+    failure =
+      RunFailure.classify({:worker_process_termination, %{reason: reason, phase: "operator", run_kind: run_kind}})
+
+    persist_run_finished(running_entry, "failed", failure)
     finish_operator_task(state, running_entry, :failed, summary)
   end
 
@@ -857,11 +927,13 @@ defmodule SymphonyElixir.Orchestrator do
     summary = agent_failure_summary(reason)
     Logger.warning("Agent task failed for issue_id=#{issue_id} session_id=#{session_id} #{summary}")
 
-    fail_or_retry(state, issue_id, running_entry, summary, :failure_retries_exhausted, reason)
-    |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+    failure = RunFailure.classify({:agent_domain_failure, %{reason: reason, detail: summary}})
+
+    fail_or_retry(state, issue_id, running_entry, summary, :failure_retries_exhausted, reason, failure: failure)
+    |> tap(fn _state -> persist_run_finished(running_entry, "failed", failure) end)
   end
 
-  defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, opts \\ []) do
+  defp fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, opts) do
     case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
       {:ok, settings} ->
         do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings, opts)
@@ -873,8 +945,10 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp do_fail_or_retry(state, issue_id, running_entry, summary, exhausted_reason, detail, settings, opts) do
+    failure = Keyword.fetch!(opts, :failure)
+
     if Keyword.get(opts, :record_environment_failure, true) do
-      record_environment_failure(issue_id, running_entry, detail)
+      record_environment_failure(issue_id, running_entry, failure)
     end
 
     decision =
@@ -887,6 +961,19 @@ defmodule SymphonyElixir.Orchestrator do
     state = %{state | failure_counts: Map.put(state.failure_counts, issue_id, failure_count)}
 
     if match?({:exhausted, _}, decision) do
+      exhausted_failure =
+        RunFailure.classify(
+          {:failure_retries_exhausted,
+           %{
+             failure_attempt: failure_count,
+             reason: exhausted_reason,
+             cause: RunFailure.reason(failure),
+             cause_evidence: RunFailure.evidence(failure),
+             summary: summary,
+             detail: detail
+           }}
+        )
+
       references =
         run_references(running_entry)
         |> Map.put(:failure_attempt, failure_count)
@@ -896,8 +983,8 @@ defmodule SymphonyElixir.Orchestrator do
         state,
         issue_id,
         running_entry,
-        exhausted_reason,
-        %{summary: summary, detail: detail, failure_attempt: failure_count},
+        RunFailure.reason(exhausted_failure),
+        RunFailure.evidence(exhausted_failure),
         references
       )
     else
@@ -907,7 +994,8 @@ defmodule SymphonyElixir.Orchestrator do
         RetryPolicy.next_retry_attempt_from_running(running_entry),
         %{
           identifier: running_entry.identifier,
-          error: summary,
+          error: RunFailure.reason(failure),
+          failure_evidence: RunFailure.evidence(failure),
           project_id: Map.get(running_entry, :project_id),
           worker_host: Map.get(running_entry, :worker_host),
           workspace_path: Map.get(running_entry, :workspace_path),
@@ -917,11 +1005,11 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp record_environment_failure(issue_id, running_entry, reason) do
+  defp record_environment_failure(issue_id, running_entry, %RunFailure{} = failure) do
     circuit =
       EnvironmentFailureCircuit.record_failure(
         Map.fetch!(running_entry, :identifier),
-        reason,
+        RunFailure.reason(failure),
         %{issue_id: issue_id, run_id: Map.get(running_entry, :run_id)}
       )
 
@@ -948,7 +1036,10 @@ defmodule SymphonyElixir.Orchestrator do
         %{message: outcome.detail, reason: outcome.reason, source: :agent}
       )
 
-    persist_run_finished(updated_running_entry, "blocked", summary)
+    failure =
+      RunFailure.classify({:blocked, %{reason: outcome.reason, detail: outcome.detail, summary: summary}})
+
+    persist_run_finished(updated_running_entry, "blocked", failure)
 
     references =
       run_references(updated_running_entry)
@@ -959,8 +1050,8 @@ defmodule SymphonyElixir.Orchestrator do
       state,
       issue_id,
       updated_running_entry,
-      outcome.reason,
-      outcome.detail,
+      RunFailure.reason(failure),
+      RunFailure.evidence(failure),
       references
     )
   end
@@ -1506,7 +1597,13 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
+  defp terminate_running_issue(
+         %State{} = state,
+         issue_id,
+         cleanup_workspace,
+         persist_terminal \\ true,
+         action \\ "reconciliation_stop"
+       ) do
     case Map.get(state.running, issue_id) do
       nil ->
         release_issue_claim(state, issue_id)
@@ -1519,7 +1616,12 @@ defmodule SymphonyElixir.Orchestrator do
           cleanup_issue_workspace(identifier, worker_host)
         end
 
-        persist_run_finished(running_entry, "stopped", nil)
+        if persist_terminal do
+          failure =
+            RunFailure.classify({:operator_stopped, %{action: action, run_kind: running_entry_kind(running_entry)}})
+
+          persist_run_finished(running_entry, "stopped", failure)
+        end
 
         if is_pid(pid) do
           terminate_task(pid)
@@ -1581,16 +1683,20 @@ defmodule SymphonyElixir.Orchestrator do
 
         summary = decision.metadata.error
 
+        failure =
+          RunFailure.classify({:stall_timeout, %{elapsed_ms: decision.elapsed_ms, timeout_ms: timeout_ms, phase: "codex"}})
+
         state
-        |> terminate_running_issue(issue_id, false)
+        |> terminate_running_issue(issue_id, false, false)
         |> fail_or_retry(
           issue_id,
           running_entry,
           summary,
           :failure_retries_exhausted,
-          %{kind: :stall, elapsed_ms: decision.elapsed_ms}
+          %{kind: :stall, elapsed_ms: decision.elapsed_ms},
+          failure: failure
         )
-        |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+        |> tap(fn _state -> persist_run_finished(running_entry, "failed", failure) end)
 
       :active ->
         state
@@ -1834,7 +1940,14 @@ defmodule SymphonyElixir.Orchestrator do
 
         failure_reason = "failed to spawn agent: #{inspect(reason)}"
 
-        record_environment_failure(issue.id, %{identifier: issue.identifier, run_id: run_record && run_record.id}, reason)
+        failure =
+          RunFailure.classify({:agent_domain_failure, %{reason: reason, detail: failure_reason, phase: "spawn"}})
+
+        record_environment_failure(
+          issue.id,
+          %{identifier: issue.identifier, run_id: run_record && run_record.id},
+          failure
+        )
 
         persist_run_finished(
           %{
@@ -1844,7 +1957,7 @@ defmodule SymphonyElixir.Orchestrator do
             session_id: nil
           },
           "failed",
-          failure_reason
+          failure
         )
 
         next_attempt = next_spawn_attempt(attempt)
@@ -2331,15 +2444,15 @@ defmodule SymphonyElixir.Orchestrator do
   defp refresh_deployment_capacity(%State{} = state) do
     capacity =
       case Config.execution_mode() do
-        :worker -> worker_deployment_capacity()
+        :worker -> worker_deployment_capacity(state.worker_capacity_query)
         :centralized -> Config.panel_max_concurrent_agents()
       end
 
     %{state | max_concurrent_agents: capacity}
   end
 
-  defp worker_deployment_capacity do
-    AssignmentManager.available_worker_slots()
+  defp worker_deployment_capacity(worker_capacity_query) do
+    worker_capacity_query.()
   catch
     :exit, {:timeout, {GenServer, :call, [AssignmentManager, :available_worker_slots, @capacity_query_timeout_ms]}} ->
       Logger.warning("event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0")
@@ -3008,6 +3121,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     running_entry = operator_running_entry(failed, nil, nil, "local")
+    run_kind = running_entry_kind(running_entry)
 
     persist_event(
       "operator_task.failed",
@@ -3016,7 +3130,10 @@ defmodule SymphonyElixir.Orchestrator do
       task.run_id
     )
 
-    persist_run_finished(running_entry, "failed", reason)
+    failure =
+      RunFailure.classify({:operator_domain_failure, %{reason: reason, action: "start", run_kind: run_kind}})
+
+    persist_run_finished(running_entry, "failed", failure)
 
     {state, failed}
   end
@@ -3288,7 +3405,17 @@ defmodule SymphonyElixir.Orchestrator do
           running_entry.run_id
         )
 
-        persist_run_finished(failed_entry, "failed", reason)
+        failure =
+          RunFailure.classify(
+            {:worker_process_termination,
+             %{
+               reason: reason,
+               phase: "reconciliation",
+               run_kind: running_entry_kind(running_entry)
+             }}
+          )
+
+        persist_run_finished(failed_entry, "failed", failure)
 
         state_acc
         |> Map.update!(:running, &Map.delete(&1, run_id))
@@ -3369,7 +3496,7 @@ defmodule SymphonyElixir.Orchestrator do
     {state, results} =
       Enum.reduce(running, {state, []}, fn {issue_id, running_entry}, {state_acc, results_acc} ->
         result = rollback_running_entry(issue_id, running_entry)
-        state_acc = terminate_running_issue(state_acc, issue_id, false)
+        state_acc = terminate_running_issue(state_acc, issue_id, false, true, "force_stop")
         {state_acc, [result | results_acc]}
       end)
 
@@ -4094,14 +4221,14 @@ defmodule SymphonyElixir.Orchestrator do
     })
   end
 
-  defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do
+  defp persist_run_finished(running_entry, status, terminal) when is_map(running_entry) do
     if persistence_enabled?() do
       run_id = Map.get(running_entry, :run_id)
       context = persistence_context(running_entry)
 
-      case RunLifecycle.finish_run(persistence(), run_id, status, failure_reason) do
+      case RunLifecycle.finish_run(persistence(), run_id, status, terminal) do
         {:ok, _run} ->
-          persist_event(Events.run_finished_event(running_entry, status, failure_reason))
+          persist_event(Events.run_finished_event(running_entry, status, terminal))
 
         :noop ->
           :ok

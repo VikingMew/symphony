@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
   Persistence payload shaping for orchestrator events.
   """
 
-  alias SymphonyElixir.{Config, Linear.Issue}
+  alias SymphonyElixir.{Config, Linear.Issue, RunFailure}
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
   @spec issue_snapshot(Issue.t()) :: map()
@@ -127,14 +127,19 @@ defmodule SymphonyElixir.Orchestrator.Events do
     event_attrs("run.started", issue.identifier, %{issue_id: issue.id, run_id: run.id, worker_host: worker_host}, run.id)
   end
 
-  @spec run_finished_event(map(), String.t(), String.t() | nil) :: map()
-  def run_finished_event(running_entry, status, failure_reason) when is_map(running_entry) and is_binary(status) do
+  @spec run_finished_event(map(), String.t(), :completed | RunFailure.t()) :: map()
+  def run_finished_event(running_entry, status, terminal) when is_map(running_entry) and is_binary(status) do
     run_id = Map.get(running_entry, :run_id)
+    failure = RunFailure.terminal_fields(terminal)
 
     event_attrs(
       "run.#{status}",
       Map.get(running_entry, :identifier),
-      %{run_id: run_id, failure_reason: failure_reason},
+      %{
+        run_id: run_id,
+        failure_reason: failure.failure_reason,
+        failure_evidence: failure.failure_evidence
+      },
       run_id
     )
   end

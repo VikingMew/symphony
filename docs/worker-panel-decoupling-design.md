@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-09-26
+updated: 2026-10-03
 design_status: landed
 ---
 
