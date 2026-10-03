@@ -453,6 +453,96 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert agents_draft_html =~ "Imported implementation prompt."
   end
 
+  @tag :tmp_dir
+  test "normal Settings save rejects an invalid workspace root before persistence", %{tmp_dir: tmp_dir} do
+    invalid_root = Path.join(tmp_dir, "workspace-file")
+    File.write!(invalid_root, "not a directory")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/agents")
+    current_before = WorkflowStore.current()
+    writes_before = persistence_write_count()
+
+    rejected_html =
+      render_submit(view, "save_workflow_form", %{
+        "workflow" => %{
+          "workspace_root" => invalid_root,
+          "prompt_body" => "Draft retained after root rejection."
+        }
+      })
+
+    assert rejected_html =~ "Agent settings save failed"
+    assert rejected_html =~ Path.expand(invalid_root)
+    assert rejected_html =~ "cannot be created"
+    assert rejected_html =~ "Settings / Import: workspace.root"
+    assert rejected_html =~ "/data/workspaces"
+    assert WorkflowStore.current() == current_before
+    assert persistence_write_count() == writes_before
+
+    retained_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: %{"prompt_body" => "Draft retained after root rejection."}
+      )
+      |> render_submit()
+
+    assert retained_html =~ Path.expand(invalid_root)
+    assert persistence_write_count() == writes_before
+  end
+
+  @tag :tmp_dir
+  test "confirmed Settings import uses the same workspace root gate before package persistence", %{tmp_dir: tmp_dir} do
+    invalid_root = Path.join(tmp_dir, "workspace-file")
+    File.write!(invalid_root, "not a directory")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+    current_before = WorkflowStore.current()
+    writes_before = persistence_write_count()
+
+    invalid_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        "/tmp/imported-workspaces",
+        invalid_root
+      )
+
+    view
+    |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => invalid_yaml})
+    |> render_submit()
+
+    rejected_html = render_click(view, "confirm_settings_import")
+
+    assert rejected_html =~ "Package import failed"
+    assert rejected_html =~ Path.expand(invalid_root)
+    assert rejected_html =~ "cannot be created"
+    assert rejected_html =~ "Settings / Import: workspace.root"
+    assert rejected_html =~ "/data/workspaces"
+    assert WorkflowStore.current() == current_before
+    assert persistence_write_count() == writes_before
+
+    valid_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        "/tmp/imported-workspaces",
+        tmp_dir
+      )
+
+    view
+    |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => valid_yaml})
+    |> render_submit()
+
+    saved_html = render_click(view, "confirm_settings_import")
+
+    assert saved_html =~ "Instance and Project settings imported"
+    assert get_in(FakePersistence.instance_workflow(), [:config, "workspace", "root"]) == tmp_dir
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:import_package, _project, _raw, "web_settings_import"} -> true
+             _call -> false
+           end)
+  end
+
   test "settings import accepts uploaded package files and can cancel staged changes" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
@@ -583,10 +673,12 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert runtime_html =~ "Codex Runtime"
   end
 
-  test "runtime settings page saves workspace hooks and Codex selectors to the singleton" do
+  @tag :tmp_dir
+  test "runtime settings page saves workspace hooks and Codex selectors to the singleton", %{tmp_dir: tmp_dir} do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
     start_test_endpoint()
+    workspace_root = Path.join(tmp_dir, "workspaces")
 
     {:ok, view, html} = live(build_conn(), "/settings/runtime")
     assert html =~ "Codex Runtime"
@@ -633,9 +725,9 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       view
       |> form(".runtime-settings-form",
         workflow: %{
-          "workspace_root" => "/srv/symphony/workspaces",
-          "workspace_repository_base_root" => "/srv/symphony/repositories",
-          "workspace_worktree_base_root" => "/srv/symphony/worktrees",
+          "workspace_root" => workspace_root,
+          "workspace_repository_base_root" => Path.join(tmp_dir, "repositories"),
+          "workspace_worktree_base_root" => Path.join(tmp_dir, "worktrees"),
           "initialize_timeout_ms" => "90000",
           "workspace_min_free_gib" => "2",
           "hook_after_create" => "mix setup",
@@ -655,7 +747,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert saved_html =~ "workflow-save-toast-success"
     assert saved_html =~ "Workflow settings saved installation-wide"
     instance = FakePersistence.instance_workflow()
-    assert get_in(instance.config, ["workspace", "root"]) == "/srv/symphony/workspaces"
+    assert get_in(instance.config, ["workspace", "root"]) == workspace_root
     assert get_in(instance.config, ["hooks", "after_create"]) == "mix setup"
     assert get_in(instance.config, ["codex", "model"]) == "gpt-6-luna"
     assert get_in(instance.config, ["codex", "reasoning_effort"]) == "max"
@@ -1068,6 +1160,15 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     |> Floki.find("#{selector} option[selected]")
     |> Floki.attribute("value")
     |> List.first()
+  end
+
+  defp persistence_write_count do
+    Enum.count(FakePersistence.calls(), fn
+      {:put_instance_workflow, _config, _prompt} -> true
+      {:import_workflow, _project, _raw, _source} -> true
+      {:import_package, _project, _raw, _source} -> true
+      _call -> false
+    end)
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

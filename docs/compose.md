@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-03
 owner: compose.yaml
 ---
 
@@ -290,6 +290,13 @@ The container paths are stable:
 Workflows imported from a host may contain host-only workspace paths. Before enabling
 listening, change the active workflow workspace root to `/data/workspaces` and verify repository,
 hook, SSH, and worktree paths are container-visible.
+
+Runtime / Agents Save and confirmed Settings / Import validate the expanded Panel-local
+`workspace.root` before persistence. In this Compose topology `/data/workspaces` is the writable Panel root; a host
+path such as `~/code/symphony-workspaces` expands inside the Panel and is rejected when it cannot
+be accessed, created, or written. This gate is separate from the execution worker's
+`/worker/workspaces` lease root. The complete contract is owned by
+[Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
 
 ## Legacy Instance Workflow Reconciliation
 

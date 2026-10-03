@@ -6,7 +6,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
   import Phoenix.LiveView,
     only: [consume_uploaded_entries: 3, put_flash: 3, uploaded_entries: 2]
 
-  alias SymphonyElixir.{PersistenceProvider, WorkflowForm, WorkflowSettingsPackage}
+  alias SymphonyElixir.{PersistenceProvider, WorkflowForm, WorkflowSettingsPackage, WorkspacePreflight}
   alias SymphonyElixirWeb.Admin.ProjectSettings
   alias SymphonyElixirWeb.AdminLive.State
 
@@ -232,6 +232,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
 
   defp persist_combined_stage(socket, project, draft, label) do
     with {:ok, raw} <- WorkflowForm.to_raw(draft),
+         :ok <- WorkspacePreflight.check(:settings_save, root: Map.fetch!(draft, "workspace_root")),
          {:ok, result} <- import_package(project, raw) do
       project_name = ProjectSettings.value(project, :name)
 
@@ -252,6 +253,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
 
   defp persist_instance_stage(socket, draft, label) do
     with {:ok, instance} <- WorkflowForm.to_instance_scope(draft),
+         :ok <- WorkspacePreflight.check(:settings_save, root: Map.fetch!(draft, "workspace_root")),
          {:ok, _stored} <- put_instance(instance) do
       {:noreply,
        socket
@@ -280,6 +282,16 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
     |> PersistenceProvider.publish_runtime_mutation()
   end
 
+  defp import_error(socket, %{kind: kind, path: path, reason: reason})
+       when kind in [:not_creatable, :not_writable, :unreadable] do
+    message = workspace_rejection_message(kind, path, reason)
+
+    {:noreply,
+     socket
+     |> put_flash(:error, "Settings package import rejected: #{message}")
+     |> assign_import_notice(:error, "Package import failed", message)}
+  end
+
   defp import_error(socket, reason) do
     message = WorkflowSettingsPackage.import_error_message(reason)
 
@@ -288,6 +300,15 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
      |> put_flash(:error, "Settings package import failed: #{message}")
      |> assign_import_notice(:error, "Package import failed", message)}
   end
+
+  defp workspace_rejection_message(kind, path, reason) do
+    "Workspace root #{path} #{workspace_rejection_reason(kind)} (reason: #{inspect(reason)}). " <>
+      "Update Settings / Import: workspace.root. For Compose, use /data/workspaces."
+  end
+
+  defp workspace_rejection_reason(:not_creatable), do: "cannot be created"
+  defp workspace_rejection_reason(:not_writable), do: "is not writable"
+  defp workspace_rejection_reason(:unreadable), do: "cannot be accessed"
 
   defp import_result(%{instance_workflow: _instance, project_workflow: _project}),
     do: "both durable scopes saved"

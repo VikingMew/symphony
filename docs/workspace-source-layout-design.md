@@ -4,7 +4,7 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -132,6 +132,36 @@ Set Settings / Workflow / Workspace / Worktree base root under an allowed root,
 or add that root to Settings / Workflow / Codex / Sandbox allowed roots.
 ```
 
+## Workspace root 有效性门禁
+
+`WorkspacePreflight` 拥有 Panel-local `workspace.root` 的可访问、可创建和可写判定。所有返回错误中的
+`path` 都先经过 `Path.expand/1`：
+
+- 既有目录必须能在目录内创建并删除一个唯一临时子目录；探针失败返回 `:not_writable`，并保留底层
+  reason。
+- 缺失 root 不会被门禁创建。门禁向上查找最近的既有目录，并在该目录执行同一写探针；探针成功表示
+  root 可创建，失败返回 `:not_creatable`。
+- 既有非目录、路径查询返回 `:enotdir`，或最近既有祖先不是目录时返回 `:not_creatable`。
+- 其它路径元数据读取失败返回 `:unreadable`。错误保留底层 reason，供 Settings 展示可操作原因。
+
+Runtime / Agents 的正常 Save 在 `WorkflowForm.to_instance_scope/1` 成功后、change detection 和
+persistence 之前调用 `WorkspacePreflight.check(:settings_save, root: ...)`。Settings / Import 的确认
+路径在 scope 解析后、写入 instance singleton 或原子写入 Instance + Project 之前调用同一门禁。无效
+root 因此不能进入 unchanged 或 saved 分支，也不能产生任一 scope 写入；Settings draft 保持 dirty，
+Import stage 保留供修正，提示指向 `Settings / Import: workspace.root`，Compose 部署建议使用
+`/data/workspaces`。缺失但最近既有祖先可写的 root 合法。
+
+`WorkspacePreflight.check(:pre_listen, settings: ...)` 冻结了 listening 接线复用的契约：先执行相同
+root 判定，再调用 `WorkspaceDiskGuard`。空间拒绝沿用 `:low_disk_space` 和
+`:disk_space_unavailable`，并把 guard reason map 原样放入 `reason`。`workspace.min_free_bytes <= 0`
+只跳过空间读取，不能跳过 root 判定。两个 listening 入口尚未消费该契约；运行时接线属于 SYM-156，
+因此本设计当前只改变 Runtime / Agents Save 与 Settings / Import 确认。
+
+测试可按调用传入 `:path_info_fun`、`:write_probe_fun` 和 `:free_bytes_fun`。前两者只替换单次 root
+判定的 `File.stat/1` 与写探针；后者只透传给 `WorkspaceDiskGuard.check/2`。这些 seam 用于稳定覆盖
+`:eacces`、`:erofs`、低空间和空间读取失败，不是 Application 配置、共享状态或第二套 filesystem
+模型。生产调用不传 seam。
+
 ## 启动前磁盘检查
 
 `WorkspaceDiskGuard` 是本地 agent 启动前的准入检查。Orchestrator 在本地
@@ -150,8 +180,8 @@ agent spawn / workspace preparation 之前调用它；远端 worker 的磁盘状
 每个 root 先展开为绝对路径；如果路径还不存在，检查最近的既有祖先目录。实际可用空间通过
 `df -Pk <existing_ancestor>` 读取并按 KiB 转 bytes。所有 root 都达到阈值时，启动继续。任一 root
 低于阈值时返回 typed reason `:low_disk_space`，包含 root、free bytes、min bytes 和可操作的
-Settings 字段。`df` 失败或输出不可解析时返回 `:disk_space_unavailable`，包含失败 detail 和相同
-Settings 字段。
+Settings 字段 `Settings / Import: workspace.min_free_bytes`。`df` 失败或输出不可解析时返回
+`:disk_space_unavailable`，包含失败 detail 和相同 Settings 字段。
 
 Orchestrator 把任一拒绝或检查异常视为本次启动拒绝：它记录 `run.blocked`，在 blocked entry 的
 session history 写入 `workspace_disk_guard.blocked`，并保留 typed reason 供状态/API 展示。该路径不创建、

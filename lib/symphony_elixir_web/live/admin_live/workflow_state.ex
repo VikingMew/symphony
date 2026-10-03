@@ -7,7 +7,8 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   alias SymphonyElixir.{
     PersistenceProvider,
     WorkflowForm,
-    WorkflowValidator
+    WorkflowValidator,
+    WorkspacePreflight
   }
 
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
@@ -35,6 +36,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     section = Components.tab(socket.assigns.live_action)
 
     with {:ok, instance} <- WorkflowForm.to_instance_scope(draft),
+         :ok <- WorkspacePreflight.check(:settings_save, root: Map.fetch!(draft, "workspace_root")),
          :changed <- instance_change_status(instance, socket),
          {:ok, _instance} <- persist_instance(instance) do
       refreshed_projects = enabled_project_names(socket.assigns.projects)
@@ -66,6 +68,19 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
          |> assign(:workflow_form, draft)
          |> assign(:workflow_form_dirty?, false)
          |> assign_validation(draft)}
+
+      {:error, %{kind: kind, path: path, reason: reason}}
+      when kind in [:not_creatable, :not_writable, :unreadable] ->
+        message = workspace_rejection_message(kind, path, reason)
+
+        {:error,
+         socket
+         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+         |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_field_errors, %{})
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, true)}
 
       {:error, message} when is_binary(message) ->
         {:error,
@@ -233,6 +248,15 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   defp instance_refresh_message(projects) do
     "Future runtime snapshots refreshed for enabled projects: #{Enum.join(projects, ", ")}."
   end
+
+  defp workspace_rejection_message(kind, path, reason) do
+    "Workspace root #{path} #{workspace_rejection_reason(kind)} (reason: #{inspect(reason)}). " <>
+      "Update Settings / Import: workspace.root. For Compose, use /data/workspaces."
+  end
+
+  defp workspace_rejection_reason(:not_creatable), do: "cannot be created"
+  defp workspace_rejection_reason(:not_writable), do: "is not writable"
+  defp workspace_rejection_reason(:unreadable), do: "cannot be accessed"
 
   defp persistence, do: PersistenceProvider.module()
 end

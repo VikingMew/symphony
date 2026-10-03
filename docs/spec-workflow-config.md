@@ -520,7 +520,14 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
-- `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
+- `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`;
+  Runtime / Agents Save and confirmed Settings / Import validate it before change detection and
+  persistence. An existing root
+  MUST be a writable directory. A missing root is valid when its nearest existing ancestor accepts
+  a write probe; the check does not create the configured root. Existing non-directories,
+  inaccessible paths, and roots that cannot be created or written receive a typed rejection. The
+  owning behavior and pre-listen contract are defined in
+  [Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
 - `hooks.after_create`: instance-owned shell script or null
 - `hooks.before_run`: instance-owned shell script or null
 - `hooks.after_run`: instance-owned shell script or null
