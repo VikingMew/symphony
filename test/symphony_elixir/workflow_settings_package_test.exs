@@ -176,11 +176,43 @@ defmodule SymphonyElixir.WorkflowSettingsPackageTest do
     assert draft["codex_reasoning_effort"] == "high"
   end
 
+  test "workflow import classifies initialization timeout only once in the instance scope" do
+    current = WorkflowForm.empty()
+
+    yaml =
+      current
+      |> workflow_config!()
+      |> Map.delete("profiles")
+      |> put_in(["workspace", "initialize_timeout_ms"], 61_000)
+      |> WorkflowFixtures.workflow_package_yaml()
+
+    assert {:ok, stage} = WorkflowSettingsPackage.stage_import(yaml, current)
+
+    assert stage.affected_scopes == ["Instance"]
+
+    assert stage.diff == [
+             %{
+               area: "Runtime",
+               scope: "Instance",
+               path: "workspace.initialize_timeout_ms",
+               before: "60000",
+               after: "61000"
+             }
+           ]
+  end
+
   defp workflow_raw!(draft) do
     case WorkflowForm.to_raw(draft) do
       {:ok, raw} -> raw
       # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
       {:error, reason} -> flunk("expected raw workflow, got #{inspect(reason)}")
+    end
+  end
+
+  defp workflow_config!(draft) do
+    case WorkflowForm.to_config(draft) do
+      {:ok, config} -> config
+      {:error, reason} -> flunk("expected workflow config, got #{inspect(reason)}")
     end
   end
 end

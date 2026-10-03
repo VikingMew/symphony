@@ -52,8 +52,11 @@ design_status: landed
 - 不存在 package 同步命令、不存在幂等的包覆盖流程、不存在仓库文件与数据库之间的 drift 契约。
   operator 在 Settings 里的改动就是最终改动；仓库示例文件不随之更新不是缺陷。
 - Settings / Import 是 portable combined package 的受支持路径：解析文件、按 Instance 与具名 Project
-  预览合并后的 draft，并在一次确认中原子写入 singleton 与显式选择的 project。空库冷启动使用同一
-  显式双 scope 导入；拒绝导入、缺少 project target、缺少
+  预览 durable 变化，并在一次确认中原子写入 singleton 与显式选择的 project。预览行与
+  `affected_scopes` 直接来自 `WorkflowForm.to_scopes/1` 按 `WorkflowScopes` ownership 拆出的
+  Instance/Project slices，与确认时的持久化目标共用同一事实来源；每个 semantic field 只以 canonical
+  durable path 出现一次，不维护另一套 prefix/default scope classifier。空库冷启动使用同一显式双
+  scope 导入；拒绝导入、缺少 project target、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
 - Settings / Import 在生成 staged preview 前转换已知的 legacy Codex command selector：
   `-c` / `--config` 中的 `model`、`model_reasoning_effort` 以及 `-m` / `--model` 会填入尚未显式

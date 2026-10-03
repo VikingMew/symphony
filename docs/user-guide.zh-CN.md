@@ -4,7 +4,7 @@ genre: guide
 domain: [operations, configuration]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-10-03
 owner: SymphonyElixir.CLI
 ---
 
@@ -305,8 +305,8 @@ PR。精确判据和证据格式以
 `project.repository_url` 指向的仓库 clone 到该 issue workspace 中。`project.repository_url` 是运行必填项；缺失或为空时
 workflow 配置校验失败，Symphony 不会拉取 Linear 候选任务或启动 agent。
 `workspace.initialize_timeout_ms` 控制项目初始化阶段的超时，包括 clone/worktree 准备和
-`project.setup_commands`；这些 project-owned 字段可在 Settings / Projects 编辑，也可通过
-Settings / Import 导入 workflow package。
+`project.setup_commands` 的执行；它属于 Instance，在 Settings / Runtime 编辑。`project.setup_commands`
+属于 Project，在 Settings / Projects 编辑。两个字段都可通过 Settings / Import 导入 workflow package。
 `hooks.timeout_ms` 只控制
 after_create、before_run、after_run、before_remove 等 lifecycle hooks。
 

@@ -25,10 +25,11 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   @spec stage_import(String.t(), WorkflowForm.draft(), keyword()) :: {:ok, map()} | {:error, term()}
   def stage_import(yaml, current, opts \\ []) do
     with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml),
-         {:ok, label, draft} <- do_import_draft(parsed, current) do
+         {:ok, label, draft} <- do_import_draft(parsed, current),
+         {:ok, durable_diff} <- diff(current, draft) do
       type = package_type(parsed)
       import_diff = legacy_codex_conversion_diff(parsed)
-      changes = import_diff ++ diff(current, draft)
+      changes = import_diff ++ durable_diff
 
       {:ok,
        %{
@@ -144,6 +145,15 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   end
 
   defp diff(current, draft) do
+    with {:ok, current_instance, current_project} <- WorkflowForm.to_scopes(current),
+         {:ok, draft_instance, draft_project} <- WorkflowForm.to_scopes(draft) do
+      {:ok,
+       scope_diff("Instance", instance_values(current_instance), instance_values(draft_instance)) ++
+         scope_diff("Project", current_project, draft_project)}
+    end
+  end
+
+  defp scope_diff(scope, current, draft) do
     current_flat = flatten(current)
     draft_flat = flatten(draft)
 
@@ -154,12 +164,16 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     |> Enum.map(fn path ->
       %{
         area: diff_area(path),
-        scope: diff_scope(path),
+        scope: scope,
         path: path,
         before: inspect_for_diff(Map.get(current_flat, path)),
         after: inspect_for_diff(Map.get(draft_flat, path))
       }
     end)
+  end
+
+  defp instance_values(%{config: config, prompt_body: prompt_body}) do
+    Map.put(config, "prompt_body", prompt_body)
   end
 
   defp flatten(value), do: flatten_value(value, [])
@@ -173,27 +187,12 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
   defp diff_area("prompt_body"), do: "Agents"
   defp diff_area("profiles." <> _rest), do: "Agents"
-  defp diff_area("workspace_" <> _rest), do: "Runtime"
-  defp diff_area("polling_" <> _rest), do: "Runtime"
-  defp diff_area("agent_max_" <> _rest), do: "Runtime"
-  defp diff_area("codex_" <> _rest), do: "Runtime"
+  defp diff_area("workspace." <> _rest), do: "Runtime"
+  defp diff_area("polling." <> _rest), do: "Runtime"
+  defp diff_area("agent." <> _rest), do: "Runtime"
+  defp diff_area("codex." <> _rest), do: "Runtime"
+  defp diff_area("hooks." <> _rest), do: "Runtime"
   defp diff_area(_path), do: "Workflow"
-
-  defp diff_scope("_base_config." <> path), do: config_scope(path)
-  defp diff_scope("prompt_body"), do: "Instance"
-  defp diff_scope("profiles." <> _rest), do: "Instance"
-  defp diff_scope("workspace_" <> _rest), do: "Instance"
-  defp diff_scope("polling_" <> _rest), do: "Instance"
-  defp diff_scope("agent_" <> _rest), do: "Instance"
-  defp diff_scope("codex_" <> _rest), do: "Instance"
-  defp diff_scope("hook_" <> _rest), do: "Instance"
-  defp diff_scope(_path), do: "Project"
-
-  defp config_scope(path) do
-    if Enum.any?(WorkflowScopes.instance_sections(), &String.starts_with?(path, &1 <> ".")),
-      do: "Instance",
-      else: "Project"
-  end
 
   defp inspect_for_diff(nil), do: "n/a"
   defp inspect_for_diff(value) when is_binary(value), do: truncate(value, 600)
