@@ -4,7 +4,7 @@ genre: design
 domain: [governance, code-quality, agents]
 status: current
 language: zh-CN
-updated: 2026-09-24
+updated: 2026-09-27
 design_status: landed
 ---
 
@@ -12,14 +12,16 @@ design_status: landed
 
 ## 1. 所有权与边界
 
-本文是面向 Agent 的代码符合性行为的 L3 owner。规范性定义、阈值语义、取证分类、
+本文是面向 Agent 的代码符合性与 X 组测试治理行为的 L3 owner。规范性定义、阈值语义、取证分类、
 符合性等级、声明格式和来源映射由
 [L4 总纲](spec-agent-facing-code.md)唯一拥有；结构化数值由
 [`config/agent_code_thresholds.yml`](../config/agent_code_thresholds.yml)拥有；当前偏差由
-[36 单元审计](agent-facing-code-audit.md)记录。其他文档只链接这些合同。
+[36 单元审计](agent-facing-code-audit.md)记录；X-01 至 X-05 的当前事实由
+[X 组符合性记录](agent-facing-code-x-conformance.md)记录。其他文档只链接这些合同。
 
-本设计拥有阈值注册、确定性取证、精确豁免、检查器输出和质量门禁接入。它不实现或审计
-G/N/L/V/O/D/P/C/X 九组的 67 条编号条款，也不据此填写仓库级正向符合性等级。
+本设计拥有阈值注册、确定性取证、精确豁免、检查器输出、质量门禁接入，以及 X 组登记、
+测试层映射、checker 自测/定标记录和门槛棘轮生命周期。除 X-01 至 X-05 外，它不实现或审计
+G/N/L/V/O/D/P/C 八组条款，也不据此填写仓库级正向符合性等级。
 
 ## 2. 数据流
 
@@ -63,3 +65,26 @@ unit 与 dialyzer jobs 继续执行另外两项等价门禁。`scripts/quality.s
 - 静态 CI 断言证明 workflow 仍调用 check/unit/dialyzer 三项等价门禁；
 - 文档、public spec 和三项仓库质量门禁必须全部通过；
 - 验证只使用本地 Elixir、脚本与 CI 静态读取，不调用容器引擎。
+
+## 6. X 组测试治理
+
+代码符合性与测试符合性是两项独立结论，任一方通过都不能推出另一方通过。X 组当前事实记录
+恰好包含 X-01 至 X-05 五行；每行必须写基线状态、最终状态、精确证据、执行方式、执行种类和
+单个测试层。未满足或部分满足必须填写补齐计划，不适用必须填写理由，空白处置不能完成审计。
+
+本设计只拥有最小测试层接缝：机器可查项属于第 1/2 层，运行时行为属于第 3/4 层；标为阈值
+的条款必须填写 1、2、3、4 中的一个层。它不扩写仓库外测试分层规范。
+
+checker 边界是对仓库内容产生 pass/fail/advisory 质量判断的自有 Mix task 或扫描脚本。命令
+串联脚本不重复计数，formatter、Credo、Dialyzer 和编译器的自身测试归上游。每个在界 checker
+均为第 1 层，必须登记可定位聚焦测试，并以人工标注的 finding/预期输出为样本点记录不一致数、
+样本数和两者之比。
+
+`mix agent_code_x.check` 严格校验五条款集合、测试层映射、checker 集合与自测路径、定标算术、
+X-04 棘轮字段、最终状态计数和 X-05 处置字段。错误定位到条款或 checker 与字段；首行输出稳定
+水位并包含 `baseline_remaining`。本地 `mix lint` 与 CI 通过同一 alias 采用相同硬门禁语义。
+
+门槛收紧先在尚未接入 `mix lint` 时运行检查器并记录精确初始 finding、人工样本、误报数和
+误报率。接线后，基线外违规立即失败，存量只在活动基线期报告且基线只减不增。唯一翻硬判据
+是 `baseline_remaining=0`；归零时删除活动基线及其放行逻辑，只保留一个硬门禁路径。生命周期
+不使用日期截止、自动过期、豁免路径或 warning/hard 双模式。
