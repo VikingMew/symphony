@@ -1,11 +1,13 @@
 defmodule SymphonyElixir.AgentCodeCheck do
   @moduledoc """
-  Evaluates the repository's agent-facing code threshold registry.
+  Evaluates the six-rule agent-facing code threshold registry owned by
+  `docs/agent-facing-code-design.md`. Resident-rule brevity is an orientation-only review concern
+  and is absent from this checker.
   """
 
   @registry_path "config/agent_code_thresholds.yml"
   @exemptions_path "config/agent_code_exemptions.yml"
-  @rule_ids ~w(file_lines function_lines nesting_depth identifier_occurrences resident_rule_lines full_gate_minutes change_lines)
+  @rule_ids ~w(file_lines function_lines nesting_depth identifier_occurrences full_gate_minutes change_lines)
   @rule_keys ~w(id kind scope unit redline default source_nature evidence_mode status default_exceedance_reason calibration)
   @scope_keys ~w(paths language exclusions)
   @exclusion_keys ~w(path reason)
@@ -81,7 +83,7 @@ defmodule SymphonyElixir.AgentCodeCheck do
     ids = Enum.map(rules, & &1["id"])
 
     if Enum.sort(ids) != Enum.sort(@rule_ids) or length(ids) != length(Enum.uniq(ids)) do
-      raise ArgumentError, "registry must contain each of the seven threshold rules exactly once"
+      raise ArgumentError, "registry must contain each of the six threshold rules exactly once"
     end
 
     Map.put(registry, "rules", rules)
@@ -95,7 +97,7 @@ defmodule SymphonyElixir.AgentCodeCheck do
     valid? =
       Enum.all?([
         rule["id"] in @rule_ids,
-        rule["kind"] in ~w(file_lines function_lines nesting_depth identifier_occurrences resident_rule_lines recorded_sample),
+        rule["kind"] in ~w(file_lines function_lines nesting_depth identifier_occurrences recorded_sample),
         rule["evidence_mode"] in ~w(machine human orientation),
         rule["status"] in ~w(enforced record_only),
         is_list(rule["scope"]["paths"]),
@@ -196,7 +198,6 @@ defmodule SymphonyElixir.AgentCodeCheck do
   defp exact_keys!(value, _keys, label), do: raise(ArgumentError, "#{label} must be a map; got #{inspect(value)}")
 
   defp measure_rule(root, %{"kind" => "file_lines"} = rule), do: line_measurements(root, rule)
-  defp measure_rule(root, %{"kind" => "resident_rule_lines"} = rule), do: line_measurements(root, rule)
 
   defp measure_rule(root, %{"kind" => kind} = rule) when kind in ~w(function_lines nesting_depth identifier_occurrences) do
     source_measurements(root, rule)

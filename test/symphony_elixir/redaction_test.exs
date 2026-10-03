@@ -88,7 +88,6 @@ defmodule SymphonyElixir.RedactionTest do
     assert sanitized.timestamp == "2026-08-08T00:00:00Z"
     assert sanitized.list == ["a", "b", "c", 1]
 
-    # The sanitized payload must survive Ecto :map-style JSON encoding.
     assert {:ok, _json} = Jason.encode(sanitized)
   end
 
@@ -106,10 +105,8 @@ defmodule SymphonyElixir.RedactionTest do
     sanitized = Redaction.payload(payload, 500)
 
     assert String.valid?(sanitized["debug"]["raw"])
-    # Invalid bytes replaced, not silently dropped entirely.
     assert sanitized["debug"]["raw"] =~ "turn"
 
-    # Survives Ecto :map-style JSON encoding.
     assert {:ok, _json} = Jason.encode(sanitized)
   end
 
@@ -125,7 +122,6 @@ defmodule SymphonyElixir.RedactionTest do
 
     assert String.valid?(sanitized["text"])
     assert sanitized["text"] =~ "... (truncated)"
-    # Survives Ecto :map-style JSON encoding.
     assert {:ok, _json} = Jason.encode(sanitized)
   end
 

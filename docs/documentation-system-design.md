@@ -4,7 +4,7 @@ genre: design
 domain: [meta, documentation]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -173,3 +173,79 @@ backtick/tilde fenced code block 中的示例）不能抑制 warning。annotatio
 不作为合并门禁。缺少必填 flag、无法解析本地 commit、无 merge base 或无法读取/解析所需 body
 是输入错误：stderr 给出明确说明，stdout 输出一条 `::error::`，退出码为 2；不静默成功。
 此信号只检查路径联动，不判断文档内容是否充分，也不改变 `mix docs.drift` 的引用/新鲜度语义。
+
+## 10. D 组元文档与注释合同
+
+本文拥有 D-01 至 D-08 的仓库级合同：
+
+| 条款 | 规则 | 执行边界 |
+| --- | --- | --- |
+| D-01 | 根 `AGENTS.md` 必须存在，常驻规则使用短、祈使、可执行的句子。 | 文件存在由机器检查；句式质量由人工评审。 |
+| D-02 | 常驻规则保持简短，把细节移入按需文档。 | 只作取向；不设置行数阈值，不进入机器符合性判定。数值注册边界由 [agent-facing code owner](agent-facing-code-design.md)维护。 |
+| D-03 | `AGENTS.md` 的 Quality Gates 只列 `scripts/check.sh`、`scripts/unit.sh`、`scripts/dialyzer.sh`；同名脚本存在且可执行，CI 分别运行相同命令。 | `mix docs.check` 全量硬阻断。 |
+| D-04 | 根 `README.md` 保留 Project Layout、Quick Start 和 Development，并在后两节保留启动与开发入口命令。 | `mix docs.check` 全量硬阻断。 |
+| D-05 | 注释只保留非显然意图、意外决策理由、外部协议假设、出处四类内容。 | 常驻规则、一次性审计与代码评审；不做 NLP 判断。 |
+| D-06 | 不用注释复述代码，也不用注释弥补坏命名或坏结构。 | 常驻规则、一次性审计与代码评审。 |
+| D-07 | 重构时保留仍有效注释，随代码更新过时注释，并记录本次每个注释修改或删除的理由。 | 常驻规则、一次性审计与代码评审。 |
+| D-08 | 规则、owner、L4 合同、审计与实现必须在同仓互相链接。 | 文档 review 与 `mix docs.check` 的既有 owner-anchor 检查共同负责。 |
+
+确定性检查实现在 [`Mix.Tasks.Docs.Check`](../lib/mix/tasks/docs.check.ex)，其 moduledoc 指回本文；
+[`scripts/check.sh`](../scripts/check.sh)把它接入 fast-check 阻断链，聚焦回归位于
+[`test/mix/tasks/docs_check_task_test.exs`](../test/mix/tasks/docs_check_task_test.exs)。D-02 的六规则
+注册、摘除语义和实现链接由 [agent-facing code owner](agent-facing-code-design.md)维护，L4 数值合同
+与修订后的 35 单元证据分别位于 [总纲](spec-agent-facing-code.md)和
+[审计](agent-facing-code-audit.md)。
+
+D-01、D-03、D-04 在 SYM-146 开工同步后的确定性水位均为零，因此终态直接使用一个硬门禁路径。
+没有 baseline 文件、条件分支、flag、环境变量、日期或豁免入口。命令成功时恰好输出一行
+`D baseline: 0 remaining`；任一新增违规直接失败，并报告条款、文件、目标、期望和实际值。
+
+## 11. 一次性注释审计
+
+审计范围恰为 `lib/**/*.ex`、`config/**/*.exs`、`scripts/**/*.sh`、`test/**/*.exs`。Elixir 候选
+使用 `Code.string_to_quoted_with_comments/2` 读取真实语法注释；shell 候选使用
+`rg -n '^\s*#' scripts --glob '*.sh'`。shebang、Credo 工具指令、Markdown fixture 以及字符串或
+heredoc 内的伪注释不进入人工分类。复跑命令为：
+
+```bash
+mise exec -- elixir -e 'Path.wildcard("{lib,config,test}/**/*.{ex,exs}") |> Enum.each(fn path -> {:ok, _, comments} = Code.string_to_quoted_with_comments(File.read!(path), columns: true); Enum.each(comments, &IO.puts("#{path}:#{&1.line}:#{&1.text}")) end)'
+rg -n '^\s*#' scripts --glob '*.sh'
+```
+
+最终保留 144 个真实行注释：100 个出处、25 个外部协议假设、10 个非显然意图、9 个意外决策
+理由。四个允许类别均有实例，因此没有需要登记为 0 的类别；`config/**/*.exs` 的真实行注释为
+0。另排除 9 个 shell shebang、2 个 Credo 工具指令，以及 parser 未返回的 fixture/string/heredoc
+伪注释。
+
+| 类别 | 逐条路径证据 |
+| --- | --- |
+| 非显然意图（10） | `lib/mix/tasks/docs_drift.ex:118`; `lib/symphony_elixir/agent_runner.ex:42`; `lib/symphony_elixir/analytics.ex:80`; `lib/symphony_elixir/orchestrator.ex:4099-4100`; `test/symphony_elixir/blocking_decision_test.exs:113`; `test/symphony_elixir/core_test.exs:1116-1117`; `test/symphony_elixir/docs_drift_pr_linkage_test.exs:146`; `scripts/docs_drift_pr_linkage.sh:76` |
+| 意外决策理由（9） | `lib/symphony_elixir/agent_runner.ex:858-859`; `lib/symphony_elixir/orchestrator.ex:39`; `lib/symphony_elixir/workspace.ex:1043-1044`; `test/symphony_elixir/execution_worker_deployment_test.exs:241-244` |
+| 外部协议假设（25） | `lib/mix/tasks/docs.check.ex:197-198`; `lib/symphony_elixir/redaction.ex:60-63,78,109-112`; `lib/symphony_elixir/specs_check.ex:106-109`; `lib/symphony_elixir/ssh.ex:70-72,92-93`; `lib/symphony_elixir/worker/executor.ex:539-540`; `test/symphony_elixir/redaction_test.exs:114`; `test/symphony_elixir/worker/command_test.exs:25`; `scripts/docs_drift_pr_linkage.sh:50` |
+| 出处（100） | `test/mix/tasks/workspace_before_remove_test.exs:380`; `test/symphony_elixir/agent_runner_test.exs:380,900`; `test/symphony_elixir/codex/tool_request_handler_test.exs:120`; `test/symphony_elixir/config/project_commands_test.exs:21,36`; `test/symphony_elixir/config_multi_project_test.exs:58-59,97-98,123-124`; `test/symphony_elixir/core_test.exs:1350`; `test/symphony_elixir/dashboard_signal_test.exs:117,119,121`; `test/symphony_elixir/default_project_placeholder_test.exs:38-39,69`; `test/symphony_elixir/dynamic_tool_test.exs:231,443,450,564,571,633,681,730,815`; `test/symphony_elixir/event_presenter_test.exs:68,70`; `test/symphony_elixir/execution_worker_deployment_test.exs:97,132,134,138,159,161,164,177,179,181,183,194,220,269`; `test/symphony_elixir/extensions_test.exs:1176`; `test/symphony_elixir/github_pull_request_test.exs:289,307,375,636`; `test/symphony_elixir/implementation_handoff_test.exs:71,140`; `test/symphony_elixir/linear_diagnostics_probes_test.exs:127`; `test/symphony_elixir/linear_diagnostics_test.exs:352,491,698`; `test/symphony_elixir/linear_health_test.exs:50,73`; `test/symphony_elixir/live_e2e_test.exs:142,148,181,186,241,277,281,288,292,304,381,400,404,621,627,636,642,646,677,688,734,778`; `test/symphony_elixir/orchestrator_operator_tasks_test.exs:466`; `test/symphony_elixir/orchestrator_status_test.exs:2262`; `test/symphony_elixir/redaction_test.exs:67,69,71`; `test/symphony_elixir/ssh_test.exs:184`; `test/symphony_elixir/worker/executor_test.exs:478`; `test/symphony_elixir/workflow_settings_package_test.exs:182`; `test/symphony_elixir/workflow_store_multi_project_test.exs:129-130,165-166,189-190`; `test/symphony_elixir/workspace/source_preparation_test.exs:196,213`; `test/symphony_elixir/workspace_disk_guard_test.exs:34`; `test/symphony_elixir_web/admin/observability_presenter_test.exs:18`; `test/symphony_elixir_web/live/observability_fake_persistence_test.exs:306,388`; `test/symphony_elixir_web/proxy_and_health_test.exs:75` |
+
+审计删除了 5 个复述性注释，未修改其他注释文本：
+
+| 路径（删除前行号） | 理由 |
+| --- | --- |
+| `test/symphony_elixir/config_multi_project_test.exs:41` | 只复述紧随其后的 context-restoration assertion。 |
+| `test/symphony_elixir/redaction_test.exs:91` | 只复述紧随其后的 JSON encoding assertion。 |
+| `test/symphony_elixir/redaction_test.exs:109` | 只复述紧随其后的 invalid-byte preservation assertion。 |
+| `test/symphony_elixir/redaction_test.exs:112` | 只复述紧随其后的 JSON encoding assertion。 |
+| `test/symphony_elixir/redaction_test.exs:128` | 只复述紧随其后的 JSON encoding assertion。 |
+
+## 12. 最终符合性
+
+| 条款 | 最终判定 | 证据 |
+| --- | --- | --- |
+| D-01 | 满足 | `AGENTS.md:1,31-42`；`mix docs.check` 验证根文件存在，人工抽查确认原则已改为祈使规则。 |
+| D-02 | 满足 | `AGENTS.md:84-91`; `config/agent_code_thresholds.yml` 恰有 6 项；`mix agent_code.check --format json` 输出 `rules=6` 且没有 `resident_rule_lines` 或 `AGENTS.md` finding。 |
+| D-03 | 满足 | `AGENTS.md:84-95`; `lib/mix/tasks/docs.check.ex:61-106`; `stat -c '%A %n' scripts/check.sh scripts/unit.sh scripts/dialyzer.sh` 均为可执行；`.github/workflows/make-all.yml:34,60,87` 与三条命令一致。 |
+| D-04 | 满足 | `README.md:28-64,120-160,320-352`; `lib/mix/tasks/docs.check.ex:108-135`; 聚焦测试覆盖结构、启动和开发入口缺失。 |
+| D-05 | 满足 | `AGENTS.md:112-113` 与本设计第 11 节逐条审计；四类保留计数为 10/9/25/100。 |
+| D-06 | 满足 | `AGENTS.md:114`; 第 11 节删除理由表；最终人工复核没有已知复述性注释或用注释弥补坏命名的命中项。 |
+| D-07 | 满足 | `AGENTS.md:115-116`; 第 11 节记录本次全部 5 个删除及理由，其他仍有效注释保持不变。 |
+| D-08 | 满足 | 本文第 10 节链接 checker、检查链、测试、L4 与审计；`Mix.Tasks.Docs.Check` moduledoc 指回本文；`SymphonyElixir.AgentCodeCheck` 与 D-02 证据指回 `docs/agent-facing-code-design.md`。 |
+
+汇总：8 条满足，0 条不满足，0 条不适用；D 组基线水位 0。`mix docs.check` 成功输出
+`D baseline: 0 remaining`，并与 `mix agent_code.check` 一同由 `scripts/check.sh:7-8`进入阻断链。

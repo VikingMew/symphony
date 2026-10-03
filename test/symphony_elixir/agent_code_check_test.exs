@@ -12,10 +12,9 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
     %{root: root}
   end
 
-  test "file and resident-rule redlines pass at the boundary and fail strictly above it", %{root: root} do
+  test "file redlines pass at the boundary and fail strictly above it", %{root: root} do
     write(root, "lib/boundary.ex", lines(5))
-    write(root, "AGENTS.md", lines(5))
-    write_registry(root, active: ~w(file_lines resident_rule_lines), redline: 5, default: 3)
+    write_registry(root, active: ["file_lines"], redline: 5, default: 3)
     write_exemptions(root, [])
 
     boundary = AgentCodeCheck.check(root: root, today: ~D[2026-09-24])
@@ -24,20 +23,16 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
     assert Enum.all?(boundary["findings"], &(&1["status"] != "failure"))
 
     write(root, "lib/boundary.ex", lines(6))
-    write(root, "AGENTS.md", lines(6))
     exceeded = AgentCodeCheck.check(root: root, today: ~D[2026-09-24])
 
     assert Enum.map(failures(exceeded), &{&1["rule"], &1["value"], &1["limit"]}) == [
-             {"file_lines", 6, 5},
-             {"resident_rule_lines", 6, 5}
+             {"file_lines", 6, 5}
            ]
 
     assert AgentCodeCheck.exit_code(exceeded) == 1
   end
 
   test "function and nesting measurements use AST boundaries", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
-
     write(root, "lib/sample.ex", """
     defmodule Sample do
       def boundary do
@@ -69,7 +64,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   test "identifier occurrence redline passes at five and fails at six", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
     write(root, "lib/five.ex", repeated_definitions(5))
     write_registry(root, active: ["identifier_occurrences"], rule_limits: %{"identifier_occurrences" => {5, 1}})
     write_exemptions(root, [])
@@ -83,7 +77,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   test "configured paths and explicit exclusions define the entire scope", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
     write(root, "lib/included.ex", lines(4))
     write(root, "lib/generated/excluded.ex", lines(8))
 
@@ -101,7 +94,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   test "an exact unexpired exemption passes and expires on the following day", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
     write(root, "lib/large.ex", lines(6))
     write_registry(root, active: ["file_lines"], redline: 5)
 
@@ -127,7 +119,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   test "stale exemptions, parse errors, and unknown registry fields fail explicitly", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
     write(root, "lib/broken.ex", "defmodule Broken do\n  def broken(\nend\n")
     write_registry(root, active: ["function_lines"])
 
@@ -153,7 +144,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   test "findings are stable, sorted, and record-only rules never affect exit status", %{root: root} do
-    write(root, "AGENTS.md", "rule\n")
     write(root, "lib/z.ex", lines(4))
     write(root, "lib/a.ex", lines(4))
     write_registry(root, active: [], redline: 2, default: 1)
@@ -191,7 +181,6 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
             {"function_lines", "function_lines", ["lib/**/*.ex"]},
             {"nesting_depth", "nesting_depth", ["lib/**/*.ex"]},
             {"identifier_occurrences", "identifier_occurrences", ["lib/**/*.ex"]},
-            {"resident_rule_lines", "resident_rule_lines", ["AGENTS.md"]},
             {"full_gate_minutes", "recorded_sample", ["scripts/quality.sh"]},
             {"change_lines", "recorded_sample", ["git diff --numstat origin/main...HEAD"]}
           ] do

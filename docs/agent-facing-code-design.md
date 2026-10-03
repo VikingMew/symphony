@@ -4,7 +4,7 @@ genre: design
 domain: [governance, code-quality, agents]
 status: current
 language: zh-CN
-updated: 2026-09-27
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -16,16 +16,18 @@ design_status: landed
 符合性等级、声明格式和来源映射由
 [L4 总纲](spec-agent-facing-code.md)唯一拥有；结构化数值由
 [`config/agent_code_thresholds.yml`](../config/agent_code_thresholds.yml)拥有；当前偏差由
-[36 单元审计](agent-facing-code-audit.md)记录；X-01 至 X-05 的当前事实由
+[35 单元审计](agent-facing-code-audit.md)记录；X-01 至 X-05 的当前事实由
 [X 组符合性记录](agent-facing-code-x-conformance.md)记录。其他文档只链接这些合同。
 
 本设计拥有阈值注册、确定性取证、精确豁免、检查器输出、质量门禁接入，以及 X 组登记、
 测试层映射、checker 自测/定标记录和门槛棘轮生命周期。除 X-01 至 X-05 外，它不实现或审计
-G/N/L/V/O/D/P/C 八组条款，也不据此填写仓库级正向符合性等级。
+G/N/L/V/O/D/P/C 八组条款，也不据此填写仓库级正向符合性等级。D 组规则与确定性检查由
+[文档体系设计](documentation-system-design.md#10-d-组元文档与注释合同)拥有；本文只拥有 D-02
+删除数值门禁后的阈值注册边界。
 
 ## 2. 数据流
 
-`mix agent_code.check` 严格读取阈值注册表与豁免表。注册表必须恰好包含七个数值项；顶层、
+`mix agent_code.check` 严格读取阈值注册表与豁免表。注册表必须恰好包含六个数值项；顶层、
 规则、范围、排除和标定对象出现未知字段时立即失败。每个排除项都必须在注册表中给出路径
 和理由，检查器没有隐藏排除规则。
 
@@ -33,6 +35,12 @@ G/N/L/V/O/D/P/C 八组条款，也不据此填写仓库级正向符合性等级�
 通过。红线只能由同时精确匹配规则与目标、并包含责任人、理由和到期日的豁免解除；过期或
 不再命中当前目标的豁免失败。默认值超限生成带注册理由的非阻断记录。`record_only` 规则仅
 产生观测，不进入符合性结论。
+
+常驻规则应保持简短，并把细节移入按需文档；这是 D-02 的人工评审取向，不是数值阈值，
+不进入注册表、豁免表、checker finding 或符合性结论。SYM-146 删除了未完成本仓标定却已
+生效的 `resident_rule_lines` 规则及其 `AGENTS.md` 定时豁免；实现位于
+[`SymphonyElixir.AgentCodeCheck`](../lib/symphony_elixir/agent_code_check.ex)，终态证据见
+[文档体系设计的 D 组符合性表](documentation-system-design.md#12-最终符合性)。
 
 Elixir 源码以带 token metadata 的 AST 取证。函数行数从 `def`/`defp` 起始行算至对应
 `end`；嵌套深度计算函数内 `case`、`cond`、`for`、`fn`、`if`、`receive`、`try`、

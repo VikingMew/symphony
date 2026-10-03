@@ -12,7 +12,7 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
 
   test "default output is concise and JSON output is a single parseable object" do
     human = capture_io(fn -> assert nil == Check.run([]) end)
-    assert human =~ "agent_code.check: PASS (7 rules, 2 active"
+    assert human =~ "agent_code.check: PASS (6 rules, 1 active"
 
     Mix.Task.reenable("agent_code.check")
     json = capture_io(fn -> assert nil == Check.run(["--format", "json"]) end)
@@ -20,7 +20,8 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
 
     assert report["schema"] == "agent-facing-code-report"
     assert report["status"] == "pass"
-    assert report["summary"]["rules"] == 7
+    assert report["summary"]["rules"] == 6
+    refute Enum.any?(report["findings"], &(&1["rule"] == "resident_rule_lines" or &1["target"] == "AGENTS.md"))
   end
 
   test "invalid options fail with the stable usage" do
@@ -39,8 +40,14 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
     assert quality =~ "scripts/check.sh\nscripts/unit.sh\nscripts/dialyzer.sh"
   end
 
-  test "the checked-in audit contains exactly the declared 36 constitution units" do
+  test "the checked-in registry and audit contain the six declared rules and 35 constitution units" do
+    registry = YamlElixir.read_from_file!("config/agent_code_thresholds.yml")
+    assert Enum.map(registry["rules"], & &1["id"]) == ~w(file_lines function_lines nesting_depth identifier_occurrences full_gate_minutes change_lines)
+
+    refute File.read!("config/agent_code_exemptions.yml") =~ "resident_rule_lines"
+    refute File.read!("lib/symphony_elixir/agent_code_check.ex") =~ "resident_rule_lines"
+
     audit = File.read!("docs/agent-facing-code-audit.md")
-    assert length(Regex.scan(~r/^\| \d{2} \|/m, audit)) == 36
+    assert length(Regex.scan(~r/^\| \d{2} \|/m, audit)) == 35
   end
 end
