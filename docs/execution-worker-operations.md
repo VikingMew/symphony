@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-03
 owner: compose.yaml
 ---
 
@@ -29,6 +29,12 @@ Node/Codex runtime or `CODEX_HOME`, and does not mount Codex credentials. The `e
 image always contains Codex. Its `execution_worker_codex` volume stores configuration, logs, and
 session data, while `compose.host-override.yaml` binds the host's live `auth.json` over the deeper
 `/home/symphony/.codex/auth.json` path.
+
+The Panel's instance workflow owns its local `workspace.root`; in Compose, Runtime / Agents Save
+and confirmed Settings / Import validate `/data/workspaces` against the Panel filesystem. The execution worker independently owns
+the `/worker/workspaces` lease root used for checked-out assignments. The Panel root gate does not
+probe or validate that worker lease volume. This boundary is owned by
+[Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
 
 ## Preflight and credentials
 
