@@ -52,6 +52,14 @@ workflow 生成的 payload，返回的 assignment issue、payload issue 和 prom
 `running` 行来自该内存 entry，包含 issue、run、worker、开始时间、session 和 Codex token
 进度。该 feed 只是当前态投影，不创建队列或持久 lease；历史事实仍只写入 run/event。
 
+candidate 二次校验和 worker/session 选择完成后，`RunAdmission.resolve/3` 在任何 issue、run、assignment
+或 executor 写入前生成一次不可变 decision。它只含 `execution_mode`、`workspace_authority`、`source`
+和 `limits`。新 worker run、assignment、payload 与 Orchestrator running entry 消费同一个 decision；
+`handle_worker_task_started/2` 只保存 assignment 中的值，不再次读取 mode、source 或 limits。
+HTTP worker authority 是 `{:http_worker, worker_id, session_id}`，readiness 只消费已通过的 live context，
+不把 worker-local workspace/cache/log path 投影到 Panel state、payload 或历史。所有 source 字段继续
+来自同一 composed workflow 的 project slice。
+
 历史去重门只把 worker started states 当作已启动态：`Refining` 和 `In Progress`。候选 issue 处于
 这两个状态之一时，最新 worker run 必须是 `succeeded`、`failed` 或 `cancelled` 才能重新 claim；最新
 worker run 仍是非终态时不得重复派发。默认 `tracker.active_states` 仍是 `Todo`、`Ready` 和
@@ -84,6 +92,11 @@ Orchestrator 的普通 poll 与 active retry 共用 worker-mode deployment capac
 liveness，不复用旧容量。每次 timeout 记录 warning：
 `event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0`。
 其他 exit 不降级，centralized mode 容量语义不变。
+
+worker mode 的 active retry 在刷新容量后释放本次 claim/retry ownership，保留该 issue 的
+`failure_counts`，等待下一次 fresh live claim；它不进入 centralized dispatcher，也不启动 Panel-local
+或 SSH agent。Panel restart 后的 reclaim 同样只能由新 live claim 产生新 run/assignment，不能用路由
+切换重置失败预算。
 
 Orchestrator 构造时持有 worker capacity query callback；默认 callback 仍为
 `AssignmentManager.available_worker_slots/0`。该 callback 只提供 process-local constructor dependency

@@ -17,13 +17,14 @@ defmodule SymphonyElixir.Orchestrator do
     Nap.Results,
     Payload,
     PersistenceProvider,
+    RunAdmission,
     RunFailure,
     RunLifecycle,
     StatusDashboard,
     Tracker,
     WorkflowStore,
     Workspace,
-    WorkspaceDiskGuard
+    WorkspacePreflight
   }
 
   alias SymphonyElixir.Config.Schema
@@ -34,6 +35,7 @@ defmodule SymphonyElixir.Orchestrator do
   alias SymphonyElixir.Orchestrator.RetryPolicy
   alias SymphonyElixir.Orchestrator.SessionHistory
   alias SymphonyElixir.Worker.AssignmentManager
+  alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
 
   @retry_due_at_display_grace_ms 400
   # Slightly above the dashboard render interval so "checking now…" can render.
@@ -67,6 +69,7 @@ defmodule SymphonyElixir.Orchestrator do
       :codex_app_server_pid,
       :started_at,
       :agent_result,
+      :admission,
       kind: :issue,
       codex_input_tokens: 0,
       codex_output_tokens: 0,
@@ -110,6 +113,7 @@ defmodule SymphonyElixir.Orchestrator do
       :codex_app_server_pid,
       :started_at,
       :agent_result,
+      :admission,
       codex_input_tokens: 0,
       codex_output_tokens: 0,
       codex_total_tokens: 0,
@@ -715,7 +719,8 @@ defmodule SymphonyElixir.Orchestrator do
       delay_type: :continuation,
       project_id: Map.get(running_entry, :project_id),
       worker_host: Map.get(running_entry, :worker_host),
-      workspace_path: Map.get(running_entry, :workspace_path)
+      workspace_path: Map.get(running_entry, :workspace_path),
+      workspace_authority: running_entry.admission.workspace_authority
     })
   end
 
@@ -1001,6 +1006,7 @@ defmodule SymphonyElixir.Orchestrator do
           project_id: Map.get(running_entry, :project_id),
           worker_host: Map.get(running_entry, :worker_host),
           workspace_path: Map.get(running_entry, :workspace_path),
+          workspace_authority: running_entry.admission.workspace_authority,
           failure_count: failure_count
         }
       )
@@ -1125,7 +1131,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
-    if Config.execution_mode() == :worker do
+    if RunAdmission.execution_mode() == "worker" do
       state
     else
       dispatch_for_workflow_centrally(state, workflow)
@@ -1612,10 +1618,9 @@ defmodule SymphonyElixir.Orchestrator do
 
       %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
         state = record_session_completion_totals(state, running_entry)
-        worker_host = Map.get(running_entry, :worker_host)
 
         if cleanup_workspace do
-          cleanup_issue_workspace(identifier, worker_host)
+          cleanup_issue_workspace(identifier, running_entry.admission.workspace_authority)
         end
 
         if persist_terminal do
@@ -1847,32 +1852,40 @@ defmodule SymphonyElixir.Orchestrator do
         state
 
       worker_host ->
-        spawn_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
+        admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
     end
   end
 
-  defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
-    case ensure_workspace_disk_available(issue) do
-      :ok ->
-        spawn_issue_with_workflow_context(state, issue, attempt, recipient, worker_host)
-
-      {:error, reason} ->
-        block_issue_for_disk_guard(state, issue, reason, worker_host)
-    end
-  end
-
-  defp spawn_issue_with_workflow_context(state, issue, attempt, recipient, worker_host) do
+  defp admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host) do
     case current_workflow_context() do
       {:ok, workflow} ->
-        persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow)
+        case RunAdmission.resolve(
+               workflow,
+               {:issue, issue},
+               centralized_execution_context(worker_host)
+             ) do
+          {:ok, admission} ->
+            persist_and_dispatch_issue(
+              state,
+              issue,
+              attempt,
+              recipient,
+              worker_host,
+              workflow,
+              admission
+            )
+
+          {:error, {:environment_unavailable, evidence}} ->
+            skip_dispatch_for_admission(state, issue, evidence)
+        end
 
       {:error, reason} ->
         skip_dispatch_for_workflow_context(state, issue, reason)
     end
   end
 
-  defp persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow) do
-    case persist_run_started(issue, attempt, worker_host) do
+  defp persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow, admission) do
+    case persist_run_started(issue, attempt, worker_host, admission) do
       {:ok, run_record} ->
         dispatch_issue_agent(
           state,
@@ -1881,16 +1894,25 @@ defmodule SymphonyElixir.Orchestrator do
           recipient,
           worker_host,
           workflow,
-          run_record
+          run_record,
+          admission
         )
 
       {:error, reason} ->
-        skip_dispatch_for_persistence(state, issue, attempt, worker_host, workflow, reason)
+        skip_dispatch_for_persistence(
+          state,
+          issue,
+          attempt,
+          worker_host,
+          workflow,
+          admission,
+          reason
+        )
     end
   end
 
-  defp dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record) do
-    case start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
+  defp dispatch_issue_agent(state, issue, attempt, recipient, worker_host, workflow, run_record, admission) do
+    case start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow, admission) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
@@ -1921,6 +1943,7 @@ defmodule SymphonyElixir.Orchestrator do
             retry_attempt: RetryPolicy.normalize_attempt(attempt),
             failure_count: Map.get(state.failure_counts, issue.id, 0),
             started_at: DateTime.utc_now(),
+            admission: admission,
             session_history: initial_session_history(issue, attempt, worker_host),
             session_history_total_count: 1
           })
@@ -1956,7 +1979,8 @@ defmodule SymphonyElixir.Orchestrator do
             run_id: run_record && run_record.id,
             identifier: issue.identifier,
             issue: issue,
-            session_id: nil
+            session_id: nil,
+            admission: admission
           },
           "failed",
           failure
@@ -1968,43 +1992,34 @@ defmodule SymphonyElixir.Orchestrator do
           identifier: issue.identifier,
           error: failure_reason,
           project_id: Map.get(workflow, :project_id),
-          worker_host: worker_host
+          worker_host: worker_host,
+          workspace_authority: admission.workspace_authority
         })
     end
   end
 
-  defp start_operator_task_after_run(state, started, run, workflow) do
+  defp start_operator_task_after_run(state, started, run, workflow, worker_host, admission) do
     started = if run, do: %{started | run_id: run.id}, else: started
-
-    case select_worker_host(state, nil) do
-      :no_worker_capacity ->
-        fail_operator_task_start(state, started, "no worker capacity available")
-
-      worker_host ->
-        spawn_operator_task_with_disk_guard(state, started, worker_host, workflow)
-    end
+    spawn_operator_task(state, started, worker_host, workflow, admission)
   end
 
-  defp spawn_operator_task_with_disk_guard(state, started, worker_host, workflow) do
-    issue = operator_task_issue(started)
-
-    case ensure_workspace_disk_available(issue) do
-      :ok ->
-        spawn_operator_task(state, started, worker_host, workflow)
-
-      {:error, reason} ->
-        fail_operator_task_start(state, started, format_disk_guard_reason(reason))
-    end
-  end
-
-  defp skip_dispatch_for_persistence(state, issue, attempt, worker_host, workflow, reason) do
+  defp skip_dispatch_for_persistence(
+         state,
+         issue,
+         attempt,
+         worker_host,
+         workflow,
+         admission,
+         reason
+       ) do
     Logger.error("Run-start persistence failed action=skip_dispatch #{issue_context(issue)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
 
     schedule_issue_retry(state, issue.id, next_spawn_attempt(attempt), %{
       identifier: issue.identifier,
       error: "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}",
       project_id: Map.get(workflow, :project_id),
-      worker_host: worker_host
+      worker_host: worker_host,
+      workspace_authority: admission.workspace_authority
     })
   end
 
@@ -2013,16 +2028,23 @@ defmodule SymphonyElixir.Orchestrator do
     release_issue_claim(state, issue.id)
   end
 
+  defp skip_dispatch_for_admission(state, issue, evidence) do
+    Logger.warning("Skipping dispatch; environment unavailable #{issue_context(issue)} evidence=#{inspect(evidence)}")
+    release_retry_ownership(state, issue.id)
+  end
+
   defp next_spawn_attempt(attempt) when is_integer(attempt), do: attempt + 1
   defp next_spawn_attempt(_attempt), do: nil
 
-  defp start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow) do
+  defp start_issue_agent_task(state, issue, attempt, recipient, worker_host, workflow, admission) do
     Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
       Config.with_workflow_context(workflow, fn ->
         result =
           agent_runner().run(issue, recipient,
             attempt: attempt,
             worker_host: worker_host,
+            admission: admission,
+            max_turns: admission.limits.max_turns,
             rate_limit_snapshot: state.codex_rate_limits,
             rate_limit_settings: Config.settings!()
           )
@@ -2043,92 +2065,6 @@ defmodule SymphonyElixir.Orchestrator do
     }
   end
 
-  defp ensure_workspace_disk_available(issue) do
-    case workspace_disk_guard().check(Config.settings!()) do
-      {:ok, _summary} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("Skipping agent spawn for #{issue_context(issue)}: #{format_disk_guard_reason(reason)}")
-
-        {:error, reason}
-    end
-  rescue
-    error ->
-      reason = %{
-        reason: :disk_guard_evaluation_failed,
-        exception: error.__struct__,
-        detail: Exception.message(error)
-      }
-
-      Logger.error("Workspace disk guard evaluation failed action=disk_guard_failed #{disk_guard_log_context(issue)} exception=#{inspect(reason.exception)} reason=#{inspect(reason.detail)}")
-
-      {:error, reason}
-  end
-
-  defp disk_guard_log_context(%Issue{
-         id: run_id,
-         assigned_to_worker: false,
-         labels: ["operator" | _]
-       }),
-       do: "run_id=#{run_id}"
-
-  defp disk_guard_log_context(%Issue{} = issue), do: issue_context(issue)
-
-  defp workspace_disk_guard do
-    Application.get_env(:symphony_elixir, :workspace_disk_guard_module, WorkspaceDiskGuard)
-  end
-
-  defp block_issue_for_disk_guard(%State{} = state, %Issue{} = issue, reason, worker_host) do
-    detail = format_disk_guard_reason(reason)
-
-    persist_event("run.blocked", issue.identifier, %{
-      issue_id: issue.id,
-      reason: "workspace_disk_guard",
-      detail: detail,
-      root: Map.get(reason, :root),
-      free_bytes: Map.get(reason, :free_bytes),
-      min_free_bytes: Map.get(reason, :min_free_bytes),
-      setting: Map.get(reason, :setting)
-    })
-
-    blocked_entry = %{
-      issue_id: issue.id,
-      identifier: issue.identifier,
-      state: issue.state,
-      worker_host: worker_host,
-      workspace_path: nil,
-      session_id: nil,
-      blocked_at: DateTime.utc_now(),
-      reason: :workspace_disk_guard,
-      detail: detail,
-      session_history: [
-        %{
-          at: DateTime.utc_now(),
-          source: :system,
-          event: "workspace_disk_guard.blocked",
-          label: "Workspace disk guard",
-          detail: detail,
-          severity: :warning
-        }
-      ],
-      session_history_total_count: 1
-    }
-
-    %{
-      state
-      | blocked: Map.put(state.blocked, issue.id, blocked_entry),
-        retry_attempts: Map.delete(state.retry_attempts, issue.id),
-        claimed: MapSet.put(state.claimed, issue.id)
-    }
-  end
-
-  defp format_disk_guard_reason(%{reason: :low_disk_space} = reason) do
-    "low workspace disk space root=#{Map.get(reason, :root)} free_bytes=#{Map.get(reason, :free_bytes)} min_free_bytes=#{Map.get(reason, :min_free_bytes)} setting=#{Map.get(reason, :setting)}"
-  end
-
-  defp format_disk_guard_reason(reason), do: inspect(reason)
-
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
@@ -2148,7 +2084,7 @@ defmodule SymphonyElixir.Orchestrator do
       RetryPolicy.prepare_retry(
         issue_id,
         attempt,
-        metadata,
+        retry_policy_metadata(metadata),
         previous_retry,
         settings.agent.max_retry_backoff_ms
       )
@@ -2187,16 +2123,38 @@ defmodule SymphonyElixir.Orchestrator do
       })
     end
 
+    retry_entry =
+      prepared_retry
+      |> RetryPolicy.retry_entry(timer_ref, retry_token, due_at_ms)
+      |> Map.put(
+        :workspace_authority,
+        metadata[:workspace_authority] || previous_retry[:workspace_authority]
+      )
+
     %{
       state
       | retry_attempts:
           Map.put(
             state.retry_attempts,
             issue_id,
-            RetryPolicy.retry_entry(prepared_retry, timer_ref, retry_token, due_at_ms)
+            retry_entry
           ),
         claimed: MapSet.put(state.claimed, issue_id)
     }
+  end
+
+  @spec retry_policy_metadata(map()) :: RetryPolicy.retry_metadata()
+  defp retry_policy_metadata(metadata) do
+    Map.take(metadata, [
+      :identifier,
+      :error,
+      :project_id,
+      :worker_host,
+      :workspace_path,
+      :failure_evidence,
+      :failure_count,
+      :delay_type
+    ])
   end
 
   defp retry_settings(metadata) do
@@ -2214,9 +2172,11 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pop_retry_attempt_state(%State{} = state, issue_id, retry_token)
        when is_reference(retry_token) do
+    workspace_authority = get_in(state.retry_attempts, [issue_id, :workspace_authority])
+
     case RetryPolicy.pop_retry_attempt(state.retry_attempts, issue_id, retry_token) do
       {:ok, attempt, metadata, retry_attempts} ->
-        {:ok, attempt, metadata, %{state | retry_attempts: retry_attempts}}
+        {:ok, attempt, Map.put(metadata, :workspace_authority, workspace_authority), %{state | retry_attempts: retry_attempts}}
 
       :missing ->
         :missing
@@ -2278,7 +2238,7 @@ defmodule SymphonyElixir.Orchestrator do
       terminal_issue_state?(issue.state, terminal_states) ->
         Logger.info("Issue state is terminal: issue_id=#{issue_id} issue_identifier=#{issue.identifier} state=#{issue.state}; removing associated workspace")
 
-        cleanup_issue_workspace(issue.identifier, metadata[:worker_host])
+        cleanup_issue_workspace(issue.identifier, metadata[:workspace_authority])
         {:noreply, release_issue_claim(state, issue_id)}
 
       DispatchPolicy.retry_candidate_issue?(issue, dispatch_settings) ->
@@ -2296,41 +2256,38 @@ defmodule SymphonyElixir.Orchestrator do
     {:noreply, release_issue_claim(state, issue_id)}
   end
 
-  defp cleanup_issue_workspace(identifier, worker_host \\ nil)
-
-  defp cleanup_issue_workspace(identifier, worker_host) when is_binary(identifier) do
-    Workspace.remove_issue_workspaces(identifier, worker_host)
+  defp cleanup_issue_workspace(identifier, authority)
+       when is_binary(identifier) and
+              (authority == {:panel_local} or elem(authority, 0) == :centralized_ssh) do
+    Workspace.remove_issue_workspaces(identifier, authority)
   end
 
-  defp cleanup_issue_workspace(_identifier, _worker_host), do: :ok
+  defp cleanup_issue_workspace(_identifier, {:http_worker, _worker_id, _session_id}), do: :ok
 
   defp run_terminal_workspace_cleanup do
     case WorkflowStore.list_enabled() do
       [] ->
-        run_terminal_workspace_cleanup_without_workflow()
+        :ok
 
       workflows ->
         Enum.each(workflows, &run_terminal_workspace_cleanup_for_workflow/1)
     end
   end
 
-  defp run_terminal_workspace_cleanup_without_workflow do
-    with :ok <- Config.validate!(),
-         {:ok, settings} <- Config.settings(),
-         {:ok, issues} <- Tracker.fetch_issues_by_states(settings.tracker.terminal_states) do
-      cleanup_terminal_issue_workspaces(issues)
-    else
-      {:error, reason} ->
-        log_terminal_workspace_cleanup_skip(reason)
-    end
+  defp run_terminal_workspace_cleanup_for_workflow(workflow) do
+    workflow
+    |> RunAdmission.cleanup_authorities()
+    |> run_terminal_workspace_cleanup_for_authorities(workflow)
   end
 
-  defp run_terminal_workspace_cleanup_for_workflow(workflow) do
+  defp run_terminal_workspace_cleanup_for_authorities([], _workflow), do: :ok
+
+  defp run_terminal_workspace_cleanup_for_authorities(authorities, workflow) do
     Config.with_workflow_context(workflow, fn ->
       with {:ok, settings} <- Config.settings(),
            :ok <- Config.validate_settings(settings),
            {:ok, issues} <- Tracker.fetch_issues_by_states(settings.tracker.terminal_states) do
-        cleanup_terminal_issue_workspaces(issues)
+        cleanup_terminal_issue_workspaces(issues, authorities)
       else
         {:error, reason} ->
           log_terminal_workspace_cleanup_skip(reason)
@@ -2338,11 +2295,10 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp cleanup_terminal_issue_workspaces(issues) when is_list(issues) do
-    issues
-    |> Enum.each(fn
+  defp cleanup_terminal_issue_workspaces(issues, authorities) when is_list(issues) do
+    Enum.each(issues, fn
       %Issue{identifier: identifier} when is_binary(identifier) ->
-        cleanup_issue_workspace(identifier)
+        Enum.each(authorities, &cleanup_issue_workspace(identifier, &1))
 
       _issue ->
         :ok
@@ -2372,27 +2328,40 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp handle_active_retry_with_workflow(state, issue, attempt, metadata) do
     state = refresh_deployment_capacity(state)
-    dispatch_settings = dispatch_policy_settings(state)
-    worker_settings = worker_policy_settings()
 
-    if DispatchPolicy.retry_candidate_issue?(issue, dispatch_settings) and
-         dispatch_slots_available?(issue, state) and
-         DispatchPolicy.worker_slots_available?(state, metadata[:worker_host], worker_settings) do
-      {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host])}
+    if RunAdmission.execution_mode() == "worker" do
+      {:noreply, release_retry_ownership(state, issue.id)}
     else
-      Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
+      dispatch_settings = dispatch_policy_settings(state)
+      worker_settings = worker_policy_settings()
 
-      {:noreply,
-       schedule_issue_retry(
-         state,
-         issue.id,
-         attempt + 1,
-         Map.merge(metadata, %{
-           identifier: issue.identifier,
-           error: "no available orchestrator slots"
-         })
-       )}
+      if DispatchPolicy.retry_candidate_issue?(issue, dispatch_settings) and
+           dispatch_slots_available?(issue, state) and
+           DispatchPolicy.worker_slots_available?(state, metadata[:worker_host], worker_settings) do
+        {:noreply, dispatch_issue(state, issue, attempt, metadata[:worker_host])}
+      else
+        Logger.debug("No available slots for retrying #{issue_context(issue)}; retrying again")
+
+        {:noreply,
+         schedule_issue_retry(
+           state,
+           issue.id,
+           attempt + 1,
+           Map.merge(metadata, %{
+             identifier: issue.identifier,
+             error: "no available orchestrator slots"
+           })
+         )}
+      end
     end
+  end
+
+  defp release_retry_ownership(%State{} = state, issue_id) do
+    %{
+      state
+      | claimed: MapSet.delete(state.claimed, issue_id),
+        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+    }
   end
 
   defp release_issue_claim(%State{} = state, issue_id) do
@@ -2411,6 +2380,116 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp select_worker_host(%State{} = state, preferred_worker_host) do
     DispatchPolicy.select_worker_host(state, preferred_worker_host, worker_policy_settings())
+  end
+
+  defp centralized_execution_context(nil), do: %{workspace_authority: {:panel_local}}
+
+  defp centralized_execution_context(worker_host) when is_binary(worker_host) do
+    %{
+      workspace_authority: {:centralized_ssh, worker_host},
+      readiness: &ssh_workspace_readiness/2
+    }
+  end
+
+  defp ssh_workspace_readiness({:centralized_ssh, worker_host}, settings) do
+    settings
+    |> ssh_workspace_roots()
+    |> Enum.reduce_while(:ok, fn root, :ok ->
+      case check_ssh_workspace_root(worker_host, root, settings) do
+        :ok -> {:cont, :ok}
+        {:error, rejection} -> {:halt, {:error, rejection}}
+      end
+    end)
+  end
+
+  defp ssh_workspace_roots(settings) do
+    [
+      settings.workspace.root,
+      SourcePreparation.repository_base_root(settings),
+      SourcePreparation.worktree_base_root(settings)
+    ]
+    |> Enum.uniq()
+  end
+
+  defp check_ssh_workspace_root(worker_host, root, settings) do
+    script = ssh_workspace_preflight_script(root, settings.workspace.min_free_bytes)
+
+    case Remote.run_command(worker_host, script, settings.workspace.initialize_timeout_ms) do
+      {:ok, {output, 0}} -> parse_ssh_workspace_preflight(output, root, settings.workspace.min_free_bytes)
+      {:ok, {output, status}} -> {:error, %{kind: :ssh_unavailable, path: root, reason: {:exit_status, status, output}}}
+      {:error, reason} -> {:error, %{kind: :ssh_unavailable, path: root, reason: reason}}
+    end
+  end
+
+  defp ssh_workspace_preflight_script(root, min_free_bytes) do
+    [
+      "set -u",
+      Remote.shell_assign("root", root),
+      "candidate=\"$root\"",
+      "probe_kind=not_writable",
+      "if [ ! -e \"$candidate\" ]; then",
+      "  probe_kind=not_creatable",
+      "  while [ ! -e \"$candidate\" ]; do",
+      "    parent=$(dirname \"$candidate\")",
+      "    if [ \"$parent\" = \"$candidate\" ]; then printf '%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' 'not_creatable'; exit 0; fi",
+      "    candidate=\"$parent\"",
+      "  done",
+      "fi",
+      "if [ ! -d \"$candidate\" ]; then printf '%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' 'not_creatable'; exit 0; fi",
+      "probe=\"$candidate/.symphony-write-probe-$$\"",
+      "if ! mkdir \"$probe\" 2>/dev/null; then printf '%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' \"$probe_kind\"; exit 0; fi",
+      "rmdir \"$probe\"",
+      ssh_disk_preflight_script(min_free_bytes),
+      "printf '%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' 'ok'"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp ssh_disk_preflight_script(min_free_bytes) when min_free_bytes <= 0, do: ""
+
+  defp ssh_disk_preflight_script(min_free_bytes) do
+    [
+      "available_kb=$(df -Pk \"$candidate\" 2>/dev/null | awk 'NR == 2 {print $4}')",
+      "case \"$available_kb\" in ''|*[!0-9]*) printf '%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' 'disk_space_unavailable'; exit 0 ;; esac",
+      "free_bytes=$((available_kb * 1024))",
+      "if [ \"$free_bytes\" -lt '#{min_free_bytes}' ]; then printf '%s\\t%s\\t%s\\n' '__SYMPHONY_PREFLIGHT__' 'low_disk_space' \"$free_bytes\"; exit 0; fi"
+    ]
+    |> Enum.join("\n")
+  end
+
+  defp parse_ssh_workspace_preflight(output, root, min_free_bytes) do
+    marker =
+      output
+      |> IO.iodata_to_binary()
+      |> String.split("\n", trim: true)
+      |> Enum.find_value(fn line ->
+        case String.split(line, "\t") do
+          ["__SYMPHONY_PREFLIGHT__" | fields] -> fields
+          _ -> nil
+        end
+      end)
+
+    case marker do
+      ["ok"] ->
+        :ok
+
+      ["not_creatable"] ->
+        {:error, %{kind: :not_creatable, path: root, reason: :write_probe_failed}}
+
+      ["not_writable"] ->
+        {:error, %{kind: :not_writable, path: root, reason: :write_probe_failed}}
+
+      ["disk_space_unavailable"] ->
+        {:error, %{kind: :disk_space_unavailable, path: root, reason: :df_failed}}
+
+      ["low_disk_space", free_bytes] ->
+        {:error,
+         %{
+           kind: :low_disk_space,
+           path: root,
+           reason: %{free_bytes: String.to_integer(free_bytes), min_free_bytes: min_free_bytes}
+         }}
+    end
   end
 
   defp find_issue_by_id(issues, issue_id) when is_binary(issue_id) do
@@ -2445,9 +2524,9 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp refresh_deployment_capacity(%State{} = state) do
     capacity =
-      case Config.execution_mode() do
-        :worker -> worker_deployment_capacity(state.worker_capacity_query)
-        :centralized -> Config.panel_max_concurrent_agents()
+      case RunAdmission.execution_mode() do
+        "worker" -> worker_deployment_capacity(state.worker_capacity_query)
+        "centralized" -> Config.panel_max_concurrent_agents()
       end
 
     %{state | max_concurrent_agents: capacity}
@@ -2708,75 +2787,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:start_listening, _from, state) do
-    case runtime_config() do
-      {:ok, _config} ->
-        state = %{state | listening_mode: :listening_all, last_config_error: nil}
-        state = schedule_tick(state, 0)
-        persist_event("orchestrator.listening_started", nil, %{mode: "listening_all"})
-        notify_dashboard()
-
-        reply = %{
-          listening?: listening?(state),
-          listening_mode: listening_mode_string(state),
-          changed_at: DateTime.utc_now()
-        }
-
-        {:reply, reply, state}
-
-      {:error, reason} ->
-        state =
-          log_config_error_once(
-            %{state | listening_mode: :not_listening, poll_check_in_progress: false},
-            reason
-          )
-
-        notify_dashboard()
-
-        reply = %{
-          listening?: listening?(state),
-          listening_mode: listening_mode_string(state),
-          error: inspect(reason),
-          changed_at: DateTime.utc_now()
-        }
-
-        {:reply, reply, state}
-    end
+    handle_start_listening(state, :listening_all)
   end
 
   def handle_call(:start_refine_only_listening, _from, state) do
-    case runtime_config() do
-      {:ok, _config} ->
-        state = %{state | listening_mode: :listening_refine_only, last_config_error: nil}
-        state = schedule_tick(state, 0)
-        persist_event("orchestrator.listening_started", nil, %{mode: "listening_refine_only"})
-        notify_dashboard()
-
-        reply = %{
-          listening?: listening?(state),
-          listening_mode: listening_mode_string(state),
-          changed_at: DateTime.utc_now()
-        }
-
-        {:reply, reply, state}
-
-      {:error, reason} ->
-        state =
-          log_config_error_once(
-            %{state | listening_mode: :not_listening, poll_check_in_progress: false},
-            reason
-          )
-
-        notify_dashboard()
-
-        reply = %{
-          listening?: listening?(state),
-          listening_mode: listening_mode_string(state),
-          error: inspect(reason),
-          changed_at: DateTime.utc_now()
-        }
-
-        {:reply, reply, state}
-    end
+    handle_start_listening(state, :listening_refine_only)
   end
 
   def handle_call(:stop_listening, _from, state) do
@@ -2871,6 +2886,61 @@ defmodule SymphonyElixir.Orchestrator do
     handle_operator_task_request(state, kind, project_id)
   end
 
+  defp handle_start_listening(state, mode) do
+    with {:ok, _config} <- runtime_config(),
+         :ok <- preflight_listening_workspace() do
+      state = %{state | listening_mode: mode, last_config_error: nil}
+      state = schedule_tick(state, 0)
+      persist_event("orchestrator.listening_started", nil, %{mode: Atom.to_string(mode)})
+      notify_dashboard()
+
+      reply = %{
+        listening?: listening?(state),
+        listening_mode: listening_mode_string(state),
+        changed_at: DateTime.utc_now()
+      }
+
+      {:reply, reply, state}
+    else
+      {:error, reason} ->
+        state =
+          log_config_error_once(
+            %{state | listening_mode: :not_listening, poll_check_in_progress: false},
+            reason
+          )
+
+        notify_dashboard()
+
+        reply = %{
+          listening?: listening?(state),
+          listening_mode: listening_mode_string(state),
+          error: listening_error(reason),
+          changed_at: DateTime.utc_now()
+        }
+
+        {:reply, reply, state}
+    end
+  end
+
+  defp preflight_listening_workspace do
+    case WorkflowStore.list_enabled() do
+      [workflow | _workflows] ->
+        Config.with_workflow_context(workflow, &preflight_current_workspace/0)
+
+      [] ->
+        preflight_current_workspace()
+    end
+  end
+
+  defp preflight_current_workspace do
+    with {:ok, settings} <- Config.settings() do
+      WorkspacePreflight.check(:pre_listen, settings: settings)
+    end
+  end
+
+  defp listening_error(%{kind: _kind} = rejection), do: rejection
+  defp listening_error(reason), do: inspect(reason)
+
   defp handle_operator_task_request(state, kind, project_id) do
     {state, task, request_status} = request_operator_task(state, kind, project_id)
 
@@ -2918,7 +2988,8 @@ defmodule SymphonyElixir.Orchestrator do
 
       _ ->
         {state, task} = request_new_operator_task(state, kind, project_id)
-        {state, task, :accepted}
+        request_status = if task.status == :failed, do: :rejected, else: :accepted
+        {state, task, request_status}
     end
   end
 
@@ -2963,12 +3034,27 @@ defmodule SymphonyElixir.Orchestrator do
     case load_operator_workflow(project) do
       {:ok, workflow} ->
         Config.with_workflow_context(workflow, fn ->
-          queue_or_start_operator_task(state, kind, task)
+          request_operator_task_in_mode(state, kind, task, RunAdmission.execution_mode())
         end)
 
       {:error, reason} ->
         put_failed_operator_task(state, kind, task, reason)
     end
+  end
+
+  defp request_operator_task_in_mode(state, kind, task, "worker") do
+    {state, failed} =
+      fail_operator_admission(state, task, %{
+        kind: :execution_mode_unavailable,
+        execution_mode: "worker",
+        surface: :centralized
+      })
+
+    {put_operator_task(state, kind, failed), failed}
+  end
+
+  defp request_operator_task_in_mode(state, kind, task, "centralized") do
+    queue_or_start_operator_task(state, kind, task)
   end
 
   defp queue_or_start_operator_task(state, kind, task) do
@@ -3057,15 +3143,51 @@ defmodule SymphonyElixir.Orchestrator do
         summary: %{created: 0, skipped: 0, failed: 0, issues: []}
     }
 
-    case persist_operator_run_started(started) do
+    start_operator_task_with_admission(state, started, workflow)
+  end
+
+  defp start_operator_task_with_admission(state, started, workflow) do
+    if RunAdmission.execution_mode() == "worker" do
+      fail_operator_admission(state, started, %{
+        kind: :execution_mode_unavailable,
+        execution_mode: "worker",
+        surface: :centralized
+      })
+    else
+      admit_centralized_operator_task(state, started, workflow)
+    end
+  end
+
+  defp admit_centralized_operator_task(state, started, workflow) do
+    case select_worker_host(state, nil) do
+      :no_worker_capacity ->
+        fail_operator_admission(state, started, %{kind: :no_worker_capacity, surface: :centralized})
+
+      worker_host ->
+        case RunAdmission.resolve(
+               workflow,
+               {:operator, started},
+               centralized_execution_context(worker_host)
+             ) do
+          {:ok, admission} ->
+            persist_admitted_operator_task(state, started, workflow, worker_host, admission)
+
+          {:error, {:environment_unavailable, evidence}} ->
+            fail_operator_admission(state, started, evidence)
+        end
+    end
+  end
+
+  defp persist_admitted_operator_task(state, started, workflow, worker_host, admission) do
+    case persist_operator_run_started(started, admission) do
       {:ok, run} ->
-        start_operator_task_after_run(state, started, run, workflow)
+        start_operator_task_after_run(state, started, run, workflow, worker_host, admission)
 
       {:error, reason} ->
         failure_reason =
           "run-start persistence failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
-        Logger.error("Operator run-start persistence failed action=fail_task kind=#{task.kind} run_id=#{task.run_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
+        Logger.error("Operator run-start persistence failed action=fail_task kind=#{started.kind} run_id=#{started.run_id} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
 
         failed = %{
           started
@@ -3079,31 +3201,52 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp spawn_operator_task(%State{} = state, task, worker_host, workflow) do
+  defp fail_operator_admission(state, task, evidence) do
+    reason = "environment_unavailable: #{inspect(evidence)}"
+
+    failed = %{
+      task
+      | status: :failed,
+        finished_at: DateTime.utc_now(),
+        failure_reason: reason,
+        summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: reason}
+    }
+
+    {state, failed}
+  end
+
+  defp spawn_operator_task(%State{} = state, task, worker_host, workflow, admission) do
     recipient = self()
 
     case Task.Supervisor.start_child(SymphonyElixir.TaskSupervisor, fn ->
-           run_operator_task(state, task, recipient, worker_host, workflow)
+           run_operator_task(state, task, recipient, worker_host, workflow, admission)
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
         Logger.info("Dispatching operator task to agent: kind=#{task.kind} run_id=#{task.run_id} pid=#{inspect(pid)} worker_host=#{worker_host || "local"}")
 
-        {put_operator_running_entry(state, task, pid, ref, worker_host), task}
+        {put_operator_running_entry(state, task, pid, ref, worker_host, admission), task}
 
       {:error, reason} ->
-        fail_operator_task_start(state, task, "failed to spawn operator task: #{inspect(reason)}")
+        fail_operator_task_start(
+          state,
+          task,
+          "failed to spawn operator task: #{inspect(reason)}",
+          admission
+        )
     end
   end
 
-  defp run_operator_task(state, task, recipient, worker_host, workflow) do
+  defp run_operator_task(state, task, recipient, worker_host, workflow, admission) do
     Config.with_workflow_context(workflow, fn ->
       result =
         agent_runner().run_operator(task.kind, task.run_id, recipient,
           project_id: task.project_id,
           worker_host: worker_host,
           run_id: task.run_id,
+          admission: admission,
+          max_turns: admission.limits.max_turns,
           rate_limit_snapshot: state.codex_rate_limits,
           rate_limit_settings: Config.settings!()
         )
@@ -3113,7 +3256,7 @@ defmodule SymphonyElixir.Orchestrator do
     end)
   end
 
-  defp fail_operator_task_start(%State{} = state, task, reason) do
+  defp fail_operator_task_start(%State{} = state, task, reason, admission) do
     failed = %{
       task
       | status: :failed,
@@ -3122,7 +3265,7 @@ defmodule SymphonyElixir.Orchestrator do
         summary: %{created: 0, skipped: 0, failed: 1, issues: [], error: reason}
     }
 
-    running_entry = operator_running_entry(failed, nil, nil, "local")
+    running_entry = operator_running_entry(failed, nil, nil, "local", admission)
     run_kind = running_entry_kind(running_entry)
 
     persist_event(
@@ -3140,12 +3283,12 @@ defmodule SymphonyElixir.Orchestrator do
     {state, failed}
   end
 
-  defp put_operator_running_entry(%State{} = state, task, pid, ref, worker_host) do
-    running_entry = operator_running_entry(task, pid, ref, worker_host)
+  defp put_operator_running_entry(%State{} = state, task, pid, ref, worker_host, admission) do
+    running_entry = operator_running_entry(task, pid, ref, worker_host, admission)
     %{state | running: Map.put(state.running, task.run_id, running_entry)}
   end
 
-  defp operator_running_entry(task, pid, ref, worker_host) do
+  defp operator_running_entry(task, pid, ref, worker_host, admission) do
     identity = AgentRunner.operator_task_identity(task.kind, task.run_id)
 
     running_entry = %RunningOperator{
@@ -3176,6 +3319,7 @@ defmodule SymphonyElixir.Orchestrator do
       turn_count: 0,
       retry_attempt: 0,
       started_at: task.started_at,
+      admission: admission,
       session_history: [
         %{
           at: task.started_at,
@@ -3190,20 +3334,6 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     running_entry
-  end
-
-  defp operator_task_issue(task) do
-    identity = AgentRunner.operator_task_identity(task.kind, task.run_id)
-
-    %Issue{
-      id: task.run_id,
-      identifier: identity.identifier,
-      title: identity.label,
-      description: identity.description,
-      state: identity.label,
-      assigned_to_worker: false,
-      labels: ["operator", to_string(task.kind)]
-    }
   end
 
   defp operator_task_label(kind), do: AgentRunner.operator_task_identity(kind, nil).label
@@ -3615,6 +3745,7 @@ defmodule SymphonyElixir.Orchestrator do
       retry_attempt: attempt,
       failure_count: Map.get(state.failure_counts, issue_id, 0),
       started_at: worker_assignment_started_at(assignment),
+      admission: Map.fetch!(assignment, :admission),
       session_history: initial_session_history(issue, attempt, worker_host),
       session_history_total_count: 1
     }
@@ -4102,15 +4233,6 @@ defmodule SymphonyElixir.Orchestrator do
     Config.current_workflow()
   end
 
-  defp current_workflow_record(%{project_id: project_id}) when is_binary(project_id) do
-    case Enum.find(persistence().list_projects(), &(&1.id == project_id)) do
-      nil -> nil
-      project -> persistence().current_workflow(project)
-    end
-  end
-
-  defp current_workflow_record(_workflow), do: persistence().current_workflow()
-
   defp persist_run_started_event(issue, run, worker_host) do
     case persist_event(Events.run_started_event(issue, run, worker_host)) do
       :ok -> {:ok, run}
@@ -4125,9 +4247,9 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
+  defp persist_run_started(%Issue{} = issue, attempt, worker_host, admission) do
     if persistence_enabled?() do
-      run_started_persist(issue, attempt, worker_host)
+      run_started_persist(issue, attempt, worker_host, admission)
     else
       {:ok, nil}
     end
@@ -4138,17 +4260,16 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, {:start_run, {:exception, error}}}
   end
 
-  defp run_started_persist(issue, attempt, worker_host) do
+  defp run_started_persist(issue, attempt, worker_host, admission) do
     case current_workflow_context() do
       {:ok, workflow} ->
         project_id = Map.get(workflow, :project_id)
         context = persistence_context(issue)
 
         with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
-             workflow_record = current_workflow_record(workflow),
              run_attrs =
                issue
-               |> Events.run_attrs(workflow_record, "centralized", attempt)
+               |> Events.run_attrs(admission, attempt)
                |> Map.put(:issue_id, issue_record.id)
                |> Map.put_new(:project_id, project_id),
              {:ok, run} <- persist_create_run(context, run_attrs) do
@@ -4176,9 +4297,9 @@ defmodule SymphonyElixir.Orchestrator do
     persistence().create_run(run_attrs)
   end
 
-  defp persist_operator_run_started(task) do
+  defp persist_operator_run_started(task, admission) do
     if persistence_enabled?() do
-      operator_run_started_persist(task)
+      operator_run_started_persist(task, admission)
     else
       {:ok, nil}
     end
@@ -4189,13 +4310,12 @@ defmodule SymphonyElixir.Orchestrator do
       {:error, {:start_operator_run, {:exception, error}}}
   end
 
-  defp operator_run_started_persist(task) do
+  defp operator_run_started_persist(task, admission) do
     case current_workflow_context() do
-      {:ok, workflow} ->
-        workflow_record = current_workflow_record(workflow)
+      {:ok, _workflow} ->
         context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
 
-        with {:ok, run} <- persist_create_operator_run(context, task, workflow_record) do
+        with {:ok, run} <- persist_create_operator_run(context, task, admission) do
           persist_operator_started_event(task, run)
         end
 
@@ -4204,20 +4324,20 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp persist_create_operator_run(context, task, workflow_record) do
+  defp persist_create_operator_run(context, task, admission) do
     required_persistence_write(:create_operator_run, context, fn ->
-      create_operator_run!(task, workflow_record)
+      create_operator_run!(task, admission)
     end)
   end
 
-  defp create_operator_run!(task, _workflow_record) do
+  defp create_operator_run!(task, admission) do
     persistence().create_run(%{
       kind: to_string(task.kind),
       profile: to_string(task.kind),
       label: operator_task_label(task.kind),
       project_id: task.project_id,
       status: "running",
-      execution_mode: "centralized",
+      execution_mode: admission.execution_mode,
       attempt: 0,
       started_at: task.started_at
     })

@@ -17,6 +17,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Orchestrator,
     PersistenceProvider,
     PromptBuilder,
+    RunAdmission,
     RunFailure,
     RunLifecycle,
     Tracker,
@@ -183,6 +184,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       orchestrator: Keyword.get(opts, :orchestrator, Orchestrator),
       now: Keyword.get(opts, :now, &DateTime.utc_now/0),
       failure_circuit: Keyword.get(opts, :failure_circuit, EnvironmentFailureCircuit),
+      run_admission: Keyword.get(opts, :run_admission, RunAdmission),
       task_supervisor: Keyword.get(opts, :task_supervisor, SymphonyElixir.TaskSupervisor),
       tracker_io_timeout_ms: Keyword.get(opts, :tracker_io_timeout_ms, @tracker_io_timeout_ms),
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
@@ -689,6 +691,19 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp create_assignment(state, worker, session, workflow, issue) do
+    authority = {:http_worker, worker.id, session.id}
+
+    with {:ok, admission} <-
+           state.run_admission.resolve(
+             workflow,
+             {:issue, issue},
+             %{workspace_authority: authority, readiness: :ready}
+           ) do
+      create_admitted_assignment(state, worker, session, workflow, issue, admission)
+    end
+  end
+
+  defp create_admitted_assignment(state, worker, session, workflow, issue, admission) do
     now = state.now.()
     assignment_id = Ecto.UUID.generate()
     expires_at = DateTime.add(now, state.persistence.worker_lease_duration_seconds(), :second)
@@ -697,7 +712,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
     with {:ok, issue_record} <-
            state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
-         {:ok, run} <- create_run(state.persistence, issue, workflow, issue_record.id, project_id, now),
+         {:ok, run} <- create_run(state.persistence, issue, admission, issue_record.id, project_id, now),
          {:ok, issue} <- move_to_worker_started(state.tracker, issue, profile),
          prompt <-
            PromptBuilder.build_prompt(issue,
@@ -706,7 +721,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
              allowed_updates: Config.workflow_allowed_updates(profile)
            ),
          assignment <-
-           build_assignment(assignment_id, issue, run, worker, session, workflow,
+           build_assignment(assignment_id, issue, run, worker, session, admission,
              prompt: prompt,
              profile: profile,
              expires_at: expires_at
@@ -720,10 +735,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp create_run(persistence, issue, workflow, issue_id, project_id, started_at) do
+  defp create_run(persistence, issue, admission, issue_id, project_id, started_at) do
     attrs =
       issue
-      |> Events.run_attrs(workflow, "worker", nil)
+      |> Events.run_attrs(admission, nil)
       |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running", started_at: started_at})
 
     persistence.create_run(attrs)
@@ -752,8 +767,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp build_assignment(id, issue, run, worker, session, workflow, opts) do
-    payload = Events.worker_assignment_payload(issue, run, workflow, opts[:prompt], opts[:profile]).payload
+  defp build_assignment(id, issue, run, worker, session, admission, opts) do
+    payload = Events.worker_assignment_payload(issue, run, admission, opts[:prompt], opts[:profile]).payload
 
     correlation = %{
       "project_id" => run.project_id,
@@ -780,6 +795,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       worker_id: worker.id,
       worker_name: Map.get(worker, :name),
       session_id: session.id,
+      admission: admission,
       started_at: Map.get(run, :started_at),
       expires_at: opts[:expires_at],
       payload: payload,

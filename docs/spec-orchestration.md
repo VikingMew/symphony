@@ -267,6 +267,22 @@ and leave the Orchestrator process and listening mode unchanged. The next refres
 in-memory liveness again. Other exits remain explicit failures, and centralized capacity behavior
 is unchanged.
 
+#### 8.3.1 Run Admission Decision
+
+`SymphonyElixir.RunAdmission.execution_mode/0` is the only Orchestrator deployment-mode projection.
+After state, dependency, listening, capacity, candidate revalidation, and host/session selection,
+`resolve/3` MUST produce one immutable decision before any run, workspace, assignment, or executor
+write. The decision contains exactly `execution_mode`, `workspace_authority`, `source`, and `limits`.
+Run persistence, the running entry, agent invocation, and worker assignment/payload MUST consume the
+same decision.
+
+Readiness rejection is `environment_unavailable` with the selected surface and specific adapter
+kind. Panel-local readiness uses `WorkspacePreflight`; centralized SSH uses the selected host
+adapter; HTTP worker readiness uses the selected live worker/session context and exposes no local
+path. A rejection creates no run, workspace, or executor. Centralized operator tasks resolve the
+same decision before run persistence; worker-mode operator requests are unavailable before host
+selection or writes.
+
 ### 8.4 Retry and Backoff
 
 Persisted terminal runs, retry metadata, and `BlockingDecision.reason` use the classification owned
@@ -287,6 +303,8 @@ Backoff formula:
 - `agent.max_retry_backoff_ms` applies only to this orchestrator failure-retry schedule. Worker
   claim requests carry no prospective issue id and maintain no per-issue retry/cooldown state;
   worker re-claim cadence uses the service-provided `poll_after_seconds` and Panel admission.
+- A worker-mode active retry MUST release its claim/retry ownership, preserve the existing failure
+  count, and wait for a fresh live claim. It MUST NOT enter centralized issue dispatch.
 - A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
   After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
   persists a blocking decision and delivers the Linear comment and `Blocked` transition.
@@ -367,9 +385,11 @@ Part B: Tracker state refresh
 
 When the service starts:
 
-1. Query tracker for issues in terminal states.
-2. For each returned issue identifier, remove the corresponding workspace directory.
-3. If the terminal-issues fetch fails, log a warning and continue startup.
+1. Resolve cleanup authorities from each enabled workflow.
+2. In worker mode, return no Panel authority and perform no Panel workspace cleanup.
+3. In centralized mode, query tracker for terminal issues and remove each workspace only through
+   the explicit Panel-local or centralized-SSH authority returned by the resolver.
+4. If the terminal-issues fetch fails, log a warning and continue startup.
 
 This prevents stale terminal workspaces from accumulating after restarts.
 

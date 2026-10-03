@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Workspace do
   @hook_command_preview_bytes 512
 
   @type worker_host :: String.t() | nil
+  @type cleanup_authority :: {:panel_local} | {:centralized_ssh, String.t()}
 
   @spec create_for_issue(map() | String.t() | nil, worker_host(), keyword()) ::
           {:ok, Path.t()} | {:error, term()}
@@ -106,11 +107,9 @@ defmodule SymphonyElixir.Workspace do
     end
   end
 
-  @spec remove_issue_workspaces(term()) :: :ok
-  def remove_issue_workspaces(identifier), do: remove_issue_workspaces(identifier, nil)
-
-  @spec remove_issue_workspaces(term(), worker_host()) :: :ok
-  def remove_issue_workspaces(identifier, worker_host) when is_binary(identifier) and is_binary(worker_host) do
+  @spec remove_issue_workspaces(String.t(), cleanup_authority()) :: :ok
+  def remove_issue_workspaces(identifier, {:centralized_ssh, worker_host})
+      when is_binary(identifier) and is_binary(worker_host) do
     safe_id = SourcePreparation.safe_identifier(identifier)
 
     case workspace_path_for_issue(safe_id, worker_host) do
@@ -121,24 +120,14 @@ defmodule SymphonyElixir.Workspace do
     :ok
   end
 
-  def remove_issue_workspaces(identifier, nil) when is_binary(identifier) do
+  def remove_issue_workspaces(identifier, {:panel_local}) when is_binary(identifier) do
     safe_id = SourcePreparation.safe_identifier(identifier)
 
-    case Config.settings!().worker.ssh_hosts do
-      [] ->
-        case workspace_path_for_issue(safe_id, nil) do
-          {:ok, workspace} -> remove(workspace, nil)
-          {:error, _reason} -> :ok
-        end
-
-      worker_hosts ->
-        Enum.each(worker_hosts, &remove_issue_workspaces(identifier, &1))
+    case workspace_path_for_issue(safe_id, nil) do
+      {:ok, workspace} -> remove(workspace, nil)
+      {:error, _reason} -> :ok
     end
 
-    :ok
-  end
-
-  def remove_issue_workspaces(_identifier, _worker_host) do
     :ok
   end
 

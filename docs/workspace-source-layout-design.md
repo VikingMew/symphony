@@ -167,8 +167,8 @@ Import stage 保留供修正，提示指向 `Settings / Import: workspace.root`�
 `WorkspacePreflight.check(:pre_listen, settings: ...)` 冻结了 listening 接线复用的契约：先执行相同
 root 判定，再调用 `WorkspaceDiskGuard`。空间拒绝沿用 `:low_disk_space` 和
 `:disk_space_unavailable`，并把 guard reason map 原样放入 `reason`。`workspace.min_free_bytes <= 0`
-只跳过空间读取，不能跳过 root 判定。两个 listening 入口尚未消费该契约；运行时接线属于 SYM-156，
-因此本设计当前只改变 Runtime / Agents Save 与 Settings / Import 确认。
+只跳过空间读取，不能跳过 root 判定。两个 listening handler 都在改变 mode、安排 tick 或写 started
+event 前调用该契约；失败时返回同一 reason map 并保持 `not_listening`。
 
 测试可按调用传入 `:path_info_fun`、`:write_probe_fun` 和 `:free_bytes_fun`。前两者只替换单次 root
 判定的 `File.stat/1` 与写探针；后者只透传给 `WorkspaceDiskGuard.check/2`。这些 seam 用于稳定覆盖
@@ -177,8 +177,10 @@ root 判定，再调用 `WorkspaceDiskGuard`。空间拒绝沿用 `:low_disk_spa
 
 ## 启动前磁盘检查
 
-`WorkspaceDiskGuard` 是本地 agent 启动前的准入检查。Orchestrator 在本地
-agent spawn / workspace preparation 之前调用它；远端 worker 的磁盘状况不由该模块探测。
+`WorkspaceDiskGuard` 是 `WorkspacePreflight` 在 Panel-local surface 使用的空间检查。Orchestrator
+通过 `RunAdmission.resolve/3` 在 run、agent spawn 和 workspace preparation 之前调用整个 preflight；
+centralized SSH 使用已选择 host 的显式 adapter，HTTP worker 消费 worker/session readiness，二者都不
+由 Panel-local `WorkspaceDiskGuard` 探测。
 
 检查输入来自 instance singleton 与 project slice 组合后的 runtime snapshot。`workspace.min_free_bytes` 是最低可用空间阈值，
 未配置时默认为 `1_073_741_824` bytes（1 GiB）；值小于或等于 `0` 时跳过磁盘检查并返回
@@ -196,9 +198,14 @@ agent spawn / workspace preparation 之前调用它；远端 worker 的磁盘状
 Settings 字段 `Settings / Import: workspace.min_free_bytes`。`df` 失败或输出不可解析时返回
 `:disk_space_unavailable`，包含失败 detail 和相同 Settings 字段。
 
-Orchestrator 把任一拒绝或检查异常视为本次启动拒绝：它记录 `run.blocked`，在 blocked entry 的
-session history 写入 `workspace_disk_guard.blocked`，并保留 typed reason 供状态/API 展示。该路径不创建、
-删除或修改 workspace。
+`RunAdmission` 把任一 readiness 拒绝归一为 `environment_unavailable`，evidence 保留 surface、
+workspace authority 与原始 kind。该拒绝发生在 run、workspace 和 executor 写入前；root 恢复后同一
+issue 可在后续 poll 重新准入。
+
+清理调用必须携带已解析 authority。startup cleanup 只遍历 `RunAdmission.cleanup_authorities/1`：
+centralized deployment 使用实际 Panel-local 或配置的 SSH authorities，worker deployment 返回空列表。
+active-run terminal cleanup 只消费 running admission 保存的 authority。`Workspace.remove_issue_workspaces/2`
+不从 `nil` 或全局 SSH host 列表隐式扇出；HTTP worker lease cleanup 仍由 worker runtime 独占。
 
 ## 运行时顺序
 

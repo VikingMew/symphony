@@ -1374,6 +1374,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_message: nil,
       last_codex_timestamp: stale_activity_at,
       last_codex_event: :notification,
+      admission: %{workspace_authority: {:panel_local}},
       started_at: stale_activity_at
     }
 
@@ -1514,6 +1515,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_message: %{"method" => "turn/input_required", "params" => %{"reason" => "operator decision"}},
       last_codex_timestamp: stale_activity_at,
       last_codex_event: :turn_input_required,
+      admission: %{workspace_authority: {:panel_local}},
       started_at: stale_activity_at,
       session_history: [],
       session_history_total_count: 0
