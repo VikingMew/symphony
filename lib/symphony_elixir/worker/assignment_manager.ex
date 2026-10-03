@@ -1333,7 +1333,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp notify_orchestrator(state, assignment, "task.progress", payload, _summary) do
-    Orchestrator.worker_task_progress(assignment.issue.id, payload, state.orchestrator)
+    if map_get(payload, "phase", :phase) == "source_preparation" do
+      send(state.orchestrator, {:system_worker_update, assignment.issue.id, source_progress_update(payload)})
+    else
+      Orchestrator.worker_task_progress(assignment.issue.id, payload, state.orchestrator)
+    end
   end
 
   defp notify_orchestrator(state, assignment, event_type, payload, terminal)
@@ -1363,6 +1367,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp notify_orchestrator(_state, _assignment, _event_type, _payload, _summary), do: :ok
+
+  defp source_progress_update(payload) do
+    %{
+      source: map_get(payload, "source", :source),
+      phase: map_get(payload, "phase", :phase),
+      operation: map_get(payload, "operation", :operation),
+      status: map_get(payload, "status", :status),
+      detail: map_get(payload, "detail", :detail),
+      occurred_at: map_get(payload, "occurred_at", :occurred_at)
+    }
+  end
 
   defp notify_worker_terminal(state, assignment, outcome) do
     Orchestrator.worker_task_finished(assignment.issue.id, outcome, state.orchestrator)

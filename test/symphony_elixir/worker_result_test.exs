@@ -54,6 +54,22 @@ defmodule SymphonyElixir.WorkerResultTest do
     assert WorkerResult.validate_event("task.progress", %{"phase" => "execution_started"}) == {:ok, nil}
   end
 
+  test "accepts typed source preparation timeout evidence" do
+    timeout =
+      summary([])
+      |> Map.put("phase", "source_preparation")
+      |> Map.put("reason", "source_preparation_timeout")
+      |> Map.put("failure_evidence", %{
+        "phase" => "fetch_failed",
+        "command_status" => "timed_out",
+        "duration_ms" => 1_001,
+        "output" => "fetch progress"
+      })
+
+    assert {:ok, validated} = WorkerResult.validate(timeout)
+    assert validated["failure_evidence"]["phase"] == "fetch_failed"
+  end
+
   test "requires a valid summary for terminal task events" do
     valid_summary = summary([])
 

@@ -6,7 +6,8 @@ defmodule SymphonyElixir.WorkerResult do
   @max_gates 32
   @max_text 512
   @max_detail 2_048
-  @phases ~w(checkout codex hooks validation handoff complete)
+  @max_source_output 4_128
+  @phases ~w(checkout source_preparation codex hooks validation handoff complete)
   @outcomes ~w(running succeeded blocked failed cancelled)
   @reasons ~w(
     in_progress
@@ -19,6 +20,7 @@ defmodule SymphonyElixir.WorkerResult do
     handoff_failed
     missing_handoff
     source_preparation_failed
+    source_preparation_timeout
     workspace_unavailable
     execution_capability_unavailable
     codex_upstream_capacity
@@ -47,7 +49,8 @@ defmodule SymphonyElixir.WorkerResult do
          :ok <- runtime(summary["runtime"]),
          :ok <- enum(summary, "validation_status", @validation_statuses),
          :ok <- gates(summary["gates"]),
-         :ok <- handoff(summary["handoff"]) do
+         :ok <- handoff(summary["handoff"]),
+         :ok <- source_failure_evidence(summary) do
       {:ok, summary}
     end
   end
@@ -145,6 +148,24 @@ defmodule SymphonyElixir.WorkerResult do
       end
     )
   end
+
+  defp source_failure_evidence(%{
+         "reason" => "source_preparation_timeout",
+         "failure_evidence" => evidence
+       })
+       when is_map(evidence) do
+    evidence = stringify_keys(evidence)
+
+    with :ok <- enum(evidence, "phase", ~w(clone_failed fetch_failed checkout_failed)),
+         :ok <- enum(evidence, "command_status", ~w(timed_out)),
+         :ok <- non_negative_integer(evidence, "duration_ms", true),
+         do: bounded_text(evidence, "output", @max_source_output, true)
+  end
+
+  defp source_failure_evidence(%{"reason" => "source_preparation_timeout"}),
+    do: invalid("source_preparation_timeout requires failure_evidence")
+
+  defp source_failure_evidence(_summary), do: :ok
 
   defp exit_code(%{"exit_code" => value}) when is_integer(value), do: :ok
   defp exit_code(%{"exit_code" => nil}), do: :ok

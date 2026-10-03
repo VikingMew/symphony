@@ -57,9 +57,19 @@ update succeeds. The assignment issue, payload issue, and rendered prompt curren
 started state, so refinement worker completions operate from `Refining -> Needs Refinement Review`
 and implementation handoff still operates from `In Progress -> Ready to Merge`. The assignment ID
 is carried in the existing `task_id` and `lease_id` JSON fields; it is not a database task. The
-payload contains the issue description, exact branch, source ref, rendered profile prompt, hooks, Codex
-settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
-Linear client nor a Linear credential.
+claim derives source preparation from the workflow decision passed to
+`Orchestrator.Events.worker_assignment_payload/5`. Its assignment wire has one `source` object
+containing `repository`, `default_branch`, `implementation_branch`, `source_strategy`, and
+`checkout_depth`; the former `repository` object is absent. `limits.initialize_timeout_ms` carries
+the same decision's initialization budget. The remaining issue, rendered profile prompt, hooks,
+Codex settings, ordered required gates, and allowed handoff updates keep their existing sources.
+
+`Worker.ExecutionPayload.from_task_payload/1` reads only that `source` object and emits worker-v1
+`repository`, `default_branch`, `branch`, `source_strategy`, `checkout_depth`, and
+`initialize_timeout_seconds`. It rounds milliseconds upward exactly once at this boundary.
+`Worker.Payload` accepts only non-blank repository/default/task branches, clone strategy, and
+positive depth and timeout values; it supplies no worker default or old-wire compatibility path.
+The worker has neither a Linear client nor a Linear credential.
 
 For the stall timeout, the resolved combined workflow field is `codex.stall_timeout_ms`. The Panel
 copies that value into assignment `limits.stall_timeout_ms`, and
@@ -93,6 +103,12 @@ included when present. When both calls succeeded but no `handoff` was submitted,
 reports `blocked` / `handoff_failed` with that bounded PR and Linear target-state evidence. Without
 that pair or the host-push predicate below, a missing `handoff` remains
 `{:handoff_failed, :missing_handoff}` and its bounded detail names the missing event or PR URL.
+
+Source preparation uses the assignment's single initialization budget for clone, fetch, remote
+branch lookup, and checkout. A command timeout becomes executor reason
+`source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command
+evidence, actual duration, and bounded recent output. This worker summary contract does not create a
+second timeout source or change the independent run-failure persistence vocabulary.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
 comment/result/references in the Codex turn and reports `linear_updated: false`. Except for the two

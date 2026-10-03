@@ -1,5 +1,5 @@
 defmodule SymphonyElixir.Worker.ExecutorTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Worker.{Config, ExecutionPayload, Executor, Payload}
@@ -170,18 +170,75 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     first_base = fixture.main_sha
     workspace = Path.join(fixture.root, "lease")
-    assert {:ok, first} = Executor.prepare(payload(fixture.remote), workspace)
+    assert {:ok, first} = Executor.prepare(payload(fixture.remote_url), workspace, no_progress())
     assert first.base_sha == first_base
     assert first.prepared_head == first_base
     assert first.default_branch == "trunk"
     assert first.task_branch == "feature/sym-74"
     assert git!(workspace, ["branch", "--show-current"]) == "feature/sym-74"
+    assert File.regular?(Path.join(workspace, ".git/shallow"))
 
     next_base = commit_and_push!(fixture.author, "trunk", "next.txt", "next default")
-    assert {:ok, second} = Executor.prepare(payload(fixture.remote), workspace)
+    assert {:ok, second} = Executor.prepare(payload(fixture.remote_url), workspace, no_progress())
     assert second.base_sha == next_base
     assert second.prepared_head == next_base
     assert git!(workspace, ["rev-parse", "refs/remotes/origin/trunk"]) == next_base
+  end
+
+  test "streams source progress without writing phase into executor payloads" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+    owner = self()
+    progress = fn phase, payload -> send(owner, {:source_progress, phase, payload}) end
+
+    assert {:ok, _source} =
+             Executor.prepare(payload(fixture.remote_url), Path.join(fixture.root, "lease"), progress)
+
+    assert_receive {:source_progress, "source_preparation", %{source: "worker", operation: "git_clone", status: "started"} = started}
+
+    assert Map.has_key?(started, :phase) == false
+    assert_receive {:source_progress, "source_preparation", %{operation: "git_clone", status: "output"}}
+    assert_receive {:source_progress, "source_preparation", %{operation: "git_clone", status: "completed"}}
+  end
+
+  test "maps a source command timeout to bounded phase evidence" do
+    root = Path.join(System.tmp_dir!(), "executor-timeout-#{System.unique_integer([:positive])}")
+    bin = Path.join(root, "bin")
+    helper = Path.join(bin, "git-remote-delay")
+    File.mkdir_p!(bin)
+
+    File.write!(helper, "#!/bin/sh\nprintf 'waiting for remote source\\n' >&2\nsleep 5\n")
+    File.chmod!(helper, 0o755)
+
+    previous_path = System.get_env("PATH")
+    previous_git_exec_path = System.get_env("GIT_EXEC_PATH")
+    System.put_env("PATH", bin <> ":" <> previous_path)
+    System.put_env("GIT_EXEC_PATH", bin)
+
+    on_exit(fn ->
+      System.put_env("PATH", previous_path)
+      restore_env("GIT_EXEC_PATH", previous_git_exec_path)
+      File.rm_rf(root)
+    end)
+
+    timed_payload = %{payload("delay::repository") | initialize_timeout_seconds: 1}
+    owner = self()
+    progress = fn phase, event -> send(owner, {:source_progress, phase, event}) end
+
+    assert {:error, :source_preparation_timeout,
+            %{
+              phase: "clone_failed",
+              command_status: "timed_out",
+              duration_ms: duration_ms,
+              output: output
+            }} = Executor.prepare(timed_payload, Path.join(root, "lease"), progress)
+
+    assert duration_ms >= 1_000
+    assert output =~ "waiting for remote source"
+
+    assert_receive {:source_progress, "source_preparation", %{operation: "git_clone", status: "failed", detail: detail}}
+
+    assert detail =~ "waiting for remote source"
   end
 
   test "preserves an existing remote task branch while refreshing the default branch" do
@@ -194,11 +251,12 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     base_sha = commit_and_push!(fixture.author, "trunk", "new-base.txt", "advance default")
 
     workspace = Path.join(fixture.root, "lease")
-    assert {:ok, source} = Executor.prepare(payload(fixture.remote), workspace)
+    assert {:ok, source} = Executor.prepare(payload(fixture.remote_url), workspace, no_progress())
     assert source.base_sha == base_sha
     assert source.prepared_head == task_sha
     assert source.task_branch == "feature/sym-74"
     assert git!(workspace, ["rev-parse", "refs/remotes/origin/trunk"]) == base_sha
+    assert File.regular?(Path.join(workspace, ".git/shallow"))
   end
 
   test "rebuilds a stale lease workspace before fetching source" do
@@ -210,7 +268,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     File.write!(Path.join(workspace, "stale.txt"), "stale checkout")
     base_sha = commit_and_push!(fixture.author, "trunk", "latest.txt", "latest default")
 
-    assert {:ok, source} = Executor.prepare(payload(fixture.remote), workspace)
+    assert {:ok, source} = Executor.prepare(payload(fixture.remote_url), workspace, no_progress())
     assert source.base_sha == base_sha
     assert File.exists?(Path.join(workspace, "stale.txt")) == false
   end
@@ -219,10 +277,10 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
 
-    bad_payload = %{payload(fixture.remote) | default_branch: "missing"}
+    bad_payload = %{payload(fixture.remote_url) | default_branch: "missing"}
 
-    assert {:error, {:source_preparation_failed, :default_branch_fetch_failed, %{status: :failed}}} =
-             Executor.prepare(bad_payload, Path.join(fixture.root, "lease"))
+    assert {:error, {:source_preparation_failed, :clone_failed, %{status: :failed}}} =
+             Executor.prepare(bad_payload, Path.join(fixture.root, "lease"), no_progress())
   end
 
   test "does not start hooks after a source preparation failure" do
@@ -233,9 +291,9 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     execution =
       panel_payload()
-      |> put_in(["repository", "url"], fixture.remote)
-      |> put_in(["repository", "source_ref"], "missing")
-      |> put_in(["repository", "implementation_branch"], "feature/sym-74")
+      |> put_in(["source", "repository"], fixture.remote_url)
+      |> put_in(["source", "default_branch"], "missing")
+      |> put_in(["source", "implementation_branch"], "feature/sym-74")
       |> put_in(["hooks", "after_create"], "touch #{marker}")
       |> ExecutionPayload.from_task_payload()
 
@@ -260,7 +318,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     result = Executor.execute(config, claim)
     assert result.status == :failed
 
-    assert {:source_preparation_failed, :default_branch_fetch_failed, %{status: :failed}} =
+    assert {:source_preparation_failed, :clone_failed, %{status: :failed}} =
              result.reason
 
     assert File.exists?(marker) == false
@@ -302,9 +360,9 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     execution =
       panel_payload()
-      |> put_in(["repository", "url"], fixture.remote)
-      |> put_in(["repository", "source_ref"], "trunk")
-      |> put_in(["repository", "implementation_branch"], "feature/sym-95")
+      |> put_in(["source", "repository"], fixture.remote_url)
+      |> put_in(["source", "default_branch"], "trunk")
+      |> put_in(["source", "implementation_branch"], "feature/sym-95")
       |> put_in(["codex", "command"], "#{codex_binary} app-server")
       |> put_in(["codex", "thread_sandbox"], "danger-full-access")
       |> put_in(["codex", "turn_sandbox_policy"], %{"type" => "dangerFullAccess"})
@@ -379,9 +437,9 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
     execution =
       panel_payload()
-      |> put_in(["repository", "url"], fixture.remote)
-      |> put_in(["repository", "source_ref"], "trunk")
-      |> put_in(["repository", "implementation_branch"], "feature/sym-107")
+      |> put_in(["source", "repository"], fixture.remote_url)
+      |> put_in(["source", "default_branch"], "trunk")
+      |> put_in(["source", "implementation_branch"], "feature/sym-107")
       |> put_in(["codex", "command"], "#{codex_binary} app-server")
       |> put_in(["codex", "thread_sandbox"], "danger-full-access")
       |> put_in(["codex", "turn_sandbox_policy"], %{"type" => "dangerFullAccess"})
@@ -431,9 +489,9 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
   defp payload(remote) do
     assert {:ok, payload} =
              panel_payload()
-             |> put_in(["repository", "url"], remote)
-             |> put_in(["repository", "source_ref"], "trunk")
-             |> put_in(["repository", "implementation_branch"], "feature/sym-74")
+             |> put_in(["source", "repository"], remote)
+             |> put_in(["source", "default_branch"], "trunk")
+             |> put_in(["source", "implementation_branch"], "feature/sym-74")
              |> ExecutionPayload.from_task_payload()
              |> Payload.parse()
 
@@ -461,7 +519,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     git!(author, ["config", "user.email", "worker@example.test"])
     git!(author, ["config", "user.name", "Worker Test"])
     main_sha = commit_and_push!(author, "trunk", "README.md", "initial")
-    %{root: root, remote: remote, author: author, main_sha: main_sha}
+    %{root: root, remote: remote, remote_url: "file://#{remote}", author: author, main_sha: main_sha}
   end
 
   defp commit_and_push!(author, branch, file, message) do
@@ -508,10 +566,12 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
       },
       "prompt" => "Implement the task.",
       "workflow_profile" => "implementation",
-      "repository" => %{
-        "url" => "git@github.com:VikingMew/symphony.git",
-        "source_ref" => "main",
-        "implementation_branch" => "vikingmew-sym-68"
+      "source" => %{
+        "repository" => "git@github.com:VikingMew/symphony.git",
+        "default_branch" => "main",
+        "implementation_branch" => "vikingmew-sym-68",
+        "source_strategy" => "clone",
+        "checkout_depth" => 1
       },
       "hooks" => %{
         "after_create" => nil,
@@ -527,9 +587,19 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
         "thread_sandbox" => "workspace-write",
         "turn_sandbox_policy" => nil
       },
-      "limits" => %{"turn_timeout_ms" => 60_000, "read_timeout_ms" => 5_000, "stall_timeout_ms" => 30_000},
+      "limits" => %{
+        "initialize_timeout_ms" => 60_000,
+        "turn_timeout_ms" => 60_000,
+        "read_timeout_ms" => 5_000,
+        "stall_timeout_ms" => 30_000
+      },
       "required_gates" => [],
       "handoff" => %{}
     }
   end
+
+  defp no_progress, do: fn _phase, _payload -> :ok end
+
+  defp restore_env(key, nil), do: System.delete_env(key)
+  defp restore_env(key, value), do: System.put_env(key, value)
 end

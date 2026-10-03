@@ -132,6 +132,15 @@ last event/message 和绝对 token delta；terminal event、取消、expiry 或 
 移除 running entry，并将 ended runtime 计入聚合。`retrying` 与 `blocked` 仍由 Orchestrator
 拥有：worker `failed` 结果在预算内进入 retry，预算耗尽或 `blocked` 结果进入持久 blocker。
 
+源码准备 progress 与 Codex progress 共用 `task.progress` 的持久化入口，但投影路径不同。Executor
+只向 Runtime 传 phase 参数 `source_preparation`，其 payload 只含 `source`、`operation`、`status` 和
+`detail`；Runtime 用 atom `:phase` 写入一次，避免 atom/string 双键。operation 固定为 `git_clone`、
+`git_fetch`、`git_branch_lookup` 或 `git_checkout`，每次 operation 先发 `started`，数据 chunk 发 bounded
+`output`，最后发 `completed` 或 `failed`。AssignmentManager 先成功持久化匹配 assignment 的 event，
+再把 source progress 发送到既有 `system_worker_update` mailbox；SessionHistory 按
+source/phase/operation 合并为 `system_progress`。Codex payload 继续进入原有
+`worker_task_progress`/Codex reducer，不改变 token 与 session 更新语义。
+
 手动 `cancel-current` 是当前内存 assignment 的控制动作，不是持久任务状态。Panel 在当前
 assignment 上记录 pending cancellation；只有持有同一 worker/session 且 heartbeat 提交匹配 active
 lease 时，heartbeat 响应才返回内存态 `cancel_task` command。发送 cancel command 后不再续期该 lease。

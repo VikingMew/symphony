@@ -5,15 +5,17 @@ defmodule SymphonyElixir.Worker.ExecutionPayload do
 
   @spec from_task_payload(map()) :: map()
   def from_task_payload(payload) when is_map(payload) do
-    repository = Map.fetch!(payload, "repository")
+    source = Map.fetch!(payload, "source")
     limits = Map.fetch!(payload, "limits")
 
     %{
       "version" => 1,
-      "repository" => Map.fetch!(repository, "url"),
-      "repository_url" => Map.fetch!(repository, "url"),
-      "default_branch" => Map.fetch!(repository, "source_ref"),
-      "branch" => Map.fetch!(repository, "implementation_branch"),
+      "repository" => Map.fetch!(source, "repository"),
+      "default_branch" => Map.fetch!(source, "default_branch"),
+      "branch" => Map.fetch!(source, "implementation_branch"),
+      "source_strategy" => Map.fetch!(source, "source_strategy"),
+      "checkout_depth" => Map.fetch!(source, "checkout_depth"),
+      "initialize_timeout_seconds" => seconds(Map.fetch!(limits, "initialize_timeout_ms")),
       "codex" => codex(payload, limits),
       "hooks" => hooks(Map.fetch!(payload, "hooks")),
       "required_gates" => Enum.map(Map.fetch!(payload, "required_gates"), &command/1),

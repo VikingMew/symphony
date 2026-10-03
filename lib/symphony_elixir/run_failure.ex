@@ -122,6 +122,17 @@ defmodule SymphonyElixir.RunFailure do
     classify({:cancelled, summary_evidence(summary)})
   end
 
+  def from_worker_summary(
+        "task.failed",
+        %{
+          "reason" => "source_preparation_timeout",
+          "failure_evidence" => %{"phase" => phase} = evidence
+        }
+      )
+      when phase in ["clone_failed", "fetch_failed", "checkout_failed"] do
+    new("source_preparation_timeout", evidence)
+  end
+
   def from_worker_summary("task.failed", %{"phase" => phase, "reason" => "timed_out"} = summary)
       when phase in ["clone", "fetch", "checkout"] do
     classify({:source_preparation_timeout, phase, summary_evidence(summary)})
@@ -219,7 +230,7 @@ defmodule SymphonyElixir.RunFailure do
 
   defp summary_evidence(summary) do
     summary
-    |> Map.take(~w(phase outcome reason detail validation_status gates handoff codexErrorInfo))
+    |> Map.take(~w(phase outcome reason detail validation_status gates handoff codexErrorInfo failure_evidence))
     |> json_map()
   end
 
