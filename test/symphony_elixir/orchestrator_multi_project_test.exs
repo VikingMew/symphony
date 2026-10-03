@@ -97,6 +97,24 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     refute log =~ "Skipping startup terminal workspace cleanup"
   end
 
+  test "worker-mode startup skips Panel terminal workspace cleanup" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    raw = sample_workflow_markdown()
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    orchestrator_name = Module.concat(__MODULE__, :WorkerStartupCleanupOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert Process.alive?(pid)
+    refute_receive {:states_fetch, _, _}, 100
+  end
+
   defp sample_workflow_markdown do
     Workflow.load()
     |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)

@@ -3,6 +3,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.Events
+  alias SymphonyElixir.RunAdmission
   alias SymphonyElixir.RunFailure
 
   test "issue attrs include the persisted issue snapshot" do
@@ -30,21 +31,10 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
   test "run and assignment payload attrs preserve existing contract" do
     issue = issue()
 
-    workflow = %{
-      config: %{
-        "project" => %{
-          "repository_url" => "https://decision.example/repo.git",
-          "default_branch" => "trunk",
-          "source_strategy" => "clone",
-          "checkout_depth" => 7
-        },
-        "workspace" => %{"initialize_timeout_ms" => 61_001}
-      }
-    }
-
     run = %{id: "run-1", project_id: "project-1"}
+    admission = admission()
 
-    run_attrs = Events.run_attrs(issue, workflow, "worker", 2)
+    run_attrs = Events.run_attrs(issue, admission, 2)
     assert run_attrs.issue_identifier == "MT-1"
     assert run_attrs.status == "running"
     assert run_attrs.execution_mode == "worker"
@@ -52,7 +42,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
     assignment_attrs =
       SymphonyElixir.Config.with_workflow_context(workflow_context(), fn ->
-        Events.worker_assignment_payload(issue, run, workflow, "Prompt", "implementation")
+        Events.worker_assignment_payload(issue, run, admission, "Prompt", "implementation")
       end)
 
     payload = assignment_attrs.payload
@@ -81,6 +71,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert payload["codex"]["reasoning_effort"] == "xhigh"
     assert payload["limits"]["stall_timeout_ms"] == 600_000
     assert payload["limits"]["initialize_timeout_ms"] == 61_001
+    assert payload["limits"]["retry_backoff_ms"] == 300_000
     assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 
@@ -151,6 +142,29 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
         }
       },
       prompt_template: "Prompt"
+    }
+  end
+
+  defp admission do
+    %RunAdmission{
+      execution_mode: "worker",
+      workspace_authority: {:http_worker, "worker-1", "session-1"},
+      source: %{
+        repository: "https://decision.example/repo.git",
+        default_branch: "trunk",
+        implementation_branch: "feature/mt-1",
+        source_strategy: "clone",
+        checkout_depth: 7
+      },
+      limits: %{
+        initialize_timeout_ms: 61_001,
+        max_turns: 20,
+        max_failure_retries: 3,
+        retry_backoff_ms: 300_000,
+        turn_timeout_ms: 3_600_000,
+        read_timeout_ms: 5_000,
+        stall_timeout_ms: 600_000
+      }
     }
   end
 

@@ -64,6 +64,15 @@ containing `repository`, `default_branch`, `implementation_branch`, `source_stra
 the same decision's initialization budget. The remaining issue, rendered profile prompt, hooks,
 Codex settings, ordered required gates, and allowed handoff updates keep their existing sources.
 
+`SymphonyElixir.RunAdmission` resolves that workflow decision once, after candidate revalidation
+and worker/session selection and before issue, run, assignment, workspace, or executor writes. The
+decision has exactly `execution_mode`, `workspace_authority`, `source`, and `limits`; the worker run,
+in-memory assignment, payload, and Orchestrator running entry consume the same value. HTTP-worker
+readiness is the selected live worker/session context and never contains or derives a worker-local
+path. Repository, default branch, implementation branch, source strategy, and checkout depth come
+from the composed project slice. An unavailable worker surface returns `environment_unavailable`
+before side effects.
+
 `Worker.ExecutionPayload.from_task_payload/1` reads only that `source` object and emits worker-v1
 `repository`, `default_branch`, `branch`, `source_strategy`, `checkout_depth`, and
 `initialize_timeout_seconds`. It rounds milliseconds upward exactly once at this boundary.
@@ -152,6 +161,12 @@ executor terms and never uses Elixir `inspect/1` syntax.
 contains no issue identifier for a prospective assignment and the worker keeps no per-issue retry or
 cooldown state. Worker re-claim cadence follows the Panel's `poll_after_seconds` response and the
 next claim is governed by Panel admission, including any persisted `blocking_decision`.
+
+When a worker attempt enters active retry, Orchestrator refreshes worker capacity through the same
+execution-mode projection, removes that retry's claim ownership, and preserves `failure_counts`.
+It does not route the retry through a Panel-local or centralized-SSH agent. A later fresh live claim
+must revalidate Linear and resolve a new worker admission, run, and assignment while continuing the
+same failure budget.
 
 Listening off stops all future dispatch, including worker HTTP claims, before candidate reads, run
 creation, issue transition, or `task.accepted` persistence. Start-listening, stop-listening, and the
