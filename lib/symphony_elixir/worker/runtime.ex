@@ -325,11 +325,11 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_summary(result, config, claim) do
     status = Map.get(result, :status, :failed)
     outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
-    phase = if status == :completed, do: "complete", else: "validation"
+    phase = terminal_phase(status, result)
     reason = if status == :completed, do: "completed", else: reason_for(status, result)
     {validation_status, gates} = validation_evidence(result, get_in(claim, ["execution", "required_gates"]))
 
-    %{
+    summary = %{
       "phase" => phase,
       "outcome" => outcome,
       "reason" => reason,
@@ -340,7 +340,16 @@ defmodule SymphonyElixir.Worker.Runtime do
       "gates" => gates,
       "detail" => terminal_detail(result)
     }
+
+    case Map.get(result, :failure_evidence) do
+      %{} = evidence -> Map.put(summary, "failure_evidence", evidence)
+      nil -> summary
+    end
   end
+
+  defp terminal_phase(:completed, _result), do: "complete"
+  defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
+  defp terminal_phase(_status, _result), do: "validation"
 
   defp reason_for(:cancelled, _), do: "cancelled"
   defp reason_for(:blocked, _), do: "handoff_failed"
@@ -352,6 +361,8 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed, :execution_capability_unavailable],
     do: Atom.to_string(reason)
+
+  defp reason_for(_, %{reason: :source_preparation_timeout}), do: "source_preparation_timeout"
 
   defp reason_for(_, _), do: "worker_error"
 

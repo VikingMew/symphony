@@ -31,7 +31,7 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
         Events.worker_assignment_payload(
           issue,
           %{id: "run-worker-prompt", project_id: "fake-project-id"},
-          %{},
+          workflow_context(),
           prompt,
           profile
         )
@@ -70,7 +70,7 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
         Events.worker_assignment_payload(
           issue,
           %{id: "run-worker-refinement-prompt", project_id: "fake-project-id"},
-          %{},
+          workflow_context(),
           prompt,
           profile
         )
@@ -86,8 +86,11 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
       config: %{
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
-          "default_branch" => "main"
-        }
+          "default_branch" => "main",
+          "source_strategy" => "clone",
+          "checkout_depth" => 1
+        },
+        "workspace" => %{"initialize_timeout_ms" => 60_000}
       },
       prompt_template: "Base worker prompt."
     }

@@ -29,7 +29,19 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   test "run and assignment payload attrs preserve existing contract" do
     issue = issue()
-    workflow = %{}
+
+    workflow = %{
+      config: %{
+        "project" => %{
+          "repository_url" => "https://decision.example/repo.git",
+          "default_branch" => "trunk",
+          "source_strategy" => "clone",
+          "checkout_depth" => 7
+        },
+        "workspace" => %{"initialize_timeout_ms" => 61_001}
+      }
+    }
+
     run = %{id: "run-1", project_id: "project-1"}
 
     run_attrs = Events.run_attrs(issue, workflow, "worker", 2)
@@ -56,10 +68,19 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
              "scripts/dialyzer.sh"
            ]
 
-    assert payload["repository"]["implementation_branch"] == "feature/mt-1"
+    assert payload["source"] == %{
+             "repository" => "https://decision.example/repo.git",
+             "default_branch" => "trunk",
+             "implementation_branch" => "feature/mt-1",
+             "source_strategy" => "clone",
+             "checkout_depth" => 7
+           }
+
+    assert Map.has_key?(payload, "repository") == false
     assert payload["codex"]["model"] == "gpt-5.5"
     assert payload["codex"]["reasoning_effort"] == "xhigh"
     assert payload["limits"]["stall_timeout_ms"] == 600_000
+    assert payload["limits"]["initialize_timeout_ms"] == 61_001
     assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 
@@ -115,12 +136,15 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
           "default_branch" => "main",
+          "source_strategy" => "clone",
+          "checkout_depth" => 1,
           "required_gates" => [
             %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
             %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
             %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
           ]
         },
+        "workspace" => %{"initialize_timeout_ms" => 60_000},
         "codex" => %{
           "model" => "gpt-5.5",
           "reasoning_effort" => "xhigh"

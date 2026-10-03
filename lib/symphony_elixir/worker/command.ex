@@ -2,13 +2,16 @@ defmodule SymphonyElixir.Worker.Command do
   @moduledoc false
 
   @spec run(map(), Path.t()) :: map()
-  def run(%{command: command, timeout_seconds: timeout}, cwd) do
+  def run(command, cwd), do: run(command, cwd, fn _chunk -> :ok end)
+
+  @spec run(map(), Path.t(), (String.t() -> term())) :: map()
+  def run(%{command: command, timeout_seconds: timeout}, cwd, on_output) when is_function(on_output, 1) do
     started = System.monotonic_time(:millisecond)
 
     result =
       case System.find_executable("bash") do
         nil -> %{status: :toolchain_unavailable, exit_code: nil, detail: "bash unavailable"}
-        bash -> run_port(bash, command <> " < /dev/null", cwd, timeout * 1_000)
+        bash -> run_port(bash, command <> " < /dev/null", cwd, timeout * 1_000, on_output)
       end
 
     result
@@ -17,7 +20,7 @@ defmodule SymphonyElixir.Worker.Command do
     |> put_references()
   end
 
-  defp run_port(bash, command, cwd, timeout) do
+  defp run_port(bash, command, cwd, timeout, on_output) do
     {executable, args} =
       case System.find_executable("setsid") do
         nil -> {bash, ["-lc", command]}
@@ -33,15 +36,16 @@ defmodule SymphonyElixir.Worker.Command do
         {:cd, cwd}
       ])
 
-    collect(port, System.monotonic_time(:millisecond) + timeout, <<>>)
+    collect(port, System.monotonic_time(:millisecond) + timeout, <<>>, on_output)
   end
 
-  defp collect(port, deadline, output) do
+  defp collect(port, deadline, output, on_output) do
     remaining = max(deadline - System.monotonic_time(:millisecond), 0)
 
     receive do
       {^port, {:data, data}} ->
-        collect(port, deadline, bounded(output <> data))
+        on_output.(bounded(data))
+        collect(port, deadline, bounded(output <> data), on_output)
 
       {^port, {:exit_status, 0}} ->
         %{status: :passed, exit_code: 0, detail: bounded(output)}

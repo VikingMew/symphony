@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
   """
 
   alias SymphonyElixir.{Config, Linear.Issue, RunFailure}
+  alias SymphonyElixir.Config.Schema
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
   @spec issue_snapshot(Issue.t()) :: map()
@@ -45,7 +46,8 @@ defmodule SymphonyElixir.Orchestrator.Events do
   end
 
   @spec worker_assignment_payload(Issue.t(), map(), map() | nil, String.t(), String.t() | nil) :: map()
-  def worker_assignment_payload(%Issue{} = issue, run, _workflow, prompt, profile) when is_map(run) do
+  def worker_assignment_payload(%Issue{} = issue, run, %{config: config}, prompt, profile) when is_map(run) do
+    {:ok, decision} = Schema.parse(config)
     settings = Config.settings!()
 
     %{
@@ -58,11 +60,12 @@ defmodule SymphonyElixir.Orchestrator.Events do
         "prompt" => prompt,
         "workflow_profile" => profile,
         "execution_mode" => "worker",
-        "repository" => %{
-          "project_id" => run.project_id,
-          "url" => settings.project.repository_url,
-          "source_ref" => settings.project.default_branch,
-          "implementation_branch" => issue.branch_name
+        "source" => %{
+          "repository" => decision.project.repository_url,
+          "default_branch" => decision.project.default_branch,
+          "implementation_branch" => issue.branch_name,
+          "source_strategy" => decision.project.source_strategy,
+          "checkout_depth" => decision.project.checkout_depth
         },
         "required_gates" => settings.project.required_gates,
         "hooks" => %{
@@ -77,7 +80,8 @@ defmodule SymphonyElixir.Orchestrator.Events do
           "max_failure_retries" => settings.agent.max_failure_retries,
           "turn_timeout_ms" => settings.codex.turn_timeout_ms,
           "read_timeout_ms" => settings.codex.read_timeout_ms,
-          "stall_timeout_ms" => settings.codex.stall_timeout_ms
+          "stall_timeout_ms" => settings.codex.stall_timeout_ms,
+          "initialize_timeout_ms" => decision.workspace.initialize_timeout_ms
         },
         "codex" => codex_payload(settings.codex),
         "handoff" => %{

@@ -50,6 +50,16 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       test = Agent.get(FakeClient, & &1.test)
       progress.("codex_session_started", %{session_id: "codex-#{claim["task_id"]}"})
       if tokens = claim["codex_tokens"], do: progress.("codex_update", %{codex: codex_token_update(claim, tokens)})
+
+      if claim["source_progress"] do
+        progress.("source_preparation", %{
+          source: "worker",
+          operation: "git_clone",
+          status: "output",
+          detail: "Receiving objects: 10%"
+        })
+      end
+
       send(test, {:executing, claim["task_id"], self()})
 
       if claim["crash"], do: raise("executor crashed")
@@ -94,6 +104,20 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     end
 
     defp claim_result(%{"failed_reason" => reason}), do: %{status: :failed, reason: reason}
+
+    defp claim_result(%{"source_timeout" => true}) do
+      %{
+        status: :failed,
+        reason: :source_preparation_timeout,
+        detail: "waiting for remote source",
+        failure_evidence: %{
+          phase: "clone_failed",
+          command_status: "timed_out",
+          duration_ms: 1_002,
+          output: "waiting for remote source"
+        }
+      }
+    end
 
     defp claim_result(%{"blocked_validation_failed" => true}) do
       evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
@@ -234,6 +258,28 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     end)
   end
 
+  test "runtime is the sole writer of the source progress phase", %{config: config} do
+    put_claims([Map.put(claim("task-1", false), "source_progress", true)])
+    _runtime = start_runtime(config)
+    assert_receive {:executing, "task-1", _executor}, 1_000
+
+    eventually(fn ->
+      Enum.any?(state().events, fn
+        {"task-1", "task.progress",
+         %{
+           phase: "source_preparation",
+           source: "worker",
+           operation: "git_clone",
+           status: "output"
+         } = payload} ->
+          Map.has_key?(payload, "phase") == false
+
+        _event ->
+          false
+      end)
+    end)
+  end
+
   test "terminal transport failure retains and renews the lease until retry succeeds", %{config: config} do
     Agent.update(FakeClient, fn state ->
       %{state | claims: [claim("task-1", false)], outcomes: %{"task.completed" => [{:error, :repo_unavailable}, {:ok, %{}}]}}
@@ -283,6 +329,27 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert Enum.map(summary["gates"], & &1["status"]) == ["not_run", "not_run"]
     assert Enum.map(summary["gates"], & &1["name"]) == ["check", "unit"]
     assert Jason.decode!(summary["detail"]) == %{"detail" => "executor failed", "reason" => "failed", "status" => "failed"}
+    assert {:ok, _validated} = WorkerResult.validate(summary)
+  end
+
+  test "source timeout delivers task.failed with structured command evidence", %{config: config} do
+    put_claims([Map.put(claim("task-1", false), "source_timeout", true)])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["phase"] == "source_preparation"
+    assert summary["reason"] == "source_preparation_timeout"
+
+    assert summary["failure_evidence"] == %{
+             phase: "clone_failed",
+             command_status: "timed_out",
+             duration_ms: 1_002,
+             output: "waiting for remote source"
+           }
+
     assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 

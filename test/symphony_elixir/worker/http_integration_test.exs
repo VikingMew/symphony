@@ -347,10 +347,12 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "prompt" => "Complete the task.",
       "workflow_profile" => profile,
       "execution_mode" => "worker",
-      "repository" => %{
-        "url" => source,
-        "source_ref" => "main",
-        "implementation_branch" => "vikingmew-sym-12"
+      "source" => %{
+        "repository" => source,
+        "default_branch" => "main",
+        "implementation_branch" => "vikingmew-sym-12",
+        "source_strategy" => "clone",
+        "checkout_depth" => 1
       },
       "hooks" => %{
         "after_create" => "git rev-parse HEAD",
@@ -367,6 +369,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "turn_sandbox_policy" => nil
       },
       "limits" => %{
+        "initialize_timeout_ms" => 60_000,
         "turn_timeout_ms" => 10_000,
         "read_timeout_ms" => 5_000,
         "stall_timeout_ms" => 5_000

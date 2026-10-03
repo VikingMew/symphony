@@ -49,6 +49,19 @@ clone_workspace_root / issue_identifier
 
 其中 `clone_workspace_root` 可以继续来自 workflow workspace root。它也必须参与同一套 sandbox allowed roots 校验。
 
+Execution worker 的 clone strategy 每轮都从空 lease workspace 开始，并消费 assignment 已冻结的
+repository、default branch、implementation branch、checkout depth 与 initialize timeout。clone 命令为
+`git clone --progress --depth <depth> --branch <default-branch> --no-checkout -- <repository> .`。
+随后 default branch 和已存在的远端 task branch 都通过带明确 branch refspec 的
+`git fetch --progress --no-tags --depth <depth>` 定向刷新；不存在远端 task branch 时，从刚解析的
+default-branch commit 创建本地 branch。clone、两类 fetch、远端 branch lookup 与 checkout 使用同一个
+initialize timeout，不保留 worker-local 300/120 秒预算或 full-clone fallback。定向 task-branch fetch
+不能解除 shallow repository 状态。
+
+任一上述命令超时时，executor 返回 `source_preparation_timeout`。命令阶段只写入
+`failure_evidence.phase`，值为 `clone_failed`、`fetch_failed` 或 `checkout_failed`；证据同时保留
+`command_status: timed_out`、实际 `duration_ms` 和 bounded recent output。
+
 ## 推荐默认值
 
 本地默认路径应聚合在同一个用户可见目录下，避免 `/tmp`、`~/.symphony/repository`、`~/.symphony/worktree` 混用：

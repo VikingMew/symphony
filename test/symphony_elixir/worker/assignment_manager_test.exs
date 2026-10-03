@@ -456,6 +456,33 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.worker.id,
                context.session.id,
                assignment.id,
+               "task.progress",
+               %{
+                 "correlation" => assignment.correlation,
+                 "phase" => "source_preparation",
+                 "source" => "worker",
+                 "operation" => "git_fetch",
+                 "status" => "output",
+                 "detail" => "Receiving objects: 50%"
+               },
+               manager
+             )
+
+    eventually(fn ->
+      %{running: [running]} = Orchestrator.snapshot(orchestrator, 100)
+
+      Enum.any?(running.session_history, fn event ->
+        event.event == :system_progress and event.source == "worker" and
+          event.metadata.phase == "source_preparation" and event.metadata.operation == "git_fetch" and
+          event.detail == "Receiving objects: 50%"
+      end)
+    end)
+
+    assert {:ok, _event} =
+             AssignmentManager.record_event(
+               context.worker.id,
+               context.session.id,
+               assignment.id,
                "task.completed",
                %{"correlation" => assignment.correlation, "summary" => summary("succeeded")},
                manager
@@ -1647,7 +1674,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert ProjectTracker.fetches() == ["linear-a", "linear-b"]
     assert assignment.project_id == project_b.id
     assert assignment.correlation["project_id"] == project_b.id
-    assert assignment.payload["repository"]["project_id"] == project_b.id
+    assert assignment.payload["source"]["repository"] == "git@example.test:b.git"
     assert assignment.payload["prompt"] =~ "Shared prompt SYM-78"
     assert assignment.payload["prompt"] =~ "Prompt A" == false
     assert assignment.payload["prompt"] =~ "Prompt B" == false

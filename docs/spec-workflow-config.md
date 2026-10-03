@@ -174,6 +174,14 @@ declares independent `check`, `unit`, and `dialyzer` script gates plus PR descri
 E2E is a credentialed manual suite run with `SYMPHONY_RUN_LIVE_E2E=1 mix test --only live_e2e` or
 `scripts/e2e.sh`; it is not currently connected to CI.
 
+#### 5.3.3 `project.checkout_depth` (positive integer)
+
+Project Settings and the durable project slice own `project.checkout_depth`. Its default is `1`,
+and values must be positive integers. The resolved execution decision copies it unchanged to
+assignment `source.checkout_depth`; the execution worker uses that value for fresh clone and every
+explicit default/task branch fetch. The worker does not define a depth default or a full-clone
+fallback.
+
 #### 5.3.3 `workspace` (object)
 
 Fields:
@@ -183,6 +191,14 @@ Fields:
   - `~` is expanded.
   - Relative paths are resolved relative to an implementation-defined runtime base directory.
   - The effective workspace root is normalized to an absolute path before use.
+- `initialize_timeout_ms` (positive integer)
+  - The instance workflow singleton and Runtime Settings own this field; projects do not override it.
+  - Default: `60000`.
+  - The resolved execution decision copies the value unchanged to
+    `limits.initialize_timeout_ms`.
+  - `Worker.ExecutionPayload` rounds it upward to seconds once. The worker then applies that one
+    budget to clone, default/task fetch, remote branch lookup, and checkout without a worker-side
+    fallback.
 
 #### 5.3.4 `hooks` (object)
 

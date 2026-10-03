@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, log_dir} <- Paths.log_dir(config, claim["task_id"], claim["lease_id"]),
          :ok <- File.mkdir_p(workspace),
          :ok <- not_cancelled(),
-         {:ok, source} <- prepare(payload, workspace),
+         {:ok, source} <- prepare(payload, workspace, progress),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
@@ -60,6 +60,14 @@ defmodule SymphonyElixir.Worker.Executor do
 
       {:blocked, reason, detail, validation} ->
         %{status: :blocked, reason: reason, detail: detail, validation: validation}
+
+      {:error, :source_preparation_timeout, evidence} ->
+        %{
+          status: :failed,
+          reason: :source_preparation_timeout,
+          detail: evidence.output,
+          failure_evidence: evidence
+        }
 
       {:error, reason, detail} ->
         %{status: :failed, reason: reason, detail: detail}
@@ -242,7 +250,7 @@ defmodule SymphonyElixir.Worker.Executor do
       config: %{
         "workspace" => %{"root" => config.workspace_root},
         "codex" => codex.config,
-        "project" => %{"repository_url" => payload.repository_url, "default_branch" => payload.default_branch}
+        "project" => %{"repository_url" => payload.repository, "default_branch" => payload.default_branch}
       },
       prompt: "",
       prompt_template: ""
@@ -250,17 +258,29 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   @doc false
-  @spec prepare(Payload.t(), Path.t()) :: {:ok, map()} | {:error, term()} | :cancelled | map()
-  def prepare(payload, workspace) do
+  @spec prepare(Payload.t(), Path.t(), (String.t(), map() -> term())) ::
+          {:ok, map()} | {:error, term()} | {:error, term(), map()} | :cancelled | map()
+  def prepare(payload, workspace, progress) do
     default_ref = "refs/remotes/origin/#{payload.default_branch}"
+    timeout = payload.initialize_timeout_seconds
+    depth = payload.checkout_depth
 
     with :ok <- not_cancelled(),
          :ok <- recreate_workspace(workspace),
-         :ok <- command(:clone_failed, "git clone --no-checkout -- #{shell(payload.repository)} .", 300, workspace),
+         :ok <-
+           source_command(
+             "clone_failed",
+             "git_clone",
+             "git clone --progress --depth #{depth} --branch #{shell(payload.default_branch)} --no-checkout -- #{shell(payload.repository)} .",
+             timeout,
+             workspace,
+             progress,
+             :clone_failed
+           ),
          :ok <- not_cancelled(),
-         :ok <- fetch_branch(payload.default_branch, workspace, :default_branch_fetch_failed),
+         :ok <- fetch_branch(payload.default_branch, depth, timeout, workspace, progress, :default_branch_fetch_failed),
          {:ok, base_sha} <- resolve_commit(default_ref, workspace, :base_ref_resolution_failed),
-         :ok <- prepare_task_branch(payload.branch, base_sha, workspace),
+         :ok <- prepare_task_branch(payload.branch, base_sha, depth, timeout, workspace, progress),
          {:ok, prepared_head} <- resolve_commit("HEAD", workspace, :prepared_head_resolution_failed),
          {:ok, prepared_branch} <- current_branch(workspace) do
       {:ok,
@@ -282,42 +302,125 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp fetch_branch(branch, workspace, failure) do
+  defp fetch_branch(branch, depth, timeout, workspace, progress, failure) do
     refspec = "+refs/heads/#{branch}:refs/remotes/origin/#{branch}"
-    command(failure, "git fetch --no-tags -- origin #{shell(refspec)}", 300, workspace)
+
+    source_command(
+      "fetch_failed",
+      "git_fetch",
+      "git fetch --progress --no-tags --depth #{depth} origin #{shell(refspec)}",
+      timeout,
+      workspace,
+      progress,
+      failure
+    )
   end
 
-  defp prepare_task_branch(branch, base_sha, workspace) do
-    lookup = Command.run(%{command: "git ls-remote --exit-code --heads -- origin #{shell(branch)}", timeout_seconds: 120}, workspace)
+  defp prepare_task_branch(branch, base_sha, depth, timeout, workspace, progress) do
+    lookup =
+      run_source_command(
+        "git_branch_lookup",
+        "git ls-remote --exit-code --heads -- origin #{shell(branch)}",
+        timeout,
+        workspace,
+        progress
+      )
 
     case lookup do
       %{status: :passed} ->
-        with :ok <- fetch_branch(branch, workspace, :task_branch_fetch_failed) do
-          command(
-            :task_branch_checkout_failed,
-            "git checkout -b #{shell(branch)} --track #{shell("refs/remotes/origin/#{branch}")}",
-            120,
-            workspace
+        complete_source_progress(progress, "git_branch_lookup", "Remote task branch found")
+
+        with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed) do
+          source_command(
+            "checkout_failed",
+            "git_checkout",
+            "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
+            timeout,
+            workspace,
+            progress,
+            :task_branch_checkout_failed
           )
         end
 
       %{status: :failed, exit_code: 2} ->
-        command(:task_branch_create_failed, "git checkout -b #{shell(branch)} #{shell(base_sha)}", 120, workspace)
+        complete_source_progress(progress, "git_branch_lookup", "Remote task branch not found")
+
+        source_command(
+          "checkout_failed",
+          "git_checkout",
+          "git checkout -b #{shell(branch)} #{shell(base_sha)}",
+          timeout,
+          workspace,
+          progress,
+          :task_branch_create_failed
+        )
 
       %{status: :cancelled} = result ->
         result
 
+      %{status: :timed_out} = result ->
+        failed_source_progress(progress, "git_branch_lookup", result.detail)
+        source_timeout("fetch_failed", result)
+
       result ->
+        failed_source_progress(progress, "git_branch_lookup", result.detail)
         {:error, {:source_preparation_failed, :task_branch_lookup_failed, result}}
     end
   end
 
-  defp command(failure, command, timeout_seconds, workspace) do
-    case Command.run(%{command: command, timeout_seconds: timeout_seconds}, workspace) do
-      %{status: :passed} -> :ok
-      %{status: :cancelled} = result -> result
-      result -> {:error, {:source_preparation_failed, failure, result}}
+  defp source_command(phase, operation, command, timeout, workspace, progress, failure) do
+    result = run_source_command(operation, command, timeout, workspace, progress)
+
+    case result do
+      %{status: :passed} ->
+        complete_source_progress(progress, operation, "#{operation} completed")
+        :ok
+
+      %{status: :cancelled} = cancelled ->
+        failed_source_progress(progress, operation, cancelled.detail)
+        cancelled
+
+      %{status: :timed_out} = timed_out ->
+        failed_source_progress(progress, operation, timed_out.detail)
+        source_timeout(phase, timed_out)
+
+      failed ->
+        failed_source_progress(progress, operation, failed.detail)
+        {:error, {:source_preparation_failed, failure, failed}}
     end
+  end
+
+  defp run_source_command(operation, command, timeout, workspace, progress) do
+    source_progress(progress, operation, "started", "#{operation} started")
+
+    Command.run(%{command: command, timeout_seconds: timeout}, workspace, fn detail ->
+      source_progress(progress, operation, "output", detail)
+    end)
+  end
+
+  defp complete_source_progress(progress, operation, detail),
+    do: source_progress(progress, operation, "completed", detail)
+
+  defp failed_source_progress(progress, operation, detail),
+    do: source_progress(progress, operation, "failed", detail)
+
+  defp source_progress(progress, operation, status, detail) do
+    progress.("source_preparation", %{
+      source: "worker",
+      operation: operation,
+      status: status,
+      detail: detail
+    })
+  end
+
+  defp source_timeout(phase, result) do
+    {:error, :source_preparation_timeout,
+     %{
+       phase: phase,
+       command_status: "timed_out",
+       duration_ms: result.duration_ms,
+       output: result.detail
+     }}
   end
 
   defp resolve_commit(ref, workspace, failure) do
