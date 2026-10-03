@@ -351,7 +351,7 @@ defmodule SymphonyElixir.TestSupport do
           turn_sandbox_policy: nil,
           codex_turn_timeout_ms: 3_600_000,
           codex_read_timeout_ms: 5_000,
-          codex_stall_timeout_ms: 300_000,
+          codex_stall_timeout_ms: 600_000,
           codex_rate_limit_gate_enabled: true,
           codex_rate_limit_gate_5h_threshold_percent: 5.0,
           codex_rate_limit_gate_7d_threshold_percent: 3.0,

@@ -188,21 +188,11 @@ defmodule SymphonyElixir.Persistence do
   def update_run(%RunRecord{} = run, attrs),
     do: run |> RunRecord.changeset(attrs) |> Repo.update()
 
-  @spec finish_run(String.t(), String.t(), String.t() | nil, keyword()) ::
+  @spec finish_run(String.t(), String.t(), :completed | SymphonyElixir.RunFailure.t(), keyword()) ::
           {:ok, RunRecord.t()} | {:error, term()}
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ [])
+  def finish_run(run_id, status, terminal, opts \\ [])
       when is_binary(run_id) and is_binary(status) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         %RunRecord{} = run <- Repo.get(RunRecord, run_id) || {:error, :not_found} do
-      update_run(
-        run,
-        RunLifecycle.terminal_attrs(
-          status,
-          failure_reason,
-          Keyword.get(opts, :finished_at, DateTime.utc_now())
-        )
-      )
-    end
+    RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
   end
 
   @spec get_run(String.t()) :: RunRecord.t() | nil
@@ -237,6 +227,27 @@ defmodule SymphonyElixir.Persistence do
           {:ok, IssueRecord.t()} | {:error, Ecto.Changeset.t()}
   def update_issue(%IssueRecord{} = issue, attrs),
     do: issue |> IssueRecord.changeset(attrs) |> Repo.update()
+
+  @spec compare_and_clear_blocking_decision(String.t(), map()) ::
+          {:ok, :cleared | :replaced} | {:error, :repo_unavailable}
+  def compare_and_clear_blocking_decision(identifier, decision)
+      when is_binary(identifier) and is_map(decision) do
+    if repo_available?() do
+      {count, _rows} =
+        Repo.update_all(
+          from(issue in IssueRecord,
+            where:
+              issue.identifier == ^identifier and
+                issue.blocking_decision == ^decision
+          ),
+          set: [blocking_decision: nil, no_progress_streak: 0]
+        )
+
+      {:ok, if(count == 1, do: :cleared, else: :replaced)}
+    else
+      {:error, :repo_unavailable}
+    end
+  end
 
   @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do

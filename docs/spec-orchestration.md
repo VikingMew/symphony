@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-19
+updated: 2026-10-03
 ---
 
 # Orchestration Specification
@@ -179,6 +179,17 @@ read repeats listening admission before assignment creation. A successful stop r
 after any earlier in-flight claim and before every later claim; it does not cancel an assignment
 that already exists.
 
+Candidate selection and the second tracker read also apply one persisted-decision validity rule. A
+decision with `transition_status = completed` expects live state `Blocked`; otherwise it expects its
+`origin_state`. The decision blocks only when that state matches and its non-empty `run_id` equals
+the latest persisted issue run id. Missing scope is typed `missing_scope`; either mismatch makes the
+decision stale. The same claim compares the observed JSON and atomically clears
+`blocking_decision` and `no_progress_streak`, records `issue.blocking_decision_cleared`, releases
+only the old run projection, and continues all remaining gates. A replacement race is re-read
+without clearing the replacement's streak or projections. Cleanup preserves any newer run's
+claimed/running projection; a manually newer run is explicit retry intent and does not inherit the
+old blocker.
+
 `Ready to Merge` has no ordinary issue route. The only allowed execution there is a durable
 post-handoff review job, keyed by project, issue, PR URL, and backend-resolved immutable head OID.
 Review jobs have their own positive concurrency limit, remain queued across restarts, and still
@@ -192,7 +203,8 @@ pre-transition intents per poll to close the successful-Linear-write/enqueue cra
 `Ready to Merge` issues for this reconciliation path; those issues do not enter the ordinary
 dispatch route and no coding-agent worker is started for them.
 
-For each issue, the reconciler reads the latest completed `implementation_handoff` event for that
+For each issue, the reconciler reads the latest completed `implementation_handoff` event with a
+non-empty owning run id for that
 issue identifier and uses the recorded PR URL plus any repository/base/head identity as the only
 handoff evidence eligible for blocking. It queries GitHub mergeability for the current issue and
 project. A missing handoff PR, a non-definitive mergeability result, unknown/behind/CI states, or a
@@ -257,6 +269,11 @@ is unchanged.
 
 ### 8.4 Retry and Backoff
 
+Persisted terminal runs, retry metadata, and `BlockingDecision.reason` use the classification owned
+by [Run Failure Classification Design](run-failure-classification-design.md). Opaque failure detail
+is retained as structured evidence. Runtime terminal writes pass through `RunLifecycle`; admission
+rejections before run creation remain outside this contract.
+
 Retry entry creation:
 
 - Cancel any existing retry timer for the same issue.
@@ -273,6 +290,15 @@ Backoff formula:
 - A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
   After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
   persists a blocking decision and delivers the Linear comment and `Blocked` transition.
+- Every producer writes the same JSON representation with live `origin_state` and owning `run_id`.
+  Failure/no-progress use the current running entry; merge conflict uses the second
+  `Ready to Merge` read and scoped handoff; review findings use their review run and delivery-time
+  state. The normalization migration adds `origin_state` from `issues.state` only when the JSON key
+  is absent, preserves an existing scope on repeated execution, and retains both existing columns
+  and all other decision content.
+- Persisting a terminal decision cancels the pending automatic retry. Automatic dispatch remains
+  suppressed while the decision is valid; a new run is allowed after CAS clear or explicit human
+  retry intent invalidates the old run scope.
 - Continuations, capacity requeues, and tracker failures while polling a retry do not consume the
   failure budget. A successful run clears the issue's current failure chain.
 
@@ -322,11 +348,11 @@ Reconciliation runs every tick and has two parts.
 
 Part A: Stall detection
 
-- For each running issue, compute `elapsed_ms` since:
-  - `last_codex_timestamp` if any event has been seen, else
-  - `started_at`
-- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry.
-- If `stall_timeout_ms <= 0`, skip stall detection entirely.
+- For each running issue with a `last_codex_timestamp`, compute `elapsed_ms` from that timestamp.
+- If no `last_codex_timestamp` exists, keep the issue active; `started_at` is not a fallback.
+- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry. Equality remains
+  active.
+- If `codex.stall_timeout_ms <= 0`, skip stall detection entirely.
 
 Part B: Tracker state refresh
 

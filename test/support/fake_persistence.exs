@@ -76,6 +76,23 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     {:ok, updated}
   end
 
+  def compare_and_clear_blocking_decision(identifier, decision) do
+    if hook = Application.get_env(:symphony_elixir, :blocking_decision_cas_hook) do
+      hook.()
+    end
+
+    Agent.get_and_update(@name, fn state ->
+      case Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) do
+        %{blocking_decision: ^decision} = issue ->
+          updated = Map.merge(issue, %{blocking_decision: nil, no_progress_streak: 0})
+          {{:ok, :cleared}, Map.update!(state, :issues, &replace_issue(&1, issue, updated))}
+
+        _replaced ->
+          {{:ok, :replaced}, state}
+      end
+    end)
+  end
+
   defp replace_issue(issues, issue, updated) do
     Enum.map(issues, fn candidate ->
       if Map.get(candidate, :identifier) == Map.get(issue, :identifier),
@@ -701,21 +718,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp run_inserted_at(%{started_at: %DateTime{} = started_at}), do: started_at
   defp run_inserted_at(_run), do: ~U[1970-01-01 00:00:00Z]
 
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) do
-    case get_run(run_id) do
-      nil ->
-        {:error, :not_found}
-
-      run ->
-        update_run(
-          run,
-          SymphonyElixir.RunLifecycle.terminal_attrs(
-            status,
-            failure_reason,
-            Keyword.get(opts, :finished_at, DateTime.utc_now())
-          )
-        )
-    end
+  def finish_run(run_id, status, terminal, opts \\ []) do
+    SymphonyElixir.RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
   end
 
   def list_runs_for_issue(identifier, _opts \\ []) do
@@ -1068,6 +1072,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     "execution_mode" => :execution_mode,
     "attempt" => :attempt,
     "failure_reason" => :failure_reason,
+    "failure_evidence" => :failure_evidence,
+    "execution_summary" => :execution_summary,
     "started_at" => :started_at,
     "finished_at" => :finished_at,
     "inserted_at" => :inserted_at,

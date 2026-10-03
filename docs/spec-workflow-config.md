@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-23
+updated: 2026-09-27
 ---
 
 # Workflow and Configuration Specification
@@ -332,7 +332,7 @@ runtime workflow that omits an explicit `turn_sandbox_policy`.
 - `read_timeout_ms` (integer)
   - Default: `5000`
 - `stall_timeout_ms` (integer)
-  - Default: `300000` (5 minutes)
+  - Default: `600000` (10 minutes)
   - If `<= 0`, stall detection is disabled.
 
 ### 5.4 Prompt Template Contract
@@ -539,4 +539,4 @@ not require recognizing or validating extension fields unless that extension is 
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
 - `codex.turn_timeout_ms`: integer, default `3600000`
 - `codex.read_timeout_ms`: integer, default `5000`
-- `codex.stall_timeout_ms`: integer, default `300000`
+- `codex.stall_timeout_ms`: integer, default `600000`

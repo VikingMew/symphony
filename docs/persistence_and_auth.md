@@ -4,7 +4,7 @@ genre: reference
 domain: [persistence, auth]
 status: current
 language: en
-updated: 2026-09-06
+updated: 2026-10-03
 owner: SymphonyElixir.Persistence
 ---
 
@@ -71,12 +71,24 @@ setup-required mode and does not poll Linear or schedule agents. A legacy full p
 not an instance fallback. Checked-in
 `workflow.yml` and `profiles.yml` remain import/export artifacts, not runtime fallbacks.
 
+## Persisted Issues
+
+Issue rows provide durable identity and foreign-key anchors for runs and review jobs, retain
+worker-owned `blocking_decision` and `no_progress_streak`, and keep the last poll-time Linear
+payload in `snapshot`. Linear state is stored only as `snapshot["state"]`; it is the state observed
+when that row was last persisted, not a current Linear lookup. Dispatch and reconciliation use the
+live normalized Linear issue instead of this historical value. See the
+[Issue Persistence Boundary Design](issue-persistence-design.md).
+
 ## Legacy SQLite Cutover
 
 The supported one-way path imports a stopped, backed-up legacy `symphony.db` into an already
 migrated, empty PostgreSQL database. It preserves IDs, foreign-key relationships, timestamps,
 JSON/map values, and only each source project's active legacy workflow into the current workflow row, verifies every table count, and refuses a non-empty
 target or a source with live `-wal`/`-shm` sidecars.
+
+Legacy SQLite issue rows may contain the removed scalar `state` column. The importer ignores that
+column and imports the poll snapshot into the current PostgreSQL issue schema.
 
 The complete maintenance-window, verification, switch, and rollback procedure is owned by
 [Compose and PostgreSQL Operations](compose.md#legacy-sqlite-cutover). The prior SQLite-capable

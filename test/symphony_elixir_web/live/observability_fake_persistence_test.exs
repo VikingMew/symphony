@@ -264,7 +264,11 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     }
 
     FakePersistence.put_runs([run])
-    FakePersistence.put_issues([%{identifier: "MT-1", state: "In Progress", title: "Issue detail"}])
+
+    FakePersistence.put_issues([
+      %{identifier: "MT-1", snapshot: %{"state" => "In Progress"}, title: "Issue detail"}
+    ])
+
     FakePersistence.put_workflow(workflow)
 
     FakePersistence.put_events([
@@ -305,6 +309,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     {:ok, _view, issue_html} = live(build_conn(), "/issues/MT-1")
     assert issue_html =~ "Issue Detail"
     assert issue_html =~ "Issue detail"
+    assert issue_html =~ "In Progress"
     assert issue_html =~ "run-1"
 
     {:ok, _view, events_html} = live(build_conn(), "/events")

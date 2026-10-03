@@ -14,6 +14,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
           optional(:project_id) => String.t(),
           optional(:worker_host) => String.t(),
           optional(:workspace_path) => String.t(),
+          optional(:failure_evidence) => map(),
           optional(:failure_count) => non_neg_integer(),
           optional(:delay_type) => atom()
         }
@@ -32,6 +33,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       project_id: pick_retry_project_id(previous_retry, metadata),
       worker_host: pick_retry_worker_host(previous_retry, metadata),
       workspace_path: pick_retry_workspace_path(previous_retry, metadata),
+      failure_evidence: Map.get(metadata, :failure_evidence, Map.get(previous_retry, :failure_evidence)),
       failure_count: Map.get(metadata, :failure_count, Map.get(previous_retry, :failure_count, 0)),
       delay_type: Map.get(metadata, :delay_type)
     }
@@ -52,6 +54,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
       failure_count: prepared_retry.failure_count
     }
     |> maybe_put(:project_id, prepared_retry.project_id)
+    |> maybe_put(:failure_evidence, prepared_retry.failure_evidence)
   end
 
   @spec pop_retry_attempt(map(), String.t(), reference()) ::
@@ -69,6 +72,7 @@ defmodule SymphonyElixir.Orchestrator.RetryPolicy do
             failure_count: Map.get(retry_entry, :failure_count, 0)
           }
           |> maybe_put(:project_id, Map.get(retry_entry, :project_id))
+          |> maybe_put(:failure_evidence, Map.get(retry_entry, :failure_evidence))
 
         {:ok, attempt, metadata, Map.delete(retry_attempts, issue_id)}
 

@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-09-24
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -29,6 +29,11 @@ design_status: landed
   singleton 的 base prompt/profiles。两个页面不依赖所选 project，保存后重新发布所有 enabled
   project 的 future runtime snapshot。`/settings/projects` 只提交 project metadata 与
   tracker/repository/source/setup/cleanup slice，不能携带 instance 字段。
+- `WorkflowStore` 组合 singleton 与 project slice 后才交给 schema 解析。schema default 只补齐组合
+  workflow 中省略的字段；instance singleton 中显式保存的值保持原样并优先于 default。具体到
+  `codex.stall_timeout_ms`，代码 default 是 `600000`，但仍显式保存 `300000` 的 installation 不会因
+  代码更新自动改变。该 installation 必须在 `/settings/import` 中 Review import、Confirm，再正常
+  Save 为 `600000`，并通过应用层重新读取 current workflow 验证；不得直接更新 SQL。
 - `workflow.states`、`allowed_transitions`、`human_review_states` 与 `tool_policy` 只来自
   `Schema.default_workflow_policy/0`；`tracker.api_key` 只按环境 secret contract 在运行时解析。
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret

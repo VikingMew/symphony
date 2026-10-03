@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -44,7 +44,12 @@ listening mode before any Linear candidate read. `not_listening` returns an empt
 by centralized dispatch, so an earlier implementation candidate cannot hide a later refinement
 candidate; `listening_all` admits both profiles. An admitted claim is then created from a live Linear
 candidate read, absence of an uncleared persisted `blocking_decision`, and a second
-state/dependency/routing/listening/blocking-decision check. The Panel
+state/dependency/routing/listening/blocking-decision check. Candidate fetch, revalidation, and the
+started-state write run in one supervised task under a 5000 ms budget, while the assignment manager
+retains the single in-flight claim reservation and continues serving lease and event calls. A
+timeout terminates that task and returns the existing `{:linear_api_request, :timeout}` tracker
+failure with 30/60-second poll backoff; the public manager claim uses a bounded 6000 ms call timeout
+instead of `:infinity`. The Panel
 derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
 contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
 validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state
@@ -55,6 +60,13 @@ is carried in the existing `task_id` and `lease_id` JSON fields; it is not a dat
 payload contains the issue description, exact branch, source ref, rendered profile prompt, hooks, Codex
 settings, limits, ordered required gates, and allowed handoff updates. The worker has neither a
 Linear client nor a Linear credential.
+
+For the stall timeout, the resolved combined workflow field is `codex.stall_timeout_ms`. The Panel
+copies that value into assignment `limits.stall_timeout_ms`, and
+`SymphonyElixir.Worker.ExecutionPayload.from_task_payload/1` maps it to worker-v1
+`codex.stall_timeout_ms` for `SymphonyElixir.Worker.Payload.parse/1`. This boundary defines no second
+timeout source. [Orchestration §8.5](spec-orchestration.md#85-active-run-reconciliation) owns the stall decision
+contract.
 
 History-based duplicate-run gating treats only `Refining` and `In Progress` as worker started
 states. A candidate in either state can be claimed only when the latest worker run is terminal
@@ -158,18 +170,35 @@ database-write gate. After controller identity/protocol parsing, the Panel recor
 freshness through a coalesced asynchronous history observer whose result is ignored by the worker-v1
 protocol. Heartbeats that report no active lease return success with an empty renewal list without
 entering the assignment manager queue. Heartbeats that report an active lease can renew only the
-current matching in-memory assignment. If that bounded renewal section cannot complete in time, the
+current matching in-memory assignment. Claim and reconciliation tracker I/O runs outside the
+assignment manager process, so this renewal section contains only in-memory lease/cancellation
+transitions. If that bounded renewal section cannot complete in time, the
 Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds`, and
 `Retry-After`; worker/session history-write delay or failure cannot produce that response and does
 not create a task, assignment, run failure, metric increment, or repair action.
 
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
-later run can start only after a new live Linear claim proves the issue eligible and no uncleared
-`blocking_decision` exists. Manual Blocked, Done, review-state changes, and persisted blocker clears
-therefore take effect at the next check. When a persisted blocker exists, empty claim evidence uses
-`reason: blocking_decision` and the Panel logs `event=worker_claim_skip` with issue and worker/session
-context; after `BlockingDecision.clear/1`, the same active issue can be claimed again if dependency,
-routing, and run-history gates pass.
+later run can start only after a new live Linear claim proves the issue eligible. Every persistent
+blocker producer uses `BlockingDecision.new/6` with the live Linear state and owning non-empty run
+id: failure and no-progress use the current running entry, merge conflict uses the second
+`Ready to Merge` read plus completed handoff run, and review findings use the review run plus their
+delivery-time `Ready to Merge` read. Persisted issue state is never a producer scope source.
+
+Candidate selection and tracker revalidation share one validity rule. A completed transition
+expects live `Blocked`; every other decision expects `origin_state`. That state and the decision
+`run_id` must match the latest persisted issue run. Missing scope is typed `missing_scope`; a state
+mismatch or newer run also makes the decision stale. The same claim compares the observed JSON and
+atomically clears `blocking_decision` / `no_progress_streak` to `NULL` / `0`, releases only the old
+run's blocked, retry, failure, and stale-claimed projection, records the scoped clear event, and
+continues later gates. A replacement race is re-read without clearing its streak or projections,
+and a same-claim newer running projection remains intact. A manually newer run is explicit retry
+intent. Persisting a terminal blocker cancels pending automatic retry so a valid blocker cannot
+immediately invalidate itself. Valid blocker claims retain `reason: blocking_decision`; their skip
+logs include issue, reason, origin state, run id, and decision time. The one-time migration enriches
+only non-null decision JSON that lacks `origin_state`, using `issues.state`; an already scoped
+decision is unchanged, including on a repeated migrator invocation. Neither existing database
+column is removed. The database-free worker suite covers equivalent post-cutover fixtures, while
+the opt-in PostgreSQL smoke is the host-run proof for the migration and column assertions.
 
 Listening rejection evidence is `{reason: not_listening, capacity: 0, listening_mode:
 not_listening}`. A refine-only batch containing no refinement candidate uses `reason:
@@ -177,9 +206,15 @@ listening_mode` with the current mode. Both paths log `event=worker_claim_skip` 
 reason, mode, and capacity. These response and log fields use the same Orchestrator mode exposed by
 the control and state APIs; no listening value is persisted in the assignment manager or workflow.
 
-Panel restart deliberately loses the assignment and payload. Reconciliation uses Linear `In
-Progress` state plus latest persisted run/event time: no duplicate is dispatched before timeout,
-then an expired zombie is moved to `Ready` and its old run is failed. Late events are rejected.
+Panel restart deliberately loses the assignment and payload. Each reconciliation round deduplicates
+enabled workflows by `tracker.project_slug`, then a single supervised task performs one Linear `In
+Progress` fetch per distinct slug plus the corresponding zombie transition. The whole task has a
+5000 ms budget; timeout terminates the round, no later round overlaps it, and the manager accepts
+only the current round-reference result cast. Tracker errors and timeouts use distinct
+`worker_reconcile_tracker_error` and `worker_reconcile_tracker_timeout` logs rather than the run's
+`assignment_expired` terminal event. Reconciliation combines those Linear results with latest
+persisted run/event time: no duplicate is dispatched before timeout, then an expired zombie is moved
+to `Ready` and its old run is failed. Late events are rejected.
 PostgreSQL stores worker/session identity and run/event history, never queued work or active leases.
 
 Centralized mode remains the default. Worker mode is opt-in. Multi-worker scheduling, distributed

@@ -19,7 +19,7 @@ defmodule SymphonyElixir.MergeConflictReconciler do
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
     delivery = Keyword.get(opts, :delivery, &BlockingDecision.deliver/2)
 
-    with {:ok, handoff} <- handoff_evidence(issue.identifier),
+    with {:ok, %{} = handoff} <- handoff_evidence(issue.identifier),
          {:ok, pull_request} <- mergeability.(issue, project, github_opts(opts)),
          :ok <- exact_handoff?(pull_request, handoff),
          true <- conflicting?(pull_request),
@@ -33,7 +33,7 @@ defmodule SymphonyElixir.MergeConflictReconciler do
       Logger.warning(
         "GitHub merge conflict blocked issue issue_id=#{fresh_issue.id} " <>
           "issue_identifier=#{fresh_issue.identifier} pr_url=#{fresh_pull_request.url} " <>
-          "run_id=#{handoff.run_id || "n/a"} raw_status=#{fresh_pull_request.raw_status}"
+          "run_id=#{handoff.run_id} raw_status=#{fresh_pull_request.raw_status}"
       )
 
       {:blocked, decision, delivery_result}
@@ -42,7 +42,7 @@ defmodule SymphonyElixir.MergeConflictReconciler do
         :unchanged
 
       {:ok, nil} ->
-        :unchanged
+        :stale
 
       :stale ->
         :stale
@@ -77,10 +77,11 @@ defmodule SymphonyElixir.MergeConflictReconciler do
     case Enum.find(events, fn event ->
            value(event.payload, "phase") == "implementation_handoff" and
              value(event.payload, "status") == "completed" and
-             is_binary(value(event.payload, "url"))
+             is_binary(value(event.payload, "url")) and
+             is_binary(event.run_id) and event.run_id != ""
          end) do
       nil ->
-        %{url: nil, repository: nil, base: nil, head: nil, run_id: nil}
+        nil
 
       event ->
         payload = event.payload
@@ -125,8 +126,7 @@ defmodule SymphonyElixir.MergeConflictReconciler do
   defp same_pull_request?(_pull_request, _fresh_pull_request), do: :stale
 
   defp persist_decision(issue, pull_request, handoff) do
-    references = %{"pr_url" => pull_request.url}
-    references = if handoff.run_id, do: Map.put(references, "handoff_run_id", handoff.run_id), else: references
+    references = %{"pr_url" => pull_request.url, "handoff_run_id" => handoff.run_id}
 
     evidence = "merge conflict (GitHub status: #{pull_request.raw_status})"
 
@@ -135,6 +135,7 @@ defmodule SymphonyElixir.MergeConflictReconciler do
       :merge_conflict,
       evidence,
       handoff.run_id,
+      issue.state,
       references
     )
   end

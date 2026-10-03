@@ -69,7 +69,6 @@ defmodule SymphonyElixir.SQLiteImporter do
        tracker_issue_id: :text,
        identifier: :text,
        title: :text,
-       state: :text,
        url: :text,
        labels: :jsonb,
        snapshot: :jsonb,
@@ -86,6 +85,7 @@ defmodule SymphonyElixir.SQLiteImporter do
        status: :text,
        attempt: :integer,
        failure_reason: :text,
+       failure_evidence: :jsonb,
        started_at: :timestamp,
        finished_at: :timestamp,
        inserted_at: :timestamp,
@@ -281,8 +281,80 @@ defmodule SymphonyElixir.SQLiteImporter do
     end)
   end
 
+  defp source_rows_for_table!(_repo, sqlite3, source_path, "runs", columns) do
+    source_columns = Keyword.delete(columns, :failure_evidence)
+
+    sqlite3
+    |> source_rows!(source_path, "runs", source_columns)
+    |> Enum.map(&normalize_run/1)
+  end
+
   defp source_rows_for_table!(_repo, sqlite3, source_path, table, columns) do
     source_rows!(sqlite3, source_path, table, columns)
+  end
+
+  @doc false
+  @spec normalize_run(map()) :: map()
+  def normalize_run(%{"status" => status} = row) when status in ["running", "completed", "success", "succeeded"] do
+    normalized_status = if status in ["success", "succeeded"], do: "completed", else: status
+
+    row
+    |> Map.put("status", normalized_status)
+    |> Map.put("failure_reason", nil)
+    |> Map.put("failure_evidence", nil)
+  end
+
+  def normalize_run(%{"status" => status, "failure_reason" => reason} = row)
+      when status in ["failed", "blocked", "cancelled", "stopped"] do
+    {classification, evidence} = normalize_legacy_failure(reason)
+
+    row
+    |> Map.put("failure_reason", classification)
+    |> Map.put("failure_evidence", evidence)
+  end
+
+  def normalize_run(%{"status" => status}) do
+    raise "Unknown legacy run status: #{inspect(status)}"
+  end
+
+  defp normalize_legacy_failure(reason)
+       when reason in [
+              "environment_unavailable",
+              "source_preparation_timeout",
+              "external_dependency_timeout",
+              "budget_exhausted",
+              "contract_violation",
+              "worker_process_termination",
+              "validation_failed",
+              "runtime_failure",
+              "codex_upstream_capacity",
+              "codex_turn_failed",
+              "cancelled",
+              "operator_stopped",
+              "unknown"
+            ] do
+    {reason, %{"import" => "historical_classification"}}
+  end
+
+  defp normalize_legacy_failure(nil),
+    do: {"unknown", %{"import" => "missing_failure_reason"}}
+
+  defp normalize_legacy_failure(reason) when is_binary(reason) do
+    cond do
+      Regex.match?(~r/(erofs|read-only file system|workspace.*(unavailable|unreadable|unwritable))/i, reason) ->
+        {"environment_unavailable", %{"import" => "historical_mapping", "kind" => "environment_unavailable", "legacy_failure_reason" => reason}}
+
+      Regex.match?(~r/(clone|fetch|checkout)/i, reason) and Regex.match?(~r/(timeout|timed[_ -]?out)/i, reason) ->
+        [phase] = Regex.run(~r/(clone|fetch|checkout)/i, reason, capture: :first)
+
+        {"source_preparation_timeout", %{"import" => "historical_mapping", "phase" => String.downcase(phase), "legacy_failure_reason" => reason}}
+
+      Regex.match?(~r/linear/i, reason) and Regex.match?(~r/(transport|timeout|timed[_ -]?out)/i, reason) ->
+        {"external_dependency_timeout", %{"import" => "historical_mapping", "dependency" => "linear", "legacy_failure_reason" => reason}}
+
+      true ->
+        {"unknown", %{"import" => "unclassified_legacy_reason", "legacy_failure_reason" => reason}}
+    end
   end
 
   defp legacy_project_hooks(sqlite3, source_path) do

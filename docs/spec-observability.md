@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.LogFile
-updated: 2026-09-19
+updated: 2026-10-03
 ---
 
 # Logging and Observability Specification
@@ -96,10 +96,12 @@ typed reason, evidence/detail, and decision time. All-zero worker-mode counts ar
 when the corresponding in-memory current-state lists are actually empty.
 
 Persistent tracker blocking emits `run.blocked` plus typed comment/transition delivery outcomes.
-Failed external writes remain visible and retryable without creating a new coding-agent run;
-worker claim admission reports `admission.reason = blocking_decision` and logs
-`event=worker_claim_skip` with issue and worker/session context while the decision remains uncleared;
-human recovery emits a decision-cleared event with issue and run context where available.
+Failed external writes remain visible and retryable without creating a new coding-agent run. A
+state/run-valid decision makes worker claim admission report `admission.reason = blocking_decision`;
+`event=worker_claim_skip` includes issue, worker/session, blocking reason, origin state, run id, and
+decision time. Claim-time invalidation emits `issue.blocking_decision_cleared` with `source`
+(`candidate_selection` or `tracker_revalidation`), `cause` (`missing_scope`, `state_mismatch`, or
+`run_superseded`), issue, old reason, origin state, run id, and decision time.
 
 External worker terminal summaries MUST distinguish validation evidence from terminal outcome.
 When validation ran, `validation_status` MUST be its actual `passed`, `failed`, `timed_out`, or
@@ -338,15 +340,19 @@ Minimum endpoints:
   - Live runtime state is authoritative when present. Bounded persisted issue, latest-run,
     recent-run, and event history MAY augment it; history failure keeps the live payload and adds an
     explicit history error.
-  - An inactive persisted issue returns `200` with its persisted state and latest outcome.
+  - An inactive persisted issue returns `200` with its last poll-time Linear state projected from
+    the persisted issue snapshot and its latest outcome. This state is historical evidence, not a
+    current Linear lookup.
   - Return `404 issue_not_found` only after successful history lookup finds neither live nor
     persisted issue/run data. If persistence is required but unavailable, failed, or timed out,
     return a typed `503` error instead of collapsing the condition to `404`.
 
 - `GET /api/v1/runs?issue_identifier=<identifier>`
   - `issue_identifier` is required. Returns bounded newest-first run projections with `id`, `kind`,
-    `profile`, `status`, `attempt`, `started_at`, `finished_at`, and `failure_reason`, plus a compact
-    bounded event timeline.
+    `profile`, `status`, `attempt`, `started_at`, `finished_at`, `failure_reason`, and bounded
+    `failure_evidence`, plus a compact bounded event timeline. Terminal `run.*` events expose the
+    same reason/evidence pair as the row. Classification and evidence ownership is defined by
+    [Run Failure Classification Design](run-failure-classification-design.md).
   - Caller limits are clamped to an implementation-owned maximum. Unknown history, invalid input,
     Repo unavailability, query failure, and bounded timeout remain distinct JSON errors.
   - The static `/api/v1/runs` route MUST be registered before the dynamic issue route.
@@ -481,7 +487,7 @@ MUST be observable without reading durable history.
 
 - `status`: `allow` or `tripped`
 - `active`: boolean open/closed state
-- `triggering_fingerprint`: the normalized failure fingerprint when open, otherwise `null`
+- `triggering_fingerprint`: the exact run failure classification when open, otherwise `null`
 - `triggered_at`: UTC trigger time when open, otherwise `null`
 - `threshold`: distinct issue threshold
 - `window_ms`: failure window in milliseconds

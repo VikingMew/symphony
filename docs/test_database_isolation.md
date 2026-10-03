@@ -48,6 +48,16 @@ workflow state, exercises representative persistence operations, performs 200 co
 writes, and proves another write/read succeeds afterward. It also proves the importer rejects a
 non-empty target.
 
+The blocking-decision portion creates four synthetic legacy rows shaped like the recorded
+SYM-130/SYM-136/SYM-138/SYM-139 cutover cases plus one already scoped row. It runs the real Ecto
+migration, invokes the migrator again, and asserts that legacy JSON content and `run_id` survive,
+only missing `origin_state` values are populated from `issues.state`, the existing scope is
+unchanged, both issue columns remain, and each synthetic legacy row is stale against its fixture
+live state before compare-and-swap clear resets the decision/streak to `NULL` / `0`. These fixtures
+are equivalent test shapes rather than copies of production rows. The host must run this command
+against its isolated PostgreSQL database before deployment and separately record the production-row
+checks; the database-free worker validation is not evidence that this smoke ran.
+
 SQLite in this target is an import fixture only. No Ecto SQLite adapter or selectable SQLite
 runtime exists.
 

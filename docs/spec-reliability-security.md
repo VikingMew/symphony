@@ -115,15 +115,15 @@ Operators can control behavior by:
 
 ### 14.5 Environment Failure Circuit Breaker
 
-An environment failure fingerprint is the stable identifier derived from a normalized failure reason.
-Normalization lowercases the failure text, collapses whitespace, and replaces volatile UUIDs and
-standalone numbers before hashing. The fingerprint represents the failure cause, not a specific run,
-workspace path, issue id, or session id.
+The environment failure circuit key is the exact durable classification owned by
+[Run Failure Classification Design](run-failure-classification-design.md). Paths, issue/session
+identifiers, timeout values, and other volatile detail remain in failure evidence and do not alter
+the key.
 
 The implementation MUST maintain an in-memory environment failure circuit for dispatcher admission.
-The circuit opens when the same fingerprint appears in failed terminal outcomes for at least three
+The circuit opens when the same classification appears in failed terminal outcomes for at least three
 distinct issue identifiers within a 30-minute window, with no intervening success or different
-failure fingerprint before the threshold is reached.
+classification before the threshold is reached.
 
 When the circuit is open:
 
