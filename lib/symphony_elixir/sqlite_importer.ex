@@ -69,7 +69,6 @@ defmodule SymphonyElixir.SQLiteImporter do
        tracker_issue_id: :text,
        identifier: :text,
        title: :text,
-       state: :text,
        url: :text,
        labels: :jsonb,
        snapshot: :jsonb,

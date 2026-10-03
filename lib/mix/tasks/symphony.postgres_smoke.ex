@@ -28,6 +28,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @codex_selector_migration 20_260_923_000_000
   @blocking_decision_migration 20_260_926_000_000
   @failure_classification_migration 20_260_927_000_000
+  @issue_state_migration 20_261_003_000_000
   @legacy_project_ids [
     "70000000-0000-0000-0000-000000000001",
     "70000000-0000-0000-0000-000000000002"
@@ -103,6 +104,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     migrate_release!()
 
     with_repo!(fn repo ->
+      verify_issue_state_migration!(repo, migrations_path)
       ^expected_snapshot = convergence_snapshot!(repo)
       Mix.shell().info("smoke release_migrator_noop=PASS")
       cleanup_legacy_fixture!(repo)
@@ -414,6 +416,37 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     ^expected_grouped = grouped
     assert_run_failure_checks!(repo)
     Mix.shell().info("smoke run_failure_migration result=PASS")
+  end
+
+  defp verify_issue_state_migration!(repo, migrations_path) do
+    assert_issue_state_column!(repo, false)
+
+    [@issue_state_migration] = Ecto.Migrator.run(repo, migrations_path, :down, step: 1)
+    assert_issue_state_column!(repo, true)
+
+    [@issue_state_migration] = Ecto.Migrator.run(repo, migrations_path, :up, to: @issue_state_migration)
+    assert_issue_state_column!(repo, false)
+    Mix.shell().info("smoke issue_state_migration up=absent down=nullable_text reup=absent result=PASS")
+  end
+
+  defp assert_issue_state_column!(repo, expected?) do
+    %{rows: rows} =
+      SQL.query!(
+        repo,
+        """
+        SELECT data_type, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'issues'
+          AND column_name = 'state'
+        """,
+        []
+      )
+
+    case expected? do
+      true -> [["text", "YES"]] = rows
+      false -> [] = rows
+    end
   end
 
   defp run_failure_rows do
@@ -927,6 +960,9 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         [@run_id]
       )
 
+    %{rows: [[%{"state" => "In Progress"}]]} =
+      SQL.query!(repo, "SELECT snapshot FROM issues WHERE id = $1::text::uuid", [@issue_id])
+
     %{rows: legacy_failures} =
       SQL.query!(
         repo,
@@ -1008,7 +1044,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     INSERT INTO projects VALUES ('#{@project_id}', 'Imported', 'imported', 'cutover fixture', 1, 'SYM', 'https://github.com/example/symphony.git', 'main', 1, 'clone', 1, 1, NULL, NULL, NULL, NULL, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO tracker_configs VALUES ('11000000-0000-0000-0000-000000000001', '#{@project_id}', 'linear', 'https://api.linear.app/graphql', 'SYM', NULL, '{"values":["Todo"]}', '{"values":["Done"]}', 1, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workflow_versions VALUES ('#{@workflow_id}', '#{@project_id}', 1, '--- workflow fixture ---', '{"tracker":{"kind":"linear","project_slug":"SYM"},"project":{"repository_url":"https://github.com/example/symphony.git"}}', 'Smoke prompt', 'import', 1, '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO issues VALUES ('#{@issue_id}', '#{@project_id}', 'linear-1', 'SYM-2', 'Cut over', 'In Progress', 'https://linear.app/example/SYM-2', '{"values":["migration"]}', '{"priority":1}', '#{@timestamp}', '#{@timestamp}');
+    INSERT INTO issues VALUES ('#{@issue_id}', '#{@project_id}', 'linear-1', 'SYM-2', 'Cut over', 'Stale Mirror', 'https://linear.app/example/SYM-2', '{"values":["migration"]}', '{"state":"In Progress"}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO runs VALUES ('#{@run_id}', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-2', '/data/workspaces/SYM-2', '#{run_status}', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
     INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000002', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-1', NULL, 'failed', 1, 'opaque legacy', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
     INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000003', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-2', NULL, 'blocked', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);

@@ -14,7 +14,6 @@ defmodule SymphonyElixir.Persistence.IssueRecord do
     field(:tracker_issue_id, :string)
     field(:identifier, :string)
     field(:title, :string)
-    field(:state, :string)
     field(:url, :string)
     field(:labels, :map, default: %{"values" => []})
     field(:snapshot, :map, default: %{})
@@ -31,7 +30,6 @@ defmodule SymphonyElixir.Persistence.IssueRecord do
       :tracker_issue_id,
       :identifier,
       :title,
-      :state,
       :url,
       :labels,
       :snapshot,

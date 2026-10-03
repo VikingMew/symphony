@@ -111,7 +111,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert %{reason: "budget_exhausted", project_id: ^project_id} = exhausted.blocked[issue_id]
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == "completed"
@@ -148,7 +148,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["comment_status"] == %{"failed" => ":comment_down"}
     assert persisted.blocking_decision["transition_status"] == "completed"
     assert log =~ "Blocking decision delivery step failed"
@@ -183,7 +183,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Ready"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == %{"failed" => ":transition_down"}
@@ -215,7 +215,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Ready"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert %{"failed" => comment_failure} = persisted.blocking_decision["comment_status"]
     assert %{"failed" => transition_failure} = persisted.blocking_decision["transition_status"]
@@ -299,7 +299,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert blocked_detail["cause"] == "runtime_failure"
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["reason"] == "budget_exhausted"
     assert persisted.blocking_decision["evidence"]["detail"] == "persistent worker failure"
     assert persisted.blocking_decision["evidence"]["failure_attempt"] == 2
@@ -358,7 +358,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
            ] = Orchestrator.snapshot(orchestrator, 100).blocked
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["reason"] == "contract_violation"
     assert persisted.blocking_decision["evidence"]["reason"] == "handoff_failed"
     assert persisted.blocking_decision["evidence"]["detail"] =~ "SYM-110.patch"
@@ -547,7 +547,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       %{
         identifier: identifier,
         tracker_issue_id: issue_id,
-        state: "Ready",
+        snapshot: %{"state" => "Ready"},
         blocking_decision: nil,
         no_progress_streak: 0
       }

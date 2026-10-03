@@ -76,16 +76,9 @@ defmodule SymphonyElixir.PRReview.Delivery do
   defp deliver_transition(%{delivery: %{"transition" => "completed"}} = job), do: {:ok, job}
 
   defp deliver_transition(job) do
-    with :ok <- Tracker.update_issue_state(job.tracker_issue_id, "Blocked"),
-         {:ok, job} <- Store.update(job, %{delivery: Map.put(job.delivery, "transition", "completed")}),
-         issue <- PersistenceProvider.module().get_issue(job.project_id, job.issue_identifier),
-         decision = Map.put(issue.blocking_decision, "transition_status", "completed"),
-         {:ok, _issue} <-
-           PersistenceProvider.module().update_issue(issue, %{
-             state: "Blocked",
-             blocking_decision: decision
-           }) do
-      {:ok, job}
+    case Tracker.update_issue_state(job.tracker_issue_id, "Blocked") do
+      :ok -> Store.update(job, %{delivery: Map.put(job.delivery, "transition", "completed")})
+      error -> error
     end
   end
 

@@ -12,7 +12,6 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
              tracker_issue_id: "issue-1",
              identifier: "MT-1",
              title: "Fix it",
-             state: "Ready",
              url: "https://linear.example/MT-1",
              labels: %{"values" => ["bug"]},
              snapshot: %{

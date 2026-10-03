@@ -1,7 +1,22 @@
 defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.Persistence.{RunRecord, Worker, WorkspaceRecord}
+  alias SymphonyElixir.Persistence.{IssueRecord, RunRecord, Worker, WorkspaceRecord}
+
+  test "issue schema and changeset omit the Linear state mirror" do
+    assert :state not in IssueRecord.__schema__(:fields)
+
+    changeset =
+      IssueRecord.changeset(%IssueRecord{}, %{
+        identifier: "SYM-139",
+        state: "Ready",
+        snapshot: %{"state" => "In Progress"}
+      })
+
+    assert changeset.valid?
+    assert Ecto.Changeset.get_change(changeset, :snapshot) == %{"state" => "In Progress"}
+    assert Map.has_key?(changeset.changes, :state) == false
+  end
 
   test "run changeset validates issue and operator run contracts" do
     valid_issue = %{
