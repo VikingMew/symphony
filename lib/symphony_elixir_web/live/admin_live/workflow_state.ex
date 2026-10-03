@@ -7,16 +7,11 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
   alias SymphonyElixir.{
     PersistenceProvider,
     WorkflowForm,
-    WorkflowSettingsPackage,
     WorkflowValidator
   }
 
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
   alias SymphonyElixirWeb.AdminLive.Settings.Components
-
-  @workflow_settings_source "web_workflow_settings"
-  @agent_settings_source "web_agent_settings"
-  @package_import_source "web_settings_import"
 
   @spec validate(map(), Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def validate(params, socket) do
@@ -36,61 +31,65 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
           | {:unchanged, Phoenix.LiveView.Socket.t()}
           | {:error, Phoenix.LiveView.Socket.t()}
   def save(params, socket) do
-    draft = workflow_draft(socket, params) |> ProjectSettings.apply_to_workflow_draft(socket.assigns.default_project)
+    draft = workflow_draft(socket, params)
     section = Components.tab(socket.assigns.live_action)
-    project = socket.assigns.selected_project
 
-    if is_nil(project) do
-      {:error, put_flash(socket, :error, "No project is configured yet. Configure a project in Settings / Projects first.")}
+    with {:ok, instance} <- WorkflowForm.to_instance_scope(draft),
+         :changed <- instance_change_status(instance, socket),
+         {:ok, _instance} <- persist_instance(instance) do
+      refreshed_projects = enabled_project_names(socket.assigns.projects)
+      refresh_message = instance_refresh_message(refreshed_projects)
+
+      {:saved,
+       socket
+       |> put_flash(:info, "#{section_label(section)} saved to the instance singleton. #{refresh_message}")
+       |> assign_save_notice(
+         :success,
+         "#{section_label(section)} saved installation-wide",
+         "Instance singleton updated. #{refresh_message}"
+       )
+       |> assign(
+         :workflow_diagnostics_notice,
+         "#{section_label(section)} saved to the instance singleton. #{refresh_message}"
+       )
+       |> assign(:workflow_validation_visible?, true)
+       |> assign(:workflow_form, draft)
+       |> assign(:workflow_form_dirty?, false)
+       |> assign_validation(draft)}
     else
-      with {:ok, raw} <- WorkflowForm.to_raw(draft),
-           :changed <- workflow_change_status(raw, socket),
-           {:ok, _workflow} <- persist_draft(project, raw, section, socket) do
-        {:saved,
+      :unchanged ->
+        {:unchanged,
          socket
-         |> put_flash(:info, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
-         |> assign_save_notice(:success, "#{section_label(section)} saved", "Current workflow updated. Runtime workflow refreshed.")
-         |> assign(:workflow_diagnostics_notice, "#{section_label(section)} saved. Runtime workflow refreshed. Re-run Linear diagnostics.")
+         |> put_flash(:info, "#{section_label(section)} already up to date.")
+         |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No instance changes to save.")
          |> assign(:workflow_validation_visible?, true)
          |> assign(:workflow_form, draft)
          |> assign(:workflow_form_dirty?, false)
-         |> assign(:workflow_import_pending?, false)
          |> assign_validation(draft)}
-      else
-        :unchanged ->
-          {:unchanged,
-           socket
-           |> put_flash(:info, "#{section_label(section)} already up to date.")
-           |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No changes to save.")
-           |> assign(:workflow_validation_visible?, true)
-           |> assign(:workflow_form, draft)
-           |> assign(:workflow_form_dirty?, false)
-           |> assign_validation(draft)}
 
-        {:error, message} when is_binary(message) ->
-          {:error,
-           socket
-           |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-           |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
-           |> assign(:workflow_validation_visible?, true)
-           |> assign(:workflow_form, draft)
-           |> assign(:workflow_form_dirty?, true)
-           |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
-           |> assign(:workflow_validation_error, nil)
-           |> assign(:workflow_form_valid?, false)}
+      {:error, message} when is_binary(message) ->
+        {:error,
+         socket
+         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+         |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, true)
+         |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
+         |> assign(:workflow_validation_error, nil)
+         |> assign(:workflow_form_valid?, false)}
 
-        {:error, reason} ->
-          message = inspect(reason)
+      {:error, reason} ->
+        message = inspect(reason)
 
-          {:error,
-           socket
-           |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-           |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
-           |> assign(:workflow_validation_visible?, true)
-           |> assign(:workflow_field_errors, %{})
-           |> assign(:workflow_form, draft)
-           |> assign(:workflow_form_dirty?, true)}
-      end
+        {:error,
+         socket
+         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+         |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
+         |> assign(:workflow_validation_visible?, true)
+         |> assign(:workflow_field_errors, %{})
+         |> assign(:workflow_form, draft)
+         |> assign(:workflow_form_dirty?, true)}
     end
   end
 
@@ -108,31 +107,46 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     assign(socket, :workflow_save_notice, %{level: level, title: title, message: message})
   end
 
-  @spec load_form(map() | nil, term()) :: {map(), boolean()}
-  def load_form(nil, {:error, :no_active_workflow}), do: {WorkflowForm.empty(), true}
-  def load_form(nil, {:error, _reason}), do: {WorkflowForm.empty(), false}
+  @spec reconcile_legacy_instance(Phoenix.LiveView.Socket.t()) ::
+          {:saved, Phoenix.LiveView.Socket.t()} | {:error, Phoenix.LiveView.Socket.t()}
+  def reconcile_legacy_instance(socket) do
+    case socket.assigns.explicit_project do
+      nil ->
+        {:error,
+         assign(socket, :legacy_reconciliation_notice, %{
+           level: :error,
+           title: "Source project required",
+           message: "Select a contributing project before reconciling legacy instance settings."
+         })}
 
-  def load_form(nil, {:ok, %{workflow: workflow}}) do
-    if Map.get(workflow, :setup_required, false) do
-      {WorkflowForm.empty(), true}
-    else
-      {WorkflowForm.from_loaded(workflow), false}
+      project ->
+        slug = ProjectSettings.value(project, :slug)
+
+        case persistence().reconcile_legacy_instance_workflow(slug) do
+          {:ok, {result, _instance}} when result in [:converged, :already_converged] ->
+            {:saved,
+             assign(socket, :legacy_reconciliation_notice, %{
+               level: :success,
+               title: "Legacy instance settings reconciled",
+               message: "#{slug} was used as the explicit source (#{result}). Runtime configuration refreshed."
+             })}
+
+          {:error, reason} ->
+            {:error,
+             assign(socket, :legacy_reconciliation_notice, %{
+               level: :error,
+               title: "Legacy reconciliation failed",
+               message: inspect(reason)
+             })}
+        end
     end
   end
 
-  def load_form(_workflow, {:ok, %{workflow: loaded}}), do: {WorkflowForm.from_loaded(loaded), false}
+  @spec load_instance_form(map() | nil) :: map()
+  def load_instance_form(nil), do: WorkflowForm.empty()
 
-  def load_form(workflow, _runtime) do
-    case persistence().export_workflow(workflow) do
-      {:ok, raw} ->
-        case WorkflowForm.from_raw(raw) do
-          {:ok, draft} -> {draft, false}
-          {:error, _reason} -> {WorkflowForm.empty(), false}
-        end
-
-      {:error, _reason} ->
-        {WorkflowForm.empty(), false}
-    end
+  def load_instance_form(%{config: config, prompt_body: prompt_body}) do
+    WorkflowForm.from_loaded(%{config: config, prompt: prompt_body})
   end
 
   @spec refreshed_form(Phoenix.LiveView.Socket.t(), map()) :: map()
@@ -196,47 +210,29 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     |> assign(:workflow_form_summary, WorkflowForm.summary(draft))
   end
 
-  defp settings_source(:agents), do: @agent_settings_source
-  defp settings_source(_section), do: @workflow_settings_source
-
-  defp safe_import_workflow(project, raw, source) do
-    project
-    |> persistence().import_workflow(raw, source)
+  defp persist_instance(%{config: config, prompt_body: prompt_body}) do
+    config
+    |> persistence().put_instance_workflow(prompt_body)
     |> PersistenceProvider.publish_runtime_mutation()
-  rescue
-    exception -> {:error, Exception.message(exception)}
-  catch
-    kind, reason -> {:error, {kind, reason}}
   end
 
-  defp safe_import_package(project, raw) do
-    project
-    |> persistence().import_package(raw, @package_import_source)
-    |> PersistenceProvider.publish_runtime_mutation()
-  rescue
-    exception -> {:error, Exception.message(exception)}
-  catch
-    kind, reason -> {:error, {kind, reason}}
+  defp instance_change_status(instance, socket) do
+    if Map.get(socket.assigns, :current_instance_workflow) == instance,
+      do: :unchanged,
+      else: :changed
   end
 
-  defp persist_draft(project, raw, section, socket) do
-    if Map.get(socket.assigns, :workflow_import_pending?, false),
-      do: safe_import_package(project, raw),
-      else: safe_import_workflow(project, raw, settings_source(section))
+  defp enabled_project_names(projects) do
+    projects
+    |> Enum.filter(&(ProjectSettings.value(&1, :enabled) == true))
+    |> Enum.map(&ProjectSettings.value(&1, :name))
   end
 
-  defp workflow_change_status(raw, socket) do
-    case Map.get(socket.assigns, :current_workflow) do
-      nil -> :changed
-      workflow -> exported_change_status(persistence().export_workflow(workflow), raw)
-    end
-  end
+  defp instance_refresh_message([]), do: "No enabled project snapshots required refresh."
 
-  defp exported_change_status({:ok, current_raw}, raw) do
-    if WorkflowSettingsPackage.changed?(current_raw, raw), do: :changed, else: :unchanged
+  defp instance_refresh_message(projects) do
+    "Future runtime snapshots refreshed for enabled projects: #{Enum.join(projects, ", ")}."
   end
-
-  defp exported_change_status({:error, _reason}, _raw), do: :changed
 
   defp persistence, do: PersistenceProvider.module()
 end

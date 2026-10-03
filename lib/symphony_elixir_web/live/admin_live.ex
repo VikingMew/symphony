@@ -40,6 +40,7 @@ defmodule SymphonyElixirWeb.AdminLive do
      |> assign(:settings_import_stage, nil)
      |> assign(:workflow_import_pending?, false)
      |> assign(:workflow_save_notice, nil)
+     |> assign(:legacy_reconciliation_notice, nil)
      |> assign(:workflow_field_errors, %{})
      |> assign(:workflow_check_targets, [])
      |> assign(:workflow_validation_error, nil)
@@ -95,6 +96,13 @@ defmodule SymphonyElixirWeb.AdminLive do
   def handle_event("save_workflow_form", %{"workflow" => params}, socket) do
     params
     |> WorkflowState.save(socket)
+    |> handle_workflow_save_result()
+  end
+
+  @impl true
+  def handle_event("reconcile_legacy_instance_workflow", _params, socket) do
+    socket
+    |> WorkflowState.reconcile_legacy_instance()
     |> handle_workflow_save_result()
   end
 

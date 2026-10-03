@@ -4,11 +4,11 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
   use Phoenix.Component
 
   import Phoenix.LiveView,
-    only: [consume_uploaded_entries: 3, put_flash: 3, push_patch: 2, uploaded_entries: 2]
+    only: [consume_uploaded_entries: 3, put_flash: 3, uploaded_entries: 2]
 
-  alias SymphonyElixir.WorkflowSettingsPackage
-  alias SymphonyElixirWeb.AdminLive.Settings.Components
-  alias SymphonyElixirWeb.AdminLive.WorkflowState
+  alias SymphonyElixir.{PersistenceProvider, WorkflowForm, WorkflowSettingsPackage}
+  alias SymphonyElixirWeb.Admin.ProjectSettings
+  alias SymphonyElixirWeb.AdminLive.State
 
   @spec render(map()) :: Phoenix.LiveView.Rendered.t()
   def render(assigns) do
@@ -17,7 +17,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
       <div class="section-header">
         <div>
           <h2 class="section-title">Import Settings Package</h2>
-          <p class="section-copy">Paste or upload workflow.yml or profiles.yml. Import is staged for review before it changes the editable draft, and runtime configuration is unchanged until the normal Save flow.</p>
+          <p class="section-copy">Paste or upload workflow.yml or profiles.yml. Review Instance and Project changes by durable scope, then confirm the import. Project changes require an explicitly selected target.</p>
         </div>
         <span class="status-badge status-info">staged review</span>
       </div>
@@ -59,31 +59,34 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
           <div class="workflow-summary-grid">
             <p><span class="metric-label">Package type</span><strong><%= @settings_import_stage.detected_type %></strong></p>
             <p><span class="metric-label">Changes</span><strong><%= length(@settings_import_stage.diff) %></strong></p>
-            <p><span class="metric-label">Next page</span><strong><%= Components.label(@settings_import_stage.owning_tab) %></strong></p>
+            <p><span class="metric-label">Durable scopes</span><strong><%= Enum.join(@settings_import_stage.affected_scopes, " + ") %></strong></p>
           </div>
           <%= if @settings_import_stage.diff == [] do %>
             <p class="empty-state">No draft changes detected.</p>
           <% else %>
-            <div class="table-wrap">
-              <table class="data-table settings-import-diff-table">
-                <thead><tr><th>Area</th><th>Field</th><th>Before</th><th>After</th></tr></thead>
-                <tbody>
-                  <tr :for={change <- @settings_import_stage.diff}>
-                    <td><span class="status-badge status-info"><%= change.area %></span></td>
-                    <td class="mono"><%= change.path %></td>
-                    <td><pre class="inline-code-panel"><%= change.before %></pre></td>
-                    <td><pre class="inline-code-panel"><%= change.after %></pre></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+            <section :for={scope <- ["Instance", "Project"]} :if={scope in @settings_import_stage.affected_scopes} class="settings-import-scope-group">
+              <h4><%= scope_heading(scope, @settings_import_stage.project_target) %></h4>
+              <div class="table-wrap">
+                <table class="data-table settings-import-diff-table">
+                  <thead><tr><th>Area</th><th>Field</th><th>Before</th><th>After</th></tr></thead>
+                  <tbody>
+                    <tr :for={change <- Enum.filter(@settings_import_stage.diff, &(&1.scope == scope))}>
+                      <td><span class="status-badge status-info"><%= change.area %></span></td>
+                      <td class="mono"><%= change.path %></td>
+                      <td><pre class="inline-code-panel"><%= change.before %></pre></td>
+                      <td><pre class="inline-code-panel"><%= change.after %></pre></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           <% end %>
           <details>
             <summary>Raw source preview</summary>
             <pre class="code-panel"><%= @settings_import_stage.preview %></pre>
           </details>
           <div class="button-row">
-            <button type="button" class="subtle-button" phx-click="confirm_settings_import" phx-disable-with="Applying...">Confirm import to draft</button>
+            <button type="button" class="subtle-button" phx-click="confirm_settings_import" phx-disable-with="Applying...">Confirm import</button>
             <button type="button" class="subtle-button" phx-click="cancel_settings_import">Cancel</button>
           </div>
         </section>
@@ -97,16 +100,19 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
     pasted = Map.get(params, "yaml", "")
     yaml = import_upload_content(socket) || pasted
     source = import_source(socket, pasted)
+    import_form = socket.assigns.settings_import_form
 
     socket =
       with :ok <- WorkflowSettingsPackage.require_import_content(yaml),
-           {:ok, stage} <- WorkflowSettingsPackage.stage_import(yaml, socket.assigns.workflow_form, source: source) do
+           {:ok, stage} <- WorkflowSettingsPackage.stage_import(yaml, import_form, source: source) do
+        stage = Map.put(stage, :project_target, socket.assigns.explicit_project)
+
         socket
         |> put_flash(:info, "#{stage.label} staged for review.")
         |> assign_import_notice(
           :success,
           "#{stage.label} staged",
-          "Review the detected changes, then confirm to update the editable Settings draft."
+          "Review the Instance and Project changes, then confirm the durable write."
         )
         |> assign(:settings_import_yaml, yaml)
         |> assign(:settings_import_stage, stage)
@@ -126,19 +132,8 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
   @spec confirm(Phoenix.LiveView.Socket.t()) :: {:noreply, Phoenix.LiveView.Socket.t()}
   def confirm(socket) do
     case socket.assigns.settings_import_stage do
-      %{draft: draft, label: label, owning_tab: owning_tab} ->
-        {:noreply,
-         socket
-         |> put_flash(:info, "#{label} applied to the editable draft. Save #{WorkflowState.section_label(owning_tab)} to activate it.")
-         |> assign_import_notice(:success, "#{label} applied to draft", "Runtime configuration is unchanged until you save.")
-         |> assign(:workflow_save_notice, nil)
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, true)
-         |> assign(:workflow_import_pending?, true)
-         |> assign(:settings_import_stage, nil)
-         |> WorkflowState.assign_validation(draft)
-         |> push_patch(to: Components.path(owning_tab))}
+      %{draft: draft, label: label} = stage ->
+        persist_stage(socket, stage, draft, label)
 
       _stage ->
         {:noreply, assign_import_notice(socket, :error, "No staged import", "Paste or upload a settings package before confirming.")}
@@ -151,7 +146,7 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
      socket
      |> assign(:settings_import_stage, nil)
      |> assign(:settings_import_yaml, "")
-     |> assign_import_notice(:info, "Import cancelled", "The editable Settings draft was not changed.")}
+     |> assign_import_notice(:info, "Import cancelled", "No durable settings were changed.")}
   end
 
   attr(:notice, :any, default: nil)
@@ -210,4 +205,99 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Import do
   defp assign_import_notice(socket, level, title, message) do
     assign(socket, :workflow_import_notice, %{level: level, title: title, message: message})
   end
+
+  defp persist_stage(socket, stage, draft, label) do
+    cond do
+      "Project" in stage.affected_scopes and is_nil(stage.project_target) ->
+        project_target_required(socket)
+
+      "Project" in stage.affected_scopes ->
+        persist_combined_stage(socket, stage.project_target, draft, label)
+
+      true ->
+        persist_instance_stage(socket, draft, label)
+    end
+  end
+
+  defp project_target_required(socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, "Settings package import rejected: project_target_required")
+     |> assign_import_notice(
+       :error,
+       "Project target required",
+       "project_target_required: select a project explicitly before confirming Project scope changes."
+     )}
+  end
+
+  defp persist_combined_stage(socket, project, draft, label) do
+    with {:ok, raw} <- WorkflowForm.to_raw(draft),
+         {:ok, result} <- import_package(project, raw) do
+      project_name = ProjectSettings.value(project, :name)
+
+      {:noreply,
+       socket
+       |> put_flash(:info, "#{label} imported to Instance and Project #{project_name}.")
+       |> assign_import_notice(
+         :success,
+         "Instance and Project settings imported",
+         "Instance singleton and Project #{project_name} were written atomically: #{import_result(result)}"
+       )
+       |> assign(:settings_import_stage, nil)
+       |> State.refresh()}
+    else
+      {:error, reason} -> import_error(socket, reason)
+    end
+  end
+
+  defp persist_instance_stage(socket, draft, label) do
+    with {:ok, instance} <- WorkflowForm.to_instance_scope(draft),
+         {:ok, _stored} <- put_instance(instance) do
+      {:noreply,
+       socket
+       |> put_flash(:info, "#{label} imported to the Instance singleton.")
+       |> assign_import_notice(
+         :success,
+         "Instance settings imported",
+         "Instance singleton updated for all enabled projects."
+       )
+       |> assign(:settings_import_stage, nil)
+       |> State.refresh()}
+    else
+      {:error, reason} -> import_error(socket, reason)
+    end
+  end
+
+  defp import_package(project, raw) do
+    project
+    |> persistence().import_package(raw, "web_settings_import")
+    |> PersistenceProvider.publish_runtime_mutation()
+  end
+
+  defp put_instance(%{config: config, prompt_body: prompt_body}) do
+    config
+    |> persistence().put_instance_workflow(prompt_body)
+    |> PersistenceProvider.publish_runtime_mutation()
+  end
+
+  defp import_error(socket, reason) do
+    message = WorkflowSettingsPackage.import_error_message(reason)
+
+    {:noreply,
+     socket
+     |> put_flash(:error, "Settings package import failed: #{message}")
+     |> assign_import_notice(:error, "Package import failed", message)}
+  end
+
+  defp import_result(%{instance_workflow: _instance, project_workflow: _project}),
+    do: "both durable scopes saved"
+
+  defp scope_heading("Instance", _project), do: "Instance"
+  defp scope_heading("Project", nil), do: "Project — no target selected"
+
+  defp scope_heading("Project", project) do
+    "Project — #{ProjectSettings.value(project, :name)} (#{ProjectSettings.value(project, :slug)})"
+  end
+
+  defp persistence, do: PersistenceProvider.module()
 end

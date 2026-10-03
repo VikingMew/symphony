@@ -84,6 +84,17 @@ defmodule SymphonyElixirWeb.Admin.ProjectSettings do
     |> Map.put("project_worktree_cleanup", boolean_string(value(project, :worktree_cleanup), true))
   end
 
+  @spec workflow_draft(map(), map(), map()) :: map()
+  def workflow_draft(current, params, project) do
+    current
+    |> Map.put("tracker_assignee", Map.get(params, "tracker_assignee", ""))
+    |> Map.put("active_states", Map.get(params, "active_states", ""))
+    |> Map.put("terminal_states", Map.get(params, "terminal_states", ""))
+    |> Map.put("project_setup_commands", Map.get(params, "project_setup_commands", ""))
+    |> Map.put("project_cleanup_commands", Map.get(params, "project_cleanup_commands", ""))
+    |> apply_to_workflow_draft(project)
+  end
+
   @spec value(map() | nil, atom()) :: term()
   def value(nil, _key), do: nil
 

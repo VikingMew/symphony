@@ -15,6 +15,7 @@ defmodule SymphonyElixirWeb.Live.SettingsProjectsLiveTest do
 
     defdelegate default_project(), to: FakePersistence
     defdelegate instance_workflow(), to: FakePersistence
+    defdelegate legacy_instance_workflow_status(), to: FakePersistence
     defdelegate list_projects(), to: FakePersistence
     defdelegate current_workflow(project), to: FakePersistence
     defdelegate workflow_to_loaded(instance, workflow), to: FakePersistence

@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-27
+updated: 2026-10-03
 ---
 
 # Workflow and Configuration Specification
@@ -288,14 +288,15 @@ Validation rules:
   `codex.command` and direct the operator to the Settings / Runtime selectors. Other command
   options and other `-c` / `--config` keys remain valid.
 
-Settings / Import converts the supported legacy command representation before it builds the
-editable draft. Existing explicit selectors win; missing selectors are populated from the legacy
-flags; the migrated flags are removed; and the staged diff exposes the command and selector
-changes. This is an import-time conversion only. Launch, dispatch, and turn creation MUST NOT parse
-model or effort from `codex.command`. The PostgreSQL data migration applies the same precedence to
-persisted current workflows, updates legacy full workflow rows' `yaml_config` and `raw_workflow_md`
-together, and updates the converged instance singleton or unresolved instance candidates when the
-earlier scope migration has already moved Codex configuration there.
+Settings / Import converts the supported legacy command representation before it stages the review
+preview, then applies the staged changes on confirmation. Existing explicit selectors win; missing
+selectors are populated from the legacy flags; the migrated flags are removed; and the staged diff
+exposes the command and selector changes. This is an import-time conversion only. Launch, dispatch,
+and turn creation MUST NOT parse model or effort from `codex.command`. The PostgreSQL data migration
+applies the same precedence to persisted current workflows, updates legacy full workflow rows'
+`yaml_config` and `raw_workflow_md` together, and updates the converged instance singleton or
+unresolved instance candidates when the earlier scope migration has already moved Codex
+configuration there.
 
 The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
 Codex block carries explicit `thread_sandbox: "danger-full-access"` and
