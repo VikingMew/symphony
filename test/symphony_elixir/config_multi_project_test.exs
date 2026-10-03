@@ -38,7 +38,6 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     assert result.tracker_a == "project"
     assert result.inner.prompt == "Project B agent for this repository."
 
-    # Context is restored after the block.
     assert Config.workflow_prompt() == default_prompt
   end
 
