@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Worker.CommandTest do
   use ExUnit.Case, async: true
 
   alias SymphonyElixir.Worker.Command
+  alias SymphonyElixir.WorkerResult
 
   test "records the Codex session marker and duration" do
     result =
@@ -55,5 +56,14 @@ defmodule SymphonyElixir.Worker.CommandTest do
     assert result.status == :timed_out
     assert result.duration_ms >= 1_000
     assert result.detail =~ "waiting"
+  end
+
+  test "includes the truncation marker within the shared source output budget" do
+    limit = WorkerResult.limits().max_source_output
+    result = Command.run(%{command: "printf '%05000d' 0", timeout_seconds: 5}, File.cwd!())
+
+    assert result.status == :passed
+    assert byte_size(result.detail) == limit
+    assert result.detail =~ "... (truncated)"
   end
 end

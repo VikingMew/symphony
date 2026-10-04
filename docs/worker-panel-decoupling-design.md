@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-10-03
+updated: 2026-10-04
 design_status: landed
 ---
 
@@ -122,6 +122,11 @@ streak。历史 run/event 和旧 payload 从不生成工作。协议继续把 as
 worker/session 和 assignment id。
 
 Assignment 只存在于 Panel 内存，包含当前 payload、worker/session、run、issue 和 expiry。
+匹配当前 assignment 的 terminal event 若因 `invalid_worker_summary` 被拒，Panel 仍返回 422，且只在该
+assignment 内存值上保存最后一次类型化 rejection：validator message、terminal event type，以及
+attempted summary 的 `phase`、`outcome`、`reason`、`validation_status` 和 gate index/status/exit code。
+该白名单不保存原始 invalid detail；路径和 credential-shaped 值在进入该内存证据前被替换或 redact。
+新的 rejection 覆盖旧值，合法 terminal event 继续走既有持久化和 assignment 清理路径。
 heartbeat 响应路径不等待 worker/session history 持久化。controller 完成 identity/protocol
 解析后，successful registration 同步建立新的内存 liveness entry；heartbeat、claim 和匹配当前
 assignment 的 task event 都记录 worker/session last-seen。heartbeat 同时把 worker/session
@@ -200,6 +205,13 @@ enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 super
 直到 run 级 lease 超时；worker 重新出现时先建立新的内存 liveness，新旧 assignment id 不匹配的迟到上报
 仍因不存在匹配 assignment 而被拒绝。未重启但 worker 停止发送请求时，内存 entry 可继续存在，但一旦
 超过 `worker_heartbeat_interval_seconds() * 3` freshness window，即不再贡献 capacity 或 admission。
+
+当前 assignment 在持有 `invalid_worker_summary` rejection 时到期，Panel 从该白名单 rejection 构造一个
+`assignment_expired` `RunFailure`。同一个值驱动 synthetic `task.failed`、terminal `run.failed`、
+`runs.failure_reason/failure_evidence` 和 Orchestrator `worker_task_finished` 通知。没有 terminal rejection
+的普通 lease expiry 继续使用 `worker_process_termination`，并保留既有
+`{phase: lease, reason: assignment_expired}` evidence。rejection 不持久化为独立队列；Panel 重启后仍按
+现有 reconciliation 契约收口，内存 rejection 不恢复。
 
 数据库只保留 `workers`、`worker_sessions`、`runs` 和 `events` 等历史模型，不存在 `tasks` 或
 `task_leases`。Workers 页面展示 registry/session、当前内存 assignment 和 worker run 历史，

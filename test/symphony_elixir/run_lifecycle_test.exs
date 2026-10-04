@@ -31,6 +31,20 @@ defmodule SymphonyElixir.RunLifecycleTest do
              RunLifecycle.finish_run(FakePersistence, "run-1", "failed", failure, attrs: %{execution_summary: %{"outcome" => "failed"}})
   end
 
+  test "writes assignment expiry classification and rejection evidence together" do
+    FakePersistence.put_runs([
+      %{id: "run-expired", issue_identifier: "SYM-126", status: "running", started_at: ~U[2026-10-04 00:00:00Z]}
+    ])
+
+    failure =
+      RunFailure.classify({:assignment_expired, %{phase: "lease", code: "invalid_worker_summary", terminal_event_type: "task.failed"}})
+
+    assert {:ok, run} = RunLifecycle.finish_run(FakePersistence, "run-expired", "failed", failure)
+    assert run.failure_reason == "assignment_expired"
+    assert run.failure_evidence["code"] == "invalid_worker_summary"
+    assert run.failure_evidence["reason"] == "assignment_expired"
+  end
+
   test "startup reconciliation closes stale running rows with a process classification" do
     FakePersistence.put_runs([
       %{id: "run-1", issue_identifier: "CCR-5", status: "running", started_at: ~U[2026-05-21 00:00:00Z]},

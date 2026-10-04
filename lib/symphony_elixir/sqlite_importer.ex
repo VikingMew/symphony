@@ -325,6 +325,7 @@ defmodule SymphonyElixir.SQLiteImporter do
               "budget_exhausted",
               "contract_violation",
               "worker_process_termination",
+              "assignment_expired",
               "validation_failed",
               "runtime_failure",
               "codex_upstream_capacity",

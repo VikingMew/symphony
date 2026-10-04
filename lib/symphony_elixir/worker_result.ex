@@ -6,7 +6,8 @@ defmodule SymphonyElixir.WorkerResult do
   @max_gates 32
   @max_text 512
   @max_detail 2_048
-  @max_source_output 4_128
+  @max_source_output 4_096
+  @detail_truncation_marker "... (truncated) ..."
   @phases ~w(checkout source_preparation codex hooks validation handoff complete)
   @outcomes ~w(running succeeded blocked failed cancelled)
   @reasons ~w(
@@ -28,7 +29,7 @@ defmodule SymphonyElixir.WorkerResult do
   )
   @validation_statuses ~w(pending passed failed timed_out cancelled)
   @gate_statuses ~w(passed failed timed_out not_run)
-  @path_pattern ~r{(?:^|\s)(?:/[^\s]+|[A-Za-z]:\\[^\s]+)}
+  @path_pattern ~r{(^|\s)(?:/[^\s]+|[A-Za-z]:\\[^\s]+)}
   @secret_pattern ~r/(?i)(?:api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*\S+/
 
   alias SymphonyElixir.RunFailure
@@ -80,7 +81,20 @@ defmodule SymphonyElixir.WorkerResult do
   end
 
   @spec limits() :: map()
-  def limits, do: %{max_gates: @max_gates, max_text: @max_text, max_detail: @max_detail}
+  def limits,
+    do: %{
+      max_gates: @max_gates,
+      max_text: @max_text,
+      max_detail: @max_detail,
+      max_source_output: @max_source_output
+    }
+
+  @spec normalize_detail(String.t()) :: String.t()
+  def normalize_detail(detail) when is_binary(detail) do
+    detail
+    |> then(&Regex.replace(@path_pattern, &1, "\\1[worker-local path]"))
+    |> truncate_detail()
+  end
 
   defp runtime(value) when is_map(value) do
     value = stringify_keys(value)
@@ -187,6 +201,20 @@ defmodule SymphonyElixir.WorkerResult do
 
       _ ->
         invalid("#{key} must be a string")
+    end
+  end
+
+  defp truncate_detail(detail) do
+    if String.length(detail) <= @max_detail do
+      detail
+    else
+      remaining = @max_detail - String.length(@detail_truncation_marker)
+      head_length = div(remaining + 1, 2)
+      tail_length = div(remaining, 2)
+
+      String.slice(detail, 0, head_length) <>
+        @detail_truncation_marker <>
+        String.slice(detail, -tail_length, tail_length)
     end
   end
 

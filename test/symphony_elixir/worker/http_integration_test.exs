@@ -1,7 +1,9 @@
 defmodule SymphonyElixir.Worker.HttpIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias SymphonyElixir.Worker.{Client, Config, ExecutionPayload, Executor}
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.{AssignmentManager, Client, Config, ExecutionPayload, Executor}
+  alias SymphonyElixir.WorkerResult
 
   defmodule WorkerApiSurface do
     use Plug.Router
@@ -162,6 +164,80 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
              "Linear issue SYM-12: Integration test"
   end
 
+  test "worker HTTP accepts normalized path and oversized gate evidence while rejecting raw summaries", %{root: root} do
+    FakePersistence.reset!()
+
+    manager =
+      start_supervised!({AssignmentManager, name: AssignmentManager, persistence: FakePersistence, reconcile_interval_ms: :timer.hours(1)})
+
+    identity = %{
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "protocol_version" => Client.protocol_version()
+    }
+
+    cases = [
+      {"path", "command=scripts/check.sh failed at /tmp/worker/output.log", "worker-local filesystem path"},
+      {"oversized", "command=scripts/check.sh " <> String.duplicate("x", 2_100) <> " TAIL", "exceeds 2048 characters"}
+    ]
+
+    Enum.each(cases, fn {suffix, raw_detail, rejection} ->
+      task_id = "task-#{suffix}"
+      run_id = "run-#{suffix}"
+      assignment = seed_http_assignment(manager, task_id, run_id)
+      raw_summary = http_failure_summary(raw_detail)
+
+      assert {:error, {:http_error, 422, %{"error" => %{"code" => "invalid_worker_summary", "message" => message}}}} =
+               Client.event(
+                 config(root),
+                 identity,
+                 task_id,
+                 "task.failed",
+                 %{"correlation" => assignment.correlation, "summary" => raw_summary}
+               )
+
+      assert message =~ rejection
+
+      normalized_summary =
+        raw_summary
+        |> put_in(["gates", Access.at(0), "failure_detail"], WorkerResult.normalize_detail(raw_detail))
+        |> Map.put("detail", Jason.encode!(%{"reason" => "non_zero", "status" => "failed"}))
+
+      assert {:ok, %{"accepted" => true}} =
+               Client.event(
+                 config(root),
+                 identity,
+                 task_id,
+                 "task.failed",
+                 %{"correlation" => assignment.correlation, "summary" => normalized_summary}
+               )
+
+      run = FakePersistence.get_run(run_id)
+      assert run.status == "failed"
+      assert run.failure_reason == "validation_failed"
+      assert run.execution_summary == normalized_summary
+      assert get_in(run.failure_evidence, ["gates", Access.at(0), "status"]) == "failed"
+      assert get_in(run.failure_evidence, ["gates", Access.at(0), "exit_code"]) == 7
+      refute inspect(run) =~ raw_detail
+    end)
+
+    secret_assignment = seed_http_assignment(manager, "task-secret", "run-secret")
+
+    assert {:error, {:http_error, 422, %{"error" => %{"code" => "invalid_worker_summary", "message" => secret_message}}}} =
+             Client.event(
+               config(root),
+               identity,
+               "task-secret",
+               "task.failed",
+               %{
+                 "correlation" => secret_assignment.correlation,
+                 "summary" => http_failure_summary("token=super-secret")
+               }
+             )
+
+    assert secret_message =~ "secret-bearing text"
+  end
+
   test "surfaces app-server turn failures in the worker result detail", %{
     root: root,
     codex_trace: codex_trace,
@@ -255,6 +331,72 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "lease_attempt" => lease.attempt,
       "worker_session_id" => correlation["worker_session_id"],
       "execution" => ExecutionPayload.from_task_payload(task.payload)
+    }
+  end
+
+  defp seed_http_assignment(manager, task_id, run_id) do
+    {:ok, _run} =
+      FakePersistence.create_run(%{
+        id: run_id,
+        project_id: "fake-project-id",
+        issue_identifier: "SYM-126",
+        status: "running",
+        started_at: DateTime.utc_now()
+      })
+
+    correlation = %{
+      "project_id" => "fake-project-id",
+      "run_id" => run_id,
+      "issue_id" => "issue-126",
+      "issue_identifier" => "SYM-126",
+      "run_attempt" => 0,
+      "task_id" => task_id,
+      "lease_id" => task_id,
+      "lease_attempt" => 1,
+      "worker_id" => "worker-1",
+      "worker_session_id" => "session-1",
+      "assignment_id" => task_id
+    }
+
+    assignment = %{
+      id: task_id,
+      task_id: task_id,
+      lease_id: task_id,
+      issue: %{id: "issue-126"},
+      issue_identifier: "SYM-126",
+      project_id: "fake-project-id",
+      run_id: run_id,
+      worker_id: "worker-1",
+      session_id: "session-1",
+      expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
+      correlation: correlation,
+      last_terminal_rejection: nil
+    }
+
+    :sys.replace_state(manager, &%{&1 | assignment: assignment})
+    assignment
+  end
+
+  defp http_failure_summary(detail) do
+    %{
+      "phase" => "validation",
+      "outcome" => "failed",
+      "reason" => "non_zero",
+      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source_revision" => "worker-revision",
+      "runtime" => %{"image_tag" => "worker:test", "worker_source_revision" => "worker-revision"},
+      "validation_status" => "failed",
+      "gates" => [
+        %{
+          "name" => "check",
+          "status" => "failed",
+          "exit_code" => 7,
+          "duration_ms" => 42,
+          "timeout_ms" => 120_000,
+          "failure_detail" => detail
+        }
+      ],
+      "detail" => detail
     }
   end
 
