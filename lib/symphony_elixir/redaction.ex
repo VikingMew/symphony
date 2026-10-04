@@ -3,13 +3,15 @@ defmodule SymphonyElixir.Redaction do
   Shared sanitization helpers for logs and persisted diagnostics.
   """
 
+  @truncation_marker "... (truncated)"
+
   @spec credentials(term()) :: String.t()
   def credentials(output) do
     output
     |> IO.iodata_to_binary()
     |> String.replace(~r/(?i)(authorization\s*[:=]\s*)(bearer|basic)?\s*[^\s,;]+/, "\\1[REDACTED]")
-    |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)["']?\s*,\s*["'])[^"']+(["'])/, "\\1[REDACTED]\\2")
-    |> String.replace(~r/(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;\]\}]+/, "\\1[REDACTED]")
+    |> String.replace(~r/(?i)((?:api[_-]?key|password|token|secret)["']?\s*,\s*["'])[^"']+(["'])/, "\\1[REDACTED]\\2")
+    |> String.replace(~r/(?i)((?:api[_-]?key|password|token|secret)\s*[:=]\s*)[^\s,;\]\}]+/, "\\1[REDACTED]")
   end
 
   @spec payload(term(), pos_integer()) :: term()
@@ -61,13 +63,14 @@ defmodule SymphonyElixir.Redaction do
       # UTF-8 character, leaving invalid UTF-8 that breaks Ecto :map JSON
       # encoding (Codex raw messages contain CJK and other multi-byte text).
       # Walk back to a character boundary so the result stays valid UTF-8.
-      truncated = binary_part(value, 0, max_bytes)
+      content_bytes = max(max_bytes - byte_size(@truncation_marker), 0)
+      truncated = binary_part(value, 0, content_bytes)
 
       if String.valid?(truncated) do
         truncated
       else
         trim_incomplete_utf8(truncated)
-      end <> "... (truncated)"
+      end <> binary_part(@truncation_marker, 0, max_bytes - content_bytes)
     end
   end
 

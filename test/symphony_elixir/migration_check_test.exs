@@ -34,4 +34,18 @@ defmodule SymphonyElixir.MigrationCheckTest do
 
     assert MigrationCheck.format_error(query_error) =~ "migration_query"
   end
+
+  test "assignment expiry migration replaces only the failure reason closed set" do
+    source =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261004000000_add_assignment_expired_run_failure.exs")
+      |> File.read!()
+
+    assert source =~ "DROP CONSTRAINT runs_failure_reason_closed"
+    assert source =~ "ADD CONSTRAINT runs_failure_reason_closed"
+    assert source =~ "assignment_expired"
+    assert source =~ "unknown"
+    refute source =~ "DROP CONSTRAINT runs_terminal_failure_matrix"
+    refute source =~ "def down"
+  end
 end

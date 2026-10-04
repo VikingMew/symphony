@@ -21,6 +21,11 @@ defmodule SymphonyElixir.SQLiteImporterTest do
            })["failure_evidence"] == %{"import" => "historical_classification"}
 
     assert SQLiteImporter.normalize_run(%{
+             "status" => "failed",
+             "failure_reason" => "assignment_expired"
+           })["failure_evidence"] == %{"import" => "historical_classification"}
+
+    assert SQLiteImporter.normalize_run(%{
              "status" => "blocked",
              "failure_reason" => "checkout timed_out"
            }) == %{

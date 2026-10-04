@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   require Logger
 
   alias SymphonyElixir.Worker.{Cleanup, Config, Paths}
+  alias SymphonyElixir.WorkerResult
 
   @spec start_link(Config.t()) :: GenServer.on_start()
   def start_link(config), do: GenServer.start_link(__MODULE__, config, name: __MODULE__)
@@ -417,11 +418,14 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp gate_status(:toolchain_unavailable), do: "not_run"
 
   defp put_failure_detail(gate, %{status: :passed}), do: gate
-  defp put_failure_detail(gate, result), do: Map.put(gate, "failure_detail", Map.fetch!(result, :detail))
+
+  defp put_failure_detail(gate, result) do
+    Map.put(gate, "failure_detail", result |> Map.fetch!(:detail) |> WorkerResult.normalize_detail())
+  end
 
   defp terminal_detail(result) do
     result
-    |> Map.take([:status, :reason, :detail])
+    |> Map.take([:status, :reason])
     |> json_value()
     |> Jason.encode!()
   end

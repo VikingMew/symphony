@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Worker.ValidationTest do
   use ExUnit.Case, async: true
 
   alias SymphonyElixir.Worker.Validation
+  alias SymphonyElixir.WorkerResult
 
   test "uses exactly the five contract outcomes" do
     assert Validation.outcomes() == [:passed, :failed, :timed_out, :cancelled, :toolchain_unavailable]
@@ -29,6 +30,18 @@ defmodule SymphonyElixir.Worker.ValidationTest do
     assert :ok = Validation.write!(path, %{token: "sensitive", nested: %{password: "bad"}})
     contents = File.read!(path)
     assert contents =~ "[REDACTED]"
+    File.rm!(path)
+  end
+
+  test "includes the truncation marker within the shared source output budget" do
+    path = Path.join(System.tmp_dir!(), "validation-budget-#{System.unique_integer([:positive])}.json")
+    limit = WorkerResult.limits().max_source_output
+
+    assert :ok = Validation.write!(path, %{output: String.duplicate("x", limit + 1)})
+    output = path |> File.read!() |> Jason.decode!() |> Map.fetch!("output")
+
+    assert byte_size(output) == limit
+    assert output =~ "... (truncated)"
     File.rm!(path)
   end
 end

@@ -11,6 +11,7 @@ defmodule SymphonyElixir.RunFailureTest do
              "budget_exhausted",
              "contract_violation",
              "worker_process_termination",
+             "assignment_expired",
              "validation_failed",
              "runtime_failure",
              "codex_upstream_capacity",
@@ -57,6 +58,13 @@ defmodule SymphonyElixir.RunFailureTest do
     assert RunFailure.classify({:signal, :sigkill}).classification == "worker_process_termination"
     assert RunFailure.classify(:oom).classification == "worker_process_termination"
     assert RunFailure.classify({:assignment_loss, %{phase: :lease}}).classification == "worker_process_termination"
+
+    assert_failure(
+      RunFailure.classify({:assignment_expired, %{phase: :lease, code: "invalid_worker_summary"}}),
+      "assignment_expired",
+      %{"code" => "invalid_worker_summary", "phase" => "lease", "reason" => "assignment_expired"}
+    )
+
     assert RunFailure.classify({:validation_result, 2}).classification == "validation_failed"
 
     assert RunFailure.classify({:validation_failed, %{gate: "unit", timeout_ms: 1_000}}).classification ==

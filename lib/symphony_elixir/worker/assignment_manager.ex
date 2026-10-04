@@ -17,6 +17,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Orchestrator,
     PersistenceProvider,
     PromptBuilder,
+    Redaction,
     RunAdmission,
     RunFailure,
     RunLifecycle,
@@ -357,6 +358,11 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
           state = complete_pending_cancellation(state, assignment, event_type, :ok)
           {:reply, {:ok, event}, %{state | assignment: assignment_after_event(state, event_type)}}
         else
+          {:error, {:invalid_worker_summary, _message} = reason} when event_type in @terminal_events ->
+            state = remember_terminal_rejection(state, assignment, event_type, payload, reason)
+            state = complete_pending_cancellation(state, state.assignment, event_type, {:error, reason})
+            {:reply, {:error, reason}, state}
+
           {:error, reason} ->
             state = complete_pending_cancellation(state, assignment, event_type, {:error, reason})
             {:reply, {:error, reason}, state}
@@ -799,7 +805,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       started_at: Map.get(run, :started_at),
       expires_at: opts[:expires_at],
       payload: payload,
-      correlation: correlation
+      correlation: correlation,
+      last_terminal_rejection: nil
     }
   end
 
@@ -846,7 +853,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp expire_assignment(state) do
     if DateTime.compare(state.assignment.expires_at, state.now.()) == :lt do
       assignment = state.assignment
-      failure = RunFailure.classify({:assignment_loss, %{reason: "assignment_expired", phase: "lease"}})
+      failure = assignment_expiry_failure(assignment)
 
       _ = transition_run(state.persistence, assignment.run_id, "task.failed", failure, nil)
       _ = persist_terminal_run_event(state.persistence, assignment, "task.failed", failure, nil)
@@ -866,6 +873,79 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       state
     end
   end
+
+  defp assignment_expiry_failure(%{last_terminal_rejection: nil}) do
+    RunFailure.classify({:assignment_loss, %{reason: "assignment_expired", phase: "lease"}})
+  end
+
+  defp assignment_expiry_failure(%{last_terminal_rejection: rejection}) do
+    RunFailure.classify({:assignment_expired, Map.put(rejection, "phase", "lease")})
+  end
+
+  defp remember_terminal_rejection(state, assignment, event_type, payload, {:invalid_worker_summary, message}) do
+    rejection = %{
+      "code" => "invalid_worker_summary",
+      "validator_message" => message,
+      "terminal_event_type" => event_type,
+      "attempted" => attempted_terminal_metadata(payload)
+    }
+
+    %{state | assignment: %{assignment | last_terminal_rejection: rejection}}
+  end
+
+  defp attempted_terminal_metadata(payload) do
+    payload
+    |> map_get("summary", :summary)
+    |> attempted_summary_metadata()
+  end
+
+  defp attempted_summary_metadata(summary) when is_map(summary) do
+    metadata =
+      [{"phase", :phase}, {"outcome", :outcome}, {"reason", :reason}, {"validation_status", :validation_status}]
+      |> Enum.reduce(%{}, &put_attempted_metadata(&1, summary, &2))
+
+    case map_get(summary, "gates", :gates) do
+      gates when is_list(gates) -> Map.put(metadata, "gates", attempted_gate_metadata(gates))
+      _other -> metadata
+    end
+  end
+
+  defp attempted_summary_metadata(_summary), do: %{}
+
+  defp attempted_gate_metadata(gates) do
+    gates
+    |> Enum.with_index()
+    |> Enum.flat_map(&attempted_gate_metadata_entry/1)
+  end
+
+  defp attempted_gate_metadata_entry({gate, index}) when is_map(gate) do
+    metadata =
+      Enum.reduce(
+        [{"status", :status}, {"exit_code", :exit_code}],
+        %{"index" => index},
+        &put_attempted_metadata(&1, gate, &2)
+      )
+
+    [metadata]
+  end
+
+  defp attempted_gate_metadata_entry({_gate, _index}), do: []
+
+  defp put_attempted_metadata({string_key, atom_key}, source, values) do
+    case sanitize_attempted_value(map_get(source, string_key, atom_key)) do
+      nil -> values
+      value -> Map.put(values, string_key, value)
+    end
+  end
+
+  defp sanitize_attempted_value(value) when is_binary(value) do
+    value
+    |> WorkerResult.normalize_detail()
+    |> Redaction.credentials()
+  end
+
+  defp sanitize_attempted_value(value) when is_integer(value), do: value
+  defp sanitize_attempted_value(_value), do: nil
 
   defp matching_assignment(nil, _worker_id, _session_id, _id), do: {:error, :lease_not_active}
 

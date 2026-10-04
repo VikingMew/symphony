@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Worker.Validation do
   @moduledoc "Ordered validation gate execution and secret-free local summary."
 
   alias SymphonyElixir.Worker.Command
+  alias SymphonyElixir.WorkerResult
 
   @outcomes [:passed, :failed, :timed_out, :cancelled, :toolchain_unavailable]
   @type outcome :: :passed | :failed | :timed_out | :cancelled | :toolchain_unavailable
@@ -24,7 +25,7 @@ defmodule SymphonyElixir.Worker.Validation do
 
   @spec write!(Path.t(), map()) :: :ok
   def write!(path, summary) do
-    safe = SymphonyElixir.Redaction.payload(summary, 4_096)
+    safe = SymphonyElixir.Redaction.payload(summary, WorkerResult.limits().max_source_output)
     path |> Path.dirname() |> File.mkdir_p!()
     File.write!(path, Jason.encode_to_iodata!(safe, pretty: true))
   end

@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-03
+updated: 2026-10-04
 design_status: landed
 ---
 
@@ -125,7 +125,10 @@ implementation `completed_delivery_evidence/1`, PR proof, handoff capture, gate 
 Source preparation uses the assignment's single initialization budget for clone, fetch, remote
 branch lookup, and checkout. A command timeout becomes executor reason
 `source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command
-evidence, actual duration, and bounded recent output. This worker summary contract does not create a
+evidence, actual duration, and bounded recent output. `WorkerResult.limits/0` is the single worker
+and Panel source for the 4096-byte source/output producer budget. `Worker.Command` and
+`Worker.Validation.write!/2` reserve the truncation marker inside that budget, so the final UTF-8
+value including the marker never exceeds 4096 bytes. This worker summary contract does not create a
 second timeout source or change the independent run-failure persistence vocabulary.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
@@ -161,8 +164,8 @@ failure, never a successful completion candidate. The AppServer retains only bou
 becomes `codex_turn_failed`. The executor's existing failed return ends the pipeline before
 validation and handoff, so the worker emits only `task.failed`, reports `validation_status=pending`,
 and marks every declared gate `not_run`. The stable reason is copied into the terminal event and
-`runs.failure_reason`; structured detail remains available in the bounded terminal JSON and run
-failure evidence. `will_retry=false` describes Codex AppServer behavior only. Symphony still counts
+`runs.failure_reason`; the raw executor detail is not copied into the terminal JSON or run failure
+evidence. `will_retry=false` describes Codex AppServer behavior only. Symphony still counts
 that failed run as one attempt in the existing failure budget, schedules the existing retry while
 budget remains, and creates the existing persistent blocker after exhaustion.
 
@@ -177,6 +180,21 @@ a missing implementation handoff fails before validation with reason `handoff_fa
 structured missing-final-handoff blockers run validation first, remain `blocked` when a gate fails,
 and preserve the actual result in the terminal summary. Failure detail is serialized from structured
 executor terms and never uses Elixir `inspect/1` syntax.
+
+The worker normalizes every non-passing gate detail once while building the terminal summary. It
+first replaces each Unix or Windows absolute path recognized by the Panel's existing
+`WorkerResult` path grammar with `[worker-local path]`. It then retains a diagnostic head and tail
+around `... (truncated) ...`, counting the marker within the independent 2048-character
+`max_detail` budget. Gate name, status, exit code, and command text already present at the retained
+edges remain available. Path replacement precedes truncation so a cut path cannot evade the Panel
+validator. The terminal top-level JSON detail contains status and reason only; it does not duplicate
+the executor's unnormalized `result.detail`. The same normalized gate value therefore reaches the
+accepted task event, run execution summary, run failure evidence, and terminal run event.
+
+The Panel continues to reject a directly submitted path-bearing, secret-bearing, or oversized gate
+detail. Worker normalization does not clean secret-bearing gate text, so that text still reaches the
+existing validator and prevents persistence. The character-counted gate budget and byte-counted
+source/output budget are separate contracts published together by `WorkerResult.limits/0`.
 
 `agent.max_retry_backoff_ms` caps only orchestrator failure-retry scheduling. A worker claim request
 contains no issue identifier for a prospective assignment and the worker keeps no per-issue retry or

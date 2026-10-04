@@ -16,6 +16,7 @@ defmodule SymphonyElixir.RunFailure do
     budget_exhausted
     contract_violation
     worker_process_termination
+    assignment_expired
     validation_failed
     runtime_failure
     codex_upstream_capacity
@@ -83,6 +84,9 @@ defmodule SymphonyElixir.RunFailure do
 
   def classify({:assignment_loss, evidence}),
     do: new("worker_process_termination", put_reason(evidence, "assignment_loss"))
+
+  def classify({:assignment_expired, evidence}),
+    do: new("assignment_expired", put_reason(evidence, "assignment_expired"))
 
   def classify({:validation_failed, evidence}), do: new("validation_failed", evidence)
 

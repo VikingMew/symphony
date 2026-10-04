@@ -1507,6 +1507,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
         project_id: "fake-project-id",
         session_id: "session-#{run_id}",
         started_at: DateTime.utc_now(),
+        admission: %{workspace_authority: {:panel_local}},
         session_history: [],
         session_history_total_count: 0
       }

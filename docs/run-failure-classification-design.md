@@ -4,7 +4,7 @@ genre: design
 domain: [runs, persistence, observability, reliability]
 status: current
 language: en
-updated: 2026-09-27
+updated: 2026-10-04
 design_status: landed
 ---
 
@@ -27,6 +27,7 @@ opaque domain detail belong only in evidence.
 | `budget_exhausted` | A stall, read timeout, or failure retry budget ended the run. |
 | `contract_violation` | Required handoff or validated protocol evidence was missing or invalid. |
 | `worker_process_termination` | A worker/Codex process, port, signal, OOM, lease, or assignment ended unexpectedly. |
+| `assignment_expired` | A matching terminal summary was rejected by the Panel and the in-memory assignment subsequently expired. |
 | `validation_failed` | A required validation gate failed, timed out, or returned non-zero. |
 | `runtime_failure` | A typed agent/operator/runtime domain failure not covered by a narrower class. |
 | `codex_upstream_capacity` | A validated Codex turn failure classified upstream as capacity exhaustion. |
@@ -54,6 +55,14 @@ the run row, terminal event, retry metadata, `BlockingDecision.reason`, and the 
 circuit key. The wire summary remains execution evidence and is not a second classification source.
 Explicit blocked outcomes remain accepted without interpreting their opaque reason or detail.
 
+When a matching terminal event fails `WorkerResult` validation, the active assignment retains only
+the typed rejection and whitelisted attempted metadata. If that assignment expires before a valid
+terminal event is accepted, `RunFailure` creates `assignment_expired` once from that sanitized value.
+The same `RunFailure` supplies the synthetic task event, terminal run event, run row, and
+orchestrator notification. An expiry with no retained terminal rejection remains
+`worker_process_termination`; an invalid summary itself remains unaccepted and is never persisted as
+an execution summary.
+
 Run terminal events and bounded run-history API projections expose the persisted reason and
 evidence together. The environment failure circuit compares classification strings exactly; its
 threshold, window, success reset, explicit reset, and admission behavior are unchanged.
@@ -71,3 +80,9 @@ The stopped SQLite importer performs the same status and reason normalization be
 insert. Any status outside the closed lifecycle vocabulary fails migration/import instead of being
 guessed. These are one-time conversion boundaries and do not introduce runtime compatibility
 branches or dual writes.
+
+The later forward-only PostgreSQL migration replaces only `runs_failure_reason_closed` to admit
+`assignment_expired`; it leaves `runs_terminal_failure_matrix` unchanged and retains historical-only
+`unknown`. Operators take a `pg_dump` before applying this constraint migration. A vocabulary or
+constraint correction is delivered as another forward migration rather than rolling this migration
+back. The stopped SQLite importer accepts `assignment_expired` as an existing classification.

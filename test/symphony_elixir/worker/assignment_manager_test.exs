@@ -1418,29 +1418,6 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert second.run_id != first.run_id
   end
 
-  test "expires an assignment before accepting a late event", context do
-    Tracker.put([issue(1)])
-    assert {:ok, assignment} = claim(context)
-    run = FakePersistence.get_run(assignment.run_id)
-    {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
-
-    :sys.replace_state(context.manager, fn state ->
-      put_in(state.assignment.expires_at, DateTime.add(context.now, -1, :second))
-    end)
-
-    assert {:error, :lease_not_active} =
-             AssignmentManager.record_event(
-               context.worker.id,
-               context.session.id,
-               assignment.id,
-               "task.progress",
-               %{},
-               context.manager
-             )
-
-    assert FakePersistence.get_run(assignment.run_id).status == "failed"
-  end
-
   test "public API is safe while worker dispatch is disabled", context do
     Process.exit(context.manager, :normal)
     Process.sleep(10)

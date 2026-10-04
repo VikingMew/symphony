@@ -328,7 +328,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert summary["validation_status"] == "pending"
     assert Enum.map(summary["gates"], & &1["status"]) == ["not_run", "not_run"]
     assert Enum.map(summary["gates"], & &1["name"]) == ["check", "unit"]
-    assert Jason.decode!(summary["detail"]) == %{"detail" => "executor failed", "reason" => "failed", "status" => "failed"}
+    assert Jason.decode!(summary["detail"]) == %{"reason" => "failed", "status" => "failed"}
     assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
@@ -378,11 +378,6 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     end
 
     assert Jason.decode!(terminal_summary("capacity", "task.failed")["detail"]) == %{
-             "detail" => %{
-               "codex_error_info" => "serverOverloaded",
-               "turn_status" => "failed",
-               "will_retry" => false
-             },
              "reason" => "codex_upstream_capacity",
              "status" => "failed"
            }
@@ -442,6 +437,58 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
+  test "validation failure normalizes paths before bounding terminal gate evidence", %{config: config} do
+    gate = %{"name" => "check", "command" => "scripts/check.sh", "timeout_seconds" => 120}
+    limit = WorkerResult.limits().max_detail
+
+    details = [
+      {"unix", "command=scripts/check.sh failed at /tmp/worker/output.log"},
+      {"windows", "command=scripts/check.sh failed at C:\\worker\\output.log"},
+      {"oversized",
+       "command=scripts/check.sh HEAD /tmp/worker/output.log " <>
+         String.duplicate("中", limit) <>
+         " TAIL"}
+    ]
+
+    claims =
+      Enum.map(details, fn {task_id, detail} ->
+        validation = %{
+          overall_status: :failed,
+          gates: [%{command: gate["command"], status: :failed, exit_code: 7, duration_ms: 42, detail: detail}]
+        }
+
+        claim(task_id, false) |> Map.put("validation_result", validation) |> put_required_gates([gate])
+      end)
+
+    put_claims(claims)
+    runtime = start_runtime(config)
+
+    Enum.each(details, fn {task_id, raw_detail} ->
+      assert_receive {:executing, ^task_id, _executor}, 1_000
+      eventually(fn -> terminal_count(task_id, "task.failed") == 1 end)
+      summary = terminal_summary(task_id, "task.failed")
+      [gate_summary] = summary["gates"]
+
+      assert gate_summary["name"] == "check"
+      assert gate_summary["status"] == "failed"
+      assert gate_summary["exit_code"] == 7
+      assert gate_summary["failure_detail"] =~ "command=scripts/check.sh"
+      assert gate_summary["failure_detail"] =~ "[worker-local path]"
+      refute gate_summary["failure_detail"] =~ raw_detail
+      refute summary["detail"] =~ "/tmp/worker"
+      refute summary["detail"] =~ "C:\\worker"
+      assert {:ok, _validated} = WorkerResult.validate(summary)
+
+      if task_id == "oversized" do
+        assert String.length(gate_summary["failure_detail"]) == limit
+        assert gate_summary["failure_detail"] =~ "... (truncated) ..."
+        assert String.ends_with?(gate_summary["failure_detail"], " TAIL")
+      end
+
+      send(runtime, :poll)
+    end)
+  end
+
   test "missing implementation handoff reports pre-validation gate evidence and JSON detail", %{config: config} do
     failed_claim =
       claim("task-1", false)
@@ -492,7 +539,6 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert [%{"name" => "check", "status" => "passed"}] = summary["gates"]
 
     assert Jason.decode!(summary["detail"]) == %{
-             "detail" => %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"},
              "reason" => [
                "handoff_failed",
                ["host_push_required", %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}]
@@ -520,7 +566,11 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     assert summary["outcome"] == "failed"
     assert summary["reason"] == "execution_capability_unavailable"
-    assert summary["detail"] =~ "bwrap: No permissions to create a new namespace"
+
+    assert Jason.decode!(summary["detail"]) == %{
+             "reason" => "execution_capability_unavailable",
+             "status" => "failed"
+           }
   end
 
   test "cancel command stops executor, emits evidence, and stops renewing the lease", %{config: config} do

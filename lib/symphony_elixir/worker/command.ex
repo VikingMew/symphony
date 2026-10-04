@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.Worker.Command do
   @moduledoc false
 
+  alias SymphonyElixir.WorkerResult
+
   @spec run(map(), Path.t()) :: map()
   def run(command, cwd), do: run(command, cwd, fn _chunk -> :ok end)
 
@@ -97,7 +99,9 @@ defmodule SymphonyElixir.Worker.Command do
     ArgumentError -> :ok
   end
 
-  defp bounded(value), do: SymphonyElixir.Redaction.bounded(value, 4_096)
+  defp bounded(value) do
+    SymphonyElixir.Redaction.bounded(value, WorkerResult.limits().max_source_output)
+  end
 
   defp put_session_id(%{detail: detail} = result) do
     case Regex.run(~r/(?:SYMPHONY_CODEX_SESSION_ID=|"session_id"\s*:\s*")([A-Za-z0-9._:-]+)/, detail) do
