@@ -34,6 +34,12 @@ design_status: landed
   `codex.stall_timeout_ms`，代码 default 是 `600000`，但仍显式保存 `300000` 的 installation 不会因
   代码更新自动改变。该 installation 必须在 `/settings/import` 中 Review import、Confirm，再正常
   Save 为 `600000`，并通过应用层重新读取 current workflow 验证；不得直接更新 SQL。
+- `RunAdmission.resolve/3` 每次只解析传入的一份 composed workflow snapshot。decision 的 workspace
+  authority 来自已选择 execution context；`workspace`、`agent` 与 `codex` limits 只投影 instance
+  singleton，repository、default branch、source strategy 与 checkout depth 只投影 project slice。
+  issue implementation branch 来自 live issue，operator 为 `nil`。HTTP worker 不得读取 worker-local
+  config/path 反填 Panel workflow、decision、payload 或历史。`retry_backoff_ms` 只投影
+  `agent.max_retry_backoff_ms`。
 - `workflow.states`、`allowed_transitions`、`human_review_states` 与 `tool_policy` 只来自
   `Schema.default_workflow_policy/0`；`tracker.api_key` 只按环境 secret contract 在运行时解析。
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret

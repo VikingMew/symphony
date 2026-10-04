@@ -45,6 +45,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerBlockingDecisionTest do
   end
 
   setup do
+    previous_execution_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
     FakePersistence.reset!()
     start_supervised!(Tracker)
     circuit = Module.concat(__MODULE__, "Circuit#{System.unique_integer([:positive])}")
@@ -59,6 +61,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerBlockingDecisionTest do
     on_exit(fn ->
       Application.delete_env(:symphony_elixir, :blocking_decision_test_workflow)
       Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook)
+
+      if is_nil(previous_execution_mode),
+        do: Application.delete_env(:symphony_elixir, :execution_mode),
+        else: Application.put_env(:symphony_elixir, :execution_mode, previous_execution_mode)
     end)
 
     %{

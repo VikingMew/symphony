@@ -5,6 +5,7 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     def run_operator(kind, run_id, recipient, opts) do
       parent = Application.fetch_env!(:symphony_elixir, :operator_runner_test_pid)
       send(parent, {:operator_runner_started, kind, run_id, self(), Keyword.get(opts, :worker_host)})
+      send(parent, {:operator_runner_admission, run_id, Keyword.fetch!(opts, :admission), Keyword.fetch!(opts, :max_turns)})
 
       send(parent, {
         :operator_runner_project,
@@ -53,13 +54,16 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   setup do
     previous_runner = Application.get_env(:symphony_elixir, :agent_runner_module)
     previous_pid = Application.get_env(:symphony_elixir, :operator_runner_test_pid)
+    previous_execution_mode = Application.get_env(:symphony_elixir, :execution_mode)
 
     Application.put_env(:symphony_elixir, :agent_runner_module, FakeAgentRunner)
     Application.put_env(:symphony_elixir, :operator_runner_test_pid, self())
+    Application.put_env(:symphony_elixir, :execution_mode, :centralized)
 
     on_exit(fn ->
       restore_app_env(:agent_runner_module, previous_runner)
       restore_app_env(:operator_runner_test_pid, previous_pid)
+      restore_app_env(:execution_mode, previous_execution_mode)
     end)
 
     :ok
@@ -74,6 +78,9 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     run_id = reply.run_id
 
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
+    assert_receive {:operator_runner_admission, ^run_id, admission, max_turns}, 500
+    assert admission.execution_mode == "centralized"
+    assert max_turns == admission.limits.max_turns
     assert_receive {:operator_runner_project, :nap, ^run_id, "fake-project-id", nil}, 500
 
     state = :sys.get_state(pid)
@@ -109,6 +116,22 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
     assert completed.operator_tasks.nap.run_id == run_id
     assert completed.operator_tasks.nap.project_id == "fake-project-id"
+  end
+
+  test "worker mode rejects operator requests before creating a run or starting a runner" do
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+    {:ok, pid} = start_operator_orchestrator(:WorkerModeRejectsOperator)
+    runs_before = Enum.count(FakePersistence.calls(), &match?({:create_run, _attrs}, &1))
+
+    reply = Orchestrator.request_nap(pid)
+
+    assert reply.accepted == false
+    assert reply.status == "failed"
+    assert reply.failure_reason =~ "environment_unavailable"
+    assert reply.failure_reason =~ "execution_mode_unavailable"
+    assert Enum.count(FakePersistence.calls(), &match?({:create_run, _attrs}, &1)) == runs_before
+    refute_receive {:operator_runner_started, :nap, _run_id, _runner_pid, _worker_host}, 100
+    assert :sys.get_state(pid).running == %{}
   end
 
   test "requesting nap while nap is running returns busy without starting or recording another run" do

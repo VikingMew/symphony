@@ -204,6 +204,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   setup do
+    previous_execution_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
     FakePersistence.reset!()
     start_supervised!(Tracker)
     circuit = Module.concat(__MODULE__, "Circuit#{System.unique_integer([:positive])}")
@@ -232,6 +234,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
       Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
       Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook)
+
+      if is_nil(previous_execution_mode),
+        do: Application.delete_env(:symphony_elixir, :execution_mode),
+        else: Application.put_env(:symphony_elixir, :execution_mode, previous_execution_mode)
     end)
 
     %{manager: pid, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
@@ -686,6 +692,13 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert assignment.payload["handoff"]["allowed_updates"]["target_states"] == ["In Progress", "Ready to Merge"]
     assert assignment.payload["prompt"] =~ "Current status: In Progress"
     assert assignment.payload["prompt"] =~ "Ready to Merge"
+    assert assignment.admission.execution_mode == "worker"
+    assert assignment.admission.workspace_authority == {:http_worker, context.worker.id, context.session.id}
+    assert assignment.payload["execution_mode"] == assignment.admission.execution_mode
+    assert assignment.payload["source"] == stringify_keys(assignment.admission.source)
+    assert assignment.payload["limits"] == stringify_keys(assignment.admission.limits)
+
+    assert %{execution_mode: "worker"} = FakePersistence.get_run(assignment.run_id)
   end
 
   test "fails Todo refinement claim visibly when Linear rejects Refining transition", context do
@@ -1977,6 +1990,10 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
     active_states = workflow.config["tracker"]["active_states"] ++ [state_name]
     Application.put_env(:symphony_elixir, :assignment_test_workflow, put_in(workflow.config["tracker"]["active_states"], active_states))
+  end
+
+  defp stringify_keys(map) do
+    Map.new(map, fn {key, value} -> {to_string(key), value} end)
   end
 
   defp eventually(fun, attempts \\ 50)

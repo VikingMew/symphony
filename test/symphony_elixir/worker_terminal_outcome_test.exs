@@ -573,6 +573,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       issue: issue,
       project_id: project_id,
       session_id: "worker-session",
+      admission: %{workspace_authority: {:http_worker, "worker", "worker-session"}},
       retry_attempt: Keyword.get(opts, :retry_attempt, 0),
       started_at: DateTime.utc_now()
     }

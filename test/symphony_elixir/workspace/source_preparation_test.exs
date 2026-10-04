@@ -727,7 +727,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
-      assert :ok = Workspace.remove_issue_workspaces("S_1")
+      assert :ok = Workspace.remove_issue_workspaces("S_1", {:panel_local})
       assert File.exists?(target_workspace) == false
       assert File.exists?(untouched_workspace)
     after
@@ -744,11 +744,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), workspace_root: missing_root)
 
-    assert :ok = Workspace.remove_issue_workspaces("S-2")
-  end
-
-  test "workspace cleanup ignores non-binary identifier" do
-    assert :ok = Workspace.remove_issue_workspaces(nil)
+    assert :ok = Workspace.remove_issue_workspaces("S-2", {:panel_local})
   end
 
   test "workspace remove returns error information for missing directory" do
@@ -791,7 +787,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       assert {:ok, _workspace} = Workspace.create_for_issue("MT-HOOKS")
       assert length(String.split(String.trim(File.read!(after_create_counter)), "\n")) == 2
 
-      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS")
+      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS", {:panel_local})
       assert File.read!(before_remove_marker) == "before_remove\n"
       assert File.exists?(workspace) == false
     after
@@ -817,7 +813,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       )
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-FAIL")
-      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-FAIL")
+      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-FAIL", {:panel_local})
       assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
@@ -842,7 +838,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       )
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-LARGE-FAIL")
-      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-LARGE-FAIL")
+      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-LARGE-FAIL", {:panel_local})
       assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
@@ -879,7 +875,7 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       )
 
       assert {:ok, workspace} = Workspace.create_for_issue("MT-HOOKS-TIMEOUT")
-      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-TIMEOUT")
+      assert :ok = Workspace.remove_issue_workspaces("MT-HOOKS-TIMEOUT", {:panel_local})
       assert File.exists?(workspace) == false
     after
       File.rm_rf(test_root)
@@ -940,7 +936,12 @@ defmodule SymphonyElixir.Workspace.SourcePreparationTest do
       assert {:ok, ^workspace_path} = Workspace.create_for_issue("MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_before_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")
       assert :ok = Workspace.run_after_run_hook(workspace_path, "MT-SSH-WS", "worker-01:2200")
-      assert :ok = Workspace.remove_issue_workspaces("MT-SSH-WS", "worker-01:2200")
+
+      assert :ok =
+               Workspace.remove_issue_workspaces(
+                 "MT-SSH-WS",
+                 {:centralized_ssh, "worker-01:2200"}
+               )
 
       trace = File.read!(trace_file)
       assert trace =~ "-p 2200 worker-01 bash -lc"

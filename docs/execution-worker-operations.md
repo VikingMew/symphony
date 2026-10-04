@@ -35,6 +35,10 @@ and confirmed Settings / Import validate `/data/workspaces` against the Panel fi
 the `/worker/workspaces` lease root used for checked-out assignments. The Panel root gate does not
 probe or validate that worker lease volume. This boundary is owned by
 [Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
+The immutable admission and worker/session authority boundary is owned by
+[External execution runtime](execution-runtime-design.md) and
+[Panel / Worker 执行设计](worker-panel-decoupling-design.md); this operations guide does not define a
+second readiness or cleanup rule.
 
 ## Preflight and credentials
 
