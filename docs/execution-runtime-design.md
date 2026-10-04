@@ -104,6 +104,15 @@ reports `blocked` / `handoff_failed` with that bounded PR and Linear target-stat
 that pair or the host-push predicate below, a missing `handoff` remains
 `{:handoff_failed, :missing_handoff}` and its bounded detail names the missing event or PR URL.
 
+For a refinement assignment, the worker retains the same-session audit only to prove a successful,
+state-name-normalized `linear_task_update(target_state: "Needs Refinement Review")`. A completed
+Codex turn without that evidence is not a successful refinement run. The executor emits
+`blocked` / `handoff_failed` with bounded `missing_refinement_completion` evidence and uses the
+existing structured blocker path, which moves the issue from `Refining` to `Blocked`. A successful
+review-state update keeps the ordinary completion path. This refinement condition does not change
+implementation `completed_delivery_evidence/1`, PR proof, handoff capture, gate ordering, or the
+`Ready to Merge` writeback.
+
 Source preparation uses the assignment's single initialization budget for clone, fetch, remote
 branch lookup, and checkout. A command timeout becomes executor reason
 `source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command
@@ -135,6 +144,18 @@ blocked payloads, marker-only, patch-only, and permission-detail-only signals do
 If the Codex command-execution capability is unavailable inside the worker, including the known
 bwrap/user-namespace failure mode, the worker reports a terminal failed outcome with a distinct
 reason instead of leaving the assignment `In Progress` until a stall or turn timeout.
+
+A `turn/completed` frame whose normalized `params.turn.status` is `failed` is a terminal Codex
+failure, never a successful completion candidate. The AppServer retains only bounded
+`codex_error_info` and `will_retry` fields from the same turn's `error` notification. An observed
+`codexErrorInfo=serverOverloaded` becomes `codex_upstream_capacity`; every other failed completion
+becomes `codex_turn_failed`. The executor's existing failed return ends the pipeline before
+validation and handoff, so the worker emits only `task.failed`, reports `validation_status=pending`,
+and marks every declared gate `not_run`. The stable reason is copied into the terminal event and
+`runs.failure_reason`; structured detail remains available in the bounded terminal JSON and run
+failure evidence. `will_retry=false` describes Codex AppServer behavior only. Symphony still counts
+that failed run as one attempt in the existing failure budget, schedules the existing retry while
+budget remains, and creates the existing persistent blocker after exhaustion.
 
 Terminal summaries report validation evidence from the executor result rather than inferring it
 from the terminal event type. When validation ran, `validation_status` reflects its overall result

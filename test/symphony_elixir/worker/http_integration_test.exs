@@ -192,6 +192,54 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.detail =~ "worker fixture failure"
   end
 
+  test "failed completion stops before validation and preserves the SYM-152 error fields", %{
+    root: root,
+    codex_trace: codex_trace
+  } do
+    turn_events =
+      ~s({"method":"error","params":{"error":{"message":"Selected model is at capacity. Please try a different model.","codexErrorInfo":"serverOverloaded"},"willRetry":false}}\n{"method":"turn/completed","params":{"turn":{"status":"failed"}}})
+
+    codex_binary = fake_codex!(root, codex_trace, turn_events)
+    gate_marker = Path.join(root, "validation-ran")
+
+    result =
+      execute_profile(
+        root,
+        codex_binary,
+        "failed-completion-task",
+        "test",
+        "printf validation-ran > #{gate_marker}"
+      )
+
+    assert result.status == :failed
+    assert result.reason == :codex_upstream_capacity
+
+    assert result.detail == %{
+             "codex_error_info" => "serverOverloaded",
+             "turn_status" => "failed",
+             "will_retry" => false
+           }
+
+    assert File.exists?(gate_marker) == false
+  end
+
+  test "successful refinement turn without review update evidence becomes blocked", %{
+    root: root,
+    codex_binary: codex_binary
+  } do
+    result = execute_profile(root, codex_binary, "refinement-missing-completion", "refinement")
+
+    evidence = %{
+      "missing" => ["linear_task_update(target_state: Needs Refinement Review)"],
+      "reason" => "missing_refinement_completion"
+    }
+
+    assert result.status == :blocked
+    assert result.reason == {:handoff_failed, {:missing_refinement_completion, evidence}}
+    assert result.detail == evidence
+    assert result.validation.overall_status == :passed
+  end
+
   defp claim_payload do
     %{task: task, lease: lease, correlation: correlation} = Agent.get(Persistence, & &1.claim)
 
@@ -235,7 +283,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       fake_codex!(
         root,
         codex_trace,
-        ~s({"method":"turn/completed"}),
+        ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
         "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
       )
 
@@ -264,7 +312,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       fake_codex!(
         root,
         codex_trace,
-        ~s({"method":"turn/completed"}),
+        ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
         "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
       )
 
@@ -327,6 +375,30 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     Executor.execute(config(root), claim)
   end
 
+  defp execute_profile(root, codex_binary, task_id, profile, gate_command \\ "git status --porcelain") do
+    source = Path.join(root, "source")
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => task_id,
+      "lease_id" => "profile-lease",
+      "issue_id" => "issue-1",
+      "issue_identifier" => "SYM-12",
+      "run_id" => "run-1",
+      "run_attempt" => 0,
+      "lease_attempt" => 1,
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "protocol_version" => Client.protocol_version(),
+      "execution" =>
+        panel_payload(source, codex_binary, profile)
+        |> put_in(["required_gates", Access.at(0), "command"], gate_command)
+        |> ExecutionPayload.from_task_payload()
+    }
+
+    Executor.execute(config(root), claim)
+  end
+
   defp config(root) do
     %Config{
       panel_url: "http://panel.test",
@@ -341,7 +413,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp panel_payload(source, codex_binary, profile \\ "refinement") do
+  defp panel_payload(source, codex_binary, profile \\ "test") do
     %{
       "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
       "prompt" => "Complete the task.",
@@ -379,7 +451,12 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp fake_codex!(root, trace_file, turn_event \\ ~s({"method":"turn/completed"}), turn_command \\ ":") do
+  defp fake_codex!(
+         root,
+         trace_file,
+         turn_event \\ ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
+         turn_command \\ ":"
+       ) do
     codex_binary = Path.join(root, "fake-codex")
 
     File.write!(codex_binary, """

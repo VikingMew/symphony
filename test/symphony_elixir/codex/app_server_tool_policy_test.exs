@@ -258,7 +258,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{\"id\":99,\"method\":\"item/commandExecution/requestApproval\",\"params\":{\"command\":\"gh pr view\",\"cwd\":\"/tmp\",\"reason\":\"need approval\"}}'
             ;;
           5)
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -389,7 +389,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{\"id\":110,\"method\":\"item/tool/requestUserInput\",\"params\":{\"itemId\":\"call-717\",\"questions\":[{\"header\":\"Approve app tool call?\",\"id\":\"mcp_tool_call_approval_call-717\",\"isOther\":false,\"isSecret\":false,\"options\":[{\"description\":\"Run the tool and continue.\",\"label\":\"Approve Once\"},{\"description\":\"Run the tool and remember this choice for this session.\",\"label\":\"Approve this Session\"},{\"description\":\"Decline this tool call and continue.\",\"label\":\"Deny\"},{\"description\":\"Cancel this tool call\",\"label\":\"Cancel\"}],\"question\":\"The linear MCP server wants to run the tool \\\"Save issue\\\", which may modify or delete data. Allow this action?\"}],\"threadId\":\"thread-717\",\"turnId\":\"turn-717\"}}'
             ;;
           5)
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -474,7 +474,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{"id":111,"method":"item/tool/requestUserInput","params":{"itemId":"call-718","questions":[{"header":"Provide context","id":"freeform-718","isOther":false,"isSecret":false,"options":null,"question":"What comment should I post back to the issue?"}],"threadId":"thread-718","turnId":"turn-718"}}'
             ;;
           5)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -564,7 +564,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{\"id\":112,\"method\":\"item/tool/requestUserInput\",\"params\":{\"itemId\":\"call-719\",\"questions\":[{\"header\":\"Choose an action\",\"id\":\"options-719\",\"isOther\":false,\"isSecret\":false,\"options\":[{\"description\":\"Use the default behavior.\",\"label\":\"Use default\"},{\"description\":\"Skip this step.\",\"label\":\"Skip\"}],\"question\":\"How should I proceed?\"}],\"threadId\":\"thread-719\",\"turnId\":\"turn-719\"}}'
             ;;
           5)
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -664,7 +664,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{\"id\":102,\"method\":\"item/tool/call\",\"params\":{\"name\":\"linear_task_read\",\"callId\":\"call-90a\",\"threadId\":\"thread-90a\",\"turnId\":\"turn-90a\",\"arguments\":{\"include_activity\":true,\"activity_limit\":25}}}'
             ;;
           5)
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
@@ -786,7 +786,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
             printf '%s\\n' '{\"id\":103,\"method\":\"item/tool/call\",\"params\":{\"tool\":\"linear_task_update\",\"callId\":\"call-90b\",\"threadId\":\"thread-90b\",\"turnId\":\"turn-90b\",\"arguments\":{\"comment\":\"boom\"}}}'
             ;;
           5)
-            printf '%s\\n' '{\"method\":\"turn/completed\"}'
+            printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
             exit 0
             ;;
           *)
