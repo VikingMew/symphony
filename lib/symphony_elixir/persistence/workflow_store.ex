@@ -98,6 +98,34 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
+  @spec save_project_settings(String.t() | nil, map(), String.t()) ::
+          {:ok, %{project: Project.t(), workflow: WorkflowRecord.t()}}
+          | {:error, term()}
+  def save_project_settings(project_id, attrs, raw_workflow_md)
+      when (is_binary(project_id) or is_nil(project_id)) and is_map(attrs) and
+             is_binary(raw_workflow_md) do
+    with :ok <- reject_project_hook_fields(attrs),
+         {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
+         {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded),
+         {:ok, _settings} <- Schema.parse(project_config),
+         true <- repo_available?() || {:error, :repo_unavailable} do
+      canonical_raw = Workflow.to_markdown(project_config, "")
+
+      Repo.transaction(fn ->
+        persist_project_settings(project_id, attrs, project_config, canonical_raw)
+      end)
+    end
+  end
+
+  defp persist_project_settings(project_id, attrs, project_config, canonical_raw) do
+    with {:ok, project} <- persist_project(project_id, attrs),
+         {:ok, workflow} <- persist_project_workflow(project, project_config, canonical_raw) do
+      %{project: project, workflow: workflow}
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowRecord.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import")
@@ -428,6 +456,41 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
         workflow
       end
     end)
+  end
+
+  defp persist_project(nil, attrs) do
+    %Project{}
+    |> Project.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  defp persist_project(project_id, attrs) do
+    case Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE")) do
+      nil -> {:error, :not_found}
+      project -> project |> Project.changeset(attrs) |> Repo.update()
+    end
+  end
+
+  defp persist_project_workflow(project, project_config, canonical_raw) do
+    attrs = %{
+      project_id: project.id,
+      raw_workflow_md: canonical_raw,
+      yaml_config: project_config,
+      prompt_body: "",
+      source: "web_project_settings"
+    }
+
+    case Repo.get_by(WorkflowRecord, project_id: project.id) do
+      %WorkflowRecord{} = existing ->
+        if workflow_changed?(existing, attrs),
+          do: existing |> WorkflowRecord.changeset(attrs) |> Repo.update(),
+          else: {:ok, existing}
+
+      nil ->
+        %WorkflowRecord{}
+        |> WorkflowRecord.changeset(attrs)
+        |> Repo.insert()
+    end
   end
 
   defp upsert_project_workflow!(project, project_config, source) do

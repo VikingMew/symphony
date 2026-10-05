@@ -4,7 +4,7 @@ genre: design
 domain: [hot-update, runtime]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-10-05
 design_status: landed
 ---
 
@@ -40,6 +40,9 @@ Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` �
   与 `Dockerfile` 的 exact bundled `CODEX_VERSION` pin（当前 `0.156.0`）同步派生；升级 CLI
   需要重建镜像并同步 catalog。从 Runtime 或 Import 保存当前 catalog 的值属于 workflow 配置热更新。
 - 保存成功后，持久化边界在返回成功前发布所有 project 的完整 derived snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
+- Projects save 在一个 durable transaction 内提交 project metadata 与 canonical project workflow，
+  commit 后只发布一次完整 snapshot。发布失败返回 typed `runtime_publication_failed`，保留已经提交的
+  durable state，页面显示失败且不会尝试跨 PostgreSQL 与内存 snapshot 回滚。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。

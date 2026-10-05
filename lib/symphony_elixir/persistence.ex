@@ -67,6 +67,17 @@ defmodule SymphonyElixir.Persistence do
     |> publish_runtime_snapshot()
   end
 
+  @spec save_project_settings(String.t() | nil, map(), String.t()) ::
+          {:ok, %{project: Project.t(), workflow: WorkflowRecord.t()}}
+          | {:error,
+             term()
+             | {:runtime_publication_failed, %{project: Project.t(), workflow: WorkflowRecord.t()}, term()}}
+  def save_project_settings(project_id, attrs, raw_workflow_md) do
+    project_id
+    |> WorkflowStore.save_project_settings(attrs, raw_workflow_md)
+    |> publish_runtime_snapshot()
+  end
+
   @spec delete_project(Project.t() | String.t()) ::
           {:ok, Project.t()}
           | {:error,

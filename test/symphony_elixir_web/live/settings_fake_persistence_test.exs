@@ -825,6 +825,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     {:ok, view, _html} = live(build_conn(), "/settings/projects")
 
+    publications_before_create = FakePersistence.runtime_publication_count()
+
     html =
       view
       |> form(".project-create-form",
@@ -846,9 +848,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "Project settings saved"
     assert html =~ "Second Project"
     assert html =~ "git@github.com:org/second.git"
+    assert FakePersistence.runtime_publication_count() == publications_before_create + 1
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:create_project, attrs} ->
+             {:save_project_settings, nil, attrs, _raw} ->
                attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git" and
                  attrs.checkout_depth == 3 and attrs.source_strategy == "worktree" and
                  attrs.worktree_fetch == true and
@@ -857,6 +860,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
              _ ->
                false
            end)
+
+    created = Enum.find(FakePersistence.list_projects(), &(&1.slug == "second"))
+    assert FakePersistence.current_workflow(created).prompt_body == ""
+
+    publications_before_update = FakePersistence.runtime_publication_count()
 
     html =
       view
@@ -877,6 +885,121 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "Renamed Project"
     assert html =~ "git@github.com:org/renamed.git"
+    assert FakePersistence.runtime_publication_count() == publications_before_update + 1
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:save_project_settings, "fake-project-id", attrs, _raw} ->
+               attrs.name == "Renamed Project" and attrs.linear_project_slug == "renamed-linear"
+
+             _ ->
+               false
+           end)
+  end
+
+  test "project settings rejects invalid durable writes atomically and remains usable" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+
+    baseline_params = project_settings_params(%{"repository_url" => "git@github.com:org/baseline.git"})
+
+    baseline_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: baseline_params)
+      |> render_submit()
+
+    assert baseline_html =~ "Project settings saved"
+    baseline_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    baseline_workflow = FakePersistence.current_workflow(baseline_project)
+    publications_after_baseline = FakePersistence.runtime_publication_count()
+
+    invalid_html =
+      view
+      |> form(
+        ~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: project_settings_params(%{"name" => ""})
+      )
+      |> render_submit()
+
+    assert invalid_html =~ "workflow-save-toast-error"
+    assert invalid_html =~ "Project settings failed"
+    assert invalid_html =~ "can&#39;t be blank"
+    assert Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id")) == baseline_project
+    assert FakePersistence.current_workflow(baseline_project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline
+
+    FakePersistence.fail_next_import_workflow!(:injected_workflow_failure)
+
+    rejected_params =
+      project_settings_params(%{
+        "repository_url" => "git@github.com:org/rejected.git",
+        "source_strategy" => "worktree",
+        "project_setup_commands" => "mix rejected"
+      })
+
+    rejected_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: rejected_params)
+      |> render_submit()
+
+    assert rejected_html =~ "workflow-save-toast-error"
+    assert rejected_html =~ "injected_workflow_failure"
+    assert Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id")) == baseline_project
+    assert FakePersistence.current_workflow(baseline_project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline
+
+    saved_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: rejected_params)
+      |> render_submit()
+
+    assert saved_html =~ "workflow-save-toast-success"
+    assert saved_html =~ "Project settings saved"
+    saved_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    saved_workflow = FakePersistence.current_workflow(saved_project)
+    assert saved_project.repository_url == "git@github.com:org/rejected.git"
+    assert saved_project.source_strategy == "worktree"
+    assert get_in(saved_workflow.yaml_config, ["project", "setup_commands"]) == ["mix rejected"]
+    assert saved_workflow.prompt_body == ""
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline + 1
+    assert {:ok, runtime} = WorkflowStore.for_project(saved_project.id)
+    assert get_in(runtime.config, ["project", "repository_url"]) == "git@github.com:org/rejected.git"
+  end
+
+  test "project settings reports post-commit publication failure and retains the durable save" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+    publications_before = FakePersistence.runtime_publication_count()
+    FakePersistence.fail_next_runtime_publication!({:refresh_failed, :injected})
+
+    params = project_settings_params(%{"repository_url" => "git@github.com:org/durable.git"})
+
+    failed_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: params)
+      |> render_submit()
+
+    assert failed_html =~ "workflow-save-toast-error"
+    assert failed_html =~ "runtime_publication_failed"
+    durable_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    assert durable_project.repository_url == "git@github.com:org/durable.git"
+    assert FakePersistence.current_workflow(durable_project).prompt_body == ""
+    assert FakePersistence.runtime_publication_count() == publications_before + 1
+
+    saved_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: params)
+      |> render_submit()
+
+    assert saved_html =~ "workflow-save-toast-success"
+    assert FakePersistence.runtime_publication_count() == publications_before + 2
+    assert {:ok, runtime} = WorkflowStore.for_project(durable_project.id)
+    assert get_in(runtime.config, ["project", "repository_url"]) == "git@github.com:org/durable.git"
   end
 
   test "project settings save refreshes runtime project configuration" do
@@ -1027,7 +1150,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert FakePersistence.instance_workflow() == instance_after_agent_save
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, %{id: "fake-project-id"}, _raw, "web_project_settings"} -> true
+             {:save_project_settings, "fake-project-id", _attrs, _raw} -> true
              _ -> false
            end)
 
@@ -1167,8 +1290,34 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       {:put_instance_workflow, _config, _prompt} -> true
       {:import_workflow, _project, _raw, _source} -> true
       {:import_package, _project, _raw, _source} -> true
+      {:save_project_settings, _project_id, _attrs, _raw} -> true
       _call -> false
     end)
+  end
+
+  defp project_settings_params(overrides) do
+    Map.merge(
+      %{
+        "id" => "fake-project-id",
+        "name" => "Fake Project",
+        "slug" => "fake",
+        "linear_project_slug" => "project",
+        "repository_url" => "git@github.com:org/repo.git",
+        "default_branch" => "main",
+        "checkout_depth" => "1",
+        "source_strategy" => "clone",
+        "worktree_fetch" => "true",
+        "worktree_cleanup" => "true",
+        "tracker_assignee" => "",
+        "active_states" => "Todo\nReady\nIn Progress",
+        "terminal_states" => "Done\nCanceled\nCancelled\nDuplicate",
+        "project_setup_commands" => "",
+        "project_cleanup_commands" => "",
+        "description" => "",
+        "enabled" => "true"
+      },
+      overrides
+    )
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

@@ -2,6 +2,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   @moduledoc false
 
   alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+  alias SymphonyElixir.Persistence.Project
 
   @name __MODULE__
 
@@ -149,6 +150,16 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.update(@name, &Map.put(&1, :next_import_workflow_error, reason))
   end
 
+  def fail_next_runtime_publication!(reason) do
+    ensure_started()
+    Agent.update(@name, &Map.put(&1, :next_runtime_publication_error, reason))
+  end
+
+  def runtime_publication_count do
+    ensure_started()
+    Agent.get(@name, & &1.runtime_publication_count)
+  end
+
   def default_project do
     ensure_started()
     Agent.get(@name, fn state -> {:ok, hd(state.projects)} end)
@@ -162,6 +173,79 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       persist_project_workflow(project, project_config, source, :import_workflow)
     end
   end
+
+  def save_project_settings(project_id, attrs, raw_workflow_md) do
+    ensure_started()
+
+    with :ok <- reject_project_hook_fields(attrs),
+         {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
+         {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
+      result =
+        Agent.get_and_update(
+          @name,
+          &save_project_settings_state(&1, project_id, attrs, project_config, raw_workflow_md)
+        )
+
+      publish_project_settings_result(result)
+    end
+  end
+
+  defp save_project_settings_state(state, project_id, attrs, project_config, raw) do
+    state = record_call(state, {:save_project_settings, project_id, attrs, raw})
+
+    with {:ok, project, projects} <- stage_project(state.projects, project_id, attrs),
+         nil <- state.next_import_workflow_error do
+      workflow = project_workflow(project, project_config, "web_project_settings")
+      saved = %{project: project, workflow: workflow}
+
+      next_state =
+        state
+        |> Map.put(:projects, projects)
+        |> Map.update!(:workflows, &put_workflow_record(&1, workflow))
+
+      {{:ok, saved}, next_state}
+    else
+      {:error, reason} -> {{:error, reason}, state}
+      reason -> {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
+    end
+  end
+
+  defp stage_project(projects, nil, attrs) do
+    changeset = Project.changeset(%Project{}, attrs)
+
+    if changeset.valid? do
+      project = attrs |> atomize_project_attrs() |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
+      {:ok, project, projects ++ [project]}
+    else
+      {:error, changeset}
+    end
+  end
+
+  defp stage_project(projects, project_id, attrs) do
+    case Enum.find(projects, &(Map.get(&1, :id) == project_id)) do
+      nil ->
+        {:error, :not_found}
+
+      project ->
+        changeset = Project.changeset(struct(Project, Map.take(project, Project.__schema__(:fields))), attrs)
+
+        if changeset.valid? do
+          updated = Map.merge(project, atomize_project_attrs(attrs))
+          {:ok, updated, replace_project(projects, project_id, updated)}
+        else
+          {:error, changeset}
+        end
+    end
+  end
+
+  defp publish_project_settings_result({:ok, saved} = success) do
+    case maybe_publish_runtime() do
+      :ok -> success
+      {:error, reason} -> {:error, {:runtime_publication_failed, saved, reason}}
+    end
+  end
+
+  defp publish_project_settings_result(error), do: error
 
   def import_package(project, raw_workflow_md, source) do
     ensure_started()
@@ -943,6 +1027,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       legacy_instance_workflow_candidates: nil,
       next_legacy_reconciliation_error: nil,
       next_import_workflow_error: nil,
+      next_runtime_publication_error: nil,
+      runtime_publication_count: 0,
       users: %{}
     }
   end
@@ -955,10 +1041,26 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   end
 
   defp maybe_publish_runtime do
-    if Process.whereis(SymphonyElixir.WorkflowStore) do
-      SymphonyElixir.WorkflowStore.force_reload()
-    else
-      :ok
+    failure =
+      Agent.get_and_update(@name, fn state ->
+        next_state =
+          state
+          |> Map.update!(:runtime_publication_count, &(&1 + 1))
+          |> Map.put(:next_runtime_publication_error, nil)
+
+        {state.next_runtime_publication_error, next_state}
+      end)
+
+    case failure do
+      nil ->
+        if Process.whereis(SymphonyElixir.WorkflowStore) do
+          SymphonyElixir.WorkflowStore.force_reload()
+        else
+          :ok
+        end
+
+      reason ->
+        {:error, reason}
     end
   end
 
