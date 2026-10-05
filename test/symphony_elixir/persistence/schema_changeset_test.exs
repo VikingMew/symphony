@@ -1,7 +1,20 @@
 defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.Persistence.{IssueRecord, RunRecord, Worker, WorkspaceRecord}
+  alias SymphonyElixir.Persistence.{IssueRecord, RunRecord, Worker, WorkflowRecord, WorkspaceRecord}
+
+  test "workflow changeset accepts the canonical empty project prompt" do
+    attrs = %{
+      project_id: Ecto.UUID.generate(),
+      raw_workflow_md: "---\ntracker:\n  kind: linear\n---\n",
+      yaml_config: %{"tracker" => %{"kind" => "linear"}},
+      prompt_body: "",
+      source: "web_project_settings"
+    }
+
+    assert WorkflowRecord.changeset(%WorkflowRecord{}, attrs).valid?
+    assert WorkflowRecord.changeset(%WorkflowRecord{}, Map.put(attrs, :prompt_body, nil)).valid? == false
+  end
 
   test "issue schema and changeset omit the Linear state mirror" do
     assert :state not in IssueRecord.__schema__(:fields)

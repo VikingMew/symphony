@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-10-03
+updated: 2026-10-05
 design_status: landed
 ---
 
@@ -29,6 +29,10 @@ design_status: landed
   singleton 的 base prompt/profiles。两个页面不依赖所选 project，保存后重新发布所有 enabled
   project 的 future runtime snapshot。`/settings/projects` 只提交 project metadata 与
   tracker/repository/source/setup/cleanup slice，不能携带 instance 字段。
+- `/settings/projects` 的新增与编辑都先解析 canonical project slice，再在一个 PostgreSQL
+  transaction 内写 project metadata 与该 project 的唯一 workflow row；任一写入失败时两者一起
+  回滚。project workflow 的 `raw_workflow_md` 与 `yaml_config` 来自同一 canonical slice，
+  `prompt_body` 固定为空字符串；base prompt 仍只存在于 instance singleton。
 - `WorkflowStore` 组合 singleton 与 project slice 后才交给 schema 解析。schema default 只补齐组合
   workflow 中省略的字段；instance singleton 中显式保存的值保持原样并优先于 default。具体到
   `codex.stall_timeout_ms`，代码 default 是 `600000`，但仍显式保存 `300000` 的 installation 不会因

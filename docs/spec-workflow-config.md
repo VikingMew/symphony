@@ -42,6 +42,10 @@ Loader behavior:
 - Each project has exactly one operator-visible current workflow slice. Runtime publication composes
   the singleton with every enabled project slice before parsing and atomically replaces the complete
   derived snapshot set.
+- Project Settings create and update MUST validate the canonical project slice before committing the
+  project row and its unique workflow row in one database transaction. The workflow row MUST store
+  the canonical YAML/Markdown representation with `prompt_body = ""`; it MUST NOT copy the instance
+  singleton prompt.
 - Reads without explicit project context select a configured, enabled `slug=default` workflow when
   present; otherwise they select the only enabled, loaded, non-placeholder project workflow when
   exactly one exists. If two or more enabled loaded workflows exist without a configured Default,
@@ -470,8 +474,9 @@ Dynamic reload is REQUIRED:
 - Runtime reads MUST NOT query persistence, trigger refresh-on-read, or wait behind persistence
   refresh work. An absent cache owner MUST NOT cause caller-side database fallback.
 - Successful instance, workflow, and project mutations MUST persist first and publish the complete replacement
-  snapshot before reporting full success. Persistence success followed by publication failure MUST
-  return a typed partial/refresh failure.
+  snapshot before reporting full success. A Project Settings transaction MUST publish exactly once
+  after commit. Persistence success followed by publication failure MUST return a typed
+  `runtime_publication_failed` partial/refresh failure and MUST NOT roll back the durable commit.
 - The software MUST detect externally saved current-workflow changes in the background with at
   most one refresh in flight. Timer ticks during a stall MUST coalesce or skip.
 - Background publication MUST use a generation guard so work started before a newer mutation cannot

@@ -146,18 +146,17 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
     attrs = ProjectSettings.attrs(params)
     current_form = Map.get(socket.assigns.project_workflow_forms, id, WorkflowForm.empty())
 
+    draft = ProjectSettings.workflow_draft(current_form, params, attrs)
+
     result =
-      with {:ok, project} <- persist_project(id, attrs, socket),
-           draft = ProjectSettings.workflow_draft(current_form, params, project),
-           {:ok, _instance, project_config} <- WorkflowForm.to_scopes(draft),
-           raw = Workflow.to_markdown(project_config, ""),
-           {:ok, workflow} <- persist_project_workflow(project, raw) do
-        {:ok, project, workflow}
+      with {:ok, _instance, project_config} <- WorkflowForm.to_scopes(draft) do
+        raw = Workflow.to_markdown(project_config, "")
+        persistence().save_project_settings(id, attrs, raw)
       end
 
     socket =
       case result do
-        {:ok, project, _workflow} ->
+        {:ok, %{project: project}} ->
           socket
           |> put_flash(:info, "Project settings saved.")
           |> WorkflowState.assign_save_notice(
@@ -241,32 +240,6 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
       <% _ -> %>
     <% end %>
     """
-  end
-
-  defp maybe_update_project(id, attrs, socket) do
-    case Enum.find(socket.assigns.projects, &(ProjectSettings.value(&1, :id) == id)) do
-      nil ->
-        persistence().update_project(id, attrs) |> PersistenceProvider.publish_runtime_mutation()
-
-      project ->
-        if ProjectSettings.changed?(project, attrs),
-          do: persistence().update_project(id, attrs) |> PersistenceProvider.publish_runtime_mutation(),
-          else: {:ok, project}
-    end
-  end
-
-  defp persist_project(nil, attrs, _socket) do
-    attrs
-    |> persistence().create_project()
-    |> PersistenceProvider.publish_runtime_mutation()
-  end
-
-  defp persist_project(id, attrs, socket), do: maybe_update_project(id, attrs, socket)
-
-  defp persist_project_workflow(project, raw) do
-    project
-    |> persistence().import_workflow(raw, "web_project_settings")
-    |> PersistenceProvider.publish_runtime_mutation()
   end
 
   defp changeset_or_reason(%Ecto.Changeset{} = changeset) do
