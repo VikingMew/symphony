@@ -39,7 +39,8 @@ conflicts with this rule is persisted as a blocker and fails closed through the 
 
 Configure each project through Settings (or Settings / Import for a package file) before starting
 the Panel. PostgreSQL stores one installation-wide `app_settings["instance_workflow"]` value and one
-tracker/repository workflow slice per project; both are required before dispatch. Direct SQL updates
+minimal tracker/project workflow slice per project; the project row separately owns its Linear slug
+and repository/source settings. Both workflow scopes are required before dispatch. Direct SQL updates
 to either store are unsupported. The package under `docs/examples/` is example and import material,
 not a synchronization source.
 

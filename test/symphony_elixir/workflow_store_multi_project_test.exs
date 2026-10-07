@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.{PersistenceProvider, Workflow, WorkflowStore}
   alias SymphonyElixir.TestSupport.FakePersistence
 
@@ -19,7 +20,9 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 
   test "list_enabled returns one loaded workflow per enabled project" do
@@ -318,7 +321,8 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
     {:ok, loaded} = Workflow.load()
     {:ok, default} = FakePersistence.default_project()
     default = update_project!(default, %{slug: "default"})
-    default_raw = Workflow.to_markdown(loaded.config, "Default prompt")
+    portable_config = ProjectAuthority.strip(loaded.config)
+    default_raw = Workflow.to_markdown(portable_config, "Default prompt")
 
     assert {:ok, _default_workflow} =
              FakePersistence.import_package(default, default_raw, "default-import")
@@ -339,7 +343,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
              })
              |> PersistenceProvider.publish_runtime_mutation()
 
-    b_raw = Workflow.to_markdown(loaded.config, "Project B old prompt")
+    b_raw = Workflow.to_markdown(portable_config, "Project B old prompt")
 
     assert {:ok, %{project_workflow: b_old_version}} =
              FakePersistence.import_package(project_b, b_raw, "project-b-old")
@@ -347,7 +351,7 @@ defmodule SymphonyElixir.WorkflowStoreMultiProjectTest do
 
     assert {:ok, %{prompt: "Project B old prompt"}} = WorkflowStore.for_project(project_b.id)
 
-    b_new_raw = Workflow.to_markdown(loaded.config, "Project B new prompt")
+    b_new_raw = Workflow.to_markdown(portable_config, "Project B new prompt")
 
     assert {:ok, %{project_workflow: b_new_workflow}} =
              FakePersistence.import_package(project_b, b_new_raw, "project-b-new")

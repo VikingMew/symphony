@@ -92,7 +92,7 @@ profiles:
 ```
 
 运行时 authority 是 PostgreSQL 的 installation singleton 与每个 enabled project 的
-tracker/repository workflow slice，经原子组合后发布。checked-in `workflow.yml` / `profiles.yml`
+project row + 最小 tracker/project workflow slice，经原子组合后发布。checked-in `workflow.yml` / `profiles.yml`
 只是 combined package 示例和导入导出 artifact。
 
 ## 工具契约

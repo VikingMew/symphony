@@ -3,12 +3,16 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
   Defines the durable instance and project workflow slices.
   """
 
-  alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.Config.{ProjectAuthority, Schema}
 
   @instance_sections ~w(polling workspace hooks agent codex observability analytics server worker profiles)
   @project_sections ~w(tracker project)
   @instance_value_keys ~w(config prompt_body)
   @project_fields %{
+    "tracker" => ~w(kind endpoint assignee active_states terminal_states),
+    "project" => ~w(required_gates setup_commands cleanup_commands)
+  }
+  @portable_project_fields %{
     "tracker" => ~w(kind endpoint project_slug assignee active_states terminal_states),
     "project" => ~w(repository_url default_branch checkout_depth source_strategy worktree_fetch worktree_cleanup required_gates setup_commands cleanup_commands)
   }
@@ -41,9 +45,9 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
          project_config = Map.take(config, @project_sections),
          :ok <- validate_combined_keys(config),
          {:ok, instance} <- new_instance(instance_config, prompt_body),
-         :ok <- validate_project_config(project_config),
+         :ok <- validate_section_fields(project_config, :project, @portable_project_fields),
          {:ok, _settings} <- Schema.parse(compose_config(instance.config, project_config)) do
-      {:ok, instance, project_config}
+      {:ok, instance, ProjectAuthority.strip(project_config)}
     end
   end
 
@@ -85,8 +89,8 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
   def project_from_loaded(%{config: config, prompt: prompt}) when is_map(config) and is_binary(prompt) do
     with :ok <- require_blank_project_prompt(prompt),
          {:ok, config} <- canonicalize(config, :project),
-         :ok <- validate_project_config(config) do
-      {:ok, config}
+         :ok <- validate_section_fields(config, :project, @portable_project_fields) do
+      {:ok, ProjectAuthority.strip(config)}
     end
   end
 
@@ -104,7 +108,7 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
     with {:ok, instance_config} <- canonicalize(instance_config, :instance),
          {:ok, project_config} <- canonicalize(project_config, :project),
          :ok <- validate_instance_config(instance_config),
-         :ok <- validate_project_config(project_config) do
+         :ok <- validate_section_fields(project_config, :project, @portable_project_fields) do
       config = compose_config(instance_config, project_config)
 
       {:ok,

@@ -32,7 +32,9 @@ Workflow source precedence:
    `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
 2. Installation runtime/profile policy comes from the fixed PostgreSQL
    `app_settings["instance_workflow"]` value.
-3. Tracker/repository settings come from the current PostgreSQL workflow slice for that project.
+3. Tracker kind/endpoint/assignee/state lists and project gates/setup/cleanup come from the current
+   PostgreSQL workflow slice; Linear project slug and repository/source settings come only from the
+   selected `projects` row.
 4. Setup-required mode applies when either the singleton or every enabled project workflow is absent.
 
 Loader behavior:
@@ -44,8 +46,9 @@ Loader behavior:
   derived snapshot set.
 - Project Settings create and update MUST validate the canonical project slice before committing the
   project row and its unique workflow row in one database transaction. The workflow row MUST store
-  the canonical YAML/Markdown representation with `prompt_body = ""`; it MUST NOT copy the instance
-  singleton prompt.
+  the canonical minimal YAML/Markdown representation with `prompt_body = ""`; it MUST NOT copy the
+  instance singleton prompt, `tracker.project_slug`, or the six repository/source fields owned by the
+  project row.
 - Reads without explicit project context select a configured, enabled `slug=default` workflow when
   present; otherwise they select the only enabled, loaded, non-placeholder project workflow when
   exactly one exists. If two or more enabled loaded workflows exist without a configured Default,
@@ -66,6 +69,13 @@ YAML:
 Design note:
 
 - A package SHOULD be self-contained enough to recreate the instance policy and one project's settings.
+- A combined package MAY carry `tracker.project_slug` plus project repository URL, default branch,
+  checkout depth, source strategy, worktree fetch, and worktree cleanup for review and transport.
+  Those values are not a durable workflow scope. Import MUST compare every explicit value with the
+  selected project before beginning a transaction; any mismatch returns
+  `{:project_authority_conflict, conflicts}` with path, installed value, and package value and leaves
+  both durable workflow scopes and the published snapshot unchanged. Matching values MUST be removed
+  before workflow persistence; omitted values use the selected project row.
 - The package under `docs/examples/` is example and import material. Runtime code MUST read the
   project's PostgreSQL snapshot rather than files from the source checkout.
 - `workflow` keys are portable example metadata only. Durable instance and project slices MUST NOT
@@ -90,6 +100,8 @@ Parsing rules:
 - Implementations MUST validate imported package data before atomically replacing its two durable scopes.
 - Project persistence and project-slice export MUST reject out-of-scope fields with a typed error;
   they MUST NOT silently discard instance keys, profiles, base prompts, workflow policy, or secrets.
+- Project-slice export MUST omit the seven project-row-owned fields. Combined export MUST materialize
+  them from the selected project row.
 
 Returned workflow object:
 
@@ -117,8 +129,9 @@ Note:
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
-- A Symphony instance maintains one runtime/profile singleton and one tracker/repository workflow
-  slice per enabled project. Workspace roots, initialization/disk thresholds, lifecycle hooks,
+- A Symphony instance maintains one runtime/profile singleton, one minimal tracker/project workflow
+  slice per enabled project, and project-row authority for Linear slug and repository/source fields.
+  Workspace roots, initialization/disk thresholds, lifecycle hooks,
   Codex policy, observability, analytics, server/worker policy, base prompt, and profiles have no
   per-project override. Persisted runs, issues, events, and worker tasks carry the originating
   `project_id`.
@@ -137,6 +150,8 @@ Fields:
   - Canonical environment variable for `tracker.kind == "linear"`: `LINEAR_API_KEY`.
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
+  - The selected `projects.linear_project_slug` field is its sole durable authority. A portable package
+    may carry the value, but a workflow row MUST NOT persist it.
 - `active_states` (list of strings)
   - Default: `Todo`, `Ready`, `In Progress`
 - `terminal_states` (list of strings)
@@ -180,7 +195,7 @@ E2E is a credentialed manual suite run with `SYMPHONY_RUN_LIVE_E2E=1 mix test --
 
 #### 5.3.3 `project.checkout_depth` (positive integer)
 
-Project Settings and the durable project slice own `project.checkout_depth`. Its default is `1`,
+Project Settings and the `projects.checkout_depth` column own `project.checkout_depth`. Its default is `1`,
 and values must be positive integers. The resolved execution decision copies it unchanged to
 assignment `source.checkout_depth`; the execution worker uses that value for fresh clone and every
 explicit default/task branch fetch. The worker does not define a depth default or a full-clone
@@ -498,6 +513,10 @@ Dynamic reload is REQUIRED:
 - Invalid or unavailable refreshes MUST NOT crash the service or expose a partial project set; keep
   the complete last-known-good snapshot, including setup-required, and emit a structured
   operator-visible error.
+- When a legacy workflow row carries any of the seven project-owned fields, composition MUST emit a
+  structured `project_authority_drift` warning containing project identity, field path, and duplicate
+  or conflict status. It MUST strip the carrier and inject only the project-row value. Saving that
+  project through Project Settings MUST rebuild both workflow representations without the carriers.
 
 ### 6.3 Dispatch Preflight Validation
 

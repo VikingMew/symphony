@@ -162,8 +162,10 @@ mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
 ## Configuration
 
 PostgreSQL stores installation runtime/profile policy once in `app_settings["instance_workflow"]`
-and tracker/repository properties once per project workflow, while workflow routing is an immutable
-code contract. The package under `docs/examples/` is example and import material: it
+and stores tracker kind/endpoint/assignee/states plus project gates/setup/cleanup once per project
+workflow. Each `projects` row solely owns its Linear project slug and six repository/source fields;
+runtime composition injects those values into the minimal workflow slice. Workflow routing remains
+an immutable code contract. The package under `docs/examples/` is example and import material: it
 documents the package format and can be imported through Settings / Import, but it is never
 synchronized into the database. On cold start Symphony composes the singleton with every enabled
 project slice and publishes the derived set as one in-memory snapshot; normal config, dashboard, prompt, diagnostics, and
@@ -187,8 +189,12 @@ mise exec -- ./bin/symphony \
 The split package is organized by concern: `workflow.yml` contains project tracker/source fields plus
 instance runtime settings and a non-runtime workflow-policy example; `profiles.yml` contains the base
 prompt and instance-owned profiles. Import previews Instance and Project separately; Project changes require
-an explicit target, and combined confirmation writes both durable scopes atomically. A project repository URL
-is required before polling and agent work can begin.
+an explicit target. Combined packages may show project-owned source values, but confirmation rejects
+any value that differs from the selected project before writing either workflow scope; matching values
+are not copied into the workflow row. Project-slice exports stay minimal, while combined exports
+materialize source values from the project row. A project repository URL is required before polling
+and agent work can begin. Projects shows effective, legacy carrier, and clean/duplicate/conflict status;
+saving a flagged project removes legacy carriers without changing its effective runtime values.
 
 Common environment variables:
 

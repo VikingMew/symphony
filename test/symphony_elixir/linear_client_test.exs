@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.LinearClientTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.Linear.{Client, IssueNormalizer, Pagination}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.{Tracker, Workflow, WorkflowStore}
@@ -16,7 +17,7 @@ defmodule SymphonyElixir.LinearClientTest do
       })
 
     {:ok, loaded} = Workflow.load()
-    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    raw = Workflow.to_markdown(ProjectAuthority.strip(loaded.config), loaded.prompt)
     {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
     assert :ok = WorkflowStore.force_reload()
 

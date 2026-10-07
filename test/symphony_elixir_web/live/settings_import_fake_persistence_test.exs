@@ -4,9 +4,10 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
-  alias SymphonyElixir.WorkflowForm
+  alias SymphonyElixir.{Workflow, WorkflowForm}
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -160,6 +161,78 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
 
     assert runtime_html =~ "Use Codex default"
     assert runtime_html =~ "Use selected model or Codex default"
+  end
+
+  test "combined import shows and rejects project authority conflicts without durable writes" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, project} = FakePersistence.default_project()
+    baseline_instance = FakePersistence.instance_workflow()
+    baseline_workflow = FakePersistence.current_workflow(project)
+    baseline_publications = FakePersistence.runtime_publication_count()
+
+    conflicting_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        project.repository_url,
+        "git@github.com:org/conflict.git"
+      )
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => conflicting_yaml})
+      |> render_submit()
+
+    assert staged_html =~ "project.repository_url"
+    assert staged_html =~ "git@github.com:org/conflict.git"
+
+    rejected_html = render_click(view, "confirm_settings_import")
+    assert rejected_html =~ "project_authority_conflict"
+    assert rejected_html =~ "installed_value"
+    assert rejected_html =~ "git@github.com:org/repo.git"
+    assert rejected_html =~ "package_value"
+    assert rejected_html =~ "git@github.com:org/conflict.git"
+    assert FakePersistence.instance_workflow() == baseline_instance
+    assert FakePersistence.current_workflow(project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == baseline_publications
+  end
+
+  test "combined import inherits omitted project authority and persists only the minimal slice" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, project} = FakePersistence.default_project()
+    assert {:ok, {:workflow, config}} = Workflow.parse_settings_yaml(WorkflowFixtures.settings_workflow_yaml())
+
+    yaml =
+      config
+      |> ProjectAuthority.strip()
+      |> put_in([Access.key("project", %{}), "setup_commands"], ["mix omitted-authority"])
+      |> WorkflowFixtures.workflow_package_yaml()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => yaml})
+      |> render_submit()
+
+    assert staged_html =~ "project.setup_commands"
+    assert staged_html =~ "project.repository_url" == false
+
+    confirmed_html = render_click(view, "confirm_settings_import")
+    assert confirmed_html =~ "Instance and Project settings imported"
+
+    workflow = FakePersistence.current_workflow(project)
+    assert ProjectAuthority.carrier_values(workflow.yaml_config) == %{}
+    assert get_in(workflow.yaml_config, ["project", "setup_commands"]) == ["mix omitted-authority"]
+
+    assert {:ok, loaded} = FakePersistence.workflow_to_loaded(FakePersistence.instance_workflow(), workflow)
+    assert get_in(loaded.config, ["tracker", "project_slug"]) == project.linear_project_slug
+    assert get_in(loaded.config, ["project", "repository_url"]) == project.repository_url
   end
 
   defp start_test_endpoint do

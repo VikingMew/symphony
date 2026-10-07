@@ -57,8 +57,9 @@ application writers.
 
 PostgreSQL owns projects, current workflow slices, issues, runs, events, agent turns, workspaces,
 workers, sessions, tasks, leases, users, tracker configuration, and application settings. The fixed
-`app_settings["instance_workflow"]` map stores runtime/profile policy once; one tracker/repository
-workflow slice exists per enabled project.
+`app_settings["instance_workflow"]` map stores runtime/profile policy once; one minimal tracker/project
+workflow slice exists per enabled project, while the project row solely owns Linear slug and
+repository/source values.
 
 At cold start `WorkflowStore` composes the singleton with every active project slice and atomically
 publishes a coherent in-memory snapshot. Normal runtime config, prompt, dashboard, diagnostics, and dispatch reads use

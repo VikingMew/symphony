@@ -38,8 +38,9 @@ already-migrated empty PostgreSQL database.
 Status: accepted
 
 One fixed application setting owns installation runtime/profile policy; each enabled project owns
-one tracker/repository workflow slice. The orchestrator composes both scopes for each project while
-preserving explicit default-project selection for existing no-context callers.
+one minimal tracker/project workflow slice, while its project row solely owns Linear slug and
+repository/source values. The orchestrator composes those authorities for each project while preserving
+explicit default-project selection for existing no-context callers.
 
 ### Linear task definition and PR-first delivery
 

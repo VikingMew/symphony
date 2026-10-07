@@ -26,8 +26,9 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` 与每项目唯一的 PostgreSQL
-`workflows` slice。portable package 导入在同一事务内写两个 scope；单独保存任一 scope 后，
+Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]`、每项目唯一的 PostgreSQL
+最小 `workflows` slice，以及 project 行唯一持有的 Linear project slug 与 6 个 source 字段。
+portable package 导入在同一事务内写两个 workflow scope；单独保存任一 scope 后，
 `WorkflowStore` 都重新读取 singleton 与全部 enabled project slices，并一次替换完整内存 snapshot。
 
 关键路径：
@@ -43,6 +44,13 @@ Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` �
 - Projects save 在一个 durable transaction 内提交 project metadata 与 canonical project workflow，
   commit 后只发布一次完整 snapshot。发布失败返回 typed `runtime_publication_failed`，保留已经提交的
   durable state，页面显示失败且不会尝试跨 PostgreSQL 与内存 snapshot 回滚。
+- Projects save 先把 7 个 project-owned 字段写入 project 行，再把 tracker kind/endpoint/assignee/states
+  与 project gates/setup/cleanup 保存为最小 workflow slice；保存会同时清除 legacy
+  `yaml_config` / `raw_workflow_md` 载体副本。重新发布时始终从 project 行注入 7 个生效值。
+- combined import 在事务前比较 package 中显式出现的 project-owned 值与目标 project；不同则返回
+  typed `project_authority_conflict` 且不写任一 durable scope、不发布 snapshot，相同则只用于 review
+  并在 workflow 写入前剥离。省略值继续使用目标 project 行。legacy duplicate/conflict 在组合时告警，
+  但不会覆盖 project 行或成为 fallback。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。
@@ -85,7 +93,8 @@ http://127.0.0.1:4000/settings
 - Projects 页面：保存 project 字段，例如 Linear project slug、repository URL、default branch。
 - Agents 页面：保存 installation-wide base prompt 与 profiles。
 - Runtime 页面：保存 installation-wide workspace、hooks 与 Codex selectors。
-- Import 页面：分组预览 singleton 与显式选择的 project slice；combined confirm 原子写两个 scope。
+- Import 页面：分组预览 singleton、最小 project slice 与 portable project-owned 值；combined confirm
+  在权威值一致时原子写两个 workflow scope，冲突时在任何事务或发布前拒绝。
 
 保存成功后，页面会显示 saved 反馈；Linear 相关配置建议再打开 `/diagnostics/linear` 验证。
 

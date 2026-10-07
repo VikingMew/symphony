@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
   import Phoenix.ConnTest
   import Plug.Conn, only: [put_req_header: 3]
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Workflow
   alias SymphonyElixir.WorkflowStore
@@ -141,6 +142,8 @@ defmodule SymphonyElixirWeb.ProxyAndHealthTest do
 
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 end
