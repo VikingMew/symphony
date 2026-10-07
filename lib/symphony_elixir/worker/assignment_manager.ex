@@ -241,6 +241,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
     Logger.warning("event=worker_reconcile_tracker_timeout timeout_ms=#{state.tracker_io_timeout_ms}")
 
+    Enum.each(task.workflows, fn workflow ->
+      record_linear_request_failure(state.persistence, workflow, "worker_reconcile", {:linear_api_request, :timeout})
+    end)
+
     {:noreply, %{state | reconcile_task: nil}}
   end
 
@@ -422,7 +426,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents) do
     empty = {:ok, nil, admission_evidence(:no_eligible_candidate, listening_mode)}
 
-    Enum.reduce_while(state.workflows.list_enabled(), empty, fn workflow, {:ok, nil, evidence} ->
+    state.workflows.list_enabled()
+    |> distinct_slug_workflows()
+    |> Enum.reduce_while(empty, fn workflow, {:ok, nil, evidence} ->
       result =
         Config.with_workflow_context(workflow, fn ->
           dispatch_settings = Orchestrator.dispatch_policy_settings(listening_mode, max_concurrent_agents)
@@ -454,7 +460,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            select_candidate(candidates, state.persistence, state.orchestrator, dispatch_settings),
          {:ok, %Issue{} = issue} <-
            revalidate(candidate, state.tracker, state.persistence, state.orchestrator, dispatch_settings),
-         {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue) do
+         {:ok, assignment} <- create_assignment(state, worker, session, workflow, issue, dispatch_settings) do
       {:ok, assignment}
     else
       {:skip, reason, evidence} ->
@@ -696,7 +702,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp create_assignment(state, worker, session, workflow, issue) do
+  defp create_assignment(state, worker, session, workflow, issue, dispatch_settings) do
     authority = {:http_worker, worker.id, session.id}
 
     with {:ok, admission} <-
@@ -705,21 +711,60 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
              {:issue, issue},
              %{workspace_authority: authority, readiness: :ready}
            ) do
-      create_admitted_assignment(state, worker, session, workflow, issue, admission)
+      create_admitted_assignment(state, worker, session, workflow, issue, admission, dispatch_settings)
     end
   end
 
-  defp create_admitted_assignment(state, worker, session, workflow, issue, admission) do
+  defp create_admitted_assignment(state, worker, session, workflow, issue, admission, dispatch_settings) do
     now = state.now.()
     assignment_id = Ecto.UUID.generate()
     expires_at = DateTime.add(now, state.persistence.worker_lease_duration_seconds(), :second)
     project_id = workflow.project_id
     profile = Config.workflow_profile_for_state(issue.state)
 
-    with {:ok, issue_record} <-
-           state.persistence.upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id)),
-         {:ok, run} <- create_run(state.persistence, issue, admission, issue_record.id, project_id, now),
-         {:ok, issue} <- move_to_worker_started(state.tracker, issue, profile),
+    issue_attrs = Map.put(Events.issue_attrs(issue), :project_id, project_id)
+    run_attrs = Events.run_attrs(issue, admission, nil) |> Map.merge(%{project_id: project_id, status: "running", started_at: now})
+    cutoff = DateTime.add(now, -state.persistence.worker_lease_duration_seconds(), :second)
+
+    case state.persistence.admit_issue_run(issue_attrs, run_attrs,
+           manual_rerun?: same_issue_state?(issue.state, "Todo"),
+           orphan_cutoff: cutoff,
+           now: now
+         ) do
+      {:ok, %{run: run}} ->
+        activate_admitted_run(state, %{
+          worker: worker,
+          session: session,
+          issue: issue,
+          admission: admission,
+          profile: profile,
+          assignment_id: assignment_id,
+          expires_at: expires_at,
+          run: run
+        })
+
+      {:error, {:active_run, run_id}} ->
+        evidence = admission_evidence(:active_run, DispatchPolicy.listening_mode(dispatch_settings))
+        {:skip, :active_run, Map.merge(evidence, %{issue_identifier: issue.identifier, run_id: run_id})}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp activate_admitted_run(state, context) do
+    %{
+      worker: worker,
+      session: session,
+      issue: issue,
+      admission: admission,
+      profile: profile,
+      assignment_id: assignment_id,
+      expires_at: expires_at,
+      run: run
+    } = context
+
+    with {:ok, issue} <- move_to_worker_started(state.tracker, issue, profile),
          prompt <-
            PromptBuilder.build_prompt(issue,
              profile: profile,
@@ -736,18 +781,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       {:ok, assignment}
     else
       {:error, reason} = error ->
-        close_failed_run(state.persistence, issue.identifier, reason)
+        close_failed_run(state.persistence, run.id, reason)
         error
     end
-  end
-
-  defp create_run(persistence, issue, admission, issue_id, project_id, started_at) do
-    attrs =
-      issue
-      |> Events.run_attrs(admission, nil)
-      |> Map.merge(%{issue_id: issue_id, project_id: project_id, status: "running", started_at: started_at})
-
-    persistence.create_run(attrs)
   end
 
   defp move_to_worker_started(tracker, %Issue{} = issue, profile) do
@@ -984,15 +1020,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp close_failed_run(persistence, identifier, reason) do
-    case persistence.list_runs_for_issue(identifier, limit: 1) do
-      [run | _] ->
-        failure = RunFailure.classify({:claim_transition_failure, reason})
-        persistence.finish_run(run.id, "failed", failure)
-
-      _other ->
-        :ok
-    end
+  defp close_failed_run(persistence, run_id, reason) do
+    failure = RunFailure.classify({:claim_transition_failure, reason})
+    persistence.finish_run(run_id, "failed", failure)
   end
 
   defp start_reconciliation(state) do
@@ -1003,7 +1033,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     else
       manager = self()
       ref = make_ref()
-      workflows = state.workflows.list_enabled() |> Enum.uniq_by(&get_in(&1.config, ["tracker", "project_slug"]))
+      workflows = distinct_slug_workflows(state.workflows.list_enabled())
 
       {:ok, pid} =
         Task.Supervisor.start_child(state.task_supervisor, fn ->
@@ -1012,7 +1042,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
         end)
 
       timer = Process.send_after(manager, {:reconcile_timeout, ref}, state.tracker_io_timeout_ms)
-      %{state | reconcile_task: %{ref: ref, pid: pid, timer: timer}}
+      %{state | reconcile_task: %{ref: ref, pid: pid, timer: timer, workflows: workflows}}
     end
   end
 
@@ -1020,8 +1050,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     _ = Process.cancel_timer(task.timer)
 
     Enum.each(results, fn
-      {:error, project_slug, reason} ->
+      {:error, workflow, project_slug, reason} ->
         Logger.warning("event=worker_reconcile_tracker_error project_slug=#{project_slug} reason=#{inspect(reason)}")
+        record_linear_request_failure(state.persistence, workflow, "worker_reconcile", reason)
 
       {:ok, _project_slug} ->
         :ok
@@ -1034,18 +1065,18 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     project_slug = get_in(workflow.config, ["tracker", "project_slug"])
 
     Config.with_workflow_context(workflow, fn ->
-      fetch_and_reconcile_workflow_zombies(state, project_slug)
+      fetch_and_reconcile_workflow_zombies(state, workflow, project_slug)
     end)
   end
 
-  defp fetch_and_reconcile_workflow_zombies(state, project_slug) do
+  defp fetch_and_reconcile_workflow_zombies(state, workflow, project_slug) do
     case state.tracker.fetch_issues_by_states(["In Progress"]) do
       {:ok, issues} ->
         Enum.each(issues, &reconcile_zombie(state, &1))
         {:ok, project_slug}
 
       {:error, reason} ->
-        {:error, project_slug, reason}
+        {:error, workflow, project_slug, reason}
     end
   end
 
@@ -1062,30 +1093,59 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     cutoff = DateTime.add(state.now.(), -state.persistence.worker_lease_duration_seconds(), :second)
 
     if DateTime.compare(started_at, cutoff) == :lt do
-      failure = RunFailure.classify({:assignment_loss, %{reason: "panel_restart_or_worker_loss", phase: "reconciliation"}})
-
-      with :ok <- state.tracker.update_issue_state(issue.id, "Ready"),
-           {:ok, _run} <- state.persistence.finish_run(run.id, "failed", failure) do
-        state.persistence.record_event(%{
-          project_id: run.project_id,
-          run_id: run.id,
-          issue_identifier: issue.identifier,
-          event_type: "task.failed",
-          payload: terminal_event_payload(%{"reason" => "panel_restart_or_worker_loss"}, failure)
-        })
-
-        state.persistence.record_event(%{
-          project_id: run.project_id,
-          run_id: run.id,
-          issue_identifier: issue.identifier,
-          event_type: "run.failed",
-          payload: terminal_event_payload(%{}, failure)
-        })
-      end
+      record_orphan_signal(state.persistence, issue, run, started_at)
     end
   end
 
   defp maybe_requeue_zombie(_state, _issue, _run), do: :ok
+
+  defp record_orphan_signal(persistence, issue, run, started_at) do
+    case persistence.list_events(run_id: run.id, event_type: "run.orphaned", limit: 1) do
+      [] ->
+        persistence.record_event(%{
+          project_id: run.project_id,
+          run_id: run.id,
+          issue_identifier: issue.identifier,
+          event_type: "run.orphaned",
+          payload: %{
+            "reason" => "assignment_missing_after_lease_window",
+            "started_at" => DateTime.to_iso8601(started_at),
+            "operator_action" => "comment_and_move_to_todo"
+          }
+        })
+
+      [_event | _rest] ->
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp record_linear_request_failure(persistence, workflow, operation, reason) do
+    persistence.record_event(%{
+      project_id: workflow.project_id,
+      event_type: "linear.request_failed",
+      payload:
+        reason
+        |> linear_failure_payload()
+        |> Map.merge(%{
+          "operation" => operation,
+          "project_slug" => get_in(workflow.config, ["tracker", "project_slug"])
+        })
+    })
+  end
+
+  defp linear_failure_payload({:linear_api_status, status, _body}) when is_integer(status),
+    do: %{"status" => status, "reason" => "http_status"}
+
+  defp linear_failure_payload({:linear_api_request, reason}),
+    do: %{"reason" => "transport:#{reason}"}
+
+  defp linear_failure_payload(reason), do: %{"reason" => inspect(reason, limit: 20, printable_limit: 500)}
+
+  defp distinct_slug_workflows(workflows),
+    do: Enum.uniq_by(workflows, &get_in(&1.config, ["tracker", "project_slug"]))
 
   defp schedule_reconciliation(state) do
     Process.send_after(self(), :reconcile, state.reconcile_interval_ms)
@@ -1165,6 +1225,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp merge_empty_evidence(_evidence, %{reason: :blocking_decision} = next_evidence), do: next_evidence
   defp merge_empty_evidence(%{reason: :listening_mode} = evidence, _next_evidence), do: evidence
   defp merge_empty_evidence(_evidence, %{reason: :listening_mode} = next_evidence), do: next_evidence
+  defp merge_empty_evidence(_evidence, %{reason: :active_run} = next_evidence), do: next_evidence
   defp merge_empty_evidence(evidence, _next_evidence), do: evidence
 
   defp log_admission_skip(:blocking_decision, worker_id, session_id, evidence) do

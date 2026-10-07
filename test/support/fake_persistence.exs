@@ -572,6 +572,49 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     end)
   end
 
+  def admit_issue_run(issue_attrs, run_attrs, opts \\ []) do
+    ensure_started()
+
+    if hook = Application.get_env(:symphony_elixir, :fake_admit_run_hook) do
+      hook.()
+    end
+
+    Agent.get_and_update(@name, fn state ->
+      issue = admission_issue(state.issues, issue_attrs)
+      active_run = Enum.find(state.runs, &(Map.get(&1, :issue_id) == issue.id and Map.get(&1, :status) == "running"))
+      cutoff = Keyword.get(opts, :orphan_cutoff)
+
+      if active_run && not replaceable_orphan?(active_run, cutoff, opts) do
+        {{:error, {:active_run, active_run.id}}, record_call(state, {:admit_issue_run, issue_attrs, run_attrs})}
+      else
+        now = Keyword.get(opts, :now, DateTime.utc_now())
+        {runs, events, replaced_run} = replace_fake_orphan(state.runs, state.events, active_run, issue, now)
+
+        run =
+          run_attrs
+          |> atomize_keys()
+          |> Map.put(:issue_id, issue.id)
+          |> Map.put_new(:project_id, issue.project_id)
+          |> Map.put_new(:id, "run-#{System.unique_integer([:positive])}")
+          |> Map.put_new(:kind, "issue")
+          |> Map.put_new(:status, "running")
+          |> Map.put_new(:attempt, 0)
+          |> Map.put_new(:started_at, now)
+          |> Map.put_new(:inserted_at, now)
+          |> Map.put_new(:updated_at, now)
+
+        next_state =
+          state
+          |> record_call({:admit_issue_run, issue_attrs, run_attrs})
+          |> Map.put(:issues, [issue | Enum.reject(state.issues, &(Map.get(&1, :project_id) == issue.project_id and Map.get(&1, :identifier) == issue.identifier))])
+          |> Map.put(:runs, [run | runs])
+          |> Map.put(:events, events)
+
+        {{:ok, %{issue: issue, run: run, replaced_run: replaced_run}}, next_state}
+      end
+    end)
+  end
+
   def list_events(opts \\ []) do
     ensure_started()
 
@@ -1159,6 +1202,45 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
       {key, value} when is_binary(key) -> {fixture_key(key), value}
       pair -> pair
     end)
+  end
+
+  defp admission_issue(issues, attrs) do
+    existing =
+      Enum.find(issues, fn issue ->
+        Map.get(issue, :project_id) == Map.fetch!(attrs, :project_id) and
+          Map.get(issue, :identifier) == Map.fetch!(attrs, :identifier)
+      end)
+
+    Map.merge(existing || %{id: "fake-issue-#{System.unique_integer([:positive])}"}, attrs)
+  end
+
+  defp replaceable_orphan?(%{started_at: %DateTime{} = started_at}, %DateTime{} = cutoff, opts) do
+    Keyword.get(opts, :manual_rerun?, false) and DateTime.compare(started_at, cutoff) == :lt
+  end
+
+  defp replaceable_orphan?(_run, _cutoff, _opts), do: false
+
+  defp replace_fake_orphan(runs, events, nil, _issue, _now), do: {runs, events, nil}
+
+  defp replace_fake_orphan(runs, events, active_run, issue, now) do
+    failure =
+      SymphonyElixir.RunFailure.classify({:assignment_expired, %{reason: "operator_manual_rerun", phase: "admission", prior_run_id: active_run.id}})
+
+    terminal = SymphonyElixir.RunLifecycle.terminal_attrs("failed", failure, now)
+    replaced = Map.merge(active_run, terminal)
+    runs = Enum.map(runs, fn run -> if run.id == active_run.id, do: replaced, else: run end)
+
+    event = %{
+      id: "event-#{System.unique_integer([:positive])}",
+      project_id: issue.project_id,
+      run_id: replaced.id,
+      issue_identifier: issue.identifier,
+      event_type: "run.failed",
+      payload: %{"failure_reason" => terminal.failure_reason, "failure_evidence" => terminal.failure_evidence},
+      occurred_at: now
+    }
+
+    {runs, [event | events], replaced}
   end
 
   @fixture_keys %{

@@ -1120,42 +1120,39 @@ defmodule SymphonyElixir.Orchestrator do
     if workflows == [] do
       handle_dispatch_error(state, :setup_required)
     else
-      Enum.reduce(workflows, state, &dispatch_workflow/2)
+      workflows
+      |> Enum.group_by(&get_in(&1.config, ["tracker", "project_slug"]))
+      |> Enum.reduce(state, fn {_project_slug, grouped_workflows}, state_acc ->
+        dispatch_workflow_group(grouped_workflows, state_acc)
+      end)
     end
   end
 
-  defp dispatch_workflow(workflow, state) do
+  defp dispatch_workflow_group([workflow | _rest] = workflows, state) do
     Config.with_workflow_context(workflow, fn ->
-      dispatch_for_workflow(state, workflow)
+      if RunAdmission.execution_mode() == "worker" do
+        state
+      else
+        dispatch_workflow_group_centrally(state, workflows)
+      end
     end)
   end
 
-  defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
-    if RunAdmission.execution_mode() == "worker" do
-      state
-    else
-      dispatch_for_workflow_centrally(state, workflow)
-    end
-  end
-
-  defp dispatch_for_workflow_centrally(%State{} = state, workflow) do
+  defp dispatch_workflow_group_centrally(%State{} = state, workflows) do
     with :ok <- Config.validate!(),
          state = reconcile_ready_to_merge_issues(state),
          :allow <- environment_failure_circuit_allows_dispatch(),
          :allow <- rate_limit_gate_allows_dispatch(state),
-         {:ok, issues} <- Tracker.fetch_candidate_issues(),
-         true <- available_slots(state) > 0,
-         true <- workflow_slots_available?(state, workflow) do
-      Logger.info(
-        "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success candidate_count=#{length(issues)} dispatch=attempted"
-      )
-
-      state = %{state | last_config_error: nil}
-      persist_polled_issues(issues)
-      choose_issues(issues, state)
+         {:ok, issues} <- Tracker.fetch_candidate_issues() do
+      dispatch_shared_issues(workflows, issues, %{state | last_config_error: nil})
     else
       {:error, reason} ->
-        Logger.warning("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked")
+        Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
+
+        Logger.warning(
+          "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked"
+        )
+
         handle_dispatch_error(state, reason)
 
       {:block, details} ->
@@ -1165,14 +1162,31 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:environment_failure_circuit_open, circuit} ->
         Logger.warning(
-          "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
+          "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
         )
 
         %{state | last_config_error: nil}
+    end
+  end
 
-      false ->
-        Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success dispatch=skipped reason=capacity")
-        %{state | last_config_error: nil}
+  defp dispatch_shared_issues(workflows, issues, state) do
+    Enum.reduce(workflows, state, fn workflow, state_acc ->
+      Config.with_workflow_context(workflow, fn -> dispatch_fetched_workflow(state_acc, workflow, issues) end)
+    end)
+  end
+
+  defp dispatch_fetched_workflow(state, workflow, issues) do
+    if available_slots(state) > 0 and workflow_slots_available?(state, workflow) do
+      Logger.info(
+        "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared candidate_count=#{length(issues)} dispatch=attempted"
+      )
+
+      persist_polled_issues(issues)
+      choose_issues(issues, state)
+    else
+      Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared dispatch=skipped reason=capacity")
+
+      state
     end
   end
 
@@ -4399,6 +4413,33 @@ defmodule SymphonyElixir.Orchestrator do
       Map.get(running_entry, :run_id)
     )
   end
+
+  defp persist_linear_request_failure(workflow, operation, reason) do
+    payload =
+      reason
+      |> linear_request_failure_payload()
+      |> Map.merge(%{
+        "operation" => operation,
+        "project_slug" => get_in(workflow.config, ["tracker", "project_slug"])
+      })
+
+    record_event(%{
+      project_id: workflow.project_id,
+      event_type: "linear.request_failed",
+      issue_identifier: nil,
+      run_id: nil,
+      payload: payload
+    })
+  end
+
+  defp linear_request_failure_payload({:linear_api_status, status, _body}) when is_integer(status),
+    do: %{"status" => status, "reason" => "http_status"}
+
+  defp linear_request_failure_payload({:linear_api_request, reason}),
+    do: %{"reason" => "transport:#{reason}"}
+
+  defp linear_request_failure_payload(reason),
+    do: %{"reason" => inspect(reason, limit: 20, printable_limit: 500)}
 
   defp persist_event(event_type, issue_identifier, payload, run_id \\ nil) do
     persist_event(Events.event_attrs(event_type, issue_identifier, payload, run_id))

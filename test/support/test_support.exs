@@ -181,6 +181,7 @@ defmodule SymphonyElixir.TestSupport do
         end
 
         FakePersistence.reset!()
+        Application.delete_env(:symphony_elixir, :fake_admit_run_hook)
         Health.reset!()
 
         SymphonyElixir.EnvironmentFailureCircuit.reset()

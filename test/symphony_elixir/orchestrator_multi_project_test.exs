@@ -16,7 +16,11 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     def fetch_candidate_issues do
       slug = Config.settings!().tracker.project_slug
       send(test_pid(), {:candidate_fetch, slug})
-      {:ok, Map.get(candidates(), slug, [])}
+
+      case Application.get_env(:symphony_elixir, :multi_project_candidate_error) do
+        nil -> {:ok, Map.get(candidates(), slug, [])}
+        reason -> {:error, reason}
+      end
     end
 
     def fetch_issue_states_by_ids(ids) do
@@ -45,6 +49,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
       Application.delete_env(:symphony_elixir, :multi_project_test_pid)
       Application.delete_env(:symphony_elixir, :multi_project_candidates)
+      Application.delete_env(:symphony_elixir, :multi_project_candidate_error)
     end)
 
     :ok
@@ -157,6 +162,71 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     assert_receive {:candidate_fetch, "project"}, 2_000
     assert_receive {:candidate_fetch, "linear-b"}, 2_000
+  end
+
+  test "poll cycle shares one candidate fetch across workflows with the same Linear slug" do
+    raw = sample_workflow_markdown()
+    {:ok, project_a} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project-a.git",
+      linear_project_slug: "shared-linear"
+    })
+
+    {:ok, _} = FakePersistence.import_package(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "shared-linear",
+        repository_url: "git@github.com:VikingMew/project-b.git",
+        enabled: true
+      })
+
+    {:ok, _} = FakePersistence.import_package(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    orchestrator_name = Module.concat(__MODULE__, :SharedSlugPollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert %{listening?: true} = GenServer.call(pid, :start_listening)
+
+    assert_receive {:candidate_fetch, "shared-linear"}, 2_000
+    refute_receive {:candidate_fetch, "shared-linear"}, 200
+  end
+
+  test "poll failure records one project-scoped Linear event and waits for the next round" do
+    raw = sample_workflow_markdown()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project.git",
+      linear_project_slug: "linear-failure"
+    })
+
+    {:ok, _} = FakePersistence.import_package(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+    Application.put_env(:symphony_elixir, :multi_project_candidate_error, {:linear_api_status, 429, "limited"})
+
+    orchestrator_name = Module.concat(__MODULE__, :FailedPollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert %{listening?: true} = GenServer.call(pid, :start_listening)
+
+    assert_receive {:candidate_fetch, "linear-failure"}, 2_000
+    refute_receive {:candidate_fetch, "linear-failure"}, 200
+
+    eventually(fn -> length(FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed")) == 1 end)
+
+    assert [%{payload: payload}] = FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed")
+    assert payload == %{"operation" => "orchestrator_poll", "project_slug" => "linear-failure", "status" => 429, "reason" => "http_status"}
+
+    Application.delete_env(:symphony_elixir, :multi_project_candidate_error)
+    send(pid, :run_poll_cycle)
+    assert_receive {:candidate_fetch, "linear-failure"}, 2_000
   end
 
   test "disabled project is not polled" do

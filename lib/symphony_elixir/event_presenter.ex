@@ -57,7 +57,7 @@ defmodule SymphonyElixir.EventPresenter do
 
   defp source(type, _payload) do
     cond do
-      type in ["linear.state_transition", "linear.tool_call"] -> :linear
+      type in ["linear.state_transition", "linear.tool_call", "linear.request_failed"] -> :linear
       type in ["workspace.phase", "workspace.hook", "workspace.prepare"] -> :workspace
       type in ["worker.task", "worker.heartbeat"] -> :worker
       type == "codex.update" -> :agent
@@ -70,7 +70,7 @@ defmodule SymphonyElixir.EventPresenter do
     cond do
       String.contains?(to_string(type), ["failed", "error"]) -> :error
       payload_status(payload) in ["failed", "error"] -> :error
-      String.contains?(to_string(type), ["stopped", "cancelled", "expired"]) -> :warning
+      String.contains?(to_string(type), ["stopped", "cancelled", "expired", "orphaned"]) -> :warning
       payload_status(payload) in ["warning", "skipped"] -> :warning
       true -> :info
     end
@@ -104,6 +104,12 @@ defmodule SymphonyElixir.EventPresenter do
     end
   end
 
+  defp summary("linear.request_failed", payload) do
+    operation = payload_value(payload, ["operation"]) |> display_value("request")
+    status = payload_value(payload, ["status"]) |> display_value(payload_value(payload, ["reason"]))
+    "Linear #{operation} failed: #{status}"
+  end
+
   defp summary(type, payload) when is_binary(type) and type in ["run.failed", "run.completed", "run.started"] do
     reason = payload_value(payload, ["failure_reason", "reason", "message"]) |> display_value(nil)
     if Text.blankish?(reason), do: type, else: "#{type}: #{reason}"
@@ -115,6 +121,12 @@ defmodule SymphonyElixir.EventPresenter do
 
   defp detail("codex.update", payload) do
     if empty_codex_notification?(payload), do: "Empty Codex notification; detailed payload was not persisted.", else: nil
+  end
+
+  defp detail("linear.request_failed", payload) do
+    slug = payload_value(payload, ["project_slug"]) |> display_value("n/a")
+    reason = payload_value(payload, ["reason"]) |> display_value("n/a")
+    "project=#{slug} reason=#{reason}"
   end
 
   defp detail(type, payload) do
@@ -160,11 +172,13 @@ defmodule SymphonyElixir.EventPresenter do
   defp known_atom_key("from"), do: :from
   defp known_atom_key("from_state"), do: :from_state
   defp known_atom_key("message"), do: :message
+  defp known_atom_key("operation"), do: :operation
   defp known_atom_key("output"), do: :output
   defp known_atom_key("phase"), do: :phase
   defp known_atom_key("reason"), do: :reason
   defp known_atom_key("recent_output"), do: :recent_output
   defp known_atom_key("status"), do: :status
+  defp known_atom_key("project_slug"), do: :project_slug
   defp known_atom_key("summary"), do: :summary
   defp known_atom_key("tool"), do: :tool
   defp known_atom_key("to"), do: :to

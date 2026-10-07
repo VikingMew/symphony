@@ -87,6 +87,24 @@ defmodule SymphonyElixir.EventPresenterTest do
     assert is_binary(row.summary)
   end
 
+  test "presents Linear request failures with filterable source, status, and operation" do
+    event = %{
+      event_type: "linear.request_failed",
+      payload: %{
+        "operation" => "worker_reconcile",
+        "project_slug" => "project-a",
+        "status" => 429,
+        "reason" => "http_status"
+      }
+    }
+
+    assert %{visible: [row]} = EventPresenter.rows([event], source: "linear", severity: "error")
+    assert row.source == :linear
+    assert row.severity == :error
+    assert row.summary == "Linear worker_reconcile failed: 429"
+    assert row.detail == "project=project-a reason=http_status"
+  end
+
   test "coerces non-binary display values" do
     row = EventPresenter.row(%{event_type: "task.failed", payload: %{"summary" => %{"detail" => %{"code" => 500}}}})
 

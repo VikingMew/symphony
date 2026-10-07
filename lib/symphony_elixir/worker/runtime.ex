@@ -286,7 +286,8 @@ defmodule SymphonyElixir.Worker.Runtime do
 
       {:error, reason} ->
         log_delivery_failure(active.claim, active.terminal_type, reason, attempt)
-        %{state | active: Map.delete(state.active, task_id)}
+        schedule({:retry_terminal, task_id}, state.config.lifecycle_retry_seconds)
+        put_active(state, task_id, %{active | attempts: attempt})
     end
   end
 

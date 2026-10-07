@@ -582,9 +582,8 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
       %{
         id: "event-proj-a-1",
         project_id: "fake-project-id",
-        issue_identifier: "MT-EVTA-1",
-        event_type: "run.failed",
-        payload: %{"failure_reason" => "boom-a"},
+        event_type: "linear.request_failed",
+        payload: %{"operation" => "poll_candidates", "status" => 429, "project_slug" => "project-a", "reason" => "rate_limited"},
         occurred_at: now
       },
       %{
@@ -598,11 +597,19 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     ])
 
     {:ok, _view, all_html} = live(build_conn(), "/events")
-    assert all_html =~ "boom-a"
+    assert all_html =~ "Linear poll_candidates failed: 429"
+    assert all_html =~ "project=project-a reason=rate_limited"
     assert all_html =~ "boom-b"
 
-    {:ok, _view, filtered_html} = live(build_conn(), "/events?project=fake-project-id")
-    assert filtered_html =~ "boom-a"
+    {:ok, _view, filtered_html} = live(build_conn(), "/events?project=fake-project-id&source=linear&severity=error")
+    assert filtered_html =~ "linear.request_failed"
+    assert filtered_html =~ "Linear poll_candidates failed: 429"
+    refute filtered_html =~ "boom-b"
+
+    {:ok, _view, global_linear_html} = live(build_conn(), "/events?source=linear&severity=error")
+    assert global_linear_html =~ "linear.request_failed"
+    assert global_linear_html =~ "project=project-a reason=rate_limited"
+    refute global_linear_html =~ "boom-b"
 
     {:ok, _view, second_html} = live(build_conn(), "/events?project=#{second_project.id}")
     assert second_html =~ "boom-b"

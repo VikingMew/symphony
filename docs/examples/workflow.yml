@@ -17,7 +17,7 @@ codex:
   turn_sandbox_policy:
     type: "dangerFullAccess"
 polling:
-  interval_ms: 5000
+  interval_ms: 30000
 project:
   checkout_depth: 1
   cleanup_commands: ["mise exec -- mix workspace.before_remove"]

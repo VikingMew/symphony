@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-10-03
+updated: 2026-10-07
 owner: compose.yaml
 ---
 
@@ -12,7 +12,8 @@ owner: compose.yaml
 
 > Linear is the dispatch source and the Panel keeps one active assignment in memory. PostgreSQL
 > runs/events are history, not a recoverable queue. On worker loss, verify no duplicate claim before
-> timeout; after timeout reconciliation fails the old run and returns an eligible issue to Ready.
+> timeout; after timeout reconciliation records an orphan signal but does not move the issue or
+> replace the run.
 > Any later claim must have a new run and assignment ID, and late old-assignment events are rejected.
 
 This L5 guide operates the opt-in Compose service named `execution-worker`. It is the trusted
@@ -156,6 +157,18 @@ error summaries and identifiers.
 
 ## Cancellation drill
 
+To stop new claims and admissions without interrupting the current assignment, run:
+
+```bash
+scripts/listening-off.sh https://panel.example.test
+```
+
+For an authenticated Panel, set `SYMPHONY_PANEL_COOKIE_FILE` to a curl cookie jar. The script is
+idempotent: it posts `{"mode":"off"}` to `/api/v1/control/listening`, verifies the response, and
+prints `not_listening`. Existing assignments continue. Use the existing cancel-current control for
+the selected project, or force-stop when listening must be disabled and the current assignment must
+also be cancelled.
+
 Start a task with a deliberately long non-handoff phase and use **Cancel** for its active task on
 `/workers`. Record cancellation observation time, last phase, terminal state, grace-period timing,
 descendant-reaping result, and cleanup/quarantine path status. Verify no later phase event appears,
@@ -171,9 +184,10 @@ docker compose --env-file .env exec execution-worker sh -lc '
 ## Crash, expiry, and duplicate drill
 
 During an active task, force a worker loss with `docker compose --env-file .env kill
-execution-worker`. Wait for the lease to expire in `/workers`, then recreate the worker. Requeue
-the expired task from `/workers` if policy does not do so automatically. Record that the replacement
-claim has the same task and run attempt, a new lease ID, and lease attempt incremented by one.
+execution-worker`. Wait beyond the lease window and verify Events records `run.orphaned` while the
+Linear issue and running row remain unchanged. Record an explanatory Linear comment, move the issue
+to `Todo`, then recreate the worker and allow one explicit claim. Verify the old run first becomes
+failed with `assignment_expired` evidence and exactly one new run and assignment are created.
 
 After recovery completes, replay the old lease's saved terminal request and the current terminal
 request through the worker-v1 endpoint using a scrubbed test client. Both must be rejected or
@@ -214,7 +228,7 @@ rollback drills described above. Switching the default before those gates pass w
 work or divergent handoff. A later decision may route only new work to `worker` after one redacted
 record demonstrates every gate; centralized rollback remains required.
 The Panel periodically expires stale worker sessions and assignments. A worker keeps a completed
-assignment in its heartbeat while retrying terminal delivery; if its bounded delivery attempts are
-exhausted, renewal stops and the in-memory assignment expires. Reconciliation may return the Linear
-issue to Ready, but no database task is restored or requeued. Late events from the old assignment
-remain fenced by worker, session, and assignment identity.
+assignment in its heartbeat while retrying terminal delivery. Panel 503 responses do not exhaust or
+discard that pending terminal; the worker uses the fixed lifecycle interval until acceptance.
+Reconciliation records an assignment-less run beyond its lease window as an orphan signal but does
+not change Linear or the run. Late events remain fenced by worker, session, and assignment identity.

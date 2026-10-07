@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-10-05
+updated: 2026-10-07
 design_status: landed
 ---
 
@@ -38,6 +38,12 @@ design_status: landed
   `codex.stall_timeout_ms`，代码 default 是 `600000`，但仍显式保存 `300000` 的 installation 不会因
   代码更新自动改变。该 installation 必须在 `/settings/import` 中 Review import、Confirm，再正常
   Save 为 `600000`，并通过应用层重新读取 current workflow 验证；不得直接更新 SQL。
+- `polling.interval_ms` 同样只来自 PostgreSQL current singleton snapshot。显式持久化的 `5000` 或
+  `30000` 会原样成为未来 Orchestrator round 的 interval；只有字段省略时 schema 才补代码 default
+  `30000`。长期推荐值是 `30000`，仓库 example package 只是 Settings / Import 素材，不证明线上当前
+  值。operator 在 `/settings/runtime` 或 `/settings/import` 保存后，重新读取 Settings，并核对
+  `/api/v1/state` 的 `polling.poll_interval_ms`；两者必须等于持久 snapshot。不得用手工 SQL UPDATE
+  发布该值。
 - `RunAdmission.resolve/3` 每次只解析传入的一份 composed workflow snapshot。decision 的 workspace
   authority 来自已选择 execution context；`workspace`、`agent` 与 `codex` limits 只投影 instance
   singleton，repository、default branch、source strategy 与 checkout depth 只投影 project slice。
