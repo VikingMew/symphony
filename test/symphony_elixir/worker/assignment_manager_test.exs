@@ -195,6 +195,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   defmodule FailingCancelPersistence do
+    defdelegate get_event(id), to: FakePersistence
+    defdelegate worker_event_transaction(fun), to: FakePersistence
     defdelegate get_run(id), to: FakePersistence
     defdelegate update_run(run, attrs), to: FakePersistence
     defdelegate worker_lease_duration_seconds(), to: FakePersistence
@@ -901,7 +903,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                context.manager
              )
 
-    assert {:error, :repo_unavailable} =
+    assert {:error, {:event_write_failed, :repo_unavailable}} =
              AssignmentManager.record_event(
                context.worker.id,
                context.session.id,

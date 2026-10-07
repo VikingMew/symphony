@@ -279,7 +279,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     assert %{"error" => %{"code" => "lease_not_active"}} =
              build_conn()
              |> worker_headers(worker_id, session_id)
-             |> post("/api/worker/v1/tasks/fake-task/events", %{"event_type" => "task.completed", "payload" => %{}})
+             |> post("/api/worker/v1/tasks/fake-task/events", %{"event_type" => "task.completed", "payload" => %{"event_id" => Ecto.UUID.generate()}})
              |> json_response(409)
 
     assert Enum.any?(FakePersistence.calls(), fn
@@ -493,7 +493,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
              |> worker_headers("worker", "session")
              |> post("/api/worker/v1/tasks/task-1/events", %{
                "event_type" => "task.completed",
-               "payload" => %{}
+               "payload" => %{"event_id" => Ecto.UUID.generate()}
              })
              |> json_response(409)
   end

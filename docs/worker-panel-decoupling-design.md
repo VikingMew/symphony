@@ -147,10 +147,21 @@ heartbeat 的 HTTP status、`Retry-After`、`worker_api.heartbeat_failed_attempt
 稳定错误码为 `worker_heartbeat_unavailable`，响应包含正数 `retry_after_seconds` 和 `Retry-After`
 header，且不包含 crash stack。该失败只计入内存 `worker_api.heartbeat_failed_attempts`，不创建 queued
 work、新 assignment、failed run 或自动修复动作。
-progress 或 terminal event 必须匹配当前未过期 assignment；不匹配、过期、Panel 重启前的旧 id 都返回明确冲突。
+新的 progress 或 terminal event 必须匹配当前未过期 assignment；不匹配、过期、Panel 重启前的旧 assignment 都返回明确冲突。
 accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `runs`。terminal event 终结
 当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、未清除 blocking decision
 检查、二次校验、新 run 和新 assignment。
+
+事件持久化与租约隔离的规范由 [Worker Event Persistence and Lease Isolation](spec-orchestration.md#worker-event-persistence-and-lease-isolation)
+拥有。实现由 `Worker.EventWriter` 在 supervised task 中调用 persistence transaction；manager 保存
+单个 `event_task` 的 monitor reference 和调用方；终态失败或结果不确定时保留该操作，每秒用同一
+event ID 重试确认。收到提交结果后才通知 orchestrator、确认取消或
+释放 assignment。续约期间修改的 expiry 留在 manager 当前状态中，不用 task 的旧快照覆盖。
+`expire_assignment` 也通过该 writer 收尾；失败后保留 assignment 及本次 expiry event ID，在下次
+过期检查重试。worker client 在发起 HTTP 前生成事件 UUID，Runtime 把终态 UUID 与 terminal payload
+一起保留；持久层复用 `events` 主键去重，无新队列表或 schema migration。该拆分不改变 worker
+Runtime 自身同步执行 HTTP 的方式，也不声称移除了 manager 的所有其他同步依赖。
+
 
 worker 完成本地执行后保留 assignment 与待确认 terminal payload，直到 Panel 接受相同 task/lease 的
 terminal event。Panel 连续返回 503 时沿用固定 `lifecycle_retry_seconds` 间隔；越过原有 max attempts

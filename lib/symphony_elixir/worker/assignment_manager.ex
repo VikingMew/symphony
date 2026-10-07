@@ -20,7 +20,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     Redaction,
     RunAdmission,
     RunFailure,
-    RunLifecycle,
     Tracker,
     WorkerResult,
     WorkflowStore
@@ -29,7 +28,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   alias SymphonyElixir.AgentRunner.Policy
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{DispatchPolicy, Events}
-  alias SymphonyElixir.Worker.HeartbeatHistory
+  alias SymphonyElixir.Worker.{EventWriter, HeartbeatHistory}
 
   @terminal_events ["task.completed", "task.failed", "task.cancelled"]
   @initial_poll_seconds 5
@@ -144,7 +143,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
           {:ok, map()} | {:error, term()}
   def record_event_with_liveness(worker_id, session_id, assignment_id, event_type, payload, attrs, server \\ __MODULE__) do
     if process_alive?(server),
-      do: GenServer.call(server, {:event, worker_id, session_id, assignment_id, event_type, payload, attrs}),
+      do: call_event(server, worker_id, session_id, assignment_id, event_type, payload, attrs),
       else: {:error, :lease_not_active}
   end
 
@@ -191,6 +190,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       reconcile_interval_ms: Keyword.get(opts, :reconcile_interval_ms, 10_000),
       claim_task: nil,
       reconcile_task: nil,
+      event_task: nil,
       empty_claim_streak: 0,
       tracker_error_streak: 0,
       liveness: %{}
@@ -220,6 +220,20 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   @impl true
+  def handle_info({ref, result}, %{event_task: %{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, finish_event_write(state, result)}
+  end
+
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{event_task: %{ref: ref}} = state) do
+    {:noreply, finish_event_write(state, {:error, {:event_writer_exit, reason}})}
+  end
+
+  def handle_info({:retry_terminal_write, ref}, %{event_task: %{ref: ref} = operation} = state) do
+    admission = admit_worker_event(state, operation.request)
+    {:noreply, start_event_write(state, operation.request, admission, nil, :event)}
+  end
+
   def handle_info(:reconcile, state) do
     state = start_reconciliation(state)
     schedule_reconciliation(state)
@@ -344,38 +358,174 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  def handle_call({:event, worker_id, session_id, assignment_id, event_type, payload, attrs}, _from, state) do
+  def handle_call({:event, _worker_id, _session_id, _assignment_id, _event_type, _payload, _attrs}, _from, %{event_task: %{kind: :expiry}} = state) do
+    {:reply, {:error, :lease_not_active}, state}
+  end
+
+  def handle_call({:event, _worker_id, _session_id, _assignment_id, _event_type, _payload, _attrs}, _from, %{event_task: %{}} = state) do
+    {:reply, {:error, :event_write_busy}, state}
+  end
+
+  def handle_call({:event, worker_id, session_id, assignment_id, event_type, payload, attrs}, from, state) do
     state = expire_assignment(state)
     state = observe_request_liveness(state, worker_id, session_id, attrs)
 
-    case matching_assignment(state.assignment, worker_id, session_id, assignment_id) do
-      {:ok, assignment} ->
-        with :ok <- validate_correlation(payload, assignment.correlation),
-             {:ok, summary} <- WorkerResult.validate_event(event_type, payload),
-             terminal = terminal_result(event_type, summary),
-             terminal_payload = terminal_event_payload(payload, terminal),
-             {:ok, event} <- persist_event(state.persistence, assignment, event_type, terminal_payload, summary),
-             :ok <- transition_run(state.persistence, assignment.run_id, event_type, terminal, summary),
-             :ok <- persist_terminal_run_event(state.persistence, assignment, event_type, terminal, summary) do
-          record_environment_failure_circuit(state, assignment, event_type, terminal)
-          notify_orchestrator(state, assignment, event_type, event_payload_with_time(payload, event), terminal)
-          state = complete_pending_cancellation(state, assignment, event_type, :ok)
-          {:reply, {:ok, event}, %{state | assignment: assignment_after_event(state, event_type)}}
-        else
-          {:error, {:invalid_worker_summary, _message} = reason} when event_type in @terminal_events ->
-            state = remember_terminal_rejection(state, assignment, event_type, payload, reason)
-            state = complete_pending_cancellation(state, state.assignment, event_type, {:error, reason})
-            {:reply, {:error, reason}, state}
+    request = %{
+      id: Map.fetch!(payload, "event_id"),
+      worker_id: worker_id,
+      session_id: session_id,
+      assignment_id: assignment_id,
+      event_type: event_type,
+      payload: Map.delete(payload, "event_id")
+    }
 
-          {:error, reason} ->
-            state = complete_pending_cancellation(state, assignment, event_type, {:error, reason})
-            {:reply, {:error, reason}, state}
-        end
+    if state.event_task,
+      do: {:reply, {:error, :lease_not_active}, state},
+      else: prepare_event_write(state, request, from)
+  end
+
+  defp prepare_event_write(state, request, from) do
+    admission = admit_worker_event(state, request)
+
+    case WorkerResult.validate_event(request.event_type, request.payload) do
+      {:ok, summary} ->
+        request = Map.merge(request, %{summary: summary, terminal: terminal_result(request.event_type, summary)})
+        {:noreply, start_event_write(state, request, admission, from, :event)}
 
       {:error, reason} ->
-        {:reply, {:error, reason}, state}
+        state = reject_event(state, request, reason)
+
+        result =
+          case admission do
+            {:ok, _assignment} -> {:error, reason}
+            {:error, _reason} = error -> error
+          end
+
+        {:reply, result, state}
     end
   end
+
+  defp admit_worker_event(state, request) do
+    id = request.assignment_id
+
+    with {:ok, assignment} <- matching_assignment(state.assignment, request.worker_id, request.session_id, id),
+         :ok <- validate_correlation(request.payload, assignment.correlation) do
+      {:ok, assignment}
+    end
+  end
+
+  defp call_event(server, worker_id, session_id, assignment_id, event_type, payload, attrs) do
+    payload = payload |> Jason.encode!() |> Jason.decode!() |> Map.put_new_lazy("event_id", &Ecto.UUID.generate/0)
+
+    case Ecto.UUID.cast(payload["event_id"]) do
+      {:ok, id} ->
+        try do
+          GenServer.call(server, {:event, worker_id, session_id, assignment_id, event_type, Map.put(payload, "event_id", id), attrs})
+        catch
+          :exit, {:timeout, _call} -> {:error, :event_write_timeout}
+        end
+
+      :error ->
+        {:error, :invalid_event_id}
+    end
+  end
+
+  defp reject_event(state, %{event_type: type} = request, {:invalid_worker_summary, _message} = reason)
+       when type in @terminal_events do
+    case admit_worker_event(state, request) do
+      {:ok, assignment} ->
+        state = remember_terminal_rejection(state, assignment, type, request.payload, reason)
+        complete_pending_cancellation(state, state.assignment, type, {:error, reason})
+
+      {:error, _reason} ->
+        state
+    end
+  end
+
+  defp reject_event(state, _request, _reason), do: state
+
+  defp start_event_write(state, request, admission, from, kind) do
+    task =
+      Task.Supervisor.async_nolink(state.task_supervisor, fn ->
+        result = EventWriter.write(state.persistence, request, admission)
+
+        case {kind, result, admission} do
+          {:event, {:ok, {_event, :written}}, {:ok, assignment}} ->
+            record_environment_failure_circuit(state, assignment, request.event_type, request.terminal)
+
+          _ ->
+            :ok
+        end
+
+        result
+      end)
+
+    %{state | event_task: %{ref: task.ref, request: request, from: from, kind: kind}}
+  end
+
+  defp finish_event_write(state, {:ok, {event, _disposition}}) do
+    operation = state.event_task
+    request = operation.request
+    state = %{state | event_task: nil}
+
+    state =
+      case state.assignment do
+        %{id: id} = assignment when id == request.assignment_id ->
+          payload = event_payload_with_time(request.payload, event)
+          notify_orchestrator(state, assignment, request.event_type, payload, request.terminal)
+          state = complete_pending_cancellation(state, assignment, request.event_type, :ok)
+          %{state | assignment: assignment_after_event(state, request.event_type)}
+
+        _ ->
+          state
+      end
+
+    if operation.from, do: GenServer.reply(operation.from, {:ok, event})
+    expire_assignment(state)
+  end
+
+  defp finish_event_write(state, {:error, reason}) do
+    operation = state.event_task
+    request = operation.request
+
+    Logger.error(
+      "event=worker_event_write_failed #{event_write_context(state.assignment, request.assignment_id)} task_id=#{request.assignment_id} worker_id=#{request.worker_id} worker_session_id=#{request.session_id} event_id=#{request.id} event_type=#{request.event_type} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+    )
+
+    if operation.from, do: GenServer.reply(operation.from, event_write_error(reason))
+    state = %{state | event_task: nil}
+
+    state =
+      case admit_worker_event(state, request) do
+        {:ok, assignment} -> complete_pending_cancellation(state, assignment, request.event_type, {:error, reason})
+        {:error, _reason} -> state
+      end
+
+    retry_failed_terminal(state, operation, event_write_error(reason))
+  end
+
+  defp event_write_context(%{id: id} = assignment, id) do
+    "issue_id=#{assignment.issue.id} issue_identifier=#{assignment.issue_identifier} run_id=#{assignment.run_id}"
+  end
+
+  defp event_write_context(_assignment, _id), do: "issue_id=n/a issue_identifier=n/a run_id=n/a"
+
+  defp retry_failed_terminal(state, %{kind: :event, request: %{terminal: terminal}} = operation, {:error, {:event_write_failed, _reason}}) when not is_nil(terminal) do
+    case admit_worker_event(state, operation.request) do
+      {:ok, _assignment} ->
+        Process.send_after(self(), {:retry_terminal_write, operation.ref}, 1_000)
+        %{state | event_task: %{operation | from: nil}}
+
+      {:error, _reason} ->
+        state
+    end
+  end
+
+  defp retry_failed_terminal(state, _operation, _error), do: state
+
+  defp event_write_error(reason) when reason in [:lease_not_active, :event_id_conflict], do: {:error, reason}
+  defp event_write_error({:correlation_mismatch, _field} = reason), do: {:error, reason}
+  defp event_write_error(reason), do: {:error, {:event_write_failed, reason}}
 
   defp start_claim(state, from, worker, session, listening_mode, max_concurrent_agents) do
     manager = self()
@@ -885,26 +1035,25 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp expire_assignment(%{assignment: nil} = state), do: state
+  defp expire_assignment(%{event_task: %{}} = state), do: state
 
   defp expire_assignment(state) do
     if DateTime.compare(state.assignment.expires_at, state.now.()) == :lt do
-      assignment = state.assignment
+      assignment = Map.put_new_lazy(state.assignment, :expiry_event_id, &Ecto.UUID.generate/0)
       failure = assignment_expiry_failure(assignment)
 
-      _ = transition_run(state.persistence, assignment.run_id, "task.failed", failure, nil)
-      _ = persist_terminal_run_event(state.persistence, assignment, "task.failed", failure, nil)
+      request = %{
+        id: assignment.expiry_event_id,
+        worker_id: assignment.worker_id,
+        session_id: assignment.session_id,
+        assignment_id: assignment.id,
+        event_type: "task.failed",
+        payload: %{"reason" => "assignment_expired"},
+        summary: nil,
+        terminal: failure
+      }
 
-      _ =
-        persist_event(
-          state.persistence,
-          assignment,
-          "task.failed",
-          terminal_event_payload(%{"reason" => "assignment_expired"}, failure),
-          nil
-        )
-
-      notify_worker_terminal(state, assignment, {:failed, failure})
-      %{state | assignment: nil}
+      start_event_write(%{state | assignment: assignment}, request, {:ok, assignment}, nil, :expiry)
     else
       state
     end
@@ -991,11 +1140,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       else: {:error, :lease_not_active}
   end
 
-  defp persist_event(persistence, assignment, event_type, payload, summary) do
-    event_payload = payload |> stringify_keys() |> Map.put("correlation", assignment.correlation) |> maybe_put_summary(summary)
-    persistence.record_event(assignment_event(assignment, event_type, event_payload))
-  end
-
   defp assignment_event(assignment, event_type, payload) do
     %{
       project_id: assignment.project_id,
@@ -1004,20 +1148,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
       event_type: event_type,
       payload: Map.put_new(payload, "correlation", assignment.correlation)
     }
-  end
-
-  defp transition_run(_persistence, _run_id, event_type, nil, _summary)
-       when event_type not in @terminal_events,
-       do: :ok
-
-  defp transition_run(persistence, run_id, event_type, terminal, summary) do
-    status = terminal_status(event_type, terminal, summary)
-    attrs = if summary, do: %{execution_summary: summary}, else: %{}
-
-    case RunLifecycle.finish_run(persistence, run_id, status, terminal, attrs: attrs) do
-      {:ok, _run} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
   end
 
   defp close_failed_run(persistence, run_id, reason) do
@@ -1294,43 +1424,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp terminal_result(event_type, _summary) when event_type not in @terminal_events, do: nil
 
-  defp terminal_status("task.completed", :completed, _summary), do: "completed"
-  defp terminal_status("task.failed", :completed, _summary), do: "completed"
-  defp terminal_status("task.failed", %RunFailure{classification: "cancelled"}, _summary), do: "cancelled"
-  defp terminal_status("task.failed", %RunFailure{}, %{"outcome" => "blocked"}), do: "blocked"
-  defp terminal_status("task.failed", %RunFailure{}, _summary), do: "failed"
-  defp terminal_status("task.cancelled", %RunFailure{classification: "cancelled"}, _summary), do: "cancelled"
-
-  defp persist_terminal_run_event(_persistence, _assignment, event_type, nil, _summary)
-       when event_type not in @terminal_events,
-       do: :ok
-
-  defp persist_terminal_run_event(persistence, assignment, event_type, terminal, summary) do
-    status = terminal_status(event_type, terminal, summary)
-    fields = RunFailure.terminal_fields(terminal)
-
-    attrs =
-      assignment_event(assignment, "run.#{status}", %{
-        "failure_reason" => fields.failure_reason,
-        "failure_evidence" => fields.failure_evidence
-      })
-
-    case persistence.record_event(attrs) do
-      {:ok, _event} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp terminal_event_payload(payload, nil), do: payload
-
-  defp terminal_event_payload(payload, terminal) do
-    fields = RunFailure.terminal_fields(terminal)
-
-    payload
-    |> Map.put("failure_reason", fields.failure_reason)
-    |> Map.put("failure_evidence", fields.failure_evidence)
-  end
-
   defp validate_correlation(payload, correlation) do
     validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)
   end
@@ -1343,9 +1436,6 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end)
   end
 
-  defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {to_string(key), value} end)
-  defp maybe_put_summary(payload, nil), do: payload
-  defp maybe_put_summary(payload, summary), do: Map.put(payload, "summary", summary)
   defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
   defp process_alive?(server), do: GenServer.whereis(server) != nil
 

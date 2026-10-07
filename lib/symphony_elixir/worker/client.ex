@@ -28,6 +28,7 @@ defmodule SymphonyElixir.Worker.Client do
 
   @spec event(Config.t(), map(), String.t(), String.t(), map()) :: {:ok, map()} | {:error, term()}
   def event(config, identity, task_id, event_type, payload) do
+    payload = Map.put_new_lazy(payload, "event_id", &Ecto.UUID.generate/0)
     request(config, :post, "/api/worker/v1/tasks/#{task_id}/events", json: Map.merge(identity, %{task_id: task_id, event_type: event_type, payload: payload}))
   end
 

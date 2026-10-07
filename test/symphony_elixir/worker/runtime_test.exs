@@ -324,6 +324,10 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     send(runtime, {:retry_terminal, "task-1"})
     eventually(fn -> terminal_count("task-1") == 4 end)
+    ids = for {"task-1", "task.completed", payload} <- state().events, do: payload["event_id"]
+    assert [id] = Enum.uniq(ids)
+    assert {:ok, ^id} = Ecto.UUID.cast(id)
+
     send(runtime, :heartbeat)
     eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == [])) end)
   end

@@ -21,6 +21,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerExpiryTest do
     expire_assignment(context)
     assert_late_event_rejected(context, assignment)
 
+    assert_receive {:"$gen_cast", {:worker_task_finished, "issue-126", {:failed, _failure}}}, 1_000
     run = FakePersistence.get_run(assignment.run_id)
     assert run.failure_reason == "worker_process_termination"
     assert run.failure_evidence == %{"phase" => "lease", "reason" => "assignment_expired"}
@@ -62,6 +63,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerExpiryTest do
     expire_assignment(context)
     assert_late_event_rejected(context, assignment)
 
+    assert_receive {:"$gen_cast", {:worker_task_finished, "issue-126", {:failed, %RunFailure{} = failure}}}, 1_000
+    assert failure.classification == "assignment_expired"
+    evidence = failure.evidence
     run = FakePersistence.get_run(assignment.run_id)
     assert run.failure_reason == "assignment_expired"
     assert run.failure_evidence["reason"] == "assignment_expired"
@@ -72,9 +76,6 @@ defmodule SymphonyElixir.Worker.AssignmentManagerExpiryTest do
     refute inspect(run.failure_evidence) =~ "/tmp/worker"
     refute inspect(run.failure_evidence) =~ "super-secret"
     assert_terminal_history(assignment, run)
-
-    assert_receive {:"$gen_cast", {:worker_task_finished, "issue-126", {:failed, %RunFailure{classification: "assignment_expired", evidence: evidence}}}},
-                   1_000
 
     assert evidence == run.failure_evidence
   end

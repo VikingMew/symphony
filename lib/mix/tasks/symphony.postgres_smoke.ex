@@ -796,6 +796,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         })
 
       concurrent_event_writes!(project.id, run.id)
+      verify_worker_event_transaction!(project, run)
 
       {:ok, marker} =
         Persistence.record_event(%{
@@ -822,6 +823,46 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
       Mix.shell().info("smoke sqlite_unknown_status_rejected=PASS")
     end)
+  end
+
+  defp verify_worker_event_transaction!(project, run) do
+    alias SymphonyElixir.Worker.EventWriter
+
+    assignment = %{
+      project_id: project.id,
+      run_id: run.id,
+      issue_identifier: run.issue_identifier,
+      correlation: %{"worker_id" => "smoke-worker", "worker_session_id" => "smoke-session", "assignment_id" => "smoke-assignment"}
+    }
+
+    request = %{
+      id: Ecto.UUID.generate(),
+      worker_id: "smoke-worker",
+      session_id: "smoke-session",
+      assignment_id: "smoke-assignment",
+      event_type: "task.completed",
+      payload: %{},
+      summary: nil,
+      terminal: :completed
+    }
+
+    # A failure after both history writes and the run update rolls back the entire worker delivery.
+    {:error, :injected_commit_failure} =
+      Persistence.worker_event_transaction(fn ->
+        {:ok, {_event, :written}} = EventWriter.write(Persistence, request, {:ok, assignment})
+        {:error, :injected_commit_failure}
+      end)
+
+    nil = Persistence.get_event(request.id)
+    %{status: "running"} = Persistence.get_run(run.id)
+    [] = Persistence.list_events(run_id: run.id, event_type: "run.completed")
+
+    {:ok, {event, :written}} = EventWriter.write(Persistence, request, {:ok, assignment})
+    {:ok, {^event, :replayed}} = EventWriter.write(Persistence, request, {:error, :lease_not_active})
+    %{status: "completed"} = Persistence.get_run(run.id)
+    [_event] = Persistence.list_events(run_id: run.id, event_type: "run.completed")
+    {:error, :event_id_conflict} = EventWriter.write(Persistence, %{request | worker_id: "other-worker"}, {:error, :lease_not_active})
+    Mix.shell().info("smoke worker_event_atomicity_and_replay=PASS")
   end
 
   defp concurrent_event_writes!(project_id, run_id) do

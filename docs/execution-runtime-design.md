@@ -267,6 +267,10 @@ Panel returns HTTP 503 with `worker_heartbeat_unavailable`, `retry_after_seconds
 `Retry-After`; worker/session history-write delay or failure cannot produce that response and does
 not create a task, assignment, run failure, metric increment, or repair action.
 
+Event and expiry database writes also run in supervised tasks, independently of lease renewal.
+Their ordering, commit acknowledgement, retry identity, and expiry race rules are owned by
+[Worker Event Persistence and Lease Isolation](spec-orchestration.md#worker-event-persistence-and-lease-isolation).
+
 A terminal failure, worker loss, or expiry ends the run and assignment. There is no task requeue. A
 later run can start only after a new live Linear claim proves the issue eligible. Every persistent
 blocker producer uses `BlockingDecision.new/6` with the live Linear state and owning non-empty run

@@ -267,6 +267,38 @@ and leave the Orchestrator process and listening mode unchanged. The next refres
 in-memory liveness again. Other exits remain explicit failures, and centralized capacity behavior
 is unchanged.
 
+#### Worker Event Persistence and Lease Isolation
+
+The assignment manager MUST execute worker event persistence and expiry persistence outside its
+mailbox callbacks. It permits one event write in flight; additional event submissions receive
+retryable HTTP 503 `worker_event_unavailable`, with `Retry-After` and `retry_after_seconds` set to 1.
+Active heartbeats continue to apply the existing in-memory ownership and unexpired-lease checks.
+A completed write MUST preserve any intervening lease renewal or cancellation state.
+
+The worker event, terminal run update through `RunLifecycle`, and terminal run history event MUST
+commit in one PostgreSQL transaction. The Panel acknowledges an event only after commit. The
+5000 ms event-call budget returns the same retryable 503 without cancelling the write: an HTTP
+timeout is not evidence of a database rollback. Database errors and writer exits are logged with
+delivery context and surfaced as retryable failures; failed expiry persistence retains assignment
+ownership and retries on the next expiry check instead of releasing capacity.
+
+Worker-v1 event requests MUST include a UUID `payload.event_id`. The worker generates it before
+HTTP retries, and retains it across terminal delivery attempts. This identifier is the persisted
+`events.id`, whose primary key prevents duplicate insertion. A committed retry returns the original
+acknowledgement only when worker, session, assignment, event type, and normalized payload match.
+Reuse for another delivery is HTTP 409 `event_id_conflict`. Missing or invalid IDs are HTTP 422
+`invalid_event_id`. A matching committed receipt can be acknowledged after assignment completion
+or Panel restart; it does not recreate an assignment, update the run again, or republish a terminal
+notification after ownership has been released. New events still require a current matching lease.
+
+An admitted terminal write retains the assignment until its result is known and takes precedence
+over subsequent lease expiry. A failed or uncertain terminal write retains ownership and retries
+the same event ID after one second; a committed receipt resolves the outcome before any expiry
+write is allowed. Expiry cannot run concurrently with that write. An admitted progress
+write finishes before an overdue assignment starts expiry persistence. Once expiry persistence
+starts, late events are rejected and expired leases cannot be renewed. The Panel holds no unbounded
+queue of pending event writes and never interprets persisted events as executable work.
+
 #### 8.3.1 Run Admission Decision
 
 `SymphonyElixir.RunAdmission.execution_mode/0` is the only Orchestrator deployment-mode projection.

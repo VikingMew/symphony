@@ -634,6 +634,10 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     Agent.get(@name, & &1.events)
   end
 
+  def get_event(id), do: Agent.get(@name, fn state -> Enum.find(state.events, &(&1.id == id)) end)
+
+  def worker_event_transaction(fun), do: fun.()
+
   def record_event(attrs) when is_map(attrs) do
     ensure_started()
 

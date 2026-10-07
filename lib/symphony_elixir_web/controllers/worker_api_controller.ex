@@ -88,6 +88,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec task_event(Conn.t(), map()) :: Conn.t()
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
+         :ok <- validate_event_id(event_payload(params)),
          {:ok, event} <-
            AssignmentManager.record_event_with_liveness(
              worker_id,
@@ -187,8 +188,29 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     })
   end
 
+  defp worker_error(conn, reason) when reason in [:event_write_busy, :event_write_timeout] do
+    event_write_unavailable(conn)
+  end
+
+  defp worker_error(conn, :invalid_event_id) do
+    error_response(conn, 422, "invalid_event_id", "payload.event_id must be a UUID retained across retries")
+  end
+
+  defp worker_error(conn, :event_id_conflict) do
+    error_response(conn, 409, "event_id_conflict", "Event ID belongs to a different delivery")
+  end
+
+  defp worker_error(conn, {:event_write_failed, _reason}), do: event_write_unavailable(conn)
+
   defp worker_error(conn, reason) do
     error_response(conn, 422, "worker_api_error", inspect(reason))
+  end
+
+  defp event_write_unavailable(conn) do
+    conn
+    |> put_resp_header("retry-after", "1")
+    |> put_status(503)
+    |> json(%{error: %{code: "worker_event_unavailable", message: "Worker event persistence is unavailable"}, retry_after_seconds: 1})
   end
 
   defp claim_error(conn, {:linear_api_status, 429, body}, poll_after_seconds) do
@@ -213,6 +235,13 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     conn
     |> put_status(status)
     |> json(%{error: %{code: code, message: message}, poll_after_seconds: poll_after_seconds})
+  end
+
+  defp validate_event_id(payload) do
+    case Ecto.UUID.cast(Map.get(payload, "event_id")) do
+      {:ok, _id} -> :ok
+      :error -> {:error, :invalid_event_id}
+    end
   end
 
   defp event_payload(params) do

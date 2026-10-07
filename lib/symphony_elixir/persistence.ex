@@ -301,6 +301,21 @@ defmodule SymphonyElixir.Persistence do
     end)
   end
 
+  @spec get_event(String.t()) :: EventRecord.t() | nil | {:error, read_error()}
+  def get_event(id), do: read(fn -> Repo.get(EventRecord, id) end)
+
+  @spec worker_event_transaction((-> {:ok, term()} | {:error, term()})) :: {:ok, term()} | {:error, term()}
+  def worker_event_transaction(fun) do
+    if repo_available?() do
+      Repo.transaction(fn -> worker_event_result(fun.()) end)
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
+  defp worker_event_result({:ok, result}), do: result
+  defp worker_event_result({:error, reason}), do: Repo.rollback(reason)
+
   @spec record_event(map()) :: {:ok, EventRecord.t()} | {:error, term()}
   def record_event(attrs) do
     if repo_available?() do

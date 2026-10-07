@@ -263,7 +263,7 @@ defmodule SymphonyElixir.Worker.Runtime do
             phase: :delivering_terminal,
             watchdog: nil,
             terminal_type: event_type,
-            terminal_payload: %{summary: terminal_summary(result, state.config, active.claim)},
+            terminal_payload: %{"event_id" => Ecto.UUID.generate(), summary: terminal_summary(result, state.config, active.claim)},
             attempts: 0
           })
 
