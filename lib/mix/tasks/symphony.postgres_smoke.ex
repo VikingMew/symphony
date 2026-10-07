@@ -797,6 +797,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
       concurrent_event_writes!(project.id, run.id)
       verify_worker_event_transaction!(project, run)
+      verify_claim_run_identity!(project)
 
       {:ok, marker} =
         Persistence.record_event(%{
@@ -823,6 +824,17 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
       Mix.shell().info("smoke sqlite_unknown_status_rejected=PASS")
     end)
+  end
+
+  defp verify_claim_run_identity!(project) do
+    run_id = Ecto.UUID.generate()
+    issue_attrs = %{project_id: project.id, identifier: "SMOKE-CLAIM", title: "Stable claim identity"}
+    run_attrs = %{id: run_id, project_id: project.id, issue_identifier: "SMOKE-CLAIM", status: "running"}
+    {:ok, %{run: %{id: ^run_id}}} = Persistence.admit_issue_run(issue_attrs, run_attrs)
+    %{id: ^run_id, status: "running"} = Persistence.get_run(run_id)
+    {:error, {:active_run, ^run_id}} = Persistence.admit_issue_run(issue_attrs, run_attrs)
+    {:ok, _run} = Persistence.finish_run(run_id, "completed", :completed)
+    Mix.shell().info("smoke claim_run_identity=PASS")
   end
 
   defp verify_worker_event_transaction!(project, run) do

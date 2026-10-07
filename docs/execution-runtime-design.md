@@ -44,12 +44,14 @@ listening mode before any Linear candidate read. `not_listening` returns an empt
 by centralized dispatch, so an earlier implementation candidate cannot hide a later refinement
 candidate; `listening_all` admits both profiles. An admitted claim is then created from a live Linear
 candidate read, absence of an uncleared persisted `blocking_decision`, and a second
-state/dependency/routing/listening/blocking-decision check. Candidate fetch, revalidation, and the
-started-state write run in one supervised task under a 5000 ms budget, while the assignment manager
-retains the single in-flight claim reservation and continues serving lease and event calls. A
-timeout terminates that task and returns the existing `{:linear_api_request, :timeout}` tracker
-failure with 30/60-second poll backoff; the public manager claim uses a bounded 6000 ms call timeout
-instead of `:infinity`. The Panel
+state/dependency/routing/listening/blocking-decision check. Claim preparation and side-effect commit run in separate supervised tasks under a single
+in-flight reservation. Preparation retains its 5000 ms deadline; an uncertain commit retains stable
+run/assignment/event identities until confirmed instead of being killed by that deadline. The
+6000 ms public call can return `worker_claim_pending` while the commit continues. Repeated claims by
+the owning worker/session recover the same published lease. See the owning
+[claim design](worker-panel-decoupling-design.md) and
+[normative contract](spec-orchestration.md#worker-claim-preparation-and-commit) for timeout, retry,
+stop, and stage-observability semantics. The Panel
 derives the worker started state from the single `AgentRunner.Policy` profile-to-started-state
 contract: refinement claims validate and apply `Todo -> Refining`, while implementation claims
 validate and apply `Ready -> In Progress`. The assignment is returned only after that Linear state

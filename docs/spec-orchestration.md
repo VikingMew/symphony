@@ -175,9 +175,36 @@ Worker HTTP claim and listening controls share the Orchestrator mailbox. `not_li
 empty claim before tracker access and all run, issue-transition, assignment, and accepted-event side
 effects. In refine-only mode the listening check is part of sorted candidate admission, so a filtered
 implementation candidate does not stop selection of a later refinement candidate. The second issue
-read repeats listening admission before assignment creation. A successful stop response is ordered
-after any earlier in-flight claim and before every later claim; it does not cancel an assignment
-that already exists.
+read repeats listening admission before assignment creation. A successful stop response gates later
+claims. An earlier admitted commit may finish after its
+HTTP caller times out and after stop is acknowledged; ordinary stop does not revoke that commit
+or cancel an existing assignment.
+
+### Worker claim preparation and commit
+
+- One in-memory reservation MUST cover both preparation and commit; concurrent claim requests
+  MUST NOT start another claim while that reservation exists.
+- Preparation (candidate read, history admission, second issue read, execution admission) has a
+  5000 ms total deadline. A preparation timeout MUST identify its active stage and MUST NOT be
+  mislabeled as a Linear timeout when the pending operation is a database read.
+- Commit MUST allocate stable run, assignment, and accepted-event identities before its first
+  write. The preparation timer MUST NOT terminate commit. Adapter I/O deadlines still apply.
+- An uncertain write or task exit MUST retain commit ownership. Recovery MUST look up the same
+  run, confirm the current tracker state before retrying transition, and deduplicate the accepted
+  event by its identity. Confirmed transition rejection MUST finish the admitted run as failed;
+  an uncertain failure write MUST also retain ownership until confirmed. Recovery uses 30/60-second
+  backoff and MUST NOT create a replacement identity merely because a response was lost.
+- The public claim call waits at most 6000 ms. A timeout returns retryable `worker_claim_pending`
+  while the admitted commit continues. Force stop during unresolved commit MUST report
+  `claim_commit_pending` rather than claim that cancellation completed or no work exists.
+- Lease time starts at publication. A repeated positive-slot claim from the same worker/session
+  MUST return its existing unexpired assignment unless cancellation or event persistence is in
+  progress. Replay MUST NOT create a run, accepted event, or second orchestrator notification.
+- Every preparation and commit stage records claim/worker/session identity, phase, stage, result
+  status, and elapsed milliseconds; issue identity is included once known. A task failure or
+  deadline log identifies the last stage. Candidate reads and history reads MUST be distinguishable.
+- The reservation is ephemeral. Panel restart uses the existing orphan-run reconciliation policy;
+  it does not replay a persisted work queue.
 
 Candidate selection and the second tracker read also apply one persisted-decision validity rule. A
 decision with `transition_status = completed` expects live state `Blocked`; otherwise it expects its

@@ -45,7 +45,7 @@ no-op. It never invokes the convergence migration's `down/0`.
 After the migration scenarios, the same command checks PostgreSQL column/constraint/index types,
 creates a legacy SQLite fixture, imports all application tables, verifies relationships and active
 workflow state, exercises representative persistence operations, performs 200 concurrent event
-writes, and proves another write/read succeeds afterward. It also verifies rollback of worker event/run/terminal-history writes as one transaction, committed receipt replay, and rejection of a different worker reusing an event ID. It also proves the importer rejects a
+writes, and proves another write/read succeeds afterward. It also verifies rollback of worker event/run/terminal-history writes as one transaction, committed receipt replay, and rejection of a different worker reusing an event ID. The smoke also verifies that run admission preserves a preallocated claim UUID and rejects a second admission against the same active run. It also proves the importer rejects a
 non-empty target.
 
 The blocking-decision portion creates four synthetic legacy rows shaped like the recorded

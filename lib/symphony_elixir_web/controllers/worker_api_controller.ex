@@ -213,6 +213,18 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     |> json(%{error: %{code: "worker_event_unavailable", message: "Worker event persistence is unavailable"}, retry_after_seconds: 1})
   end
 
+  defp claim_error(conn, :claim_pending, poll_after_seconds) do
+    error_response(conn, 503, "worker_claim_pending", "Claim is still committing; retry with the same worker session", poll_after_seconds)
+  end
+
+  defp claim_error(conn, {:claim_prepare_timeout, stage}, poll_after_seconds) do
+    error_response(conn, 503, "worker_claim_prepare_timeout", "Claim preparation exceeded its budget at #{stage}", poll_after_seconds)
+  end
+
+  defp claim_error(conn, {:claim_prepare_failed, stage, _reason}, poll_after_seconds) do
+    error_response(conn, 503, "worker_claim_prepare_failed", "Claim preparation failed at #{stage}", poll_after_seconds)
+  end
+
   defp claim_error(conn, {:linear_api_status, 429, body}, poll_after_seconds) do
     error_response(conn, 429, "linear_rate_limited", inspect(body), poll_after_seconds)
   end

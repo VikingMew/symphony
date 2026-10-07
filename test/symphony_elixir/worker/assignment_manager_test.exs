@@ -253,8 +253,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     first_claim = Task.async(fn -> claim(context) end)
     second_claim = Task.async(fn -> claim(context) end)
     results = Enum.map([first_claim, second_claim], &Task.await/1)
-    assert Enum.count(results, &match?({:ok, %{}}, &1)) == 1
-    assert Enum.count(results, &(&1 == {:ok, {:empty, 5}})) == 1
+    assigned = for {:ok, %{} = assignment} <- results, do: assignment
+    assert length(Enum.uniq_by(assigned, & &1.id)) == 1
+    assert Enum.all?(results, &(match?({:ok, %{}}, &1) or &1 == {:ok, {:empty, 5}}))
 
     {:ok, first} = Enum.find(results, &match?({:ok, %{}}, &1))
     complete(context, first)
@@ -1119,7 +1120,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert log =~ "event=worker_reconcile_tracker_timeout"
   end
 
-  test "claim tracker timeout is bounded without occupying the manager mailbox", context do
+  test "claim preparation timeout names its stage without occupying the manager mailbox", context do
     Application.put_env(:symphony_elixir, :assignment_test_owner, self())
 
     Application.put_env(:symphony_elixir, :assignment_test_fetch_hook, fn ->
@@ -1167,7 +1168,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert_receive {:claim_fetch_blocked, blocked_pid}, 500
     assert AssignmentManager.available_worker_slots(manager) == 1
-    assert {:error, {:linear_api_request, :timeout}, 30} = Task.await(claim, 500)
+    assert {:error, {:claim_prepare_timeout, :candidate_fetch}, 30} = Task.await(claim, 500)
     eventually(fn -> not Process.alive?(blocked_pid) end)
   end
 

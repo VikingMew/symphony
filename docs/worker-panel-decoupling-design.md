@@ -15,14 +15,24 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 历史，但不保存待执行工作。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
-Orchestrator mailbox；Orchestrator 以当下持有的 `listening_mode` 完成整次 claim 调用后才处理下一条
-start/stop 控制消息。`AssignmentManager` 不持久化或缓存另一份 mode。它串行处理已经通过该边界的
-claim，因此同一 Panel 实例同一时刻最多发布一个 assignment。通过快速准入的 claim 将 Linear
-candidate fetch、二次校验与 started-state 更新交给一个 supervised task；manager 只保存单个
-in-flight claim 的 ownership，并在结果回投后发布 assignment。同一时刻到达的其他 claim 以现有
-`active_assignment` 空结果返回。task 的 5000 ms 预算超时会终止该 task，并复用
-`{:linear_api_request, :timeout}` 与 30/60 秒 tracker backoff；公开 claim call 使用 6000 ms 有界 timeout，
-不再以 `:infinity` 占用调用方。`AssignmentManager` 同时拥有
+Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。
+claim 分为准备与提交两个 supervised task 阶段，始终保留单个 in-flight ownership，其他领取请求
+返回 `active_assignment` 空结果，心跳与事件上报继续由 manager 处理。
+准备阶段包括候选查询、历史过滤、二次校验和 execution admission，仍使用 5000 ms 总预算；
+超时只终止准备 task，返回带具体阶段的 `claim_prepare_timeout`，按 30/60 秒退避。
+提交阶段持有固定 run、assignment 和 accepted-event UUID，执行原子 run admission、Linear
+started-state 更新和 accepted event 写入。已开始的副作用不受准备阶段总计时器影响；各次 I/O
+沿用 adapter 自身 timeout。结果不确定时保留 ownership 并按 30/60 秒重试：先查询同一个 run，
+重新读取 Linear 状态确认迁移结果，按固定 event id 去重，不另建 run 或 assignment。
+公开 claim call 仍最多等待 6000 ms，超时返回 `worker_claim_pending`，后台继续提交。
+因此普通 stop 关闭后续准入，但不撤销此前已准入的提交；force stop 遇到未确认的提交会明确返回
+`claim_commit_pending` 失败，不能误报已无工作。发布时才开始租约计时，原 worker/session 的
+重复领取返回同一个未过期 assignment，不重复创建 run、写 accepted event 或通知 Orchestrator。
+各阶段记录 `worker_claim_stage` 的 phase、stage、elapsed_ms、claim 和 worker/session 标识；
+候选查询与 run-history 读取、run admission、Linear transition 的耗时可分别定位。
+候选过滤与二次校验各自只读取一次所需的最新 run history，并显式返回数据库读取错误。
+规范边界见 [worker claim preparation and commit](spec-orchestration.md#worker-claim-preparation-and-commit)。
+`AssignmentManager` 同时拥有
 Panel 内存中的 worker/session liveness：每个 entry 以 worker/session 为 key，保存最近一次
 `last_seen_at`、worker/session 身份以及 registration 广告的 `total_slots`。该 entry 只有在
 `last_seen_at` 落在 `worker_heartbeat_interval_seconds() * 3` 窗口内才 fresh；超过窗口即 stale，

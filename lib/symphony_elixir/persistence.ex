@@ -215,7 +215,7 @@ defmodule SymphonyElixir.Persistence do
           |> Map.put_new(:status, "running")
           |> Map.put_new(:started_at, DateTime.utc_now())
 
-        run = %RunRecord{} |> RunRecord.changeset(attrs) |> Repo.insert!()
+        run = %RunRecord{id: Map.get(run_attrs, :id)} |> RunRecord.changeset(attrs) |> Repo.insert!()
         %{issue: issue, run: run, replaced_run: replaced_run}
       end)
     end
