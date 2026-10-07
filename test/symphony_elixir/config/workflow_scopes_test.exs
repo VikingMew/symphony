@@ -58,6 +58,30 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
     assert project == %{"tracker" => %{"kind" => "linear"}}
   end
 
+  test "dispatch scope round-trips through the instance form and package boundary" do
+    {:ok, loaded} = Workflow.load()
+
+    config =
+      Map.put(loaded.config, "dispatch_scope", %{
+        "linear_team_key" => "KRN",
+        "linear_project_slug" => "koroni",
+        "fallback_project_slug" => "default"
+      })
+
+    draft = WorkflowForm.from_loaded(%{loaded | config: config})
+    assert draft["dispatch_linear_team_key"] == "KRN"
+    assert draft["dispatch_linear_project_slug"] == "koroni"
+    assert draft["dispatch_fallback_project_slug"] == "default"
+
+    assert {:ok, instance, _project} = WorkflowForm.to_scopes(draft)
+
+    assert instance.config["dispatch_scope"] == %{
+             "fallback_project_slug" => "default",
+             "linear_project_slug" => "koroni",
+             "linear_team_key" => "KRN"
+           }
+  end
+
   test "slice parsing rejects duplicate canonical keys" do
     assert {:error, {:duplicate_workflow_fields, :instance, ["polling"]}} =
              WorkflowScopes.split_package(

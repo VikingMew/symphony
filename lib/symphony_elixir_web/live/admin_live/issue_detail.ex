@@ -14,6 +14,16 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
     <section class="section-card">
       <h1 class="section-title">Issue Detail</h1>
       <%= if @issue_detail.issue do %>
+        <h2 class="section-title">Dispatch Context</h2>
+        <table class="data-table dispatch-context-table">
+          <tbody>
+            <tr><th>Linear team</th><td><%= snapshot_value(@issue_detail.issue, "linear_team_key") %></td></tr>
+            <tr><th>Linear project</th><td><%= snapshot_value(@issue_detail.issue, "linear_project_slug") %></td></tr>
+            <tr><th>Symphony Project</th><td><%= snapshot_value(@issue_detail.issue, "symphony_project_slug") %></td></tr>
+            <tr><th>Context source</th><td><%= snapshot_value(@issue_detail.issue, "context_source") %></td></tr>
+            <tr><th>Dispatch scope</th><td class="mono"><%= inspect(snapshot_value(@issue_detail.issue, "dispatch_scope")) %></td></tr>
+          </tbody>
+        </table>
         <pre class="code-panel"><%= inspect(@issue_detail.issue, pretty: true) %></pre>
       <% else %>
         <p class="empty-state">No persisted issue snapshot found for <span class="mono"><%= @route_params["identifier"] %></span>.</p>
@@ -78,4 +88,11 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
   end
 
   defp persistence, do: PersistenceProvider.module()
+
+  defp snapshot_value(issue, key) do
+    case issue.snapshot do
+      snapshot when is_map(snapshot) -> Map.get(snapshot, key) || "n/a"
+      _snapshot -> "n/a"
+    end
+  end
 end

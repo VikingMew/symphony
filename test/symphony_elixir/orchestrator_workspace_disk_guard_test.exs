@@ -219,7 +219,13 @@ defmodule SymphonyElixir.OrchestratorWorkspaceDiskGuardTest do
   end
 
   defp issue(id, identifier) do
-    %Issue{id: id, identifier: identifier, title: "Disk guard", state: "In Progress"}
+    %Issue{
+      id: id,
+      identifier: identifier,
+      title: "Disk guard",
+      state: "In Progress",
+      project_slug: SymphonyElixir.Config.settings!().tracker.project_slug
+    }
   end
 
   defp invalid_workspace_root! do

@@ -106,14 +106,20 @@ explicit operator rerun intent: the same admission transaction first terminates 
 `tracker.active_states` at `Todo`, `Ready`, and `In Progress`, so `Refining` is not a default dispatch
 state.
 
-Each normal Orchestrator poll groups enabled workflows by distinct Linear project slug. It fetches
-candidates once for each slug and shares that result across the workflows in the group. The existing
-poll-in-progress gate prevents two normal rounds from overlapping. A failed Linear read ends that
-slug's work for the round; it records `linear.request_failed` and waits for the next fixed
-`polling.interval_ms` tick without a new retry, backoff, circuit, or cooldown. For the fixed fixture
-of three workflows mapped to two slugs, candidate fetches fall from three to two per round. At a
-fixed one-minute window, changing `polling.interval_ms` from 5000 to 30000 changes the maximum normal
-poll rounds per slug from twelve to two. Worker claim timing is independent of this calculation.
+Each normal Orchestrator poll performs one installation-level candidate query. The query states are
+the union of `tracker.active_states` from every enabled workflow. `dispatch_scope` selects one of
+three exact filter shapes: state only; team key plus state; or team key, Linear project slug, and
+state. Omitting the optional project predicate admits both project-associated and `project = null`
+issues. The offline query contract pins the external `team.key.eq` relation-filter assumption.
+
+Candidate scope and execution context are separate decisions. A candidate with a Linear project is
+resolved to the single enabled workflow whose composed `tracker.project_slug` matches
+`issue.project.slugId`. A candidate without a Linear project resolves only through the explicit
+internal `dispatch_scope.fallback_project_slug`. Missing or ambiguous context remains visible as a
+typed `admission_rejected` result and creates no run. After resolution, admission checks the issue
+state against that workflow's own `tracker.active_states`; the query union can widen reads but cannot
+widen dispatch. The existing poll-in-progress gate prevents overlapping rounds. A failed query ends
+the round and waits for the next fixed `polling.interval_ms` tick.
 
 One supervised process group owns checkout, hooks, Codex, validation, and handoff for an assignment.
 It renews only that assignment and emits accepted/progress/completed/failed/cancelled events with

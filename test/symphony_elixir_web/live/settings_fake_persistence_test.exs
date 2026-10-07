@@ -28,6 +28,20 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       end
     end
 
+    @spec graphql(String.t(), map()) :: {:ok, map()} | {:error, term()}
+    def graphql(query, variables) do
+      operation_name =
+        case Regex.run(~r/query\s+(\w+)/, query) do
+          [_, name] -> name
+          _no_name -> nil
+        end
+
+      graphql(query, variables, operation_name: operation_name)
+    end
+
+    @spec fetch_candidate_issues() :: {:ok, list()}
+    def fetch_candidate_issues, do: {:ok, []}
+
     defp default_response("SymphonyLinearDiscoveryViewer", _variables) do
       %{"data" => %{"viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}}}
     end
@@ -757,6 +771,97 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
     assert reloaded_html =~ ~s(id="workflow-codex-model")
     assert reloaded_html =~ ~s(id="workflow-codex-reasoning-effort")
+  end
+
+  @tag :tmp_dir
+  test "Runtime saves team-wide and project-narrowed Linear scopes and Diagnostics shows the filter shape", %{tmp_dir: tmp_dir} do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      workspace_root: Path.join(tmp_dir, "workspaces"),
+      project_repository_url: "git@github.com:org/repo.git"
+    )
+
+    Application.put_env(:symphony_elixir, :linear_discovery_fake, %{
+      "SymphonyLinearDiscoveryTeams" => %{
+        "data" => %{"teams" => %{"nodes" => [%{"id" => "team-krn", "key" => "KRN", "name" => "Kernel"}]}}
+      },
+      "SymphonyLinearDiscoveryTeamStates" => %{
+        "data" => %{
+          "teams" => %{
+            "nodes" => [
+              %{
+                "id" => "team-krn",
+                "key" => "KRN",
+                "states" => %{"nodes" => [%{"id" => "state-ready", "name" => "Ready", "type" => "unstarted"}]}
+              }
+            ]
+          }
+        }
+      },
+      "SymphonyLinearDiscoveryProjects" => %{
+        "data" => %{
+          "projects" => %{
+            "nodes" => [
+              %{
+                "id" => "linear-project-koroni",
+                "name" => "Koroni",
+                "slugId" => "koroni",
+                "url" => "https://linear.app/project/koroni",
+                "teams" => %{"nodes" => [%{"id" => "team-krn", "key" => "KRN", "name" => "Kernel"}]}
+              }
+            ]
+          }
+        }
+      }
+    })
+
+    start_test_endpoint()
+    fallback_slug = FakePersistence.list_projects() |> hd() |> Map.fetch!(:slug)
+    {:ok, view, html} = live(build_conn(), "/settings/runtime")
+
+    assert html =~ "Linear team (大项目)"
+    assert html =~ "Linear project (下面的项目)"
+    fetched = render_click(view, "fetch_linear_discovery")
+    assert fetched =~ "Kernel (KRN)"
+    assert fetched =~ "Koroni (koroni)"
+
+    team_wide =
+      view
+      |> form(".runtime-settings-form",
+        workflow: %{
+          "dispatch_linear_team_key" => "KRN",
+          "dispatch_linear_project_slug" => "",
+          "dispatch_fallback_project_slug" => fallback_slug
+        }
+      )
+      |> render_submit()
+
+    assert team_wide =~ "workflow-save-toast-success"
+    instance = FakePersistence.instance_workflow()
+    assert get_in(instance.config, ["dispatch_scope", "linear_team_key"]) == "KRN"
+    assert get_in(instance.config, ["dispatch_scope", "linear_project_slug"]) == nil
+    assert get_in(instance.config, ["dispatch_scope", "fallback_project_slug"]) == fallback_slug
+
+    {:ok, _diagnostics, diagnostics_html} = live(build_conn(), "/diagnostics/linear")
+    assert diagnostics_html =~ "Dispatch filter shape"
+    assert diagnostics_html =~ "team_state"
+
+    narrowed =
+      view
+      |> form(".runtime-settings-form",
+        workflow: %{
+          "dispatch_linear_team_key" => "KRN",
+          "dispatch_linear_project_slug" => "koroni",
+          "dispatch_fallback_project_slug" => fallback_slug
+        }
+      )
+      |> render_submit()
+
+    assert narrowed =~ "workflow-save-toast-success"
+    instance = FakePersistence.instance_workflow()
+    assert get_in(instance.config, ["dispatch_scope", "linear_project_slug"]) == "koroni"
+
+    {:ok, _diagnostics, diagnostics_html} = live(build_conn(), "/diagnostics/linear")
+    assert diagnostics_html =~ "team_project_state"
   end
 
   test "settings import saves a new Codex model and Runtime reloads it" do

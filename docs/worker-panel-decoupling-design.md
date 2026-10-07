@@ -230,10 +230,13 @@ findings 使用 review job run id 和投递时的实时 `Ready to Merge`。有�
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
-Panel 的 normal Orchestrator poll 与 worker reconciliation 都按 enabled workflow 的 distinct
-`tracker.project_slug` 共享查询，并分别由现有 in-progress gate 保证同类 round 不重叠。三个 workflow
-映射两个 slug 的固定夹具中，两类可共享查询每轮最多两次；改动前 normal poll 会查询三次，改动后
-查询两次，reconciliation 保持两次。normal poll 失败只结束当前轮，下一次仍由固定
+Panel 的 normal Orchestrator poll 与 worker claim 都读取一次 installation `dispatch_scope` 候选集，
+查询状态是 enabled workflows 的 `tracker.active_states` 并集。两条路径共用同一个 context resolver：
+有 Linear project 的候选按 `projects.linear_project_slug -> tracker.project_slug` 映射到唯一 enabled
+Symphony Project；无 Linear project 的候选只接受显式 internal fallback slug。随后在所选 workflow
+上下文内再次校验 active state、routing/profile、capacity 与 history。缺少 fallback、找不到上下文或
+候选偏离 team/project scope 时写 typed `admission_rejected`，不创建 run 或 assignment。normal poll
+失败只结束当前轮，下一次仍由固定
 `polling.interval_ms` 触发，不新增 retry、backoff、circuit 或 cooldown。Linear 400、429、5xx 和
 typed transport failure 会写入 project-associated `linear.request_failed`，payload 包含 operation、
 status/reason 与 project slug。

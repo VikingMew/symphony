@@ -23,15 +23,26 @@ design_status: landed
   checkout depth、source strategy、worktree fetch/cleanup 这 7 个字段的唯一 durable authority。
   `WorkflowStore` 在发布边界把 project 行字段注入最小 slice，再与 singleton 组合，并把完整 derived set
   原子发布为内存 snapshot。
-- instance singleton 独占 `polling`、`workspace`、`hooks`、`agent`、`codex`、`observability`、
+- instance singleton 独占 `dispatch_scope`、`polling`、`workspace`、`hooks`、`agent`、`codex`、`observability`、
   `analytics`、`server`、`worker`、base prompt 和 `profiles`。project workflow 只接受 tracker 的
   kind/endpoint/assignee/state lists，以及 project required gates/setup/cleanup；它不持久化上述 7 个
   project-owned 字段。
-- Settings 按同一 durable ownership 分页：`/settings/runtime` 直接读写 singleton 的 workspace、
+- `dispatch_scope.linear_team_key` 与可空的 `dispatch_scope.linear_project_slug` 只定义安装级 Linear
+  候选范围；可空的 `dispatch_scope.fallback_project_slug` 是无 Linear project 候选的显式 Symphony
+  Project 上下文。`projects.linear_project_slug` 继续是 enabled Symphony Project 到 Linear project
+  的唯一 durable 映射，并在组合时生成必填的 `tracker.project_slug`。监听范围不得写回该字段，也不
+  得创建第二份项目上下文映射。
+- Settings 按同一 durable ownership 分页：`/settings/runtime` 直接读写 singleton 的 Linear dispatch
+  scope、workspace、
   初始化/磁盘阈值、lifecycle hooks 与 Codex model/reasoning/sandbox；`/settings/agents` 直接读写
   singleton 的 base prompt/profiles。两个页面不依赖所选 project，保存后重新发布所有 enabled
   project 的 future runtime snapshot。`/settings/projects` 只提交 project metadata 与
   tracker/repository/source/setup/cleanup slice，不能携带 instance 字段。
+- Runtime 保存允许 team/project 同时为空、team 有值且 project 为空，以及 team/project 同时有值且
+  discovery 证明归属正确。project 有值而 team 为空、未知 team/project、错误归属、未知 fallback 与
+  disabled fallback 都返回稳定 typed rejection。空值是有效范围语义，不是缺失配置；表单清空任一
+  scope 字段会显式移除旧值，使已收窄范围可再次放宽。instance/package import 在 durable scope 边界
+  复用相同的组合校验。非 scope 设置保存且 normalized scope 未变化时不重新执行 Linear discovery。
 - `/settings/projects` 的新增与编辑都先解析 canonical project slice，再在一个 PostgreSQL
   transaction 内写 project metadata（包括 7 个 project-owned 字段）与该 project 的唯一最小 workflow
   row；任一写入失败时两者一起回滚。project workflow 的 `raw_workflow_md` 与 `yaml_config` 来自同一

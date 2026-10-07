@@ -4,56 +4,11 @@ defmodule SymphonyElixir.Linear.Client do
   """
 
   require Logger
-  alias SymphonyElixir.{Config, RuntimeProxy}
-  alias SymphonyElixir.Linear.{Issue, IssueNormalizer, Pagination}
+  alias SymphonyElixir.{Config, RuntimeProxy, WorkflowStore}
+  alias SymphonyElixir.Linear.{CandidateQuery, DispatchScope, Issue, IssueNormalizer, Pagination}
 
   @issue_page_size 50
   @max_error_body_log_bytes 1_000
-
-  @query """
-  query SymphonyLinearPoll($projectSlug: String!, $stateNames: [String!]!, $first: Int!, $relationFirst: Int!, $after: String) {
-    issues(filter: {project: {slugId: {eq: $projectSlug}}, state: {name: {in: $stateNames}}}, first: $first, after: $after) {
-      nodes {
-        id
-        identifier
-        title
-        description
-        priority
-        state {
-          name
-        }
-        branchName
-        url
-        assignee {
-          id
-        }
-        labels {
-          nodes {
-            name
-          }
-        }
-        inverseRelations(first: $relationFirst) {
-          nodes {
-            type
-            issue {
-              id
-              identifier
-              state {
-                name
-              }
-            }
-          }
-        }
-        createdAt
-        updatedAt
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-    }
-  }
-  """
 
   @query_by_ids """
   query SymphonyLinearIssuesById($ids: [ID!]!, $first: Int!, $relationFirst: Int!) {
@@ -67,6 +22,8 @@ defmodule SymphonyElixir.Linear.Client do
         state {
           name
         }
+        team { key }
+        project { slugId }
         branchName
         url
         assignee {
@@ -145,10 +102,23 @@ defmodule SymphonyElixir.Linear.Client do
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
-    with {:ok, tracker} <- runtime_tracker(),
+    with {:ok, settings} <- runtime_settings(),
          {:ok, assignee_filter} <- routing_assignee_filter() do
-      do_fetch_by_states(tracker.project_slug, tracker.active_states, assignee_filter)
+      do_fetch_by_states(
+        settings.dispatch_scope,
+        DispatchScope.active_states(WorkflowStore.list_enabled()),
+        assignee_filter,
+        &graphql/2
+      )
     end
+  end
+
+  @doc "Fetches scoped candidates through an injected GraphQL boundary."
+  @spec fetch_candidate_issues(map(), [String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
+          {:ok, [Issue.t()]} | {:error, term()}
+  def fetch_candidate_issues(scope, state_names, graphql_fun)
+      when is_map(scope) and is_list(state_names) and is_function(graphql_fun, 2) do
+    do_fetch_by_states(scope, Enum.map(state_names, &to_string/1) |> Enum.uniq(), nil, graphql_fun)
   end
 
   @spec fetch_issues_by_states([String.t()]) :: {:ok, [Issue.t()]} | {:error, term()}
@@ -158,19 +128,17 @@ defmodule SymphonyElixir.Linear.Client do
     if normalized_states == [] do
       {:ok, []}
     else
-      with {:ok, tracker} <- runtime_tracker() do
-        do_fetch_by_states(tracker.project_slug, normalized_states, nil)
+      with {:ok, settings} <- runtime_settings() do
+        do_fetch_by_states(settings.dispatch_scope, normalized_states, nil, &graphql/2)
       end
     end
   end
 
-  defp runtime_tracker do
+  defp runtime_settings do
     with {:ok, settings} <- Config.settings() do
-      cond do
-        is_nil(settings.tracker.api_key) -> {:error, :missing_linear_api_token}
-        is_nil(settings.tracker.project_slug) -> {:error, :missing_linear_project_slug}
-        true -> {:ok, settings.tracker}
-      end
+      if is_nil(settings.tracker.api_key),
+        do: {:error, :missing_linear_api_token},
+        else: {:ok, settings}
     end
   end
 
@@ -266,34 +234,85 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp do_fetch_by_states(project_slug, state_names, assignee_filter) do
-    do_fetch_by_states_page(project_slug, state_names, assignee_filter, nil, [])
+  defp do_fetch_by_states(scope, state_names, assignee_filter, graphql_fun) do
+    scope = DispatchScope.normalize(scope)
+    shape = CandidateQuery.filter_shape(scope)
+
+    Logger.info(
+      "event=query_filter team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
+        "active_states=#{inspect(state_names)} filter_shape=#{shape}"
+    )
+
+    do_fetch_by_states_page(scope, state_names, assignee_filter, graphql_fun, nil, [], 0)
   end
 
-  defp do_fetch_by_states_page(project_slug, state_names, assignee_filter, after_cursor, acc_issues) do
-    with {:ok, body} <-
-           graphql(@query, %{
-             projectSlug: project_slug,
-             stateNames: state_names,
-             first: @issue_page_size,
-             relationFirst: @issue_page_size,
-             after: after_cursor
-           }),
+  defp do_fetch_by_states_page(
+         scope,
+         state_names,
+         assignee_filter,
+         graphql_fun,
+         after_cursor,
+         acc_issues,
+         page_count
+       ) do
+    {query, variables, _shape} =
+      CandidateQuery.build(scope, state_names,
+        first: @issue_page_size,
+        relation_first: @issue_page_size,
+        after: after_cursor
+      )
+
+    with {:ok, body} <- graphql_fun.(query, variables),
          {:ok, issues, page_info} <- Pagination.decode_page_response(body, assignee_filter) do
-      updated_acc = Pagination.prepend_page_issues(issues, acc_issues)
-
-      case Pagination.next_page_cursor(page_info) do
-        {:ok, next_cursor} ->
-          do_fetch_by_states_page(project_slug, state_names, assignee_filter, next_cursor, updated_acc)
-
-        :done ->
-          {:ok, Pagination.finalize_paginated_issues(updated_acc)}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      continue_candidate_pages(
+        Pagination.next_page_cursor(page_info),
+        scope,
+        state_names,
+        assignee_filter,
+        graphql_fun,
+        Pagination.prepend_page_issues(issues, acc_issues),
+        page_count + 1
+      )
     end
   end
+
+  defp continue_candidate_pages(
+         {:ok, next_cursor},
+         scope,
+         state_names,
+         assignee_filter,
+         graphql_fun,
+         issues,
+         page_count
+       ) do
+    do_fetch_by_states_page(
+      scope,
+      state_names,
+      assignee_filter,
+      graphql_fun,
+      next_cursor,
+      issues,
+      page_count
+    )
+  end
+
+  defp continue_candidate_pages(:done, scope, state_names, _assignee_filter, _graphql_fun, issues, page_count) do
+    issues = Pagination.finalize_paginated_issues(issues)
+    log_empty_fetch(issues, scope, state_names, page_count)
+    {:ok, issues}
+  end
+
+  defp continue_candidate_pages({:error, reason}, _scope, _states, _assignee, _graphql, _issues, _page_count),
+    do: {:error, reason}
+
+  defp log_empty_fetch([], scope, state_names, page_count) do
+    Logger.info(
+      "event=fetch_empty team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
+        "active_states=#{inspect(state_names)} page_count=#{page_count} candidate_count=0"
+    )
+  end
+
+  defp log_empty_fetch(_issues, _scope, _state_names, _page_count), do: :ok
 
   defp do_fetch_issue_states(ids, assignee_filter) do
     do_fetch_issue_states(ids, assignee_filter, &graphql/2)

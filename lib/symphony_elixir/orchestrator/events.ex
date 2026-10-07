@@ -3,7 +3,8 @@ defmodule SymphonyElixir.Orchestrator.Events do
   Persistence payload shaping for orchestrator events.
   """
 
-  alias SymphonyElixir.{Config, Linear.Issue, RunAdmission, RunFailure}
+  alias SymphonyElixir.{Config, RunAdmission, RunFailure}
+  alias SymphonyElixir.Linear.{DispatchScope, Issue}
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
   @spec issue_snapshot(Issue.t()) :: map()
@@ -18,7 +19,11 @@ defmodule SymphonyElixir.Orchestrator.Events do
       "url" => issue.url,
       "labels" => issue.labels || []
     }
+    |> Map.merge(DispatchScope.evidence(issue))
   end
+
+  @spec dispatch_context(Issue.t()) :: map()
+  def dispatch_context(%Issue{} = issue), do: DispatchScope.evidence(issue)
 
   @spec issue_attrs(Issue.t()) :: map()
   def issue_attrs(%Issue{} = issue) do

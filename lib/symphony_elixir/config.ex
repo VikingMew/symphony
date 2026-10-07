@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Config do
   Runtime configuration loaded from the current workflow.
   """
 
-  alias SymphonyElixir.{Config.Schema, Text, Workflow, WorkflowStore}
+  alias SymphonyElixir.{Config.Schema, Linear.DispatchScope, Text, Workflow, WorkflowStore}
 
   @workflow_context_key :symphony_workflow_context
 
@@ -185,7 +185,8 @@ defmodule SymphonyElixir.Config do
   def validate_settings(%Schema{} = settings), do: validate_semantics(settings)
 
   defp validate_semantics(settings) do
-    with :ok <- validate_tracker(settings.tracker) do
+    with :ok <- validate_tracker(settings.tracker),
+         :ok <- DispatchScope.validate_combination(settings.dispatch_scope) do
       validate_project(settings.project)
     end
   end

@@ -28,7 +28,7 @@ defmodule SymphonyElixir.Orchestrator do
   }
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Linear.{DispatchScope, Issue}
   alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.Orchestrator.Events
   alias SymphonyElixir.Orchestrator.InputBlocker
@@ -1120,31 +1120,27 @@ defmodule SymphonyElixir.Orchestrator do
     if workflows == [] do
       handle_dispatch_error(state, :setup_required)
     else
-      workflows
-      |> Enum.group_by(&get_in(&1.config, ["tracker", "project_slug"]))
-      |> Enum.reduce(state, fn {_project_slug, grouped_workflows}, state_acc ->
-        dispatch_workflow_group(grouped_workflows, state_acc)
-      end)
+      dispatch_workflows(workflows, state)
     end
   end
 
-  defp dispatch_workflow_group([workflow | _rest] = workflows, state) do
+  defp dispatch_workflows([workflow | _rest] = workflows, state) do
     Config.with_workflow_context(workflow, fn ->
       if RunAdmission.execution_mode() == "worker" do
         state
       else
-        dispatch_workflow_group_centrally(state, workflows)
+        dispatch_workflows_centrally(state, workflows)
       end
     end)
   end
 
-  defp dispatch_workflow_group_centrally(%State{} = state, workflows) do
+  defp dispatch_workflows_centrally(%State{} = state, workflows) do
     with :ok <- Config.validate!(),
          state = reconcile_ready_to_merge_issues(state),
          :allow <- environment_failure_circuit_allows_dispatch(),
          :allow <- rate_limit_gate_allows_dispatch(state),
          {:ok, issues} <- Tracker.fetch_candidate_issues() do
-      dispatch_shared_issues(workflows, issues, %{state | last_config_error: nil})
+      dispatch_scoped_issues(workflows, issues, %{state | last_config_error: nil})
     else
       {:error, reason} ->
         Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
@@ -1169,10 +1165,38 @@ defmodule SymphonyElixir.Orchestrator do
     end
   end
 
-  defp dispatch_shared_issues(workflows, issues, state) do
-    Enum.reduce(workflows, state, fn workflow, state_acc ->
-      Config.with_workflow_context(workflow, fn -> dispatch_fetched_workflow(state_acc, workflow, issues) end)
+  defp dispatch_scoped_issues(workflows, issues, state) do
+    scope = Config.settings!().dispatch_scope
+
+    grouped = Enum.reduce(issues, %{}, &group_scoped_issue(&1, &2, workflows, scope))
+
+    Enum.reduce(grouped, state, fn {_project_id, {workflow, workflow_issues}}, state_acc ->
+      Config.with_workflow_context(workflow, fn ->
+        dispatch_fetched_workflow(state_acc, workflow, Enum.reverse(workflow_issues))
+      end)
     end)
+  end
+
+  defp group_scoped_issue(issue, groups, workflows, scope) do
+    case DispatchScope.resolve(issue, workflows, scope) do
+      {:ok, workflow, resolved_issue} ->
+        Map.update(groups, workflow.project_id, {workflow, [resolved_issue]}, fn {existing, existing_issues} ->
+          {existing, [resolved_issue | existing_issues]}
+        end)
+
+      {:error, reason, rejected_issue} ->
+        log_context_rejection(rejected_issue, reason)
+        groups
+    end
+  end
+
+  defp log_context_rejection(issue, reason) do
+    scope = DispatchScope.evidence(issue)["dispatch_scope"]
+
+    Logger.warning(
+      "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
+        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}"
+    )
   end
 
   defp dispatch_fetched_workflow(state, workflow, issues) do
@@ -1834,7 +1858,14 @@ defmodule SymphonyElixir.Orchestrator do
            dispatch_policy_settings(state)
          ) do
       {:ok, %Issue{} = refreshed_issue} ->
-        do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host)
+        case resolve_refreshed_context(refreshed_issue) do
+          {:ok, resolved_issue} ->
+            do_dispatch_issue(state, resolved_issue, attempt, preferred_worker_host)
+
+          {:error, reason, rejected_issue} ->
+            log_context_rejection(rejected_issue, reason)
+            state
+        end
 
       {:skip, :missing} ->
         Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
@@ -1850,6 +1881,21 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.warning("Skipping dispatch; issue refresh failed for #{issue_context(issue)}: #{inspect(reason)}")
 
         state
+    end
+  end
+
+  defp resolve_refreshed_context(issue) do
+    workflows = WorkflowStore.list_enabled()
+    scope = Config.settings!().dispatch_scope
+
+    with {:ok, current} <- current_workflow_context(),
+         {:ok, resolved_workflow, resolved_issue} <- DispatchScope.resolve(issue, workflows, scope),
+         true <- resolved_workflow.project_id == current.project_id do
+      {:ok, resolved_issue}
+    else
+      {:error, reason, rejected_issue} -> {:error, reason, rejected_issue}
+      {:error, reason} -> {:error, reason, %{issue | dispatch_scope: DispatchScope.normalize(scope)}}
+      false -> {:error, :issue_project_out_of_scope, %{issue | dispatch_scope: DispatchScope.normalize(scope)}}
     end
   end
 

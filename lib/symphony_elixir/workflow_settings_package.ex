@@ -206,6 +206,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
   defp diff_area("prompt_body"), do: "Agents"
   defp diff_area("profiles." <> _rest), do: "Agents"
+  defp diff_area("dispatch_scope." <> _rest), do: "Runtime"
   defp diff_area("workspace." <> _rest), do: "Runtime"
   defp diff_area("polling." <> _rest), do: "Runtime"
   defp diff_area("agent." <> _rest), do: "Runtime"

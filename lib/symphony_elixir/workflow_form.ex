@@ -22,6 +22,9 @@ defmodule SymphonyElixir.WorkflowForm do
     display_config = normalized_display_config(config)
 
     %{
+      "dispatch_linear_team_key" => get_string(display_config, ["dispatch_scope", "linear_team_key"]),
+      "dispatch_linear_project_slug" => get_string(display_config, ["dispatch_scope", "linear_project_slug"]),
+      "dispatch_fallback_project_slug" => get_string(display_config, ["dispatch_scope", "fallback_project_slug"]),
       "tracker_project_slug" => get_string(display_config, ["tracker", "project_slug"]),
       "tracker_assignee" => get_string(display_config, ["tracker", "assignee"]),
       "active_states" => get_list_text(display_config, ["tracker", "active_states"]),
@@ -112,6 +115,18 @@ defmodule SymphonyElixir.WorkflowForm do
       config =
         draft
         |> Map.get("_base_config", %{})
+        |> put_optional_path(
+          ["dispatch_scope", "linear_team_key"],
+          Map.get(draft, "dispatch_linear_team_key", "")
+        )
+        |> put_optional_path(
+          ["dispatch_scope", "linear_project_slug"],
+          Map.get(draft, "dispatch_linear_project_slug", "")
+        )
+        |> put_optional_path(
+          ["dispatch_scope", "fallback_project_slug"],
+          Map.get(draft, "dispatch_fallback_project_slug", "")
+        )
         |> put_path(["tracker", "kind"], "linear")
         |> put_path(["tracker", "endpoint"], linear_endpoint(draft))
         |> put_optional_path(["tracker", "project_slug"], Map.get(draft, "tracker_project_slug", ""))

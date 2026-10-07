@@ -283,8 +283,8 @@ defmodule SymphonyElixir.WorkflowStoreTest do
     assert :ok = WorkflowStore.force_reload()
     Application.put_env(:symphony_elixir, :persistence_module, EdgePersistence)
 
-    loaded = %{project_id: "edge", prompt: "Edge prompt"}
-    project = %{id: "edge", enabled: true}
+    loaded = %{project_id: "edge", project_slug: "edge", prompt: "Edge prompt"}
+    project = %{id: "edge", slug: "edge", enabled: true}
     version = %{loaded: loaded}
 
     put_edge(

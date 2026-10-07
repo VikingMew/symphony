@@ -240,6 +240,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerBlockingDecisionTest do
   end
 
   defp issue(number) do
+    workflow = Application.fetch_env!(:symphony_elixir, :blocking_decision_test_workflow)
+
     %Issue{
       id: "issue-#{number}",
       identifier: "SYM-#{number}",
@@ -247,6 +249,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerBlockingDecisionTest do
       description: "Work",
       priority: number,
       state: "Ready",
+      project_slug: get_in(workflow.config, ["tracker", "project_slug"]),
       branch_name: "sym-#{number}",
       blocked_by: [],
       labels: [],

@@ -140,8 +140,8 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
 
 1. Settings / Projects: per-project tracker, repository, source, setup, and cleanup settings.
 2. Settings / Agents: installation-wide base prompt, profile prompts, allowed updates, and target states.
-3. Settings / Runtime: installation-wide workspace roots, initialization/disk thresholds, lifecycle hooks,
-   and Codex model/reasoning/sandbox selectors.
+3. Settings / Runtime: installation-wide Linear dispatch team/project scope and null-project fallback,
+   workspace roots, initialization/disk thresholds, lifecycle hooks, and Codex model/reasoning/sandbox selectors.
 4. Settings / Import: workflow/profile package review grouped into Instance and an explicitly selected
    Project. Confirming a combined package writes both scopes atomically. Routing and transitions remain
    an immutable code contract.
@@ -165,6 +165,15 @@ dispatch reads use that snapshot without querying PostgreSQL. Successful imports
 before reporting success, and background external-change detection retains last-known-good state
 during database stalls. Change configuration through Settings (or Settings / Import) and do not
 update `workflows` or `app_settings` by hand.
+
+Linear candidate scope is installation-wide and independent of project execution context.
+`dispatch_scope.linear_team_key` may be blank for every team;
+`dispatch_scope.linear_project_slug` may be blank to include both associated and unassociated issues;
+`dispatch_scope.fallback_project_slug` names an enabled internal Symphony Project used only for
+issues whose Linear project is null. Project Settings still require one `linear_project_slug` for
+every enabled Symphony Project. That durable mapping selects execution context after a candidate is
+read and is never replaced by the optional dispatch project filter. Diagnostics shows the active
+filter shape and the resolved Linear/Symphony context.
 
 Useful startup options:
 

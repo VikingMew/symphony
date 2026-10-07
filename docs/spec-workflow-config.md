@@ -118,6 +118,7 @@ Returned workflow object:
 
 Top-level keys:
 
+- `dispatch_scope`
 - `tracker`
 - `polling`
 - `workspace`
@@ -141,6 +142,22 @@ Note:
   Codex policy, observability, analytics, server/worker policy, base prompt, and profiles have no
   per-project override. Persisted runs, issues, events, and worker tasks carry the originating
   `project_id`.
+
+#### `dispatch_scope` (object)
+
+This instance-owned object controls candidate visibility independently of per-project execution
+context.
+
+- `linear_team_key` (nullable string): null means every Linear team.
+- `linear_project_slug` (nullable string): null omits the Linear project predicate and includes
+  project-associated and `project = null` candidates.
+- `fallback_project_slug` (nullable string): internal slug of an enabled Symphony Project used only
+  when the candidate's Linear project is null. Null leaves those candidates visible but rejected.
+
+Valid team/project combinations are both null, team only, or team plus a project that discovery
+proves belongs to that team. Project without team is invalid. Settings persistence MUST reject
+unknown teams/projects, mismatched ownership, and unknown or disabled fallback projects with typed
+errors. Empty team/project values MUST NOT be reported as missing configuration.
 
 #### 5.3.1 `tracker` (object)
 
@@ -565,6 +582,10 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.api_key`: runtime-only secret from canonical env `LINEAR_API_KEY`; never persisted
 - `tracker.project_slug`: string, REQUIRED when `tracker.kind=linear`; configured per project in
   the Project settings record (each enabled project names its own Linear project slug)
+- `dispatch_scope.linear_team_key`: nullable string, instance-owned Linear team filter
+- `dispatch_scope.linear_project_slug`: nullable string, instance-owned Linear project filter
+- `dispatch_scope.fallback_project_slug`: nullable enabled internal Symphony Project slug for
+  null-project candidates
 - `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`

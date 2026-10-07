@@ -97,6 +97,7 @@ defmodule SymphonyElixir.LegacyWorkflowRuntimeIntegrationTest do
       identifier: "SYM-LEGACY",
       title: "Legacy reconciliation dispatch",
       state: "Ready",
+      project_slug: project.linear_project_slug,
       labels: [],
       blocked_by: []
     }

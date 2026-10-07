@@ -183,6 +183,22 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
                 <td>{@diagnostics.config.project_slug}</td>
               </tr>
               <tr>
+                <th>Dispatch team</th>
+                <td>{@diagnostics.config.dispatch_team_key}</td>
+              </tr>
+              <tr>
+                <th>Dispatch project</th>
+                <td>{@diagnostics.config.dispatch_project_slug}</td>
+              </tr>
+              <tr>
+                <th>Fallback Symphony Project</th>
+                <td>{@diagnostics.config.fallback_project_slug}</td>
+              </tr>
+              <tr>
+                <th>Dispatch filter shape</th>
+                <td>{@diagnostics.config.dispatch_filter_shape}</td>
+              </tr>
+              <tr>
                 <th>Assignee</th>
                 <td>{@diagnostics.config.assignee}</td>
               </tr>
@@ -291,6 +307,10 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
                   <th>Issue</th>
                   <th>Title</th>
                   <th>State</th>
+                  <th>Linear team</th>
+                  <th>Linear project</th>
+                  <th>Symphony Project</th>
+                  <th>Context</th>
                   <th>Assignee</th>
                   <th>Labels</th>
                   <th>Blockers</th>
@@ -303,6 +323,10 @@ defmodule SymphonyElixirWeb.LinearDiagnosticsLive do
                   <td class="issue-id">{issue.identifier}</td>
                   <td>{issue.title}</td>
                   <td><span class="status-badge status-info">{issue.state}</span></td>
+                  <td>{issue.team_key}</td>
+                  <td>{issue.project_slug}</td>
+                  <td>{issue.symphony_project}</td>
+                  <td>{if issue.context_error == "n/a", do: issue.context_source, else: issue.context_error}</td>
                   <td>{issue.assignee}</td>
                   <td>{Enum.join(issue.labels, ", ")}</td>
                   <td>{blockers_text(issue.blockers)}</td>

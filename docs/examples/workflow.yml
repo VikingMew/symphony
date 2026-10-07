@@ -16,6 +16,10 @@ codex:
   thread_sandbox: "danger-full-access"
   turn_sandbox_policy:
     type: "dangerFullAccess"
+dispatch_scope:
+  fallback_project_slug: null
+  linear_project_slug: null
+  linear_team_key: null
 polling:
   interval_ms: 30000
 project:
