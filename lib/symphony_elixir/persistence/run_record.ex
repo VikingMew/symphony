@@ -58,6 +58,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     |> validate_issue_identifier_for_issue_run()
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
     |> validate_terminal_failure()
+    |> unique_constraint(:issue_id, name: :runs_one_running_issue)
   end
 
   defp validate_issue_identifier_for_issue_run(changeset) do

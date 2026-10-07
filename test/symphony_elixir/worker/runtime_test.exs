@@ -298,6 +298,36 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == [])) end)
   end
 
+  test "terminal delivery remains pending after the configured attempt limit and recovers", %{config: config} do
+    Agent.update(FakeClient, fn state ->
+      outcomes = [
+        {:error, {:http_error, 503, "unavailable"}},
+        {:error, {:http_error, 503, "unavailable"}},
+        {:error, {:http_error, 503, "unavailable"}},
+        {:ok, %{}}
+      ]
+
+      %{state | claims: [claim("task-1", false)], outcomes: %{"task.completed" => outcomes}}
+    end)
+
+    runtime = start_runtime(config)
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1") == 1 end)
+
+    send(runtime, {:retry_terminal, "task-1"})
+    eventually(fn -> terminal_count("task-1") == 2 end)
+    send(runtime, {:retry_terminal, "task-1"})
+    eventually(fn -> terminal_count("task-1") == 3 end)
+
+    send(runtime, :heartbeat)
+    eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == ["lease-task-1"])) end)
+
+    send(runtime, {:retry_terminal, "task-1"})
+    eventually(fn -> terminal_count("task-1") == 4 end)
+    send(runtime, :heartbeat)
+    eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == [])) end)
+  end
+
   test "abnormal executor exit is delivered as task.failed", %{config: config} do
     put_claims([Map.put(claim("task-1", false), "crash", true)])
     _runtime = start_runtime(config)

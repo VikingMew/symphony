@@ -117,6 +117,9 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
 
     assert %{"listening" => false, "mode" => "off"} = post_json("/api/v1/control/listening", %{mode: "off"}, 200)
     assert_receive {:orchestrator_call, :stop_listening}
+
+    assert %{"listening" => false, "mode" => "off"} = post_json("/api/v1/control/listening", %{mode: "off"}, 200)
+    assert_receive {:orchestrator_call, :stop_listening}
   end
 
   test "environment failure circuit reset calls the injected orchestrator and returns its map" do

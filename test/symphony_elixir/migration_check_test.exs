@@ -48,4 +48,18 @@ defmodule SymphonyElixir.MigrationCheckTest do
     refute source =~ "DROP CONSTRAINT runs_terminal_failure_matrix"
     refute source =~ "def down"
   end
+
+  test "running issue admission migration closes duplicates before adding the partial unique index" do
+    source =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261006000000_enforce_one_running_issue_run.exs")
+      |> File.read!()
+
+    assert source =~ "row_number() OVER"
+    assert source =~ "duplicate_running_run_migration"
+    assert source =~ "status = 'running'"
+    assert source =~ ~s(where: "kind = 'issue' AND status = 'running' AND issue_id IS NOT NULL")
+    assert source =~ "runs_one_running_issue"
+    refute source =~ "def down"
+  end
 end

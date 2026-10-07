@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-10-04
+updated: 2026-10-07
 design_status: landed
 ---
 
@@ -56,6 +56,13 @@ candidate 二次校验和 worker/session 选择完成后，`RunAdmission.resolve
 或 executor 写入前生成一次不可变 decision。它只含 `execution_mode`、`workspace_authority`、`source`
 和 `limits`。新 worker run、assignment、payload 与 Orchestrator running entry 消费同一个 decision；
 `handle_worker_task_started/2` 只保存 assignment 中的值，不再次读取 mode、source 或 limits。
+
+issue upsert、issue row lock、同 issue running run 检查和新 run 创建位于同一个 PostgreSQL
+transaction；running issue run 的 partial unique index 是跨 manager/caller 的最终原子边界。两个独立
+claim 同时选中同一 issue 时，最多一个创建 run/assignment，另一方返回
+`admission.reason = active_run` 与现有 run id。listening、容量、session freshness、已有 assignment
+等本地快速路径的 Linear 调用数为 0；只有进入 candidate admission 的路径读取 Linear。这两类计数
+不能用 claim HTTP 请求行数互相代替，既有 5/30/60 秒 claim cadence 与 `poll_after_seconds` 不变。
 HTTP worker authority 是 `{:http_worker, worker_id, session_id}`，readiness 只消费已通过的 live context，
 不把 worker-local workspace/cache/log path 投影到 Panel state、payload 或历史。所有 source 字段继续
 来自同一 composed workflow 的 project slice。
@@ -144,6 +151,12 @@ progress 或 terminal event 必须匹配当前未过期 assignment；不匹配�
 accepted/progress/completed/failed/cancelled 写入统一 `events` 并更新 `runs`。terminal event 终结
 当前 assignment，不产生 queued work。未来执行必须来自新的 Linear fetch、未清除 blocking decision
 检查、二次校验、新 run 和新 assignment。
+
+worker 完成本地执行后保留 assignment 与待确认 terminal payload，直到 Panel 接受相同 task/lease 的
+terminal event。Panel 连续返回 503 时沿用固定 `lifecycle_retry_seconds` 间隔；越过原有 max attempts
+后不丢弃 pending terminal、不释放 assignment。Panel 恢复后，同一 terminal 只终结原 run，并通过
+`RunLifecycle` 写入非空 `finished_at`、`failure_reason` 与 `failure_evidence`。该投递修复不改变 claim
+cadence，也不增加指数退避、自动熔断或冷却。
 accepted/progress 路径同时更新 `Orchestrator` 当前态：`task.progress` 携带
 `codex_session_started` 或 Codex app-server 原始消息时，Panel 更新对应 running entry 的 session、
 last event/message 和绝对 token delta；terminal event、取消、expiry 或 reconciliation 失败旧 run 时
@@ -191,20 +204,33 @@ findings 使用 review job run id 和投递时的实时 `Ready to Merge`。有�
 adapter 必须快速产出同一 terminal `failed` outcome，并在 summary reason 中保留可区分原因；Panel
 仍只按 `outcome` 路由，不把 assignment 留在 `In Progress` 等待 stall/turn timeout。
 
+Panel 的 normal Orchestrator poll 与 worker reconciliation 都按 enabled workflow 的 distinct
+`tracker.project_slug` 共享查询，并分别由现有 in-progress gate 保证同类 round 不重叠。三个 workflow
+映射两个 slug 的固定夹具中，两类可共享查询每轮最多两次；改动前 normal poll 会查询三次，改动后
+查询两次，reconciliation 保持两次。normal poll 失败只结束当前轮，下一次仍由固定
+`polling.interval_ms` 触发，不新增 retry、backoff、circuit 或 cooldown。Linear 400、429、5xx 和
+typed transport failure 会写入 project-associated `linear.request_failed`，payload 包含 operation、
+status/reason 与 project slug。
+
 Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。每轮 reconciliation 先按
 enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 supervised task 中对每个 slug
-各读取一次 Linear `In Progress` issue，并完成对应的 zombie tracker 更新。整个 task 使用 5000 ms
+各读取一次 Linear `In Progress` issue。整个 task 使用 5000 ms
 预算；超时终止本轮，下一轮不与它重叠。结果 cast 携带不可复用的 round reference，manager 只接受
 当前 round 一次；迟到或重复结果不改变状态。tracker error 与 timeout 分别记录
 `worker_reconcile_tracker_error` 和 `worker_reconcile_tracker_timeout`，与 run 的
-`assignment_expired` terminal event 分开归因。reconciliation 结合最新 worker run 时间：lease timeout
-前保持不派发；超时后将僵尸 issue 转回 `Ready` 并失败终结旧 run。回收判据不调用 session heartbeat 过期扫描，也不以
+`linear.request_failed` event。reconciliation 结合最新 worker run 时间：lease timeout 前保持不派发；
+超时且当前态没有 assignment 时只写一次 `run.orphaned` operator signal，不移动 Linear state、不终结
+run、不重新派发。判据不调用 session heartbeat 过期扫描，也不以
 `worker_sessions.status` 或 `last_heartbeat_at` 作为僵尸回收准入。重启后旧 session row 单独存在时
 不提供 deployment capacity 或 claim admission；到 worker 下一次 registration、heartbeat、claim 或
 当前 assignment task event 记录内存 last-seen 前，Panel 将该 session 视为未知。未知窗口内不重新派发，
 直到 run 级 lease 超时；worker 重新出现时先建立新的内存 liveness，新旧 assignment id 不匹配的迟到上报
 仍因不存在匹配 assignment 而被拒绝。未重启但 worker 停止发送请求时，内存 entry 可继续存在，但一旦
 超过 `worker_heartbeat_interval_seconds() * 3` freshness window，即不再贡献 capacity 或 admission。
+
+operator 在 Events 和 run history 核对 orphan signal、lease 时间与当前 state 后，先记录说明评论并把
+issue 移回 `Todo`。下一次显式 claim 才把该动作视为重跑意图：原子 admission 先用
+`assignment_expired` 与 `operator_manual_rerun` evidence 终结旧 run，再创建且只创建一个新 run。
 
 当前 assignment 在持有 `invalid_worker_summary` rejection 时到期，Panel 从该白名单 rejection 构造一个
 `assignment_expired` `RunFailure`。同一个值驱动 synthetic `task.failed`、terminal `run.failed`、

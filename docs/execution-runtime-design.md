@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-04
+updated: 2026-10-07
 design_status: landed
 ---
 
@@ -87,11 +87,31 @@ copies that value into assignment `limits.stall_timeout_ms`, and
 timeout source. [Orchestration §8.5](spec-orchestration.md#85-active-run-reconciliation) owns the stall decision
 contract.
 
+Worker admission persists the issue, locks that row, checks for a running issue run, and creates the
+new run in one PostgreSQL transaction. A partial unique index on running issue runs is the final
+cross-caller boundary. Two independent claim callers that select the same candidate can therefore
+publish at most one run and assignment; the loser returns `admission.reason = active_run` with the
+winning run id. Local claim gates such as listening, capacity, session freshness, and an existing
+assignment do not call Linear. Candidate admission is a separate measured path and performs the
+live Linear reads. Claim cadence and `poll_after_seconds` remain unchanged.
+
 History-based duplicate-run gating treats only `Refining` and `In Progress` as worker started
 states. A candidate in either state can be claimed only when the latest worker run is terminal
 (`succeeded`, `failed`, or `cancelled`); a non-terminal latest worker run prevents duplicate
-assignment. Repository defaults still leave `tracker.active_states` at `Todo`, `Ready`, and
-`In Progress`, so `Refining` is not a default dispatch state.
+assignment. A `Todo` candidate with a running run older than the assignment lease window represents
+explicit operator rerun intent: the same admission transaction first terminates the orphan with
+`assignment_expired` evidence and then creates one replacement run. Repository defaults still leave
+`tracker.active_states` at `Todo`, `Ready`, and `In Progress`, so `Refining` is not a default dispatch
+state.
+
+Each normal Orchestrator poll groups enabled workflows by distinct Linear project slug. It fetches
+candidates once for each slug and shares that result across the workflows in the group. The existing
+poll-in-progress gate prevents two normal rounds from overlapping. A failed Linear read ends that
+slug's work for the round; it records `linear.request_failed` and waits for the next fixed
+`polling.interval_ms` tick without a new retry, backoff, circuit, or cooldown. For the fixed fixture
+of three workflows mapped to two slugs, candidate fetches fall from three to two per round. At a
+fixed one-minute window, changing `polling.interval_ms` from 5000 to 30000 changes the maximum normal
+poll rounds per slug from twelve to two. Worker claim timing is independent of this calculation.
 
 One supervised process group owns checkout, hooks, Codex, validation, and handoff for an assignment.
 It renews only that assignment and emits accepted/progress/completed/failed/cancelled events with
@@ -254,6 +274,14 @@ id: failure and no-progress use the current running entry, merge conflict uses t
 `Ready to Merge` read plus completed handoff run, and review findings use the review run plus their
 delivery-time `Ready to Merge` read. Persisted issue state is never a producer scope source.
 
+The execution worker keeps a completed assignment and its terminal payload until the Panel accepts
+that exact terminal event. A Panel 503 uses the existing fixed lifecycle retry interval. Passing the
+former bounded-attempt threshold no longer drops the pending terminal or frees the assignment; the
+worker continues delivery with the same task and lease identity. After the Panel recovers, one
+accepted failure terminal closes the original run through `RunLifecycle`, including non-empty
+`finished_at`, `failure_reason`, and `failure_evidence` derived from the original summary. This
+delivery retry does not change claim cadence and does not add exponential backoff or a cooldown.
+
 Candidate selection and tracker revalidation share one validity rule. A completed transition
 expects live `Blocked`; every other decision expects `origin_state`. That state and the decision
 `run_id` must match the latest persisted issue run. Missing scope is typed `missing_scope`; a state
@@ -278,13 +306,14 @@ the control and state APIs; no listening value is persisted in the assignment ma
 
 Panel restart deliberately loses the assignment and payload. Each reconciliation round deduplicates
 enabled workflows by `tracker.project_slug`, then a single supervised task performs one Linear `In
-Progress` fetch per distinct slug plus the corresponding zombie transition. The whole task has a
-5000 ms budget; timeout terminates the round, no later round overlaps it, and the manager accepts
-only the current round-reference result cast. Tracker errors and timeouts use distinct
-`worker_reconcile_tracker_error` and `worker_reconcile_tracker_timeout` logs rather than the run's
-`assignment_expired` terminal event. Reconciliation combines those Linear results with latest
-persisted run/event time: no duplicate is dispatched before timeout, then an expired zombie is moved
-to `Ready` and its old run is failed. Late events are rejected.
+Progress` fetch per distinct slug. The whole task has a 5000 ms budget; timeout terminates the round,
+no later round overlaps it, and the manager accepts only the current round-reference result cast.
+Linear 400, 429, 5xx, and typed transport failures persist a project-associated
+`linear.request_failed` event and end that round. Reconciliation combines those Linear results with
+latest persisted run/event time. When a run remains running beyond the lease window but no current
+assignment exists, it records one `run.orphaned` operator signal. It does not move the Linear issue,
+terminate the run, or dispatch a replacement. Worker heartbeat absence is supporting evidence only.
+Late events remain fenced by assignment identity.
 PostgreSQL stores worker/session identity and run/event history, never queued work or active leases.
 
 Centralized mode remains the default. Worker mode is opt-in. Multi-worker scheduling, distributed

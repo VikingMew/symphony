@@ -5,7 +5,7 @@ domain: [issues, persistence, linear, observability]
 status: current
 language: en
 owner: SymphonyElixir.Persistence.IssueRecord
-updated: 2026-10-03
+updated: 2026-10-07
 design_status: landed
 ---
 
@@ -25,6 +25,20 @@ state.
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.
 Neither path rewrites the poll snapshot or maintains another tracker-state mirror.
+
+## Atomic running-run admission
+
+Worker admission upserts the project issue, locks that issue row, checks its running issue run, and
+creates a new run in one transaction. A partial unique index on `runs.issue_id` where the issue run
+is `running` enforces the invariant across independent callers. The forward migration resolves any
+pre-existing duplicates deterministically by retaining the oldest running row and failing later
+rows with structured migration evidence before adding the index.
+
+An existing running row normally returns `{:active_run, run_id}` and produces no assignment. A live
+`Todo` candidate is explicit operator rerun intent only when the existing row predates the assignment
+lease cutoff. The transaction then closes that orphan through `RunLifecycle` with
+`assignment_expired` / `operator_manual_rerun` evidence before inserting exactly one replacement.
+Periodic orphan detection only records `run.orphaned`; it never changes Linear state or the run.
 
 ## History projection
 

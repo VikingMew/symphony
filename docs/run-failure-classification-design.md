@@ -4,7 +4,7 @@ genre: design
 domain: [runs, persistence, observability, reliability]
 status: current
 language: en
-updated: 2026-10-04
+updated: 2026-10-07
 design_status: landed
 ---
 
@@ -27,7 +27,7 @@ opaque domain detail belong only in evidence.
 | `budget_exhausted` | A stall, read timeout, or failure retry budget ended the run. |
 | `contract_violation` | Required handoff or validated protocol evidence was missing or invalid. |
 | `worker_process_termination` | A worker/Codex process, port, signal, OOM, lease, or assignment ended unexpectedly. |
-| `assignment_expired` | A matching terminal summary was rejected by the Panel and the in-memory assignment subsequently expired. |
+| `assignment_expired` | A rejected terminal assignment expired, or an operator explicitly replaced an orphaned running assignment after its lease window. |
 | `validation_failed` | A required validation gate failed, timed out, or returned non-zero. |
 | `runtime_failure` | A typed agent/operator/runtime domain failure not covered by a narrower class. |
 | `codex_upstream_capacity` | A validated Codex turn failure classified upstream as capacity exhaustion. |
@@ -55,6 +55,11 @@ the run row, terminal event, retry metadata, `BlockingDecision.reason`, and the 
 circuit key. The wire summary remains execution evidence and is not a second classification source.
 Explicit blocked outcomes remain accepted without interpreting their opaque reason or detail.
 
+Worker terminal delivery retains the validated payload across Panel 503 responses and beyond the
+former attempt limit. When delivery later succeeds, the original failure classification and its
+delivery/summary evidence pass through `RunLifecycle`; no second run or substitute terminal write is
+created.
+
 When a matching terminal event fails `WorkerResult` validation, the active assignment retains only
 the typed rejection and whitelisted attempted metadata. If that assignment expires before a valid
 terminal event is accepted, `RunFailure` creates `assignment_expired` once from that sanitized value.
@@ -62,6 +67,12 @@ The same `RunFailure` supplies the synthetic task event, terminal run event, run
 orchestrator notification. An expiry with no retained terminal rejection remains
 `worker_process_termination`; an invalid summary itself remains unaccepted and is never persisted as
 an execution summary.
+
+A `run.orphaned` event is observational and does not terminally classify its running run. After an
+operator records the incident and moves the issue to `Todo`, explicit admission may replace a run
+older than the lease window. That single transaction first finishes the old run as
+`assignment_expired` with `reason = operator_manual_rerun`, `phase = admission`, and the prior run id,
+then creates one new running row. Periodic reconciliation never performs this terminal write.
 
 Run terminal events and bounded run-history API projections expose the persisted reason and
 evidence together. The environment failure circuit compares classification strings exactly; its

@@ -163,7 +163,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
   defmodule ZombieReconcilePersistence do
     defdelegate list_runs_for_issue(identifier, opts), to: FakePersistence
-    defdelegate finish_run(run_id, status, summary), to: FakePersistence
+    defdelegate list_events(opts), to: FakePersistence
     defdelegate record_event(attrs), to: FakePersistence
     defdelegate worker_heartbeat_interval_seconds(), to: FakePersistence
     defdelegate worker_lease_duration_seconds(), to: FakePersistence
@@ -234,6 +234,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
       Application.delete_env(:symphony_elixir, :assignment_test_fetch_hook)
       Application.delete_env(:symphony_elixir, :blocking_decision_cas_hook)
+      Application.delete_env(:symphony_elixir, :fake_admit_run_hook)
 
       if is_nil(previous_execution_mode),
         do: Application.delete_env(:symphony_elixir, :execution_mode),
@@ -1192,8 +1193,9 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       )
 
     AssignmentManager.reconcile(restarted)
-    eventually(fn -> List.last(Tracker.updates()) == {ready.id, "Ready"} end)
-    assert FakePersistence.get_run(assignment.run_id).status == "failed"
+    eventually(fn -> length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1 end)
+    assert Tracker.updates() == [{ready.id, "In Progress"}]
+    assert FakePersistence.get_run(assignment.run_id).status == "running"
   end
 
   test "blocked heartbeat history does not delay matching lease renewal", context do
@@ -1449,7 +1451,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("disabled", context.manager)
   end
 
-  test "restart reconciliation preserves a recent run and resets an expired zombie", context do
+  test "restart reconciliation preserves runs and emits one orphan signal after the lease window", context do
     ready = issue(1)
     Tracker.put([ready])
     assert {:ok, assignment} = claim(context)
@@ -1477,9 +1479,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     run = FakePersistence.get_run(assignment.run_id)
     {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
     AssignmentManager.reconcile(restarted)
+    eventually(fn -> length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1 end)
+    AssignmentManager.reconcile(restarted)
     Process.sleep(10)
-    assert List.last(Tracker.updates()) == {ready.id, "Ready"}
-    assert FakePersistence.get_run(assignment.run_id).status == "failed"
+    assert Tracker.updates() == [{ready.id, "In Progress"}]
+    assert FakePersistence.get_run(assignment.run_id).status == "running"
+    assert length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1
 
     assert {:error, :lease_not_active} =
              AssignmentManager.record_event(context.worker.id, context.session.id, assignment.id, "task.completed", %{}, restarted)
@@ -1574,7 +1579,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     Tracker.fail_fetch(nil)
     assert {:ok, {:empty, 5}} = claim(context)
-    assert Tracker.fetch_count() == 8
+    assert Tracker.fetch_count() == 5
   end
 
   test "assignment halts workflow traversal and resets empty and error streaks", context do
@@ -1585,7 +1590,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     Tracker.put([issue(1)])
     assert {:ok, assignment} = claim(context)
-    assert Tracker.fetch_count() == 9
+    assert Tracker.fetch_count() == 3
     complete(context, assignment)
 
     Tracker.put([])
