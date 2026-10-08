@@ -150,7 +150,6 @@ test/symphony_elixir/extensions_test.exs	776	refute	implementation-detail	review
 test/symphony_elixir/extensions_test.exs	901	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute html =~ "<details open"
 test/symphony_elixir/extensions_test.exs	972	refute	structure-data	rewrite-exact	tested data/state contract	refute html =~ "Active issue sessions in the current runtime."
 test/symphony_elixir/extensions_test.exs	1174	flunk	structure-data	rewrite-exact	tested data/state contract	defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
-test/symphony_elixir/first_run_defaults_test.exs	51	refute	implementation-detail	review-delete-or-positive	nearest owning contract	refute prompt =~ "Disabled"
 test/symphony_elixir/github_pull_request_test.exs	141	flunk	control-flow	rewrite-match	explicit success shape	["pr", "create" | _rest] -> flunk("closed branch PR must not create an ambiguous duplicate")
 test/symphony_elixir/github_pull_request_test.exs	158	flunk	control-flow	rewrite-match	explicit success shape	_ -> flunk("repository mismatch must stop lookup")
 test/symphony_elixir/github_pull_request_test.exs	225	refute	security-redline	retain-with-contract	security owning contract	refute details =~ "super-secret-token"

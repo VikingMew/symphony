@@ -55,7 +55,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
 
     circuit = Module.concat(__MODULE__, "Circuit#{System.unique_integer([:positive])}")
     start_supervised!({EnvironmentFailureCircuit, name: circuit})
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
     Application.put_env(:symphony_elixir, :assignment_admission_workflow, Map.put(loaded, :project_id, "fake-project-id"))
     {:ok, registration} = FakePersistence.register_worker(%{"worker_name" => "test", "total_slots" => 1})
     now = DateTime.utc_now()

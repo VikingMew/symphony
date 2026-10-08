@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, projects, persistence, admin-ui]
 status: current
 language: zh-CN
-updated: 2026-10-03
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -28,8 +28,9 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
 
 - `persistence/workflow_store.ex:20-47` `default_project!` 仅在 projects 表为空时创建
   disabled Default placeholder。
-- `first_run_defaults.ex:37-43` 零 enabled project 时直接 log "start in setup-required mode",
-  不导入 workflow。
+- source `bin/symphony` 经 `CLI.main/1` 准备数据库并启动 supervision tree；OTP release 的
+  `bin/symphony start` 由 release boot script 启动且不经过 `CLI.main/1`。两条链都不自动读取或导入
+  `docs/examples/`，缺少 durable scope 时保持 setup-required。
 - `persistence.ex` / `linear/health.ex` / `admin_live/*` 仍有 `default_project` 引用
   (runtime no-context fallback 已收敛为 configured Default / exactly one / missing context,但函数和概念还在)。
 - Settings/Projects UI(settings/projects.ex)只有编辑和新增,没有移除功能。
@@ -40,15 +41,16 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
 
 1. **零 project 引导**:`default_project!` 在 `list_projects() == []` 时自动创建
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: false}`。
-   该记录是 Settings 可见的引导占位,不参与 runtime dispatch；first-run combined package
-   导入仍要求显式选择 enabled project，并在同一事务写入 instance singleton 与该 project slice。
+   该记录是 Settings 可见的引导占位,不参与 runtime dispatch；启动不提供 first-run package prompt
+   或自动导入。operator 在 Settings / Import 主动选择 package 与 enabled project，并在确认后由同一
+   事务写入 instance singleton 与该 project slice。
    Settings / Import 的 review 按 durable ownership 分成 Instance 与 Project 两组，并显示显式选择的
    project identity；preview rows 与 `affected_scopes` 直接来自确认写入使用的相同 Instance/Project
    slices。只含 Instance 变化时不要求 project target，直接写 singleton；含 Project 变化但没有显式
    target 时返回 `project_target_required`。确认 combined package 后由原子 import transaction 一次写
-   singleton 与所选 project slice，并分别报告两 scope 的结果。交互式 first-run 导入若因 portable
-   project-owned 值与所选 project 行不同而返回 `project_authority_conflict`，启动路径记录 warning、
-   保持 setup-required 并继续启动，不能用 package 值或默认值掩盖冲突。
+   singleton 与所选 project slice，并分别报告两 scope 的结果。portable project-owned 值与所选
+   project 行不同时返回 `project_authority_conflict`，保持 setup-required 且不写入，不能用 package
+   值或默认值掩盖冲突。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建新的 Default。无显式 project context 的 runtime settings 和诊断选择已配置的
    Default workflow；没有可用 Default 时,只有恰好一个 enabled 且已加载 workflow 的真实
@@ -87,7 +89,6 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
 - `lib/symphony_elixir/persistence.ex`(delete_project/1 委托 + 规格)
 - `lib/symphony_elixir/persistence/project.ex`(如需要 on_replace / 级联配置)
 - `lib/symphony_elixir_web/live/admin_live/settings/projects.ex`(移除按钮 + handle_event)
-- `lib/symphony_elixir/first_run_defaults.ex`(零 project 自动创建后导入,可能需微调)
 - 相关测试
 
 ## 不做

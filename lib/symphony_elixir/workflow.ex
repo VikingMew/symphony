@@ -4,8 +4,8 @@ defmodule SymphonyElixir.Workflow do
 
   Split package parsing supports `workflow.yml` for runtime/routing data and
   `profiles.yml` for agent profile settings plus the shared base prompt. The
-  checked-in package is available for first-run import into the installation
-  singleton and one explicitly selected project's durable slice.
+  checked-in package is available through an explicitly named loader for
+  Settings imports, smoke checks, and tests.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -23,8 +23,8 @@ defmodule SymphonyElixir.Workflow do
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
-    Application.get_env(:symphony_elixir, :workflow_file_path) ||
-      Path.join(example_package_root(), "workflow.yml")
+    :symphony_elixir
+    |> Application.fetch_env!(:workflow_file_path)
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
@@ -374,6 +374,11 @@ defmodule SymphonyElixir.Workflow do
 
   defp to_prompt_body(nil), do: ""
   defp to_prompt_body(prompt), do: String.trim(prompt)
+
+  @spec load_example_package() :: {:ok, loaded_workflow()} | {:error, term()}
+  def load_example_package do
+    load(example_package_root())
+  end
 
   defp maybe_reload_store do
     if Process.whereis(WorkflowStore) do
