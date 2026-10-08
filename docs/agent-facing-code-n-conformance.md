@@ -28,12 +28,12 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-04 | not_satisfied | satisfied | Glossary below; `AGENTS.md` single-term review item | The seven core terms have one repository meaning and prohibited new declaration synonyms. | Review changed declarations against the glossary. | None. |
 | N-05 | partially_satisfied | partially_satisfied | N-05 identities in `config/agent_code_navigation_baseline.yml` | Every scanned Elixir file has one top-level main-module check and basename-to-module-suffix mapping, including dotted Mix task basenames. | `mix agent_code_n.check --format json` | Split or rename each baselined file/module mismatch and remove the exact identity. |
 | N-06 | satisfied | satisfied | `find docs lib test config scripts .github -type d \| sort`; `AGENTS.md` directory review item | Date and numbered phase/stage/batch directories are machine-blocked; person names and other semantic stages remain human-reviewed. | `mix agent_code_n.check --format json` plus review of changed paths | None. |
-| N-07 | partially_satisfied | satisfied | `AGENTS.md` Build, Run, and Test sections | The resident rules give current executable commands for all three groups and the checker verifies their entries. | `mix agent_code_n.check --format json` | None. |
+| N-07 | partially_satisfied | partially_satisfied | `AGENTS.md` Build, Run, and Test sections; exact N-07 identity in `config/agent_code_navigation_baseline.yml` | The resident rules give current executable commands for all three groups, while the combined Test command span remains an exact baselined finding. | `mix agent_code_n.check --format json` | Give `scripts/check.sh` its own command span and remove the exact baseline identity. |
 | N-08 | partially_satisfied | partially_satisfied | N-08 identities in `config/agent_code_navigation_baseline.yml` | Top-level test modules, support namespaces, and helper/product declaration collisions are checked with exact locations. | `mix agent_code_n.check --format json` | Rename each baselined helper collision or product declaration and remove the exact identity. |
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
-Final totals are 5 satisfied, 4 partially satisfied, 0 not satisfied, and 0 not applicable. The
-current baseline waterline is 555 exact findings; the N group is not fully compliant while that
+Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
+current baseline waterline is 562 exact findings; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
