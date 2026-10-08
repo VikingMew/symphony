@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Codex.Startup do
       workspace: Map.get(context, :workspace),
       worker_host: Map.get(context, :worker_host) || "local",
       output: sanitize_output(output),
-      hint: hint(reason),
+      hint: hint(reason, timeout_ms),
       timeout_ms: timeout_ms
     }
 
@@ -91,12 +91,11 @@ defmodule SymphonyElixir.Codex.Startup do
 
   def sanitize_output(_output), do: ""
 
-  @spec hint(term()) :: String.t()
-  def hint({:port_exit, 127}), do: "Command not found or shell initialization failed before codex app-server became ready."
+  defp hint({:port_exit, 127}, _timeout_ms), do: "Command not found or shell initialization failed before codex app-server became ready."
 
-  def hint({:port_exit, _status}), do: "Codex startup failed before the session handshake completed. Check Settings / Workflow / Codex / Pre-start commands and Command."
+  defp hint({:port_exit, _status}, _timeout_ms), do: "Codex startup failed before the session handshake completed. Check Settings / Workflow / Codex / Pre-start commands and Command."
 
-  def hint({:response_error, error}) do
+  defp hint({:response_error, error}, _timeout_ms) do
     error
     |> response_error_message()
     |> approval_policy_error?()
@@ -106,10 +105,13 @@ defmodule SymphonyElixir.Codex.Startup do
     end
   end
 
-  def hint(:response_timeout),
-    do: "Codex app-server did not respond within the fixed 30-second startup handshake budget. Check the Codex command, authentication, and pre-start shell work."
+  defp hint(:response_timeout, timeout_ms) do
+    timeout_seconds = div(timeout_ms, 1_000)
 
-  def hint(_reason), do: "Codex app-server startup failed before the session handshake completed."
+    "Codex app-server did not respond within the fixed #{timeout_seconds}-second startup handshake budget. Check the Codex command, authentication, and pre-start shell work."
+  end
+
+  defp hint(_reason, _timeout_ms), do: "Codex app-server startup failed before the session handshake completed."
 
   defp startup_reason({:port_exit, _status}), do: :port_exit
   defp startup_reason({:response_error, _error}), do: :response_error

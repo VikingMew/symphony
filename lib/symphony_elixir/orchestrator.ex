@@ -1085,6 +1085,11 @@ defmodule SymphonyElixir.Orchestrator do
     "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{elapsed_ms} setting=#{setting} output=#{compact_log_output(output)}"
   end
 
+  defp agent_failure_summary({:codex_startup_failed, %{reason: reason, stage: stage, timeout_ms: timeout_ms, output: output}}) do
+    "class=agent_domain_failure type=codex_startup_failed stage=#{inspect(stage)} timeout_ms=#{timeout_ms} reason=#{inspect(reason)} output=#{compact_log_output(output)}"
+    |> String.slice(0, 1_000)
+  end
+
   defp agent_failure_summary(reason),
     do: "class=agent_domain_failure reason=#{compact_log_output(inspect(reason, limit: 20, printable_limit: 1_000))}"
 

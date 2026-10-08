@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Codex.Startup
   alias SymphonyElixir.Config.ProjectAuthority
 
   defmodule FakeAgentRunner do
@@ -349,15 +350,27 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
            }
   end
 
-  test "operator runner failures clear running state and mark the task failed" do
-    {:ok, pid} = start_operator_orchestrator(:FailedNap)
+  test "startup failures persist classification and ordered bounded evidence" do
+    pid = restart_default_orchestrator()
 
     reply = GenServer.call(pid, {:request_operator_task, :nap})
     run_id = reply.run_id
     assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
 
+    output =
+      1..80
+      |> Enum.map_join("\n", &"cold-start-output-line-#{String.pad_leading(to_string(&1), 3, "0")}")
+
+    assert byte_size(output) >= 1_024
+
     startup_failure =
-      {:codex_startup_failed, %{reason: :response_timeout, stage: :thread_start, timeout_ms: 30_000}}
+      Startup.failure(
+        :response_timeout,
+        :thread_start,
+        %{command: "codex app-server", workspace: "/tmp/operator", worker_host: "local"},
+        output,
+        30_000
+      )
 
     send(runner_pid, {:finish_operator_runner, {:error, startup_failure}})
 
@@ -366,10 +379,24 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
         snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "failed"
       end)
 
-    failure_reason = snapshot.operator_tasks.nap.failure_reason
-    assert failure_reason =~ "codex_startup_failed"
-    assert failure_reason =~ "stage: :thread_start"
-    assert failure_reason =~ "timeout_ms: 30000"
+    summary = snapshot.operator_tasks.nap.failure_reason
+    assert summary =~ "type=codex_startup_failed"
+    assert summary =~ "stage=:thread_start"
+    assert summary =~ "timeout_ms=30000"
+    assert summary =~ "cold-start-output-line-"
+    assert String.length(summary) <= 1_000
+
+    assert summary =~
+             ~r/type=codex_startup_failed.*stage=:thread_start.*timeout_ms=30000.*output=cold-start-output-line-/
+
+    assert [run_event] = FakePersistence.list_events(run_id: run_id, event_type: "run.failed")
+    assert run_event.payload.failure_reason == "runtime_failure"
+
+    evidence = run_event.payload.failure_evidence
+    assert evidence["reason"] |> hd() == "codex_startup_failed"
+    assert get_in(evidence, ["reason", Access.at(1), "stage"]) == "thread_start"
+    assert get_in(evidence, ["reason", Access.at(1), "timeout_ms"]) == 30_000
+    assert evidence["detail"] == summary
   end
 
   test "stale synthetic operator entries do not keep the runtime busy forever" do
@@ -482,6 +509,22 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
     end)
 
     {:ok, pid}
+  end
+
+  defp restart_default_orchestrator do
+    assert :ok =
+             Supervisor.terminate_child(
+               SymphonyElixir.Supervisor,
+               SymphonyElixir.Orchestrator
+             )
+
+    assert {:ok, pid} =
+             Supervisor.restart_child(
+               SymphonyElixir.Supervisor,
+               SymphonyElixir.Orchestrator
+             )
+
+    pid
   end
 
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 500) when is_function(predicate, 1) do
