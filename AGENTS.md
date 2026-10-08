@@ -9,6 +9,24 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Make is reserved for build/image targets. `scripts/e2e.sh` is a credentialed manual live E2E suite,
   not a CI gate.
 
+### Build
+
+Run `mix build` after `mix setup`.
+
+### Run
+
+With `DATABASE_URL` set, run `mix symphony.migrate`, then `mix phx.server`.
+
+### Test
+
+Run `scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh`.
+
+### Navigation
+
+Use the [module map](docs/design.md) and `rg -n "defmodule|def |@type|@opaque" lib test`
+to locate code by concept. For naming details and current exceptions, see the
+[N-conformance record](docs/agent-facing-code-n-conformance.md).
+
 
 ## Codebase-Specific Conventions
 
@@ -96,6 +114,10 @@ scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
 
 ## Required Rules
 
+- Choose names that state intent and role; do not add encoded prefixes, type abbreviations, or
+  Hungarian-style names.
+- Use the glossary term for each concept; do not introduce a listed declaration synonym.
+- Organize directories by domain; do not add date-, person-, phase-, stage-, or batch-named mainline directories.
 - Public functions (`def`) in `lib/` must have an adjacent `@spec`.
 - `defp` specs are optional.
 - `@impl` callback implementations are exempt from local `@spec` requirement.
