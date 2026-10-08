@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Config.RuntimeResolver
   alias SymphonyElixir.GitHub.PullRequest
   alias SymphonyElixir.Linear.{Client, Issue}
-  alias SymphonyElixir.StateName
+  alias SymphonyElixir.{StateName, WorkerResult}
   alias SymphonyElixir.Worker.{Command, Config, LinearToolAuditRecorder, Paths, Payload, Validation}
 
   @linear_endpoint "https://api.linear.app/graphql"
@@ -70,10 +70,10 @@ defmodule SymphonyElixir.Worker.Executor do
         }
 
       {:error, reason, detail} ->
-        %{status: :failed, reason: reason, detail: detail}
+        execution_failure(reason, detail)
 
       {:error, reason} ->
-        %{status: :failed, reason: reason}
+        execution_failure(reason, nil)
 
       %{status: :failed, reason: reason, detail: detail} ->
         %{status: :failed, reason: reason, detail: detail}
@@ -268,7 +268,6 @@ defmodule SymphonyElixir.Worker.Executor do
   @spec prepare(Payload.t(), Path.t(), (String.t(), map() -> term())) ::
           {:ok, map()} | {:error, term()} | {:error, term(), map()} | :cancelled | map()
   def prepare(payload, workspace, progress) do
-    default_ref = "refs/remotes/origin/#{payload.default_branch}"
     timeout = payload.initialize_timeout_seconds
     depth = payload.checkout_depth
 
@@ -286,17 +285,8 @@ defmodule SymphonyElixir.Worker.Executor do
            ),
          :ok <- not_cancelled(),
          :ok <- fetch_branch(payload.default_branch, depth, timeout, workspace, progress, :default_branch_fetch_failed),
-         {:ok, base_sha} <- resolve_commit(default_ref, workspace, :base_ref_resolution_failed),
-         :ok <- prepare_task_branch(payload.branch, base_sha, depth, timeout, workspace, progress),
-         {:ok, prepared_head} <- resolve_commit("HEAD", workspace, :prepared_head_resolution_failed),
-         {:ok, prepared_branch} <- current_branch(workspace) do
-      {:ok,
-       %{
-         base_sha: base_sha,
-         default_branch: payload.default_branch,
-         prepared_head: prepared_head,
-         task_branch: prepared_branch
-       }}
+         {:ok, source} <- prepare_source(payload, depth, timeout, workspace, progress) do
+      {:ok, source}
     end
   end
 
@@ -323,7 +313,7 @@ defmodule SymphonyElixir.Worker.Executor do
     )
   end
 
-  defp prepare_task_branch(branch, base_sha, depth, timeout, workspace, progress) do
+  defp prepare_task_branch(branch, default_branch, base_sha, depth, timeout, workspace, progress) do
     lookup =
       run_source_command(
         "git_branch_lookup",
@@ -337,16 +327,25 @@ defmodule SymphonyElixir.Worker.Executor do
       %{status: :passed} ->
         complete_source_progress(progress, "git_branch_lookup", "Remote task branch found")
 
-        with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed) do
-          source_command(
-            "checkout_failed",
-            "git_checkout",
-            "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
-            timeout,
-            workspace,
-            progress,
-            :task_branch_checkout_failed
-          )
+        with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed),
+             :ok <-
+               source_command(
+                 "checkout_failed",
+                 "git_checkout",
+                 "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
+                 timeout,
+                 workspace,
+                 progress,
+                 :task_branch_checkout_failed
+               ),
+             {:ok, task_sha} <-
+               resolve_commit("HEAD", timeout, workspace, progress, :task_head_resolution_failed),
+             :ok <-
+               sync_task_branch(
+                 {branch, default_branch, base_sha, task_sha},
+                 {depth, timeout, workspace, progress}
+               ) do
+          {:ok, task_sha}
         end
 
       %{status: :failed, exit_code: 2} ->
@@ -361,6 +360,7 @@ defmodule SymphonyElixir.Worker.Executor do
           progress,
           :task_branch_create_failed
         )
+        |> task_branch_created(base_sha)
 
       %{status: :cancelled} = result ->
         result
@@ -430,18 +430,18 @@ defmodule SymphonyElixir.Worker.Executor do
      }}
   end
 
-  defp resolve_commit(ref, workspace, failure) do
-    case System.cmd("git", ["rev-parse", "--verify", "#{ref}^{commit}"], cd: workspace, stderr_to_stdout: true) do
-      {sha, 0} -> {:ok, String.trim(sha)}
-      {detail, status} -> {:error, {:source_preparation_failed, failure, %{status: status, detail: String.trim(detail)}}}
-    end
+  defp resolve_commit(ref, timeout, workspace, progress, failure) do
+    result = resolve_source_commit(ref, failure, timeout, workspace, progress)
+
+    result
+    |> trim_source_value()
   end
 
-  defp current_branch(workspace) do
-    case System.cmd("git", ["symbolic-ref", "--short", "HEAD"], cd: workspace, stderr_to_stdout: true) do
-      {branch, 0} -> {:ok, String.trim(branch)}
-      {detail, status} -> {:error, {:source_preparation_failed, :prepared_branch_resolution_failed, %{status: status, detail: String.trim(detail)}}}
-    end
+  defp current_branch(timeout, workspace, progress) do
+    result = resolve_current_branch(timeout, workspace, progress)
+
+    result
+    |> trim_source_value()
   end
 
   defp run_steps(steps, workspace, failure) do
@@ -722,4 +722,333 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   defp shell(value), do: "'" <> String.replace(value, "'", "'\\''") <> "'"
+
+  defp source_query(operation, command, timeout_phase, failure, timeout, workspace, progress) do
+    result = run_source_command(operation, command, timeout, workspace, progress)
+
+    case result do
+      %{status: :passed, detail: detail} ->
+        complete_source_progress(progress, operation, "#{operation} completed")
+        {:ok, detail}
+
+      other ->
+        source_query_error(operation, timeout_phase, failure, other, progress)
+    end
+  end
+
+  defp source_query_error(operation, timeout_phase, failure, result, progress) do
+    failed_source_progress(progress, operation, result.detail)
+
+    case result do
+      %{status: :cancelled} = cancelled -> cancelled
+      %{status: :timed_out} = timed_out -> source_timeout(timeout_phase, timed_out)
+      failed -> {:error, {:source_preparation_failed, failure, failed}}
+    end
+  end
+
+  defp preparation_error(failure, detail) do
+    {:error, {:source_preparation_failed, failure, %{status: :failed, detail: detail}}}
+  end
+
+  defp source_preparation_failure(failure, detail) do
+    operation = source_failure_operation(failure)
+
+    evidence = %{
+      phase: source_failure_phase(failure),
+      command_status: "failed",
+      operation: operation,
+      detail: source_failure_detail(detail)
+    }
+
+    %{status: :failed, reason: :source_preparation_failed, detail: evidence.detail, failure_evidence: evidence}
+  end
+
+  defp source_failure_phase(failure)
+       when failure in [:clone_failed, :default_branch_fetch_failed, :task_branch_fetch_failed, :history_deepen_failed],
+       do: if(failure == :clone_failed, do: "clone_failed", else: "fetch_failed")
+
+  defp source_failure_phase(_failure), do: "checkout_failed"
+
+  defp source_failure_operation(failure) do
+    failure
+    |> Atom.to_string()
+    |> String.replace_suffix("_failed", "")
+  end
+
+  defp source_failure_detail(%{detail: detail}) when is_binary(detail), do: source_failure_detail(detail)
+
+  defp source_failure_detail(detail) when is_binary(detail) do
+    detail
+    |> SymphonyElixir.Redaction.credentials()
+    |> WorkerResult.normalize_detail()
+  end
+
+  defp source_failure_detail(detail), do: detail |> inspect() |> WorkerResult.normalize_detail()
+
+  defp sync_task_branch(
+         {branch, default_branch, base_sha, task_sha},
+         {depth, timeout, workspace, progress}
+       ) do
+    case ancestor?(base_sha, task_sha, "git_base_ancestor", timeout, workspace, progress) do
+      {:ok, true} ->
+        :ok
+
+      {:ok, false} ->
+        with :ok <-
+               ensure_common_ancestor(
+                 branch,
+                 default_branch,
+                 base_sha,
+                 task_sha,
+                 depth,
+                 timeout,
+                 workspace,
+                 progress
+               ) do
+          merge_after_history(base_sha, task_sha, timeout, workspace, progress)
+        end
+
+      other ->
+        other
+    end
+  end
+
+  defp merge_after_history(base_sha, task_sha, timeout, workspace, progress) do
+    case ancestor?(base_sha, task_sha, "git_base_ancestor", timeout, workspace, progress) do
+      {:ok, true} ->
+        :ok
+
+      {:ok, false} ->
+        source_command(
+          "checkout_failed",
+          "git_merge",
+          "git -c user.name=Symphony -c user.email=symphony@localhost merge --no-edit #{shell(base_sha)}",
+          timeout,
+          workspace,
+          progress,
+          :task_branch_merge_failed
+        )
+
+      other ->
+        other
+    end
+  end
+
+  defp ensure_common_ancestor(branch, default_branch, base_sha, task_sha, depth, timeout, workspace, progress) do
+    case merge_base_visible?(base_sha, task_sha, timeout, workspace, progress) do
+      {:ok, true} ->
+        :ok
+
+      {:ok, false} ->
+        deepen_history(branch, default_branch, base_sha, task_sha, depth, timeout, workspace, progress)
+
+      other ->
+        other
+    end
+  end
+
+  defp deepen_history(branch, default_branch, base_sha, task_sha, depth, timeout, workspace, progress) do
+    with {:ok, true} <- shallow_repository?(timeout, workspace, progress),
+         {:ok, before_count} <- history_count(timeout, workspace, progress),
+         :ok <-
+           source_command(
+             "fetch_failed",
+             "git_deepen",
+             deepen_command(branch, default_branch, depth),
+             timeout,
+             workspace,
+             progress,
+             :history_deepen_failed
+           ),
+         {:ok, after_count} <- history_count(timeout, workspace, progress) do
+      if after_count > before_count do
+        ensure_common_ancestor(
+          branch,
+          default_branch,
+          base_sha,
+          task_sha,
+          depth,
+          timeout,
+          workspace,
+          progress
+        )
+      else
+        preparation_error(:merge_base_no_progress, "targeted deepen exposed no additional commits")
+      end
+    else
+      {:ok, false} -> preparation_error(:merge_base_exhausted, "repository has no common ancestor")
+      other -> other
+    end
+  end
+
+  defp deepen_command(branch, default_branch, depth) do
+    default_refspec = "+refs/heads/#{default_branch}:refs/remotes/origin/#{default_branch}"
+    task_refspec = "+refs/heads/#{branch}:refs/remotes/origin/#{branch}"
+
+    "git fetch --progress --no-tags --deepen #{depth} origin #{shell(default_refspec)} #{shell(task_refspec)}"
+  end
+
+  defp merge_base_visible?(base_sha, task_sha, timeout, workspace, progress) do
+    operation = "git_merge_base"
+    result = run_source_command(operation, "git merge-base #{shell(base_sha)} #{shell(task_sha)}", timeout, workspace, progress)
+
+    case result do
+      %{status: :passed} ->
+        complete_source_progress(progress, operation, "merge base visible")
+        {:ok, true}
+
+      %{status: :failed, exit_code: 1} ->
+        complete_source_progress(progress, operation, "merge base not visible")
+        {:ok, false}
+
+      other ->
+        source_query_error(operation, "checkout_failed", :merge_base_failed, other, progress)
+    end
+  end
+
+  defp ancestor?(ancestor, descendant, operation, timeout, workspace, progress) do
+    result =
+      run_source_command(
+        operation,
+        "git merge-base --is-ancestor #{shell(ancestor)} #{shell(descendant)}",
+        timeout,
+        workspace,
+        progress
+      )
+
+    case result do
+      %{status: :passed} ->
+        complete_source_progress(progress, operation, "ancestor verified")
+        {:ok, true}
+
+      %{status: :failed, exit_code: 1} ->
+        complete_source_progress(progress, operation, "ancestor not present")
+        {:ok, false}
+
+      other ->
+        source_query_error(operation, "checkout_failed", :dag_ancestor_check_failed, other, progress)
+    end
+  end
+
+  defp shallow_repository?(timeout, workspace, progress) do
+    with {:ok, output} <-
+           source_query(
+             "git_shallow_check",
+             "git rev-parse --is-shallow-repository",
+             "checkout_failed",
+             :shallow_repository_check_failed,
+             timeout,
+             workspace,
+             progress
+           ) do
+      {:ok, String.trim(output) == "true"}
+    end
+  end
+
+  defp history_count(timeout, workspace, progress) do
+    with {:ok, output} <-
+           source_query(
+             "git_history_count",
+             "git rev-list --count --all",
+             "checkout_failed",
+             :history_count_failed,
+             timeout,
+             workspace,
+             progress
+           ),
+         {count, ""} <- output |> String.trim() |> Integer.parse() do
+      {:ok, count}
+    else
+      :error -> preparation_error(:history_count_failed, "git history count was not an integer")
+      other -> other
+    end
+  end
+
+  defp verify_prepared_branch(default_ref, base_sha, task_sha, timeout, workspace, progress) do
+    with {:ok, true} <- ancestor?(task_sha, "HEAD", "git_verify_task_ancestor", timeout, workspace, progress),
+         {:ok, true} <- ancestor?(base_sha, "HEAD", "git_verify_base_ancestor", timeout, workspace, progress),
+         {:ok, merge_base} <-
+           source_query(
+             "git_verify_default_merge_base",
+             "git merge-base #{shell(default_ref)} HEAD",
+             "checkout_failed",
+             :default_merge_base_verification_failed,
+             timeout,
+             workspace,
+             progress
+           ),
+         true <- String.trim(merge_base) == base_sha do
+      :ok
+    else
+      {:ok, false} -> preparation_error(:dag_postcondition_failed, "prepared HEAD is missing a required ancestor")
+      false -> preparation_error(:dag_postcondition_failed, "remote default merge base differs from captured base SHA")
+      other -> other
+    end
+  end
+
+  defp execution_failure({:source_preparation_failed, failure, detail}, nil),
+    do: source_preparation_failure(failure, detail)
+
+  defp execution_failure(reason, nil), do: %{status: :failed, reason: reason}
+  defp execution_failure(reason, detail), do: %{status: :failed, reason: reason, detail: detail}
+
+  defp task_branch_created(:ok, base_sha), do: {:ok, base_sha}
+  defp task_branch_created(other, _base_sha), do: other
+
+  defp resolve_source_commit(ref, failure, timeout, workspace, progress) do
+    source_query(
+      "git_resolve_commit",
+      "git rev-parse --verify #{shell("#{ref}^{commit}")}",
+      "checkout_failed",
+      failure,
+      timeout,
+      workspace,
+      progress
+    )
+  end
+
+  defp resolve_current_branch(timeout, workspace, progress) do
+    source_query(
+      "git_current_branch",
+      "git symbolic-ref --short HEAD",
+      "checkout_failed",
+      :prepared_branch_resolution_failed,
+      timeout,
+      workspace,
+      progress
+    )
+  end
+
+  defp trim_source_value({:ok, value}), do: {:ok, String.trim(value)}
+  defp trim_source_value(other), do: other
+
+  defp prepare_source(payload, depth, timeout, workspace, progress) do
+    default_ref = "refs/remotes/origin/#{payload.default_branch}"
+
+    with {:ok, base_sha} <-
+           resolve_commit(default_ref, timeout, workspace, progress, :base_ref_resolution_failed),
+         {:ok, task_sha} <-
+           prepare_task_branch(
+             payload.branch,
+             payload.default_branch,
+             base_sha,
+             depth,
+             timeout,
+             workspace,
+             progress
+           ),
+         :ok <- verify_prepared_branch(default_ref, base_sha, task_sha, timeout, workspace, progress),
+         {:ok, prepared_head} <-
+           resolve_commit("HEAD", timeout, workspace, progress, :prepared_head_resolution_failed),
+         {:ok, prepared_branch} <- current_branch(timeout, workspace, progress) do
+      {:ok,
+       %{
+         base_sha: base_sha,
+         default_branch: payload.default_branch,
+         prepared_head: prepared_head,
+         task_sha: task_sha,
+         task_branch: prepared_branch
+       }}
+    end
+  end
 end

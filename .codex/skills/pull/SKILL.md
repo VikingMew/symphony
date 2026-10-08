@@ -1,13 +1,14 @@
 ---
 name: pull
 description:
-  Pull latest origin/main into the current local branch and resolve merge
-  conflicts (aka update-branch). Use when Codex needs to sync a feature branch
-  with origin, perform a merge-based update (not rebase), and guide conflict
-  resolution best practices.
+  Merge the prompt's configured default branch into the current local branch
+  and resolve conflicts (aka update-branch). Use at implementation kickoff,
+  before delivery, or to recover from a non-fast-forward push rejection.
 ---
 
 # Pull
+
+Preserve merge-based history; do not rebase the implementation branch.
 
 ## Workflow
 
@@ -18,14 +19,14 @@ description:
 3. Confirm remotes and branches:
    - Ensure the `origin` remote exists.
    - Ensure the current branch is the one to receive the merge.
-4. Fetch latest refs:
+4. Read the configured default branch from the implementation prompt. Fetch latest refs:
    - `git fetch origin`
 5. Sync the remote feature branch first:
    - `git pull --ff-only origin $(git branch --show-current)`
    - This pulls branch updates made remotely (for example, a GitHub auto-commit)
-     before merging `origin/main`.
+     before merging the configured default branch.
 6. Merge in order:
-   - Prefer `git -c merge.conflictstyle=zdiff3 merge origin/main` for clearer
+   - Prefer `git -c merge.conflictstyle=zdiff3 merge origin/<configured-default-branch>` for clearer
      conflict context.
 7. If conflicts appear, resolve them (see conflict guidance below), then:
    - `git add <files>`

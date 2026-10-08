@@ -104,8 +104,8 @@ defmodule SymphonyElixir.RunFailureTest do
     checkout = worker_summary("failed", "timed_out") |> Map.put("phase", "checkout")
     assert RunFailure.from_worker_summary("task.failed", checkout).classification == "source_preparation_timeout"
 
-    clone = worker_summary("failed", "source_preparation_failed") |> Map.put("phase", "clone")
-    assert RunFailure.from_worker_summary("task.failed", clone).classification == "source_preparation_timeout"
+    source_failure = source_preparation_failure_summary()
+    assert_source_preparation_mapping(source_failure)
 
     assert RunFailure.from_worker_summary(
              "task.failed",
@@ -154,6 +154,21 @@ defmodule SymphonyElixir.RunFailureTest do
   defp assert_failure(failure, classification, evidence) do
     assert failure.classification == classification
     assert failure.evidence == evidence
+  end
+
+  defp source_preparation_failure_summary do
+    worker_summary("failed", "source_preparation_failed")
+    |> Map.put("phase", "source_preparation")
+    |> Map.put("failure_evidence", %{
+      "phase" => "checkout_failed",
+      "command_status" => "failed",
+      "operation" => "task_branch_merge",
+      "detail" => "merge conflict"
+    })
+  end
+
+  defp assert_source_preparation_mapping(summary) do
+    assert RunFailure.from_worker_summary("task.failed", summary).classification == "source_preparation_timeout"
   end
 
   # credo:disable-for-next-line Credo.Check.Refactor.Apply

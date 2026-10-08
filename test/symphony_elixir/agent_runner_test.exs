@@ -1033,8 +1033,9 @@ defmodule SymphonyElixir.AgentRunnerTest do
       assert :success =
                AgentRunner.run(issue, nil,
                  workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
-                 implementation_branch_checkout: fn ^workspace, "feature/sym-1", _opts ->
-                   {:ok, "checked out"}
+                 implementation_branch_preparer: fn ^workspace, "main", "feature/sym-1", _opts ->
+                   send(test_pid, {:handoff_order, :source_sync})
+                   {:ok, %{base_sha: "base-sha", prepared_head: "prepared-sha", task_sha: "task-sha"}}
                  end,
                  pull_request_ensurer: pull_request_ensurer,
                  dynamic_tool_opts: [graphql: graphql, pull_request_proof_secret: "test-proof"],
@@ -1044,6 +1045,7 @@ defmodule SymphonyElixir.AgentRunnerTest do
                  run_id: "run-handoff"
                )
 
+      assert_receive {:handoff_order, :source_sync}
       assert_receive {:handoff_order, :pr}
       assert_receive {:handoff_order, :attachment}
       assert_receive {:handoff_order, :comment}
@@ -1072,5 +1074,37 @@ defmodule SymphonyElixir.AgentRunnerTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  test "implementation preparation failure stops before the first Codex session" do
+    test_root = Path.join(System.tmp_dir!(), "agent-runner-preparation-failure-#{System.unique_integer([:positive])}")
+    workspace = Path.join(test_root, "workspace")
+    File.mkdir_p!(workspace)
+
+    on_exit(fn -> File.rm_rf(test_root) end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "https://github.com/acme/app",
+      project_default_branch: "trunk",
+      codex_command: "this-command-must-not-run app-server"
+    )
+
+    issue = %Issue{
+      id: "issue-preparation-failure",
+      identifier: "SYM-160",
+      title: "Prepare implementation branch",
+      description: "Stop before Codex when preparation fails",
+      state: "In Progress",
+      branch_name: "feature/sym-160",
+      labels: []
+    }
+
+    assert {:failed, :merge_conflict} =
+             AgentRunner.run(issue, nil,
+               workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
+               implementation_branch_preparer: fn ^workspace, "trunk", "feature/sym-160", _opts ->
+                 {:error, :merge_conflict}
+               end
+             )
   end
 end

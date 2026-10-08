@@ -321,14 +321,17 @@ defmodule SymphonyElixir.PromptBuilderTest do
   test "push skill checks the complete branch diff before push and PR operations" do
     skill = File.read!(Path.expand("../../.codex/skills/push/SKILL.md", __DIR__))
 
-    preflight = :binary.match(skill, "git diff --name-only origin/main...HEAD")
+    preflight = :binary.match(skill, "changed_paths=$(git diff --name-only")
     first_push = :binary.match(skill, "git push -u origin HEAD")
     first_pr = :binary.match(skill, "gh pr view --json state")
 
     assert preflight < first_push
     assert preflight < first_pr
     assert skill =~ "grep -Eq '^\\.github/'"
-    assert skill =~ "git diff --binary origin/main...HEAD"
+    assert skill =~ "configured_default_branch=\"<configured-default-branch-from-prompt>\""
+    assert skill =~ "git diff --binary \"origin/$configured_default_branch...HEAD\""
+    assert skill =~ "pull skill has completed kickoff synchronization"
+    assert skill =~ "non-fast-forward"
     assert skill =~ "do not push, create a pull"
     assert skill =~ "request, or rewrite the remote, protocol, or credentials"
     assert skill =~ "需宿主 push"
@@ -439,7 +442,10 @@ defmodule SymphonyElixir.PromptBuilderTest do
   end
 
   test "prompt builder supports disabled profile prompts and implementation branch contract" do
-    write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base {{ issue.identifier }}")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      prompt: "Base {{ issue.identifier }}",
+      project_default_branch: "trunk"
+    )
 
     issue = %Issue{
       identifier: "S-5",
@@ -460,14 +466,34 @@ defmodule SymphonyElixir.PromptBuilderTest do
 
     assert String.starts_with?(disabled_prompt, "Base S-5\n\n")
 
+    {:ok, workflow} = Config.current_workflow()
+    workflow = put_in(workflow, [:config, "project", "default_branch"], "trunk")
+
     branch_prompt =
-      PromptBuilder.build_prompt(issue,
-        profile: "implementation",
-        allowed_updates: %{"target_states" => ["Ready to Merge"]}
-      )
+      Config.with_workflow_context(workflow, fn ->
+        PromptBuilder.build_prompt(issue,
+          profile: "implementation",
+          allowed_updates: %{"target_states" => ["Ready to Merge"]}
+        )
+      end)
 
     assert branch_prompt =~ "Required branch: `feature/s-5`"
+    assert branch_prompt =~ "Configured default branch: `trunk`"
+    assert branch_prompt =~ "pull skill to merge `origin/trunk`"
+
+    assert :binary.match(branch_prompt, "sync the configured default branch") <
+             :binary.match(branch_prompt, "implement, validate")
+
     assert branch_prompt =~ "Do not create or switch to a different task branch."
+  end
+
+  test "pull skill triggers at implementation kickoff and merges the configured default branch" do
+    skill = File.read!(Path.expand("../../.codex/skills/pull/SKILL.md", __DIR__))
+
+    assert skill =~ "Use at implementation kickoff"
+    assert skill =~ "prompt's configured default branch"
+    assert skill =~ "merge origin/<configured-default-branch>"
+    assert skill =~ "merge-based"
   end
 
   test "prompt builder renders issue datetime fields without crashing" do

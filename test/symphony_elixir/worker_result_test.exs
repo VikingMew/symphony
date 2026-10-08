@@ -143,4 +143,26 @@ defmodule SymphonyElixir.WorkerResultTest do
       "failure_detail" => detail
     }
   end
+
+  test "accepts only bounded closed evidence for non-timeout source preparation failures" do
+    failed =
+      summary([])
+      |> Map.put("phase", "source_preparation")
+      |> Map.put("reason", "source_preparation_failed")
+      |> Map.put("failure_evidence", %{
+        "phase" => "checkout_failed",
+        "command_status" => "failed",
+        "operation" => "task_branch_merge",
+        "detail" => "merge conflict"
+      })
+
+    assert {:ok, validated} = WorkerResult.validate(failed)
+    assert validated["failure_evidence"]["operation"] == "task_branch_merge"
+
+    assert {:error, {:invalid_worker_summary, _message}} =
+             WorkerResult.validate(put_in(failed, ["failure_evidence", "phase"], "merge_failed"))
+
+    assert {:error, {:invalid_worker_summary, _message}} =
+             WorkerResult.validate(Map.delete(failed, "failure_evidence"))
+  end
 end

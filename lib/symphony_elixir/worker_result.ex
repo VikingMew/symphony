@@ -164,20 +164,20 @@ defmodule SymphonyElixir.WorkerResult do
   end
 
   defp source_failure_evidence(%{
-         "reason" => "source_preparation_timeout",
+         "reason" => reason,
          "failure_evidence" => evidence
        })
-       when is_map(evidence) do
-    evidence = stringify_keys(evidence)
+       when reason in ["source_preparation_timeout", "source_preparation_failed"] and is_map(evidence) do
+    evidence =
+      evidence
+      |> stringify_keys()
 
-    with :ok <- enum(evidence, "phase", ~w(clone_failed fetch_failed checkout_failed)),
-         :ok <- enum(evidence, "command_status", ~w(timed_out)),
-         :ok <- non_negative_integer(evidence, "duration_ms", true),
-         do: bounded_text(evidence, "output", @max_source_output, true)
+    validate_source_failure(reason, evidence)
   end
 
-  defp source_failure_evidence(%{"reason" => "source_preparation_timeout"}),
-    do: invalid("source_preparation_timeout requires failure_evidence")
+  defp source_failure_evidence(%{"reason" => reason})
+       when reason in ["source_preparation_timeout", "source_preparation_failed"],
+       do: invalid("#{reason} requires failure_evidence")
 
   defp source_failure_evidence(_summary), do: :ok
 
@@ -268,5 +268,20 @@ defmodule SymphonyElixir.WorkerResult do
   defp stringify_value(value) when is_map(value), do: stringify_keys(value)
   defp stringify_value(value) when is_list(value), do: Enum.map(value, &stringify_value/1)
   defp stringify_value(value), do: value
+
+  defp validate_source_failure("source_preparation_timeout", evidence) do
+    with :ok <- enum(evidence, "phase", ~w(clone_failed fetch_failed checkout_failed)),
+         :ok <- enum(evidence, "command_status", ~w(timed_out)),
+         :ok <- non_negative_integer(evidence, "duration_ms", true),
+         do: bounded_text(evidence, "output", @max_source_output, true)
+  end
+
+  defp validate_source_failure("source_preparation_failed", evidence) do
+    with :ok <- enum(evidence, "phase", ~w(clone_failed fetch_failed checkout_failed)),
+         :ok <- enum(evidence, "command_status", ~w(failed)),
+         :ok <- bounded_text(evidence, "operation", @max_text, true),
+         do: bounded_detail(evidence, "detail")
+  end
+
   defp invalid(message), do: {:error, {:invalid_worker_summary, message}}
 end

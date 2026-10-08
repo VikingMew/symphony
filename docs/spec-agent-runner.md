@@ -237,19 +237,26 @@ Behavior:
 1. Recreate the lease workspace, explicitly fetch the configured default branch from `origin`,
    and resolve its remote-tracking ref to an immutable `base_sha`.
 2. Create a missing Linear task branch at `base_sha`, or fetch and checkout an existing remote
-   task branch without resetting its commits. Record the default branch, `base_sha`, prepared
-   branch, and prepared HEAD in the worker result.
-3. Build prompt from workflow template.
-4. Start app-server session.
-5. Forward app-server events to orchestrator.
-6. For worker implementation, treat only a captured `handoff` payload as implementation completion.
-7. On any error, fail the worker attempt (the orchestrator will retry).
+   task branch without resetting its commits. Preserve the existing `task_sha`. If shallow history
+   hides a common ancestor, deepen both explicit refspecs by the configured checkout depth until it
+   appears; fail on no progress or unrelated complete history.
+3. If the task already contains `base_sha`, keep HEAD unchanged; otherwise merge that immutable SHA.
+   Verify `task_sha` and `base_sha` are HEAD ancestors and the remote-default merge base equals
+   `base_sha`. Record the default branch, SHAs, prepared branch, and prepared HEAD.
+4. Build the implementation prompt with the configured default branch and ordered sync, implement,
+   validate, commit/push guidance.
+5. Start app-server session only after source preparation succeeds.
+6. Forward app-server events to orchestrator.
+7. For worker implementation, treat only a captured `handoff` payload as implementation completion.
+8. On any error, fail the worker attempt (the orchestrator will retry).
 
 Note:
 
 - Workspaces are intentionally preserved after successful runs.
 - A normal app-server turn completion or `agent.max_turns` exhaustion MUST NOT create a PR or move
   an issue to `Ready to Merge`.
+- Source preparation MUST NOT rebase, reset, force-push, merge unrelated histories, unshallow,
+  reclone, or fall back to a full clone.
 
 ### 10.8 Worker GitHub PR Handoff
 

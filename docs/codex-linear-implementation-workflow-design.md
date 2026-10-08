@@ -55,14 +55,21 @@ workpad/comment。
 
 ### 2. 准备 workspace 和精确分支
 
-Symphony 创建隔离 workspace，并校验/checkout Linear `branchName`。不得生成不同 task branch。
+Symphony 创建隔离 workspace，并在第一个 Codex turn 前校验 Linear `branchName`。运行时先 fetch
+`project.default_branch`，把这次 fetch 的 remote-tracking ref 只解析一次为不可变 `base_sha`，再 checkout
+精确 task branch。远端 branch 不存在时从 `base_sha` 创建；存在时保留原 `task_sha`，把精确
+`base_sha` 以 merge-based history 合入。完成后同时验证 `task_sha` 与 `base_sha` 是 `HEAD` 祖先，且
+remote-default ref 与 `HEAD` 的 merge base 精确等于 `base_sha`。任何准备失败都发生在 session/Codex
+启动前并终止 run。
+
 每次 run 可能重建 workspace，因此有价值的进度必须 commit/push，不能只留在本地目录。
 
 SSH execution 中 workspace 只存在于 worker；后续 PR handoff 不得要求 Symphony host 能访问该路径。
 
 ### 3. Baseline、实现和验证
 
-先运行与改动相关的 baseline/targeted checks，再做最小实现。遵循 repository `AGENTS.md`、spec、
+实现 prompt 明示 configured default branch，并固定 agent 顺序为：用 pull skill 同步该 branch、实现、
+验证、commit/push。先运行与改动相关的 baseline/targeted checks，再做最小实现。遵循 repository `AGENTS.md`、spec、
 格式、静态检查和测试约束。验证强度与风险相称；失败命令和原因进入 final result。
 
 交付前必须按实际 diff 复核票面的 owning-design 声明。`lib/` 下行为代码或运行时配置语义变化必须
@@ -74,8 +81,8 @@ row。实际 diff 与票面 classification 不一致时，先修正 Linear descr
 ### 4. Commit 和 push
 
 确认 branch 等于 Linear `branchName`，review diff，创建有意义的 commit。任何 `git push`
-或 pull-request 操作前，先确认 `origin/main` 可比较，并以 `git diff --name-only
-origin/main...HEAD` 检查当前分支相对 `origin/main` 的完整交付路径；不能只看 staged 或
+或 pull-request 操作前，先确认 prompt 指定的 `origin/<configured-default-branch>` 可比较，并以
+`git diff --name-only origin/<configured-default-branch>...HEAD` 检查当前分支相对该 branch 的完整交付路径；不能只看 staged 或
 working-tree diff。
 
 若 issue description 首个非空行精确为 `交付路径:宿主 push`，或完整交付路径包含
@@ -83,7 +90,7 @@ working-tree diff。
 scope 被拒的路径，worker 不得 push、创建 PR、改 remote/protocol/credential，或把确定性
 permission/workflow-scope 拒绝当瞬态错误重试。完成实现和允许的本地验证后，worker 在
 workspace/repository 根生成一个 `<issue-identifier>.patch`，内容为 `git diff --binary
-origin/main...HEAD` 的完整 binary-safe delivery diff；workpad 和 final references 记录
+origin/<configured-default-branch>...HEAD` 的完整 binary-safe delivery diff；workpad 和 final references 记录
 root-relative path，并标记 `需宿主 push`。若 ticket 必须以 push、PR、或依赖远端 branch 的
 handoff 作为验收，worker 记录精确 blocker evidence，并走 persistent `blocking_decision` /
 `Blocked` 流程。

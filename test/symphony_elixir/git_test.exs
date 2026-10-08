@@ -99,4 +99,107 @@ defmodule SymphonyElixir.GitTest do
       File.rm_rf(workspace)
     end
   end
+
+  test "prepares an exact task branch from one captured configured-default tip" do
+    fixture = central_git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    central_git!(fixture.author, ["checkout", "-b", "feature/sym-160"])
+    task_sha = commit_and_push_central_git!(fixture.author, "feature/sym-160", "task.txt", "task")
+    central_git!(fixture.author, ["checkout", "trunk"])
+    base_sha = commit_and_push_central_git!(fixture.author, "trunk", "base.txt", "base")
+    central_git!(fixture.root, ["clone", fixture.remote, fixture.workspace])
+
+    assert {:ok, prepared} =
+             Git.prepare_work_branch(fixture.workspace, "trunk", "feature/sym-160")
+
+    assert prepared.base_sha == base_sha
+    assert prepared.task_sha == task_sha
+    assert central_git!(fixture.workspace, ["branch", "--show-current"]) == "feature/sym-160"
+    assert central_git!(fixture.workspace, ["merge-base", "--is-ancestor", task_sha, "HEAD"]) == ""
+    assert central_git!(fixture.workspace, ["merge-base", "--is-ancestor", base_sha, "HEAD"]) == ""
+    assert central_git!(fixture.workspace, ["merge-base", "refs/remotes/origin/trunk", "HEAD"]) == base_sha
+  end
+
+  test "starts a missing task branch at the captured configured-default tip" do
+    fixture = central_git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+    central_git!(fixture.root, ["clone", fixture.remote, fixture.workspace])
+
+    assert {:ok, prepared} = Git.prepare_work_branch(fixture.workspace, "trunk", "feature/new")
+    assert prepared.base_sha == fixture.main_sha
+    assert prepared.task_sha == fixture.main_sha
+    assert prepared.prepared_head == fixture.main_sha
+  end
+
+  test "fails when the fetched configured-default ref cannot be resolved" do
+    runner = fn
+      "/repo", ["fetch", "--no-tags", "origin", "+refs/heads/trunk:refs/remotes/origin/trunk"], 300_000 ->
+        {"", 0}
+
+      "/repo", ["rev-parse", "--verify", "refs/remotes/origin/trunk^{commit}"], 300_000 ->
+        {"fatal: bad revision", 128}
+    end
+
+    assert {:error, {:git_command_failed, ["rev-parse" | _args], 128, "fatal: bad revision"}} =
+             Git.prepare_work_branch("/repo", "trunk", "feature/sym-160", runner: runner)
+  end
+
+  test "fails when the prepared DAG does not retain the captured default merge base" do
+    runner = fn
+      "/repo", ["fetch", "--no-tags", "origin", "+refs/heads/trunk:refs/remotes/origin/trunk"], 300_000 ->
+        {"", 0}
+
+      "/repo", ["rev-parse", "--verify", "refs/remotes/origin/trunk^{commit}"], 300_000 ->
+        {"base-sha\n", 0}
+
+      "/repo", ["ls-remote", "--heads", "origin", "feature/sym-160"], 300_000 ->
+        {"", 0}
+
+      "/repo", ["checkout", "-B", "feature/sym-160", "base-sha"], 300_000 ->
+        {"", 0}
+
+      "/repo", ["merge-base", "--is-ancestor", "base-sha", target], 300_000
+      when target in ["base-sha", "HEAD"] ->
+        {"", 0}
+
+      "/repo", ["rev-parse", "--verify", "HEAD^{commit}"], 300_000 ->
+        {"prepared-sha\n", 0}
+
+      "/repo", ["merge-base", "refs/remotes/origin/trunk", "HEAD"], 300_000 ->
+        {"wrong-sha\n", 0}
+    end
+
+    assert {:error, {:git_postcondition_failed, :default_merge_base, "base-sha"}} =
+             Git.prepare_work_branch("/repo", "trunk", "feature/sym-160", runner: runner)
+  end
+
+  defp central_git_fixture! do
+    root = Path.join(System.tmp_dir!(), "git-boundary-#{System.unique_integer([:positive])}")
+    remote = Path.join(root, "remote.git")
+    author = Path.join(root, "author")
+    workspace = Path.join(root, "workspace")
+    File.mkdir_p!(root)
+    central_git!(root, ["init", "--bare", "--initial-branch=trunk", remote])
+    central_git!(root, ["clone", remote, author])
+    central_git!(author, ["config", "user.email", "git@example.test"])
+    central_git!(author, ["config", "user.name", "Git Test"])
+    main_sha = commit_and_push_central_git!(author, "trunk", "README.md", "initial")
+    %{root: root, remote: remote, author: author, workspace: workspace, main_sha: main_sha}
+  end
+
+  defp commit_and_push_central_git!(author, branch, file, content) do
+    File.write!(Path.join(author, file), content)
+    central_git!(author, ["add", file])
+    central_git!(author, ["commit", "-m", content])
+    central_git!(author, ["push", "origin", branch])
+    central_git!(author, ["rev-parse", "HEAD"])
+  end
+
+  defp central_git!(cwd, args) do
+    case System.cmd("git", args, cd: cwd, stderr_to_stdout: true) do
+      {output, 0} -> String.trim(output)
+      {output, status} -> flunk("git #{Enum.join(args, " ")} failed (#{status}): #{output}")
+    end
+  end
 end

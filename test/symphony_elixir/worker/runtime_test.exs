@@ -91,8 +91,8 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     defp claim_result(%{"trap_shutdown" => true}), do: %{status: :cancelled}
 
-    defp claim_result(%{"validation_result" => validation}) do
-      %{status: :failed, phase: :validation, validation: validation}
+    defp claim_result(%{"validation_result" => result}) do
+      if Map.has_key?(result, :status), do: result, else: %{status: :failed, phase: :validation, validation: result}
     end
 
     defp claim_result(%{"failed_reason" => reason, "failed_detail" => detail}) do
@@ -767,5 +767,31 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       Process.sleep(10)
       eventually(fun, attempts - 1)
     end
+  end
+
+  test "non-timeout source failure retains the closed terminal contract", %{config: config} do
+    result = %{
+      status: :failed,
+      reason: :source_preparation_failed,
+      detail: "merge conflict",
+      failure_evidence: %{
+        phase: "checkout_failed",
+        command_status: "failed",
+        operation: "task_branch_merge",
+        detail: "merge conflict"
+      }
+    }
+
+    put_claims([Map.put(claim("task-1", false), "validation_result", result)])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["phase"] == "source_preparation"
+    assert summary["reason"] == "source_preparation_failed"
+    assert summary["failure_evidence"].phase == "checkout_failed"
+    assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 end

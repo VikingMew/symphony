@@ -112,4 +112,95 @@ defmodule SymphonyElixir.Git do
   defp sanitize_output(output) do
     SymphonyElixir.Redaction.credentials(output)
   end
+
+  @spec prepare_work_branch(Path.t(), String.t(), String.t(), keyword()) ::
+          {:ok, %{base_sha: String.t(), task_sha: String.t(), prepared_head: String.t()}} | {:error, term()}
+  def prepare_work_branch(workspace, default_branch, task_branch, opts \\ []) do
+    remote = Keyword.get(opts, :remote, "origin")
+    default_ref = "refs/remotes/#{remote}/#{default_branch}"
+    task_ref = "refs/remotes/#{remote}/#{task_branch}"
+
+    with {:ok, _output} <-
+           run(
+             workspace,
+             ["fetch", "--no-tags", remote, "+refs/heads/#{default_branch}:#{default_ref}"],
+             opts
+           ),
+         {:ok, base_sha} <- resolve_git_commit(workspace, default_ref, opts),
+         {:ok, task_sha} <- checkout_task_branch(workspace, remote, task_branch, task_ref, base_sha, opts),
+         :ok <- merge_base(workspace, base_sha, task_sha, opts),
+         {:ok, prepared_head} <- resolve_git_commit(workspace, "HEAD", opts),
+         :ok <- verify_work_branch(workspace, default_ref, base_sha, task_sha, opts) do
+      {:ok, %{base_sha: base_sha, task_sha: task_sha, prepared_head: prepared_head}}
+    end
+  end
+
+  defp checkout_task_branch(workspace, remote, branch, task_ref, base_sha, opts) do
+    case remote_branch_exists?(workspace, branch, opts) do
+      {:ok, true} ->
+        with {:ok, _output} <-
+               run(
+                 workspace,
+                 ["fetch", "--no-tags", remote, "+refs/heads/#{branch}:#{task_ref}"],
+                 opts
+               ),
+             {:ok, _output} <- run(workspace, ["checkout", "-B", branch, task_ref], opts),
+             do: resolve_git_commit(workspace, "HEAD", opts)
+
+      {:ok, false} ->
+        with {:ok, _output} <- run(workspace, ["checkout", "-B", branch, base_sha], opts),
+             do: {:ok, base_sha}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp merge_base(workspace, base_sha, task_sha, opts) do
+    case run(workspace, ["merge-base", "--is-ancestor", base_sha, task_sha], opts) do
+      {:ok, _output} ->
+        :ok
+
+      {:error, {:git_command_failed, _args, 1, _output}} ->
+        with {:ok, _output} <- run(workspace, ["merge-base", base_sha, task_sha], opts),
+             {:ok, _output} <-
+               run(
+                 workspace,
+                 [
+                   "-c",
+                   "user.name=Symphony",
+                   "-c",
+                   "user.email=symphony@localhost",
+                   "merge",
+                   "--no-edit",
+                   base_sha
+                 ],
+                 opts
+               ) do
+          :ok
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp verify_work_branch(workspace, default_ref, base_sha, task_sha, opts) do
+    with {:ok, _output} <- run(workspace, ["merge-base", "--is-ancestor", task_sha, "HEAD"], opts),
+         {:ok, _output} <- run(workspace, ["merge-base", "--is-ancestor", base_sha, "HEAD"], opts),
+         {:ok, merge_base} <- run(workspace, ["merge-base", default_ref, "HEAD"], opts),
+         true <- String.trim(merge_base) == base_sha do
+      :ok
+    else
+      false -> {:error, {:git_postcondition_failed, :default_merge_base, base_sha}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resolve_git_commit(workspace, ref, opts) do
+    case run(workspace, ["rev-parse", "--verify", "#{ref}^{commit}"], opts) do
+      {:ok, output} -> {:ok, String.trim(output)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 end

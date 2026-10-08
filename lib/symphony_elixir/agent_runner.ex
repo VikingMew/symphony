@@ -223,8 +223,8 @@ defmodule SymphonyElixir.AgentRunner do
              emit_branch_event(issue, :implementation_branch_validation, :completed, %{
                branch: branch
              }),
-           {:ok, _output} <- checkout_implementation_branch(workspace, branch, opts) do
-        emit_branch_event(issue, :implementation_branch_checkout, :completed, %{branch: branch})
+           {:ok, prepared} <- run_implementation_branch_preparer(workspace, configured_kickoff_branch(), branch, opts) do
+        emit_branch_event(issue, :implementation_branch_checkout, :completed, branch_preparation_payload(branch, prepared))
       else
         {:error, reason} ->
           emit_branch_event(issue, :implementation_branch_checkout, :failed, %{
@@ -245,10 +245,10 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp checkout_implementation_branch(workspace, branch, opts) do
+  defp run_implementation_branch_preparer(workspace, default_branch, branch, opts) do
     git_opts = Keyword.get(opts, :git_opts, [])
-    checkout = Keyword.get(opts, :implementation_branch_checkout, &Git.checkout_work_branch/3)
-    checkout.(workspace, branch, git_opts)
+    prepare = Keyword.get(opts, :implementation_branch_preparer, &Git.prepare_work_branch/4)
+    prepare.(workspace, default_branch, branch, git_opts)
   end
 
   defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
@@ -869,5 +869,11 @@ defmodule SymphonyElixir.AgentRunner do
 
         :ok
     end
+  end
+
+  defp configured_kickoff_branch, do: Config.settings!().project.default_branch
+
+  defp branch_preparation_payload(branch, prepared) do
+    %{branch: branch, base_sha: prepared.base_sha, prepared_head: prepared.prepared_head}
   end
 end
