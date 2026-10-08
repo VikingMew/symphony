@@ -5,7 +5,7 @@ domain: [spec, agent-runner]
 status: current
 language: en
 owner: SymphonyElixir.AgentRunner
-updated: 2026-09-13
+updated: 2026-10-08
 ---
 
 # Agent Runner Protocol Specification
@@ -211,7 +211,8 @@ User-input-required policy:
 
 Timeouts:
 
-- `codex.read_timeout_ms`: request/response timeout during startup and sync requests
+- startup `initialize` and `thread/start` responses: fixed 30-second budget
+- `codex.read_timeout_ms`: request/response timeout for later synchronous requests such as `turn/start`
 - `codex.turn_timeout_ms`: total turn stream timeout
 - `codex.stall_timeout_ms`: enforced by orchestrator based on event inactivity
 

@@ -36,6 +36,25 @@ defmodule SymphonyElixir.CodexStartupTest do
     assert details.hint =~ "Settings / Workflow / Codex / Approval policy"
   end
 
+  test "response timeout failures describe the fixed startup handshake budget" do
+    Enum.each([:initialize, :thread_start], fn stage ->
+      assert {:codex_startup_failed,
+              %{
+                reason: :response_timeout,
+                stage: ^stage,
+                timeout_ms: 30_000,
+                hint: "Codex app-server did not respond within the fixed 30-second startup handshake budget. Check the Codex command, authentication, and pre-start shell work."
+              }} =
+               Startup.failure(
+                 :response_timeout,
+                 stage,
+                 %{command: "codex app-server", workspace: "/tmp/ws"},
+                 "",
+                 30_000
+               )
+    end)
+  end
+
   test "startup output is bounded and redacted" do
     output = Startup.append_output("", String.duplicate("a", 5_000))
     assert output =~ "... (truncated)"

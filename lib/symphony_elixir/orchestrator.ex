@@ -1078,11 +1078,11 @@ defmodule SymphonyElixir.Orchestrator do
     do: "crashed #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
   defp agent_failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
-    elapsed_ms = if is_map(details), do: Map.get(details, :elapsed_ms), else: nil
-    output = if is_map(details), do: Map.get(details, :recent_output, ""), else: ""
-    setting = timeout_setting_hint(hook_name)
+    "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{if is_map(details), do: Map.get(details, :elapsed_ms), else: nil} setting=#{timeout_setting_hint(hook_name)} output=#{compact_log_output(if is_map(details), do: Map.get(details, :recent_output, ""), else: "")}"
+  end
 
-    "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{elapsed_ms} setting=#{setting} output=#{compact_log_output(output)}"
+  defp agent_failure_summary({:codex_startup_failed, %{reason: reason, stage: stage, timeout_ms: timeout_ms, output: output}}) do
+    String.slice("class=agent_domain_failure type=codex_startup_failed stage=#{inspect(stage)} timeout_ms=#{timeout_ms} reason=#{inspect(reason)} output=#{compact_log_output(output)}", 0, 1_000)
   end
 
   defp agent_failure_summary(reason),

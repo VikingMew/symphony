@@ -4,7 +4,7 @@ genre: design
 domain: [runs, persistence, observability, reliability]
 status: current
 language: en
-updated: 2026-10-07
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -16,6 +16,12 @@ Persisted runs use one closed status and failure contract. `running` and `comple
 `failure_evidence`. The classification is the query and aggregation key; paths, actions, phases,
 timeouts, exit codes, signals, gate results, dependency operations, Codex error information, and
 opaque domain detail belong only in evidence.
+
+A Codex startup handshake failure keeps the existing `runtime_failure` classification for the
+failed run; retry exhaustion keeps `budget_exhausted`. The sole startup fact remains
+`{:codex_startup_failed, details}`. Its type, `initialize` or `thread_start` stage, 30,000 ms budget,
+and bounded summary belong in `failure_evidence`. The summary places those structured facts before
+compressed raw startup output so output cannot push them outside the bounded detail.
 
 ## Vocabulary
 

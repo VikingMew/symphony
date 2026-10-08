@@ -513,4 +513,56 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
   defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
+
+  alias SymphonyElixir.Codex.Startup, as: CodexStartup
+
+  test "startup failures persist classification and ordered bounded evidence" do
+    assert :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+    assert {:ok, pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, SymphonyElixir.Orchestrator)
+
+    reply = GenServer.call(pid, {:request_operator_task, :nap})
+    run_id = reply.run_id
+    assert_receive {:operator_runner_started, :nap, ^run_id, runner_pid, _worker_host}, 500
+
+    output =
+      1..80
+      |> Enum.map_join("\n", &"cold-start-output-line-#{String.pad_leading(to_string(&1), 3, "0")}")
+
+    assert byte_size(output) >= 1_024
+
+    startup_failure =
+      CodexStartup.failure(
+        :response_timeout,
+        :thread_start,
+        %{command: "codex app-server", workspace: "/tmp/operator", worker_host: "local"},
+        output,
+        30_000
+      )
+
+    send(runner_pid, {:finish_operator_runner, {:error, startup_failure}})
+
+    snapshot =
+      wait_for_snapshot(pid, fn snapshot ->
+        snapshot.running == [] and get_in(snapshot, [:operator_tasks, :nap, :status]) == "failed"
+      end)
+
+    summary = snapshot.operator_tasks.nap.failure_reason
+    assert summary =~ "type=codex_startup_failed"
+    assert summary =~ "stage=:thread_start"
+    assert summary =~ "timeout_ms=30000"
+    assert summary =~ "cold-start-output-line-"
+    assert String.length(summary) <= 1_000
+
+    assert summary =~
+             ~r/type=codex_startup_failed.*stage=:thread_start.*timeout_ms=30000.*output=cold-start-output-line-/
+
+    assert [run_event] = FakePersistence.list_events(run_id: run_id, event_type: "run.failed")
+    assert run_event.payload.failure_reason == "runtime_failure"
+
+    evidence = run_event.payload.failure_evidence
+    assert evidence["reason"] |> hd() == "codex_startup_failed"
+    assert get_in(evidence, ["reason", Access.at(1), "stage"]) == "thread_start"
+    assert get_in(evidence, ["reason", Access.at(1), "timeout_ms"]) == 30_000
+    assert evidence["detail"] == summary
+  end
 end

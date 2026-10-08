@@ -137,6 +137,15 @@ reports `blocked` / `handoff_failed` with that bounded PR and Linear target-stat
 that pair or the host-push predicate below, a missing `handoff` remains
 `{:handoff_failed, :missing_handoff}` and its bounded detail names the missing event or PR URL.
 
+Centralized and worker execution launch Codex through the same `Codex.AppServer`. Its `initialize`
+and `thread/start` handshake responses each have a fixed 30-second startup budget owned by that
+module. Later synchronous responses, including `turn/start`, use `codex.read_timeout_ms`, whose
+default remains 5 seconds. A startup failure remains one `{:codex_startup_failed, details}` fact;
+`details.stage` identifies `initialize` or `thread_start`, and `details.timeout_ms` records the
+30,000 ms budget for run-failure evidence. Its bounded Orchestrator summary writes the
+`codex_startup_failed` type, stage, and timeout before compressed raw startup output, so long output
+cannot displace the structured evidence.
+
 The shared correlation field registry and error-envelope requirements are owned by
 [Observability and Tool Error Design](observability-errors-design.md); this design owns their worker
 transport behavior.
