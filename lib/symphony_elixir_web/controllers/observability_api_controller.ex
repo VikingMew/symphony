@@ -74,7 +74,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   defp error_response(conn, status, code, message) do
     conn
     |> put_status(status)
-    |> json(%{error: %{code: code, message: message}})
+    |> json(%{error: %{code: code, retryable: status >= 500, message: message}})
   end
 
   defp issue_response(conn, {:ok, live_payload}, {:ok, history}) do

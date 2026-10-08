@@ -182,6 +182,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     |> json(%{
       error: %{
         code: "worker_heartbeat_unavailable",
+        retryable: true,
         message: "Worker heartbeat could not complete before the server timeout"
       },
       retry_after_seconds: retry_after_seconds
@@ -210,7 +211,14 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     conn
     |> put_resp_header("retry-after", "1")
     |> put_status(503)
-    |> json(%{error: %{code: "worker_event_unavailable", message: "Worker event persistence is unavailable"}, retry_after_seconds: 1})
+    |> json(%{
+      error: %{
+        code: "worker_event_unavailable",
+        retryable: true,
+        message: "Worker event persistence is unavailable"
+      },
+      retry_after_seconds: 1
+    })
   end
 
   defp claim_error(conn, :claim_pending, poll_after_seconds) do
@@ -240,14 +248,21 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   defp error_response(conn, status, code, message) do
     conn
     |> put_status(status)
-    |> json(%{error: %{code: code, message: message}})
+    |> json(%{error: %{code: code, retryable: retryable_status?(status), message: message}})
   end
 
   defp error_response(conn, status, code, message, poll_after_seconds) do
     conn
     |> put_status(status)
-    |> json(%{error: %{code: code, message: message}, poll_after_seconds: poll_after_seconds})
+    |> json(%{
+      error: %{code: code, retryable: retryable_status?(status), message: message},
+      poll_after_seconds: poll_after_seconds
+    })
   end
+
+  defp retryable_status?(429), do: true
+  defp retryable_status?(status) when status >= 500, do: true
+  defp retryable_status?(_status), do: false
 
   defp validate_event_id(payload) do
     case Ecto.UUID.cast(Map.get(payload, "event_id")) do

@@ -9,7 +9,7 @@ defmodule SymphonyElixir.LogFile do
   @default_log_relative_path "log/symphony.log"
   @default_max_bytes 10 * 1024 * 1024
   @default_max_files 5
-  @logger_formatter {:logger_formatter, %{single_line: true}}
+  @logger_formatter {SymphonyElixir.LogFormatter, %{}}
 
   @spec default_log_file() :: Path.t()
   def default_log_file do
@@ -21,7 +21,7 @@ defmodule SymphonyElixir.LogFile do
     Path.join(logs_root, @default_log_relative_path)
   end
 
-  @spec configure() :: :ok
+  @spec configure() :: :ok | {:error, term()}
   def configure do
     log_file = Application.get_env(:symphony_elixir, :log_file, default_log_file())
     max_bytes = Application.get_env(:symphony_elixir, :log_file_max_bytes, @default_max_bytes)
@@ -32,21 +32,31 @@ defmodule SymphonyElixir.LogFile do
 
   defp setup_disk_handler(log_file, max_bytes, max_files) do
     expanded_path = Path.expand(log_file)
-    :ok = File.mkdir_p(Path.dirname(expanded_path))
-    :ok = remove_existing_handler()
-    :ok = configure_default_console_handler()
 
-    case :logger.add_handler(
-           @handler_id,
-           :logger_disk_log_h,
-           disk_log_handler_config(expanded_path, max_bytes, max_files)
-         ) do
-      :ok ->
-        :ok
+    with :ok <- File.mkdir_p(Path.dirname(expanded_path)),
+         :ok <- remove_existing_handler(),
+         :ok <- configure_default_console_handler() do
+      case :logger.add_handler(
+             @handler_id,
+             :logger_disk_log_h,
+             disk_log_handler_config(expanded_path, max_bytes, max_files)
+           ) do
+        :ok ->
+          :ok
 
-      {:error, reason} ->
-        Logger.warning("Failed to configure rotating log file handler: #{inspect(reason)}")
-        :ok
+        {:error, reason} ->
+          Logger.warning("Failed to configure rotating log file handler",
+            event: "log.handler.configure_failed",
+            operation: "configure_rotating_log",
+            location: expanded_path,
+            offending_value: inspect(reason),
+            expected_shape: "writable rotating disk log handler",
+            error_code: "log_handler_configure_failed",
+            retryable: false
+          )
+
+          {:error, {:log_handler_configure_failed, reason}}
+      end
     end
   end
 
@@ -54,7 +64,7 @@ defmodule SymphonyElixir.LogFile do
     case :logger.remove_handler(@handler_id) do
       :ok -> :ok
       {:error, {:not_found, @handler_id}} -> :ok
-      {:error, _reason} -> :ok
+      {:error, reason} -> {:error, {:log_handler_remove_failed, reason}}
     end
   end
 
@@ -62,13 +72,12 @@ defmodule SymphonyElixir.LogFile do
     case :logger.update_handler_config(:default, :formatter, @logger_formatter) do
       :ok ->
         :logger.update_handler_config(:default, :level, :info)
-        :ok
 
       {:error, {:not_found, :default}} ->
         add_default_console_handler()
 
-      {:error, _reason} ->
-        :ok
+      {:error, reason} ->
+        {:error, {:console_handler_configure_failed, reason}}
     end
   end
 
@@ -80,7 +89,7 @@ defmodule SymphonyElixir.LogFile do
          }) do
       :ok -> :ok
       {:error, {:already_exist, :default}} -> :ok
-      {:error, _reason} -> :ok
+      {:error, reason} -> {:error, {:console_handler_add_failed, reason}}
     end
   end
 

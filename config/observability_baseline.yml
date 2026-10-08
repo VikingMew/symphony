@@ -1,0 +1,855 @@
+{
+  "findings": [
+    {
+      "identifier": "silent_error_branch:530287f77b47",
+      "path": "lib/mix/tasks/pr_body.check.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_error_branch:c9a79f93ebc3",
+      "path": "lib/mix/tasks/workspace.before_remove.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.error:94e68b529497",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:c005ca3b243e",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:04450e9a9e93",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:0bbbd683d3d6",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:1289d8ee663b",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:151a1c1c69c3",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:158249890c2f",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:30420f250d9b",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:74ae8c3e50bf",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:a539ada9bb64",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:a92573b50fe3",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:aebb74baa651",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:ed4b17b6a484",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:f587b35c39fe",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:123c1740def7",
+      "path": "lib/symphony_elixir/agent_runner.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.debug:685a1437ebb9",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:73d472697d30",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:e571ed6c2415",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.error:df95dffe7704",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:056eabe3f1f3",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:37d466d80e7d",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:103c89dd69bf",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:7c9f2ae8e15e",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:b012ba1c1892",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "silent_rescue:626c20e02e2a",
+      "path": "lib/symphony_elixir/codex/app_server.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:ba754cf0f5d7",
+      "path": "lib/symphony_elixir/codex/rate_limit_gate.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_error_branch:32f81c7ce921",
+      "path": "lib/symphony_elixir/first_run_defaults.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_error_branch:c921bbb08278",
+      "path": "lib/symphony_elixir/first_run_defaults.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:ae06f0a8e3b9",
+      "path": "lib/symphony_elixir/git.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:ae06f0a8e3b9",
+      "path": "lib/symphony_elixir/github/pull_request.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:1d07379bf957",
+      "path": "lib/symphony_elixir/http_server.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:9f0d13a7de86",
+      "path": "lib/symphony_elixir/http_server.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.error:0fc11e8db1b8",
+      "path": "lib/symphony_elixir/linear/client.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:5a4c80aedb61",
+      "path": "lib/symphony_elixir/linear/client.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:ac9c548cf87e",
+      "path": "lib/symphony_elixir/linear/diagnostics.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:d890ca1a1d97",
+      "path": "lib/symphony_elixir/linear/diagnostics.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "silent_catch:daf8eaae6957",
+      "path": "lib/symphony_elixir/linear/health.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:1729eae65076",
+      "path": "lib/symphony_elixir/linear/health.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.info:c9d0e29f7e08",
+      "path": "lib/symphony_elixir/linear/workflow_bootstrap.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "silent_error_branch:d3134997fb1c",
+      "path": "lib/symphony_elixir/log_file.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_error_branch:f8e03bdaf45d",
+      "path": "lib/symphony_elixir/log_file.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.error:e86172f43b74",
+      "path": "lib/symphony_elixir/merge_conflict_reconciler.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:a68a7a631a19",
+      "path": "lib/symphony_elixir/merge_conflict_reconciler.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:4490d664b1fe",
+      "path": "lib/symphony_elixir/migration_check.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:7b086cd38085",
+      "path": "lib/symphony_elixir/migration_check.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:471b35b3487e",
+      "path": "lib/symphony_elixir/migration_check.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:0bb4941ba84a",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:0d054c91e4ad",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:15d86872ee0e",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:700af0282216",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:95e3915b9c65",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:9b8958145249",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:af467d2a4c73",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.debug:f27cb0c6663f",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.debug lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.error:05b4e833256a",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:0c7711876e50",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:35af0d5fd611",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:3bdb05e6b5a8",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:5a4a782eb288",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:61269011eb31",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:62878f1e937d",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:7748d28fa56c",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:9fd169eeedc7",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:a110ae8f5c5a",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:a6796d9dd8aa",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:a9e18c5aea2b",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:b99ac5cedc3d",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:c0302719858a",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:e8b3605ebba6",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:ee7057830918",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:f848ee86e217",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:fd1c6e29c1d3",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:21b7efe5e035",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:2b89badae1c9",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:3865968dd381",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:3d773c4e7e9d",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:4201d1eadf42",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:516017269a47",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:675d8025e180",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:6c437a2833cc",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:6f4d932f5eb3",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:71966df7bf92.1",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:71966df7bf92.2",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:7cc613fe9e16",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:7ece9d80b9c2",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:a5ed4ef6e05c",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:aed7618d0f40",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:b6c401a38200",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:bc76be3a3cc4",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:c5aa9cc3cdbe",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:d29dcf82df1d",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:d8bf11325a62",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:e3d650a12b91",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:f77460412265",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:01776585aa29",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:1f49b863ee2c",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:206b304bd2ba",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:38d294a0b471",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:445b0a48ed7f",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:4f133ca39007",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:52741c2f33bd",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:6b6519fb95a6.1",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:6b6519fb95a6.2",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:712fa8d5bd12",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:884265942df9.1",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:884265942df9.2",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:8a43e9cef19e",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:8bc7d6d91c36",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:94c903b0dd99",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:95a81691c165",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:95c910d250a7",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:97350bc9d009",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:a5e5939b5a40",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:b22f7ce3965d",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:d639c300b885",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:dd696859bc26",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:dda7834bfaaa",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:df3fd965f38a",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:e7096ec4ad2b",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:eba3730621cd",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:f945b9d9f376",
+      "path": "lib/symphony_elixir/orchestrator.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:e147a66ee549",
+      "path": "lib/symphony_elixir/persistence/workflow_store.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:780c92c6bf47",
+      "path": "lib/symphony_elixir/persistence_event_writer.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:aca9abb6e0f6",
+      "path": "lib/symphony_elixir/persistence_event_writer.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "silent_error_branch:1ec66810be8f",
+      "path": "lib/symphony_elixir/release.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:9f0d13a7de86",
+      "path": "lib/symphony_elixir/run_history.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.warning:1b2a47016c3b",
+      "path": "lib/symphony_elixir/run_lifecycle.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:e3a77688aa6d",
+      "path": "lib/symphony_elixir/run_lifecycle.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:22873fc55b64",
+      "path": "lib/symphony_elixir/status_dashboard.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:fb7592e196c9",
+      "path": "lib/symphony_elixir/status_dashboard.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:285376f8d1d3",
+      "path": "lib/symphony_elixir/status_dashboard.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:519324a2ad96",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:ff16fa137243",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:6431c7facd45",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:778e5a1a9b12",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:d5ce0a16ab78",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:2b8f05b4092f",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:34d1530473da",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:be67c83dcf9d",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:c0fe4193916d",
+      "path": "lib/symphony_elixir/worker/assignment_manager.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:300b7c7b223b",
+      "path": "lib/symphony_elixir/worker/claim_stage.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:ee96baefa361",
+      "path": "lib/symphony_elixir/worker/claim_stage.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "silent_rescue:87959826fd1f",
+      "path": "lib/symphony_elixir/worker/command.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "logger.warning:89519fc445d5",
+      "path": "lib/symphony_elixir/worker/heartbeat_history.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:c3594af5b469",
+      "path": "lib/symphony_elixir/worker/heartbeat_history.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:f1b2abefdf65",
+      "path": "lib/symphony_elixir/worker/runtime.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:513984925567",
+      "path": "lib/symphony_elixir/worker/runtime.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.error:c0c50978ea47",
+      "path": "lib/symphony_elixir/workflow_store.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:bfd1a5dcbd18",
+      "path": "lib/symphony_elixir/workflow_store.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.error:1b65d588c6bb",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.error lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.info:2bde7f705e27",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:363213dd7446",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:6778c37b5fad",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:74e5e51f03a7",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:a8f2e27abfff",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.info:ab322fd16e8d",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.info lacks registered metadata: event"
+    },
+    {
+      "identifier": "logger.warning:751d670d2b67",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:8bca83482231",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "logger.warning:8cc0ce1e45bf",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "Logger.warning lacks registered metadata: event,operation,location,expected_shape,error_code,retryable"
+    },
+    {
+      "identifier": "silent_error_branch:eb5cf8f36e0a",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:177c33964fde",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:dc451ed42392",
+      "path": "lib/symphony_elixir/workspace.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:ae06f0a8e3b9",
+      "path": "lib/symphony_elixir/workspace/hook_runner.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:63a93a890c90",
+      "path": "lib/symphony_elixir_web/controllers/health_controller.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_catch:7e5187f9bd62",
+      "path": "lib/symphony_elixir_web/controllers/health_controller.ex",
+      "reason": "silent_catch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_error_branch:31333df6483d",
+      "path": "lib/symphony_elixir_web/controllers/health_controller.ex",
+      "reason": "error tuple branch returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:10266f6f23a5",
+      "path": "lib/symphony_elixir_web/controllers/health_controller.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    },
+    {
+      "identifier": "silent_rescue:9d7f67079dcb",
+      "path": "lib/symphony_elixir_web/controllers/health_controller.ex",
+      "reason": "silent_rescue returns success without a registered failure event or typed error"
+    }
+  ],
+  "schema": "observability-baseline"
+}

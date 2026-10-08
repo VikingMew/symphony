@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-07
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -124,8 +124,10 @@ Panel persists it. The forwarded audit surface includes every `linear_task_read`
 `linear_task_update`, `linear_issue_create`, `create_pull_request`, and `handoff` call, with one
 event for each success or failure. PR success evidence is bounded to URL and repository/base/head
 metadata; accepted handoff results are bounded, and credentials, tokens, and completion proofs are
-redacted before persistence. Failure payloads retain stable class/message and available reason
-fields. Audit delivery failures are logged as degraded execution and do not change the tool
+redacted before persistence. App-server `params.callId` is forwarded as `tool_call_id` at the
+event top level and in its correlation map, alongside applicable issue, run, and session identity.
+Failure payloads retain typed code/retryable fields without message matching. Audit delivery
+failures are logged as degraded execution and do not change the tool
 response or assignment lifecycle. Centralized execution records the same audit locally in the
 Panel. For one Codex session, the worker also retains only the successful `create_pull_request` and
 state-name-normalized `linear_task_update(target_state: "Ready to Merge")` audit fields needed to
@@ -134,6 +136,10 @@ included when present. When both calls succeeded but no `handoff` was submitted,
 reports `blocked` / `handoff_failed` with that bounded PR and Linear target-state evidence. Without
 that pair or the host-push predicate below, a missing `handoff` remains
 `{:handoff_failed, :missing_handoff}` and its bounded detail names the missing event or PR URL.
+
+The shared correlation field registry and error-envelope requirements are owned by
+[Observability and Tool Error Design](observability-errors-design.md); this design owns their worker
+transport behavior.
 
 For a refinement assignment, the worker retains the same-session audit only to prove a successful,
 state-name-normalized `linear_task_update(target_state: "Needs Refinement Review")`. A completed

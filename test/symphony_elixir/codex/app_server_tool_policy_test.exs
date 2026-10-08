@@ -693,8 +693,8 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
 
       test_pid = self()
 
-      tool_executor = fn tool, arguments ->
-        send(test_pid, {:tool_called, tool, arguments})
+      tool_executor = fn tool, arguments, context ->
+        send(test_pid, {:tool_called, tool, arguments, context})
 
         %{
           "success" => true,
@@ -714,7 +714,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
                        %{
                          "include_activity" => true,
                          "activity_limit" => 25
-                       }}
+                       }, [tool_call_id: "call-90a"]}
 
       trace = File.read!(trace_file)
       lines = String.split(trace, "\n", trim: true)
@@ -815,8 +815,8 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
 
       test_pid = self()
 
-      tool_executor = fn tool, arguments ->
-        send(test_pid, {:tool_called, tool, arguments})
+      tool_executor = fn tool, arguments, context ->
+        send(test_pid, {:tool_called, tool, arguments, context})
 
         %{
           "success" => false,
@@ -837,7 +837,7 @@ defmodule SymphonyElixir.Codex.AppServerToolPolicyTest do
                  tool_executor: tool_executor
                )
 
-      assert_received {:tool_called, "linear_task_update", %{"comment" => "boom"}}
+      assert_received {:tool_called, "linear_task_update", %{"comment" => "boom"}, [tool_call_id: "call-90b"]}
 
       assert_received {:app_server_message, %{event: :tool_call_failed, payload: %{"params" => %{"tool" => "linear_task_update"}}}}
     after

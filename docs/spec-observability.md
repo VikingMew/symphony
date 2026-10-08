@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.LogFile
-updated: 2026-10-03
+updated: 2026-10-08
 ---
 
 # Logging and Observability Specification
@@ -14,21 +14,12 @@ updated: 2026-10-03
 
 ### 13.1 Logging Conventions
 
-REQUIRED context fields for issue-related logs:
-
-- `issue_id`
-- `issue_identifier`
-
-REQUIRED context for coding-agent session lifecycle logs:
-
-- `session_id`
-
-Message formatting requirements:
-
-- Use stable `key=value` phrasing.
-- Include action outcome (`completed`, `failed`, `retrying`, etc.).
-- Include concise failure reason when present.
-- Avoid logging large raw payloads unless necessary.
+First-party console and rotating-file records MUST be one-object-per-line JSON. Every record MUST
+contain `timestamp`, `level`, `event`, `message`, and `source`; applicable issue, run, session, and
+tool-call identity MUST use the exact names in [logging.md](logging.md). Warning/error records for
+operation failures MUST carry structured operation, location, expected shape, stable error code,
+and boolean retryability, plus the offending value and correlation identifiers when available.
+Human message text MUST NOT determine classification, retryability, or correlation.
 
 ### 13.2 Logging Outputs and Sinks
 
@@ -46,8 +37,10 @@ Requirements:
 Persisted run history MUST include one `linear.tool_call` event for every Codex-side
 `linear_task_read`, `linear_task_update`, `linear_issue_create`, `create_pull_request`, and `handoff`
 dynamic tool call, including successful and failed calls. The event payload retains the tool,
-status, session/run correlation, bounded arguments, and either a normalized result or structured
-`error.class`, `error.message`, and available `error.reason`.
+status, session/run correlation, `tool_call_id` copied from app-server `params.callId`, bounded
+arguments, and either a normalized result or structured error. Typed tool failures MUST expose
+stable `code` and boolean `retryable`; audit persistence MUST copy those values into `error.class`,
+`error.code`, and `error.retryable` without message matching.
 
 For `create_pull_request`, normalized success evidence is limited to the PR URL and available
 repository, base, head, head OID, and source metadata. A successful `handoff` exposes only its
@@ -474,7 +467,8 @@ API design notes:
 - Implementations MAY add fields, but SHOULD avoid breaking existing fields within a version.
 - Endpoints SHOULD be read-only except for operational triggers like `/refresh`.
 - Unsupported methods on defined routes SHOULD return `405 Method Not Allowed`.
-- API errors SHOULD use a JSON envelope such as `{"error":{"code":"...","message":"..."}}`.
+- API errors MUST use a JSON envelope whose `error` contains stable `code`, boolean `retryable`,
+  and human-readable `message`; callers MUST NOT infer retryability from message text.
 - If the dashboard is a client-side app, it SHOULD consume this API rather than duplicating state
   logic.
 

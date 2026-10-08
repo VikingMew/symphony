@@ -2116,7 +2116,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "application keeps the default console logger handler" do
     assert {:ok, handler_config} = :logger.get_handler_config(:default)
-    assert handler_config.formatter == {:logger_formatter, %{single_line: true}}
+    assert handler_config.formatter == {SymphonyElixir.LogFormatter, %{}}
     assert handler_config.level == :info
   end
 
