@@ -149,7 +149,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
       AssignmentManager.reconcile(context.manager)
       eventually(fn -> Tracker.reconcile_fetches() == expected_count end)
       eventually(fn -> length(FakePersistence.list_events(event_type: "linear.request_failed")) == expected_count end)
-      Process.sleep(20)
+      eventually(fn -> :sys.get_state(context.manager).reconcile_task == nil end)
       assert Tracker.reconcile_fetches() == expected_count
     end)
 

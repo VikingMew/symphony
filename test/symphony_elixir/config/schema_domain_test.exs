@@ -20,6 +20,7 @@ defmodule SymphonyElixir.Config.SchemaDomainTest do
     System.delete_env("LINEAR_API_KEY")
 
     write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_endpoint: nil,
       workspace_root: nil,
       codex_approval_policy: nil,
       codex_thread_sandbox: nil,

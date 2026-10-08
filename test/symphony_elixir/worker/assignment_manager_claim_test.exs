@@ -91,9 +91,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     circuit = start_supervised!({EnvironmentFailureCircuit, name: nil})
     {:ok, registration} = FakePersistence.register_worker(%{"worker_name" => "claim-test", "total_slots" => 1})
 
+    now = DateTime.utc_now()
+
     manager =
       start_supervised!(
-        {AssignmentManager, name: nil, tracker: Tracker, persistence: Persistence, workflows: Workflows, failure_circuit: circuit, orchestrator: self(), reconcile_interval_ms: :timer.hours(1)}
+        {AssignmentManager,
+         now: fn -> now end, name: nil, tracker: Tracker, persistence: Persistence, workflows: Workflows, failure_circuit: circuit, orchestrator: self(), reconcile_interval_ms: :timer.hours(1)}
       )
 
     :ok = AssignmentManager.observe_session(registration.worker, registration.session, manager)
@@ -111,7 +114,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
       end
     end)
 
-    %{manager: manager, worker: registration.worker, session: registration.session}
+    %{manager: manager, worker: registration.worker, session: registration.session, now: now}
   end
 
   test "preparation deadline cannot kill a commit or consume its lease", context do
@@ -132,7 +135,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert {:ok, %{commands: [], lease_renewals: []}} = AssignmentManager.heartbeat(context.worker.id, context.session.id, %{"active_leases" => []}, context.manager)
     send(commit, :release)
     assert {:ok, assignment} = Task.await(task)
-    assert DateTime.diff(assignment.expires_at, DateTime.utc_now()) >= FakePersistence.worker_lease_duration_seconds() - 1
+    assert assignment.expires_at == DateTime.add(context.now, FakePersistence.worker_lease_duration_seconds(), :second)
     assert_single_assignment(context, assignment)
   end
 

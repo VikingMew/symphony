@@ -51,7 +51,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
     assert dockerfile =~ "mise link erlang@28 /usr/local"
     assert dockerfile =~ "mise link elixir@1.19.5-otp-28 /usr/local"
-    assert mise =~ ~s(erlang = "28")
+    assert mise =~ ~s(erlang = "28.5")
     assert mise =~ ~s(elixir = "1.19.5-otp-28")
 
     for stage <- ["worker", "symphony-base", "execution-worker"] do
@@ -111,7 +111,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   test "blocking quality workflow owns repository aggregate" do
     quality = File.read!(@quality_workflow)
-    assert quality =~ "scripts/check.sh"
+    assert quality =~ "scripts/quality.sh"
   end
 
   test "all Codex images configure token-free GitHub credentials at system scope" do

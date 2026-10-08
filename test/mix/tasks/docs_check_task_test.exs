@@ -51,10 +51,10 @@ defmodule Mix.Tasks.Docs.CheckTaskTest do
   end
 
   test "D-03 rejects missing or extra resident quality commands" do
-    File.write!("AGENTS.md", String.replace(File.read!("AGENTS.md"), "scripts/unit.sh", "scripts/e2e.sh"))
+    File.write!("AGENTS.md", String.replace(File.read!("AGENTS.md"), "scripts/quality.sh", "scripts/e2e.sh"))
     output = capture_d_failure()
     assert output =~ "D-03 AGENTS.md target=Quality Gates commands"
-    assert output =~ ~s(actual=["scripts/check.sh", "scripts/e2e.sh", "scripts/dialyzer.sh"])
+    assert output =~ ~s(actual=["scripts/e2e.sh"])
   end
 
   test "D-03 rejects missing and non-executable quality scripts" do
@@ -68,12 +68,12 @@ defmodule Mix.Tasks.Docs.CheckTaskTest do
   test "D-03 rejects CI command drift" do
     File.write!(
       ".github/workflows/make-all.yml",
-      String.replace(File.read!(".github/workflows/make-all.yml"), "scripts/unit.sh", "scripts/e2e.sh")
+      String.replace(File.read!(".github/workflows/make-all.yml"), "scripts/quality.sh", "scripts/e2e.sh")
     )
 
     output = capture_d_failure()
     assert output =~ "D-03 .github/workflows/make-all.yml target=jobs.*.steps.run"
-    assert output =~ ~s(actual=["scripts/check.sh", "scripts/dialyzer.sh", "scripts/e2e.sh"])
+    assert output =~ ~s(actual=["scripts/e2e.sh", "scripts/setup.sh"])
   end
 
   test "D-04 rejects missing README structure and entry commands" do
@@ -114,15 +114,15 @@ defmodule Mix.Tasks.Docs.CheckTaskTest do
 
     File.write!(
       Path.join(root, "AGENTS.md"),
-      "## Quality Gates\n\n- `scripts/check.sh`\n- `scripts/unit.sh`\n- `scripts/dialyzer.sh`\n"
+      "## Quality Gates\n\n- `scripts/quality.sh`\n"
     )
 
     File.write!(
       Path.join(root, "README.md"),
-      "## Quick Start\n\n`mise exec -- mix setup`\n\n## Project Layout\n\n- lib\n\n## Development\n\n`mise exec -- mix test`\n"
+      "## Quick Start\n\n`scripts/setup.sh`\n\n## Project Layout\n\n- lib\n\n## Development\n\n`mise exec -- mix test`\n"
     )
 
-    Enum.each(~w(check unit dialyzer), fn name ->
+    Enum.each(~w(setup quality check unit dialyzer), fn name ->
       path = Path.join(root, "scripts/#{name}.sh")
       File.write!(path, "#!/usr/bin/env bash\n")
       File.chmod!(path, 0o755)
@@ -130,7 +130,7 @@ defmodule Mix.Tasks.Docs.CheckTaskTest do
 
     File.write!(
       Path.join(root, ".github/workflows/make-all.yml"),
-      "jobs:\n  check:\n    steps:\n      - run: scripts/check.sh\n  unit:\n    steps:\n      - run: scripts/unit.sh\n  dialyzer:\n    steps:\n      - run: scripts/dialyzer.sh\n"
+      "jobs:\n  quality:\n    steps:\n      - run: scripts/setup.sh\n      - run: scripts/quality.sh\n"
     )
   end
 end

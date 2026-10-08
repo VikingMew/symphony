@@ -17,7 +17,7 @@ jobs:
       - name: Set up mise tools
         uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
         with:
-          install: true
+          install: false
           cache: true
 
       - name: Cache deps and build
@@ -25,63 +25,22 @@ jobs:
         with:
           path: |
             deps
-            _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
+            _build/dev
+            _build/test
+          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock', 'mise.toml') }}
           restore-keys: |
             ${{ runner.os }}-mix-
 
-      - name: Run fast checks
-        run: scripts/check.sh
+      - name: Initialize dependencies
+        run: scripts/setup.sh
 
-  unit:
-    runs-on: ubuntu-latest
+      - name: Run repository quality gates
+        run: scripts/quality.sh
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up mise tools
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+      - name: Preserve verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          install: true
-          cache: true
-
-      - name: Cache deps and build
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-
-      - name: Run unit coverage
-        run: scripts/unit.sh
-
-  dialyzer:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-
-      - name: Set up mise tools
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
-        with:
-          install: true
-          cache: true
-
-      - name: Cache deps, build, and PLT
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            deps
-            _build
-            priv/plts
-          key: ${{ runner.os }}-dialyzer-${{ hashFiles('mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-dialyzer-
-
-      - name: Run Dialyzer
-        run: scripts/dialyzer.sh
+          name: repository-verification
+          path: _build/quality/
+          if-no-files-found: error

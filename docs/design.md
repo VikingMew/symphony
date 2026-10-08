@@ -27,6 +27,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [execution-runtime-design.md](execution-runtime-design.md) | External execution runtime and container credential boundary | landed |
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency and boundary governance | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code conformance and merge-gate behavior | landed |
+| [repository-verification-design.md](repository-verification-design.md) | Repository verification and V-01 through V-09 | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification and evidence contract | landed |
 | [issue-persistence-design.md](issue-persistence-design.md) | Issue persistence and poll-snapshot state boundary | landed |
 | [observability-errors-design.md](observability-errors-design.md) | Structured logs, request/tool errors, correlation, operator commands, and source ratchet | landed |

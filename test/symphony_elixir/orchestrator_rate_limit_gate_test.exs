@@ -54,7 +54,7 @@ defmodule SymphonyElixir.OrchestratorRateLimitGateTest do
     end)
 
     send(pid, :run_poll_cycle)
-    Process.sleep(50)
+    :sys.get_state(pid)
 
     refute_receive :fetch_candidate_issues_called, 100
 

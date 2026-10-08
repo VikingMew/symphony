@@ -15,7 +15,8 @@ defmodule Mix.Tasks.Docs.Check do
   @agents_path "AGENTS.md"
   @readme_path "README.md"
   @workflow_path ".github/workflows/make-all.yml"
-  @quality_commands ~w(scripts/check.sh scripts/unit.sh scripts/dialyzer.sh)
+  @quality_commands ~w(scripts/quality.sh)
+  @scripts ~w(scripts/setup.sh scripts/quality.sh scripts/check.sh scripts/unit.sh scripts/dialyzer.sh)
 
   @impl Mix.Task
   def run(_args) do
@@ -77,7 +78,7 @@ defmodule Mix.Tasks.Docs.Check do
   end
 
   defp script_findings do
-    Enum.flat_map(@quality_commands, fn path ->
+    Enum.flat_map(@scripts, fn path ->
       cond do
         not File.regular?(path) ->
           ["D-03 #{path} target=quality gate script expected=regular executable file actual=missing"]
@@ -93,7 +94,7 @@ defmodule Mix.Tasks.Docs.Check do
 
   defp workflow_findings do
     actual = workflow_commands()
-    expected = Enum.sort(@quality_commands)
+    expected = ~w(scripts/quality.sh scripts/setup.sh)
 
     if actual == expected do
       []
@@ -111,7 +112,7 @@ defmodule Mix.Tasks.Docs.Check do
 
       [
         readme_section_finding(content, "## Project Layout", "structure or module map"),
-        readme_command_finding(content, "## Quick Start", "mise exec -- mix setup", "startup entry command"),
+        readme_command_finding(content, "## Quick Start", "scripts/setup.sh", "startup entry command"),
         readme_command_finding(content, "## Development", "mise exec -- mix test", "development entry command")
       ]
       |> Enum.reject(&is_nil/1)

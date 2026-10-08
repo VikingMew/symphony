@@ -27,6 +27,10 @@ X-05 外，它不实现或审计 G/L/V/O/D/P/C 组条款，也不据此填写仓
 [文档体系设计](documentation-system-design.md#10-d-组元文档与注释合同)拥有；本文只拥有 D-02
 删除数值门禁后的阈值注册边界。
 
+V-01 至 V-09 及初始化、runner 日志/JSON、默认测试确定性和禁外网守卫由
+[仓库验证设计](repository-verification-design.md)唯一拥有。本文继续拥有检查器 JSON、阈值/豁免、
+门禁接入地位与完整门禁时长的 `record_only` 标定；runner 只报告观测，不设时长红线。
+
 ## 2. 数据流
 
 `mix agent_code.check` 严格读取阈值注册表与豁免表。注册表必须恰好包含六个数值项；顶层、

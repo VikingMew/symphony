@@ -149,8 +149,12 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     def fetch_issues_by_states(states) do
       owner = Application.fetch_env!(:symphony_elixir, :assignment_test_owner)
-      send(owner, :slow_reconcile_started)
-      Process.sleep(Application.fetch_env!(:symphony_elixir, :assignment_test_reconcile_delay_ms))
+      send(owner, {:slow_reconcile_started, self()})
+
+      receive do
+        :release_reconcile -> :ok
+      end
+
       result = Tracker.fetch_issues_by_states(states)
       send(owner, :slow_reconcile_finished)
       result
@@ -230,7 +234,6 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
       Application.delete_env(:symphony_elixir, :assignment_test_workflow)
       Application.delete_env(:symphony_elixir, :assignment_test_workflow_count)
       Application.delete_env(:symphony_elixir, :assignment_test_owner)
-      Application.delete_env(:symphony_elixir, :assignment_test_reconcile_delay_ms)
       Application.delete_env(:symphony_elixir, :assignment_test_workflows)
       Application.delete_env(:symphony_elixir, :assignment_test_heartbeat_mode)
       Application.delete_env(:symphony_elixir, :assignment_test_revalidate_hook)
@@ -980,9 +983,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     send(blocked_pid, :release_reconcile)
   end
 
-  test "two-second reconciliation leaves active heartbeat and audit ingestion responsive", context do
+  test "blocked reconciliation leaves active heartbeat and audit ingestion responsive", context do
     Application.put_env(:symphony_elixir, :assignment_test_owner, self())
-    Application.put_env(:symphony_elixir, :assignment_test_reconcile_delay_ms, 2_000)
     name = Module.concat(__MODULE__, "SlowReconcile#{System.unique_integer([:positive])}")
 
     manager =
@@ -1017,9 +1019,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     AssignmentManager.reconcile(manager)
-    assert_receive :slow_reconcile_started, 500
-
-    started_at = System.monotonic_time(:millisecond)
+    assert_receive {:slow_reconcile_started, reconcile}, 500
 
     assert {:ok, %{lease_renewals: [%{lease_id: lease_id}]}} =
              AssignmentManager.heartbeat(
@@ -1031,7 +1031,6 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert lease_id == assignment.id
-    assert System.monotonic_time(:millisecond) - started_at < 1_000
 
     assert {:ok, event} =
              AssignmentManager.record_event(
@@ -1044,7 +1043,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
              )
 
     assert event.event_type == "linear.tool_call"
-    assert_receive :slow_reconcile_finished, 2_500
+    send(reconcile, :release_reconcile)
+    assert_receive :slow_reconcile_finished
     assert FakePersistence.get_run(assignment.run_id).status == "running"
     assert FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.failed") == []
   end
@@ -1176,8 +1176,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     ready = issue(1)
     Tracker.put([ready])
     assert {:ok, assignment} = claim(context)
-    Process.exit(context.manager, :normal)
-    Process.sleep(10)
+    stop_supervised!(AssignmentManager)
 
     run = FakePersistence.get_run(assignment.run_id)
     {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
@@ -1424,8 +1423,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   end
 
   test "public API is safe while worker dispatch is disabled", context do
-    Process.exit(context.manager, :normal)
-    Process.sleep(10)
+    stop_supervised!(AssignmentManager)
+    server = Module.concat(__MODULE__, :DisabledDispatch)
 
     assert {:ok, {:empty, 5}} =
              AssignmentManager.claim_with_policy(
@@ -1434,11 +1433,11 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                %{},
                :listening_all,
                1,
-               context.manager
+               server
              )
 
     assert {:ok, %{lease_renewals: [], commands: []}} =
-             AssignmentManager.heartbeat(context.worker.id, context.session.id, %{}, context.manager)
+             AssignmentManager.heartbeat(context.worker.id, context.session.id, %{}, server)
 
     assert {:error, :lease_not_active} =
              AssignmentManager.record_event(
@@ -1447,19 +1446,18 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
                "gone",
                "task.progress",
                %{},
-               context.manager
+               server
              )
 
-    assert AssignmentManager.current_assignment(context.manager) == nil
-    assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("disabled", context.manager)
+    assert AssignmentManager.current_assignment(server) == nil
+    assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("disabled", server)
   end
 
   test "restart reconciliation preserves runs and emits one orphan signal after the lease window", context do
     ready = issue(1)
     Tracker.put([ready])
     assert {:ok, assignment} = claim(context)
-    Process.exit(context.manager, :normal)
-    Process.sleep(10)
+    stop_supervised!(AssignmentManager)
 
     name = Module.concat(__MODULE__, "Restarted#{System.unique_integer([:positive])}")
 
@@ -1476,7 +1474,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
 
     assert AssignmentManager.current_assignment(restarted) == nil
     AssignmentManager.reconcile(restarted)
-    Process.sleep(10)
+    eventually(fn -> :sys.get_state(restarted).reconcile_task == nil end)
     assert Tracker.updates() == [{ready.id, "In Progress"}]
 
     run = FakePersistence.get_run(assignment.run_id)
@@ -1484,7 +1482,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     AssignmentManager.reconcile(restarted)
     eventually(fn -> length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1 end)
     AssignmentManager.reconcile(restarted)
-    Process.sleep(10)
+    eventually(fn -> :sys.get_state(restarted).reconcile_task == nil end)
     assert Tracker.updates() == [{ready.id, "In Progress"}]
     assert FakePersistence.get_run(assignment.run_id).status == "running"
     assert length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1
@@ -1498,8 +1496,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     Tracker.put([ready])
     assert {:ok, assignment} = claim(context)
     complete(context, assignment)
-    Process.exit(context.manager, :normal)
-    Process.sleep(10)
+    stop_supervised!(AssignmentManager)
 
     name = Module.concat(__MODULE__, "RestartedLiveness#{System.unique_integer([:positive])}")
 

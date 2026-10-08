@@ -1,4 +1,10 @@
-ExUnit.start()
+ExUnit.start(seed: 0)
+
+Code.require_file("support/outbound_http_guard.exs", __DIR__)
+
+if System.get_env("SYMPHONY_RUN_LIVE_E2E") != "1" do
+  Req.default_options(finch_request: &SymphonyElixir.TestSupport.OutboundHTTPGuard.request/4)
+end
 
 Code.require_file("support/fake_persistence.exs", __DIR__)
 

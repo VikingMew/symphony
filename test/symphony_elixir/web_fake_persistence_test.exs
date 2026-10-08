@@ -43,8 +43,12 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     def fetch_issues_by_states(_states) do
       owner = Application.fetch_env!(:symphony_elixir, :web_slow_reconcile_owner)
-      send(owner, :web_slow_reconcile_started)
-      Process.sleep(2_000)
+      send(owner, {:web_slow_reconcile_started, self()})
+
+      receive do
+        :release_reconcile -> :ok
+      end
+
       send(owner, :web_slow_reconcile_finished)
       {:ok, []}
     end
@@ -293,7 +297,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     Application.put_env(:symphony_elixir, :heartbeat_test_owner, self())
     start_test_endpoint()
     start_assignment_manager(SlowHeartbeatPersistence)
-    start_heartbeat_history(coalesce_ms: 20)
+    start_heartbeat_history(coalesce_ms: :timer.hours(1))
 
     %{"worker_id" => worker_id, "session_id" => session_id} =
       build_conn()
@@ -326,6 +330,11 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
 
     assert HeartbeatMetrics.snapshot() == %{heartbeat_failed_attempts: 0}
     eventually(fn -> AssignmentManager.available_worker_slots() == 1 end)
+    key = {SlowHeartbeatPersistence, worker_id, session_id}
+    pending = :sys.get_state(HeartbeatHistory).pending
+    assert Map.keys(pending) == [key]
+    assert is_integer(Process.cancel_timer(pending[key]))
+    send(HeartbeatHistory, {:flush, key})
     assert_receive {:slow_heartbeat_started, blocked_pid}, 500
     refute_receive {:slow_heartbeat_started, _pid}, 50
     send(blocked_pid, :release_heartbeat)
@@ -358,23 +367,22 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
     end)
 
     AssignmentManager.reconcile()
-    assert_receive :web_slow_reconcile_started, 500
+    assert_receive {:web_slow_reconcile_started, reconcile}, 500
     metrics_before = HeartbeatMetrics.snapshot()
-    started_at = System.monotonic_time(:millisecond)
 
     conn =
       build_conn()
       |> worker_headers(worker_id, session_id)
       |> post("/api/worker/v1/heartbeat", %{"active_leases" => [lease_id]})
 
-    assert System.monotonic_time(:millisecond) - started_at < 1_000
     assert Plug.Conn.get_resp_header(conn, "retry-after") == []
 
     assert %{"ok" => true, "lease_renewals" => [%{"lease_id" => ^lease_id}]} =
              json_response(conn, 200)
 
     assert HeartbeatMetrics.snapshot() == metrics_before
-    assert_receive :web_slow_reconcile_finished, 2_500
+    send(reconcile, :release_reconcile)
+    assert_receive :web_slow_reconcile_finished
   end
 
   test "claim observes expired liveness after admission so the following claim is fresh" do
@@ -431,16 +439,20 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
   end
 
   test "heartbeat history observer coalesces repeated idle observations" do
-    start_heartbeat_history(coalesce_ms: 20)
+    start_heartbeat_history(coalesce_ms: :timer.hours(1))
     {:ok, %{worker: worker, session: session}} = FakePersistence.register_worker(worker_registration_payload())
 
     for _ <- 1..3 do
       HeartbeatHistory.observe(worker.id, session.id, FakePersistence)
     end
 
+    key = {FakePersistence, worker.id, session.id}
+    assert %{pending: pending} = :sys.get_state(HeartbeatHistory)
+    assert Map.keys(pending) == [key]
+    assert is_integer(Process.cancel_timer(pending[key]))
+    send(HeartbeatHistory, {:flush, key})
+    assert :sys.get_state(HeartbeatHistory).pending == %{}
     eventually(fn -> heartbeat_worker_calls(worker.id, session.id) == 1 end)
-    Process.sleep(30)
-    assert heartbeat_worker_calls(worker.id, session.id) == 1
   end
 
   test "worker API returns controller-level errors before persistence work" do
