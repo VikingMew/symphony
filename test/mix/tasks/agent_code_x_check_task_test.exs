@@ -24,7 +24,7 @@ defmodule Mix.Tasks.AgentCodeX.CheckTaskTest do
     check = File.read!("scripts/check.sh")
 
     assert mix =~
-             ~s(lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "credo --strict"])
+             ~s(lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "locality.check", "credo --strict"])
 
     assert Regex.scan(~r/agent_code_x\.check/, check) == []
     assert [_once] = Regex.scan(~r/^mix lint$/m, check)

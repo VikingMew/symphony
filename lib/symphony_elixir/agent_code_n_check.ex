@@ -394,13 +394,40 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   end
 
   defp baseline_ratchet_errors({:ok, rows}, {:ok, base_rows}, _findings) do
-    Enum.map(rows -- base_rows, &"baseline.added: #{&1}")
+    base_by_identity = Map.new(base_rows, &{ratchet_identity(&1), &1})
+
+    Enum.flat_map(rows -- base_rows, &ratchet_row_errors(&1, base_by_identity))
   end
 
   defp baseline_ratchet_errors(:missing, {:ok, _base_rows}, []), do: []
   defp baseline_ratchet_errors(:missing, :missing, []), do: []
   defp baseline_ratchet_errors(_current, {:error, error}, _findings), do: [error]
   defp baseline_ratchet_errors(_current, _base, _findings), do: []
+
+  defp ratchet_row_errors(row, base_by_identity) do
+    case Map.fetch(base_by_identity, ratchet_identity(row)) do
+      {:ok, base_row} ->
+        if finding_magnitude(row) <= finding_magnitude(base_row),
+          do: [],
+          else: ["baseline.expanded: #{row}"]
+
+      :error ->
+        ["baseline.added: #{row}"]
+    end
+  end
+
+  defp ratchet_identity(row) do
+    row
+    |> String.split("|")
+    |> Enum.take(3)
+    |> Enum.join("|")
+  end
+
+  defp finding_magnitude(row) do
+    ~r/(?:@|:)\d+(?=,|;|\||$)/
+    |> Regex.scan(row)
+    |> length()
+  end
 
   defp base_baseline(_root, _path, option) when option == :missing, do: :missing
   defp base_baseline(_root, _path, rows) when is_list(rows), do: {:ok, rows}

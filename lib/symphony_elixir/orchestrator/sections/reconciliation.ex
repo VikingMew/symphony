@@ -18,12 +18,13 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         Nap.Results,
         Payload,
         PersistenceProvider,
+        RunAdmission,
         RunLifecycle,
         StatusDashboard,
         Tracker,
         WorkflowStore,
         Workspace,
-        WorkspaceDiskGuard
+        WorkspacePreflight
       }
 
       alias SymphonyElixir.Config.Schema
@@ -32,10 +33,85 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
       alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Orchestrator.InputBlocker
       alias SymphonyElixir.Orchestrator.RetryPolicy
-      alias SymphonyElixir.Orchestrator.SessionHistory
-      alias SymphonyElixir.Worker.AssignmentManager
-
       alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
+      alias SymphonyElixir.Orchestrator.SessionHistory
+      alias SymphonyElixir.RunFailure, as: Failure
+      alias SymphonyElixir.Worker.AssignmentManager
+      alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
+
+      defp block_issue_for_input(state, issue_id, running_entry, outcome, session_id) do
+        summary = InputBlocker.summary(outcome)
+
+        Logger.warning("Agent task blocked for issue_id=#{issue_id} session_id=#{session_id} #{summary}; waiting for operator input")
+
+        updated_running_entry =
+          append_session_history(
+            running_entry,
+            :blocked,
+            "Agent blocked",
+            %{message: outcome.detail, reason: outcome.reason, source: :agent}
+          )
+
+        failure =
+          Failure.classify({:blocked, %{reason: outcome.reason, detail: outcome.detail, summary: summary}})
+
+        persist_run_finished(updated_running_entry, "blocked", failure)
+
+        references =
+          run_references(updated_running_entry)
+          |> Map.merge(Map.get(outcome, :references, %{}))
+          |> Map.put(:session_id, session_id)
+
+        persist_and_block_issue(
+          state,
+          issue_id,
+          updated_running_entry,
+          Failure.reason(failure),
+          Failure.evidence(failure),
+          references
+        )
+      end
+
+      defp agent_exit_summary(:normal, %{agent_result: :success}), do: "completed"
+
+      defp agent_exit_summary(:normal, %{agent_result: {:failed, reason}}),
+        do: "failed #{agent_failure_summary(reason)}"
+
+      defp agent_exit_summary(:normal, %{agent_result: {:blocked, outcome}}),
+        do: InputBlocker.summary(outcome)
+
+      defp agent_exit_summary(:normal, _running_entry), do: "completed"
+
+      defp agent_exit_summary(reason, _running_entry),
+        do: "crashed #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
+      defp agent_failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
+        "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{if is_map(details), do: Map.get(details, :elapsed_ms), else: nil} setting=#{timeout_setting_hint(hook_name)} output=#{compact_log_output(if is_map(details), do: Map.get(details, :recent_output, ""), else: "")}"
+      end
+
+      defp agent_failure_summary({:codex_startup_failed, details}),
+        do:
+          "class=agent_domain_failure type=codex_startup_failed stage=#{inspect(details.stage)} timeout_ms=#{details.timeout_ms} reason=#{inspect(details.reason)} output=#{compact_log_output(details.output)}"
+          |> String.slice(0, 1_000)
+
+      defp agent_failure_summary(reason),
+        do: "class=agent_domain_failure reason=#{compact_log_output(inspect(reason, limit: 20, printable_limit: 1_000))}"
+
+      defp timeout_setting_hint("project_bootstrap"),
+        do: "Settings / Workflow / Bootstrap / Initialize timeout ms"
+
+      defp timeout_setting_hint(_), do: "Settings / Workflow / Lifecycle Hooks / Hook timeout ms"
+
+      defp compact_log_output(output) do
+        output
+        |> to_string()
+        |> String.replace("\r", "\n")
+        |> String.split("\n", trim: true)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.take(-8)
+        |> Enum.join(" | ")
+        |> String.slice(0, 1_000)
+      end
 
       defp maybe_dispatch(%State{} = state) do
         Logger.debug("event=poll_heartbeat listening_mode=#{listening_mode(state)} tick_timestamp=#{System.system_time(:millisecond)}")
@@ -52,42 +128,38 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         if workflows == [] do
           handle_dispatch_error(state, :setup_required)
         else
-          Enum.reduce(workflows, state, &dispatch_workflow/2)
+          workflows
+          |> Enum.group_by(&get_in(&1.config, ["tracker", "project_slug"]))
+          |> Enum.reduce(state, fn {_project_slug, grouped_workflows}, state_acc ->
+            dispatch_workflow_group(grouped_workflows, state_acc)
+          end)
         end
       end
 
-      defp dispatch_workflow(workflow, state) do
+      defp dispatch_workflow_group([workflow | _rest] = workflows, state) do
         Config.with_workflow_context(workflow, fn ->
-          dispatch_for_workflow(state, workflow)
+          if RunAdmission.execution_mode() == "worker" do
+            state
+          else
+            dispatch_workflow_group_centrally(state, workflows)
+          end
         end)
       end
 
-      defp dispatch_for_workflow(%State{} = state, %{config: _config} = workflow) do
-        if Config.execution_mode() == :worker do
-          state
-        else
-          dispatch_for_workflow_centrally(state, workflow)
-        end
-      end
-
-      defp dispatch_for_workflow_centrally(%State{} = state, workflow) do
+      defp dispatch_workflow_group_centrally(%State{} = state, workflows) do
         with :ok <- Config.validate!(),
              state = reconcile_ready_to_merge_issues(state),
              :allow <- environment_failure_circuit_allows_dispatch(),
              :allow <- rate_limit_gate_allows_dispatch(state),
-             {:ok, issues} <- Tracker.fetch_candidate_issues(),
-             true <- available_slots(state) > 0,
-             true <- workflow_slots_available?(state, workflow) do
-          Logger.info(
-            "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success candidate_count=#{length(issues)} dispatch=attempted"
-          )
-
-          state = %{state | last_config_error: nil}
-          persist_polled_issues(issues)
-          choose_issues(issues, state)
+             {:ok, issues} <- Tracker.fetch_candidate_issues() do
+          dispatch_shared_issues(workflows, issues, %{state | last_config_error: nil})
         else
           {:error, reason} ->
-            Logger.warning("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked")
+            Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
+
+            Logger.warning(
+              "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked"
+            )
 
             handle_dispatch_error(state, reason)
 
@@ -98,15 +170,31 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
 
           {:environment_failure_circuit_open, circuit} ->
             Logger.warning(
-              "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
+              "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
             )
 
             %{state | last_config_error: nil}
+        end
+      end
 
-          false ->
-            Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=success dispatch=skipped reason=capacity")
+      defp dispatch_shared_issues(workflows, issues, state) do
+        Enum.reduce(workflows, state, fn workflow, state_acc ->
+          Config.with_workflow_context(workflow, fn -> dispatch_fetched_workflow(state_acc, workflow, issues) end)
+        end)
+      end
 
-            %{state | last_config_error: nil}
+      defp dispatch_fetched_workflow(state, workflow, issues) do
+        if available_slots(state) > 0 and workflow_slots_available?(state, workflow) do
+          Logger.info(
+            "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared candidate_count=#{length(issues)} dispatch=attempted"
+          )
+
+          persist_polled_issues(issues)
+          choose_issues(issues, state)
+        else
+          Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared dispatch=skipped reason=capacity")
+
+          state
         end
       end
 
@@ -124,7 +212,6 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
 
           {:error, reason} ->
             Logger.error("Failed to fetch Ready to Merge issues for mergeability reconciliation: #{inspect(reason)}")
-
             state
         end
       end
@@ -135,12 +222,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
             blocked_entry = %{
               issue_id: issue.id,
               identifier: issue.identifier,
-              state:
-                if delivery_transition_completed?(delivery) do
-                  "Blocked"
-                else
-                  issue.state
-                end,
+              state: if(delivery_transition_completed?(delivery), do: "Blocked", else: issue.state),
               run_id: decision["run_id"],
               blocked_at: decision["decided_at"],
               reason: decision["reason"],
@@ -161,9 +243,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp workflow_slots_available?(%State{} = state, _workflow) do
-        available_slots(state) > 0
-      end
+      defp workflow_slots_available?(%State{} = state, _workflow), do: available_slots(state) > 0
 
       defp handle_dispatch_error(%State{} = state, reason) do
         if config_validation_error?(reason) do
@@ -174,86 +254,43 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp log_config_error_once(%State{last_config_error: reason} = state, reason) do
-        state
-      end
+      defp log_config_error_once(%State{last_config_error: reason} = state, reason), do: state
 
       defp log_config_error_once(%State{} = state, reason) do
         Logger.error(config_validation_error_message(reason))
         %{state | last_config_error: reason}
       end
 
-      defp config_validation_error?(:missing_linear_api_token) do
-        true
-      end
+      defp config_validation_error?(:missing_linear_api_token), do: true
+      defp config_validation_error?(:missing_linear_endpoint), do: true
+      defp config_validation_error?(:missing_linear_project_slug), do: true
+      defp config_validation_error?(:missing_project_repository_url), do: true
+      defp config_validation_error?(:missing_tracker_kind), do: true
+      defp config_validation_error?(:setup_required), do: true
+      defp config_validation_error?(:workflow_front_matter_not_a_map), do: true
+      defp config_validation_error?({:unsupported_tracker_kind, _kind}), do: true
+      defp config_validation_error?({:invalid_workflow_config, _message}), do: true
+      defp config_validation_error?({:missing_workflow_file, _path, _reason}), do: true
+      defp config_validation_error?({:workflow_parse_error, _reason}), do: true
+      defp config_validation_error?(_reason), do: false
 
-      defp config_validation_error?(:missing_linear_endpoint) do
-        true
-      end
+      defp config_validation_error_message(:missing_linear_api_token),
+        do: "Linear API token missing in runtime environment"
 
-      defp config_validation_error?(:missing_linear_project_slug) do
-        true
-      end
+      defp config_validation_error_message(:missing_linear_endpoint),
+        do: "Linear endpoint missing in runtime tracker settings"
 
-      defp config_validation_error?(:missing_project_repository_url) do
-        true
-      end
+      defp config_validation_error_message(:missing_linear_project_slug),
+        do: "Linear project slug missing in Project Settings"
 
-      defp config_validation_error?(:missing_tracker_kind) do
-        true
-      end
+      defp config_validation_error_message(:missing_project_repository_url),
+        do: "Project repository URL missing in Project Settings"
 
-      defp config_validation_error?(:setup_required) do
-        true
-      end
+      defp config_validation_error_message(:missing_tracker_kind),
+        do: "Tracker kind missing in runtime tracker settings"
 
-      defp config_validation_error?(:workflow_front_matter_not_a_map) do
-        true
-      end
-
-      defp config_validation_error?({:unsupported_tracker_kind, _kind}) do
-        true
-      end
-
-      defp config_validation_error?({:invalid_workflow_config, _message}) do
-        true
-      end
-
-      defp config_validation_error?({:missing_workflow_file, _path, _reason}) do
-        true
-      end
-
-      defp config_validation_error?({:workflow_parse_error, _reason}) do
-        true
-      end
-
-      defp config_validation_error?(_reason) do
-        false
-      end
-
-      defp config_validation_error_message(:missing_linear_api_token) do
-        "Linear API token missing in runtime environment"
-      end
-
-      defp config_validation_error_message(:missing_linear_endpoint) do
-        "Linear endpoint missing in runtime tracker settings"
-      end
-
-      defp config_validation_error_message(:missing_linear_project_slug) do
-        "Linear project slug missing in Project Settings"
-      end
-
-      defp config_validation_error_message(:missing_project_repository_url) do
-        "Project repository URL missing in Project Settings"
-      end
-
-      defp config_validation_error_message(:missing_tracker_kind) do
-        "Tracker kind missing in runtime tracker settings"
-      end
-
-      defp config_validation_error_message(:setup_required) do
-        "No workflow is configured. Import a workflow package in /settings/import."
-      end
+      defp config_validation_error_message(:setup_required),
+        do: "No workflow is configured. Import a workflow package in /settings/import."
 
       defp config_validation_error_message(:workflow_front_matter_not_a_map) do
         "Failed to parse workflow config: front matter must decode to a map"
@@ -275,9 +312,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         "Failed to parse workflow config: #{inspect(reason)}"
       end
 
-      defp config_validation_error_message(reason) do
-        inspect(reason)
-      end
+      defp config_validation_error_message(reason), do: inspect(reason)
 
       defp reconcile_running_issues(%State{} = state) do
         state = reconcile_stalled_running_issues(state)
@@ -304,31 +339,29 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      @doc "Reconciles already-refreshed issue states against the current runtime state.\n\nThis is a side-effecting runtime boundary used by the orchestrator and\nintegration tests. It may stop active tasks and clean workspaces according to\nthe configured active and terminal state sets.\n"
+      @doc """
+      Reconciles already-refreshed issue states against the current runtime state.
+
+      This is a side-effecting runtime boundary used by the orchestrator and
+      integration tests. It may stop active tasks and clean workspaces according to
+      the configured active and terminal state sets.
+      """
       @spec reconcile_issue_states([Issue.t()], term()) :: term()
       def reconcile_issue_states(issues, %State{} = state) when is_list(issues) do
         case runtime_state_sets() do
-          {:ok, state_sets} ->
-            reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
-
-          {:error, _reason} ->
-            state
+          {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+          {:error, _reason} -> state
         end
       end
 
       def reconcile_issue_states(issues, state) when is_list(issues) do
         case runtime_state_sets() do
-          {:ok, state_sets} ->
-            reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
-
-          {:error, _reason} ->
-            state
+          {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+          {:error, _reason} -> state
         end
       end
 
-      defp reconcile_running_issue_states([], state, _active_states, _terminal_states) do
-        state
-      end
+      defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
 
       defp reconcile_running_issue_states([issue | rest], state, active_states, terminal_states) do
         reconcile_running_issue_states(
@@ -361,9 +394,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp reconcile_issue_state(_issue, state, _active_states, _terminal_states) do
-        state
-      end
+      defp reconcile_issue_state(_issue, state, _active_states, _terminal_states), do: state
 
       defp reconcile_missing_running_issue_ids(%State{} = state, requested_issue_ids, issues)
            when is_list(requested_issue_ids) and is_list(issues) do
@@ -385,13 +416,10 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end)
       end
 
-      defp reconcile_missing_running_issue_ids(state, _requested_issue_ids, _issues) do
-        state
-      end
+      defp reconcile_missing_running_issue_ids(state, _requested_issue_ids, _issues), do: state
 
-      defp reconcile_blocked_issues(%State{blocked: blocked} = state) when map_size(blocked) == 0 do
-        state
-      end
+      defp reconcile_blocked_issues(%State{blocked: blocked} = state) when map_size(blocked) == 0,
+        do: state
 
       defp reconcile_blocked_issues(%State{blocked: blocked} = state) do
         blocked_ids = Map.keys(blocked)
@@ -409,9 +437,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp reconcile_blocked_issue_states([], state, _active_states, _terminal_states) do
-        state
-      end
+      defp reconcile_blocked_issue_states([], state, _active_states, _terminal_states), do: state
 
       defp reconcile_blocked_issue_states([issue | rest], state, active_states, terminal_states) do
         reconcile_blocked_issue_states(
@@ -454,9 +480,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp reconcile_blocked_issue_state(_issue, state, _active_states, _terminal_states) do
-        state
-      end
+      defp reconcile_blocked_issue_state(_issue, state, _active_states, _terminal_states), do: state
 
       defp retry_blocked_delivery(%Issue{id: issue_id, identifier: identifier}) do
         case BlockingDecision.deliver(issue_id, identifier) do
@@ -481,17 +505,13 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
           |> MapSet.new()
 
         Enum.reduce(requested_issue_ids, state, fn issue_id, state_acc ->
-          if MapSet.member?(visible_issue_ids, issue_id) do
-            state_acc
-          else
-            release_blocked_issue(state_acc, issue_id)
-          end
+          if MapSet.member?(visible_issue_ids, issue_id),
+            do: state_acc,
+            else: release_blocked_issue(state_acc, issue_id)
         end)
       end
 
-      defp reconcile_missing_blocked_issue_ids(state, _requested_issue_ids, _issues) do
-        state
-      end
+      defp reconcile_missing_blocked_issue_ids(state, _requested_issue_ids, _issues), do: state
 
       defp refresh_blocked_issue_state(%State{} = state, %Issue{} = issue) do
         case Map.get(state.blocked, issue.id) do
@@ -512,6 +532,33 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
           | blocked: Map.delete(state.blocked, issue_id),
             claimed: MapSet.delete(state.claimed, issue_id),
             retry_attempts: Map.delete(state.retry_attempts, issue_id)
+        }
+      end
+
+      defp clear_blocking_decision_projection(%State{} = state, issue_id, decision_run_id) do
+        state = cancel_issue_retry(state, issue_id)
+
+        blocked =
+          case Map.get(state.blocked, issue_id) do
+            %{run_id: ^decision_run_id} -> Map.delete(state.blocked, issue_id)
+            _entry -> state.blocked
+          end
+
+        projection_for_newer_run? =
+          Enum.any?([Map.get(state.running, issue_id), Map.get(blocked, issue_id)], fn
+            %{run_id: run_id} -> run_id != decision_run_id
+            _entry -> false
+          end)
+
+        %{
+          state
+          | blocked: blocked,
+            claimed:
+              if(projection_for_newer_run?,
+                do: state.claimed,
+                else: MapSet.delete(state.claimed, issue_id)
+              ),
+            failure_counts: Map.delete(state.failure_counts, issue_id)
         }
       end
 
@@ -568,9 +615,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp log_missing_running_issue(_state, _issue_id) do
-        :ok
-      end
+      defp log_missing_running_issue(_state, _issue_id), do: :ok
 
       defp refresh_running_issue_state(%State{} = state, %Issue{} = issue) do
         case Map.get(state.running, issue.id) do
@@ -582,20 +627,30 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp terminate_running_issue(%State{} = state, issue_id, cleanup_workspace) do
+      defp terminate_running_issue(
+             %State{} = state,
+             issue_id,
+             cleanup_workspace,
+             persist_terminal \\ true,
+             action \\ "reconciliation_stop"
+           ) do
         case Map.get(state.running, issue_id) do
           nil ->
             release_issue_claim(state, issue_id)
 
           %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
             state = record_session_completion_totals(state, running_entry)
-            worker_host = Map.get(running_entry, :worker_host)
 
             if cleanup_workspace do
-              cleanup_issue_workspace(identifier, worker_host)
+              cleanup_issue_workspace(identifier, running_entry.admission.workspace_authority)
             end
 
-            persist_run_finished(running_entry, "stopped", nil)
+            if persist_terminal do
+              failure =
+                Failure.classify({:operator_stopped, %{action: action, run_kind: running_entry_kind(running_entry)}})
+
+              persist_run_finished(running_entry, "stopped", failure)
+            end
 
             if is_pid(pid) do
               terminate_task(pid)
@@ -633,29 +688,20 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end)
       end
 
-      defp restart_stalled_issue_with_context(state, _issue_id, %RunningOperator{}, _now) do
-        state
-      end
+      defp restart_stalled_issue_with_context(state, _issue_id, %RunningOperator{}, _now), do: state
 
       defp restart_stalled_issue_with_context(state, issue_id, %RunningIssue{} = running_entry, now) do
-        case retry_settings(%{
-               project_id: Map.get(running_entry, :project_id),
-               identifier: running_entry.identifier
-             }) do
+        case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
           {:ok, settings} ->
             restart_stalled_issue(state, issue_id, running_entry, now, settings.codex.stall_timeout_ms)
 
           {:error, reason} ->
             Logger.warning("Skipping stalled issue check; workflow context unavailable issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} reason=#{inspect(reason)}")
-
             state
         end
       end
 
-      defp restart_stalled_issue(state, _issue_id, _running_entry, _now, timeout_ms)
-           when timeout_ms <= 0 do
-        state
-      end
+      defp restart_stalled_issue(state, _issue_id, _running_entry, _now, timeout_ms) when timeout_ms <= 0, do: state
 
       defp restart_stalled_issue(state, issue_id, %RunningIssue{} = running_entry, now, timeout_ms) do
         stall_decision = RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)
@@ -666,16 +712,20 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
 
             summary = decision.metadata.error
 
+            failure =
+              Failure.classify({:stall_timeout, %{elapsed_ms: decision.elapsed_ms, timeout_ms: timeout_ms, phase: "codex"}})
+
             state
-            |> terminate_running_issue(issue_id, false)
+            |> terminate_running_issue(issue_id, false, false)
             |> fail_or_retry(
               issue_id,
               running_entry,
               summary,
               :failure_retries_exhausted,
-              %{kind: :stall, elapsed_ms: decision.elapsed_ms}
+              %{kind: :stall, elapsed_ms: decision.elapsed_ms},
+              failure: failure
             )
-            |> tap(fn _state -> persist_run_finished(running_entry, "failed", summary) end)
+            |> tap(fn _state -> persist_run_finished(running_entry, "failed", failure) end)
 
           :active ->
             state
@@ -692,9 +742,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp terminate_task(_pid) do
-        :ok
-      end
+      defp terminate_task(_pid), do: :ok
 
       defp choose_issues(issues, state) do
         dispatch_settings = dispatch_policy_settings(state)
@@ -712,29 +760,20 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
             dispatch_issue(state_acc, issue)
           else
             reasons = DispatchPolicy.skip_reasons(issue, state_acc, dispatch_settings, worker_settings)
-
             Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
-
             state_acc
           end
         end)
       end
 
-      defp listening_mode(%State{} = state) do
-        listening_mode_string(state)
-      end
-
-      defp workflow_name(%{project_id: project_id}) do
-        project_id
-      end
+      defp listening_mode(%State{} = state), do: listening_mode_string(state)
+      defp workflow_name(%{project_id: project_id}), do: project_id
 
       defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
         DispatchPolicy.terminal_issue_state?(state_name, terminal_states)
       end
 
-      defp terminal_issue_state?(_state_name, _terminal_states) do
-        false
-      end
+      defp terminal_issue_state?(_state_name, _terminal_states), do: false
 
       defp active_issue_state?(state_name, active_states) when is_binary(state_name) do
         DispatchPolicy.active_issue_state?(state_name, active_states)
@@ -754,8 +793,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      @spec dispatch_policy_settings(listening_mode(), pos_integer()) ::
-              DispatchPolicy.dispatch_settings()
+      @spec dispatch_policy_settings(listening_mode(), pos_integer()) :: DispatchPolicy.dispatch_settings()
       def dispatch_policy_settings(listening_mode, max_concurrent_agents) do
         config = Config.settings!()
 
@@ -768,38 +806,6 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
           workflow_executor_for_state: &Config.workflow_executor_for_state/1,
           human_review_state?: &Config.human_review_state?/1
         })
-      end
-
-      defp dispatch_policy_settings(%State{} = state) do
-        dispatch_policy_settings(listening_mode_atom(state), state.max_concurrent_agents)
-      end
-
-      defp refinement_states(config) do
-        routed_states =
-          config.workflow
-          |> Map.get("states", %{})
-          |> Enum.flat_map(fn
-            {state_name, %{"profile" => "refinement"}} when is_binary(state_name) -> [state_name]
-            {state_name, %{profile: "refinement"}} when is_binary(state_name) -> [state_name]
-            _ -> []
-          end)
-          |> Enum.map(&normalize_issue_state/1)
-          |> Enum.reject(&(&1 == ""))
-
-        if routed_states == [] do
-          ["refining"]
-        else
-          routed_states
-        end
-      end
-
-      defp worker_policy_settings do
-        config = Config.settings!()
-
-        %{
-          ssh_hosts: config.worker.ssh_hosts,
-          max_concurrent_agents_per_host: config.worker.max_concurrent_agents_per_host
-        }
       end
     end
   end

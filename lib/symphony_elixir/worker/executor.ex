@@ -123,7 +123,7 @@ defmodule SymphonyElixir.Worker.Executor do
               task_id: Map.fetch!(claim, "task_id"),
               graphql: &worker_graphql/2,
               pull_request_proof_secret: proof_secret,
-              pull_request_creator: pull_request_creator(RuntimeConfig.settings!().project)
+              pull_request_creator: project_pull_request_creator(RuntimeConfig.settings!().project)
             ]
           ]
 
@@ -162,7 +162,7 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp pull_request_creator(project) do
+  defp project_pull_request_creator(project) do
     fn issue, rendered, _opts -> PullRequest.ensure_open(issue, project, rendered, []) end
   end
 

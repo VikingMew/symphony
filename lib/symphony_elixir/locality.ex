@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Locality do
   @max_nesting_depth 2
   @max_remote_call_depth 2
   @nesting_forms [:if, :unless, :case, :cond, :fn, :for, :with]
-  @required_exception_fields ~w(path identifier lines split owner due)a
+  @required_exception_fields ~w(path identifier lines split owner)a
 
   @type config :: %{
           required(:code_extensions) => [String.t()],
@@ -15,10 +15,16 @@ defmodule SymphonyElixir.Locality do
           required(:generated) => [map()],
           required(:clause_exceptions) => [map()]
         }
-  @type violation :: %{required(:path) => String.t(), required(:message) => String.t()}
+  @type locality_violation :: %{required(:path) => String.t(), required(:message) => String.t()}
+  @type waterline :: %{
+          required(:exemptions_remaining) => non_neg_integer(),
+          required(:max_file_lines) => non_neg_integer(),
+          required(:max_clause_lines) => non_neg_integer()
+        }
+  @type locality_result :: %{required(:violations) => [locality_violation()], required(:waterline) => waterline()}
 
-  @spec config(Path.t()) :: config()
-  def config(root \\ File.cwd!()) do
+  @spec locality_config(Path.t()) :: config()
+  def locality_config(root \\ File.cwd!()) do
     {value, _binding} = Code.eval_file(Path.join(root, "config/locality.exs"))
     value
   end
@@ -34,61 +40,77 @@ defmodule SymphonyElixir.Locality do
     |> Enum.sort()
   end
 
-  @spec check(Path.t(), Date.t()) :: [violation()]
-  def check(root \\ File.cwd!(), today \\ Date.utc_today()) do
+  @spec check_locality(Path.t()) :: locality_result()
+  def check_locality(root \\ File.cwd!()) do
     paths = tracked_paths(root)
-    settings = config(root)
+    settings = locality_config(root)
 
-    check_paths(root, paths, settings, today)
+    check_paths(root, paths, settings)
   end
 
-  @spec check_paths(Path.t(), [String.t()], config(), Date.t()) :: [violation()]
-  def check_paths(root, paths, settings, today) do
+  @spec check_paths(Path.t(), [String.t()], config()) :: locality_result()
+  def check_paths(root, paths, settings) do
     generated_paths = MapSet.new(settings.generated, &Map.get(&1, :path))
     data_paths = MapSet.new(settings.data_paths)
 
-    code_violations =
+    measurements =
       paths
       |> Enum.filter(&code_path?(&1, settings))
       |> Enum.reject(&MapSet.member?(data_paths, &1))
-      |> Enum.flat_map(fn path ->
-        absolute_path = Path.join(root, path)
+      |> Enum.map(&measure_code_path(root, &1, settings, generated_paths))
 
-        if MapSet.member?(generated_paths, path) do
-          generated_header_violations(absolute_path, path, settings.generated)
-        else
-          handwritten_violations(absolute_path, path, settings, today)
-        end
-      end)
+    violations =
+      (manifest_violations(root, paths, settings, measured_clause_keys(measurements)) ++
+         Enum.flat_map(measurements, & &1.violations))
+      |> Enum.sort_by(&{&1.path, &1.message})
 
-    (manifest_violations(root, paths, settings, today) ++ code_violations)
-    |> Enum.sort_by(&{&1.path, &1.message})
+    %{
+      violations: violations,
+      waterline: %{
+        exemptions_remaining: length(settings.clause_exceptions),
+        max_file_lines: measurements |> Enum.map(& &1.file_lines) |> Enum.max(fn -> 0 end),
+        max_clause_lines: measurements |> Enum.map(& &1.clause_lines) |> Enum.max(fn -> 0 end)
+      }
+    }
   end
 
-  @spec format([violation()]) :: String.t()
-  def format([]), do: "Locality check passed.\n"
+  defp measured_clause_keys(measurements) do
+    Enum.reduce(measurements, MapSet.new(), &MapSet.union(&1.clauses, &2))
+  end
 
-  def format(violations) do
+  @spec format_report(locality_result()) :: String.t()
+  def format_report(%{violations: violations, waterline: waterline}) do
+    summary =
+      "locality_waterline exemptions_remaining=#{waterline.exemptions_remaining} " <>
+        "max_file_lines=#{waterline.max_file_lines} max_clause_lines=#{waterline.max_clause_lines}"
+
+    case violations do
+      [] -> "#{summary}\nLocality check passed.\n"
+      _ -> "#{summary}\n#{format_violations(violations)}"
+    end
+  end
+
+  defp format_violations(violations) do
     details = Enum.map_join(violations, "\n", &"#{&1.path}: #{&1.message}")
     "Locality check failed with #{length(violations)} violation(s):\n#{details}\n"
   end
 
-  defp manifest_violations(root, paths, settings, today) do
+  defp manifest_violations(root, paths, settings, clause_keys) do
     tracked = MapSet.new(paths)
 
     stale_data =
       settings.data_paths
       |> Enum.reject(&MapSet.member?(tracked, &1))
-      |> Enum.map(&violation(&1, "data exclusion does not name a tracked file"))
+      |> Enum.map(&new_violation(&1, "data exclusion does not name a tracked file"))
 
     generated =
       Enum.flat_map(settings.generated, fn entry ->
         cond do
           Map.keys(entry) |> Enum.sort() != [:path, :source] ->
-            [violation(Map.get(entry, :path, "config/locality.exs"), "generated entry requires exactly path and source")]
+            [new_violation(Map.get(entry, :path, "config/locality.exs"), "generated entry requires exactly path and source")]
 
           not MapSet.member?(tracked, entry.path) ->
-            [violation(entry.path, "generated exclusion does not name a tracked file")]
+            [new_violation(entry.path, "generated exclusion does not name a tracked file")]
 
           true ->
             []
@@ -98,85 +120,109 @@ defmodule SymphonyElixir.Locality do
     exceptions =
       Enum.flat_map(
         settings.clause_exceptions,
-        &exception_violations(&1, tracked, today, root)
+        &exception_violations(&1, tracked, root, clause_keys)
       )
 
     stale_data ++ generated ++ exceptions
   end
 
-  defp exception_violations(entry, tracked, today, root) do
+  defp exception_violations(entry, tracked, root, clause_keys) do
     missing = Enum.reject(@required_exception_fields, &Map.has_key?(entry, &1))
     path = Map.get(entry, :path, "config/locality.exs")
 
     cond do
       missing != [] ->
-        [violation(path, "clause exception missing fields: #{Enum.join(missing, ", ")}")]
+        [new_violation(path, "clause exception missing fields: #{Enum.join(missing, ", ")}")]
 
       not MapSet.member?(tracked, path) ->
-        [violation(path, "clause exception does not name a tracked file")]
-
-      Date.compare(entry.due, today) == :lt ->
-        [violation(path, "clause exception #{entry.identifier} expired on #{entry.due}")]
-
-      Date.compare(entry.due, Date.add(today, 30)) == :gt ->
-        [violation(path, "clause exception #{entry.identifier} is due more than 30 days out")]
+        [new_violation(path, "clause exception does not name a tracked file")]
 
       entry.lines <= @max_clause_lines ->
-        [violation(path, "clause exception #{entry.identifier} is not over #{@max_clause_lines} lines")]
+        [new_violation(path, "clause exception #{entry.identifier} is not over #{@max_clause_lines} lines")]
+
+      not MapSet.member?(clause_keys, {path, entry.identifier, entry.lines}) ->
+        [new_violation(path, "clause exception #{entry.identifier} does not match a current overlong clause")]
 
       not section_index?(Path.join(root, path)) ->
-        [violation(path, "clause exception #{entry.identifier} lacks a nearby locality split index")]
+        [new_violation(path, "clause exception #{entry.identifier} lacks a nearby locality split index")]
 
       true ->
         []
     end
   end
 
-  defp handwritten_violations(absolute_path, path, settings, today) do
+  defp measure_code_path(root, path, settings, generated_paths) do
+    absolute_path = Path.join(root, path)
     contents = File.read!(absolute_path)
-    line_count = physical_line_count(contents)
-    file_violations = if line_count > @max_file_lines, do: [violation(path, "#{line_count} lines exceeds #{@max_file_lines}")], else: []
+    file_lines = physical_line_count(contents)
+
+    if MapSet.member?(generated_paths, path) do
+      %{
+        violations: generated_header_violations(absolute_path, path, settings.generated),
+        file_lines: file_lines,
+        clause_lines: 0,
+        clauses: MapSet.new()
+      }
+    else
+      measure_handwritten(contents, path, settings, file_lines)
+    end
+  end
+
+  defp measure_handwritten(contents, path, settings, line_count) do
+    file_violations = if line_count > @max_file_lines, do: [new_violation(path, "#{line_count} lines exceeds #{@max_file_lines}")], else: []
 
     if Path.extname(path) in [".ex", ".exs"] do
-      file_violations ++ ast_violations(contents, path, settings.clause_exceptions, today)
+      {ast_violations, max_clause_lines, clauses} = measure_ast(contents, path, settings.clause_exceptions)
+
+      %{
+        violations: file_violations ++ ast_violations,
+        file_lines: line_count,
+        clause_lines: max_clause_lines,
+        clauses: clauses
+      }
     else
-      file_violations
+      %{violations: file_violations, file_lines: line_count, clause_lines: 0, clauses: MapSet.new()}
     end
   end
 
-  defp ast_violations(contents, path, exceptions, today) do
+  defp measure_ast(contents, path, exceptions) do
     case Code.string_to_quoted(contents, columns: true, token_metadata: true, file: path) do
       {:ok, ast} ->
-        {_, violations} =
-          Macro.prewalk(ast, [], fn
-            {kind, metadata, arguments} = node, acc when kind in [:def, :defp, :defmacro, :defmacrop] ->
-              clause = clause_violation(node, metadata, arguments, path, exceptions, today)
+        {_, {violations, max_clause_lines, clauses}} =
+          Macro.prewalk(ast, {[], 0, MapSet.new()}, fn
+            {kind, metadata, arguments} = node, {acc, maximum, clauses}
+            when kind in [:def, :defp, :defmacro, :defmacrop] ->
+              {clause, identifier, lines} = clause_violation(metadata, arguments, path, exceptions)
               nesting = nesting_violation(arguments, metadata, path)
-              {node, nesting ++ clause ++ acc}
+              clause_key = {path, identifier, lines}
+              {node, {nesting ++ clause ++ acc, max(maximum, lines), MapSet.put(clauses, clause_key)}}
 
-            node, acc ->
+            node, {acc, maximum, clauses} ->
               remote = remote_call_violation(node, path)
-              {node, remote ++ acc}
+              {node, {remote ++ acc, maximum, clauses}}
           end)
 
-        violations
+        {violations, max_clause_lines, clauses}
 
       {:error, {_metadata, message, token}} ->
-        [violation(path, "cannot parse Elixir AST: #{message} #{inspect(token)}")]
+        {[new_violation(path, "cannot parse Elixir AST: #{message} #{inspect(token)}")], 0, MapSet.new()}
     end
   end
 
-  defp clause_violation(_node, metadata, arguments, path, exceptions, today) do
+  defp clause_violation(metadata, arguments, path, exceptions) do
     start_line = Keyword.fetch!(metadata, :line)
     end_line = metadata |> Keyword.get(:end, Keyword.get(metadata, :end_of_expression, [])) |> Keyword.get(:line, start_line)
     lines = end_line - start_line + 1
     identifier = clause_identifier(arguments, start_line)
 
-    if lines > @max_clause_lines and not current_exception?(exceptions, path, identifier, lines, today) do
-      [violation(path, "#{identifier} spans #{lines} lines; maximum is #{@max_clause_lines}")]
-    else
-      []
-    end
+    violations =
+      if lines > @max_clause_lines and not current_exception?(exceptions, path, identifier, lines) do
+        [new_violation(path, "#{identifier} spans #{lines} lines; maximum is #{@max_clause_lines}")]
+      else
+        []
+      end
+
+    {violations, identifier, lines}
   end
 
   defp clause_identifier([head | _], line) do
@@ -193,11 +239,11 @@ defmodule SymphonyElixir.Locality do
     end
   end
 
-  defp current_exception?(exceptions, path, identifier, lines, today) do
+  defp current_exception?(exceptions, path, identifier, lines) do
     Enum.any?(exceptions, fn entry ->
       case entry do
-        %{path: ^path, identifier: ^identifier, lines: ^lines, due: %Date{} = due} ->
-          Date.compare(due, today) != :lt
+        %{path: ^path, identifier: ^identifier, lines: ^lines} ->
+          true
 
         _other ->
           false
@@ -209,7 +255,7 @@ defmodule SymphonyElixir.Locality do
     depth = max_nesting(arguments, 0)
 
     if depth > @max_nesting_depth do
-      [violation(path, "function body nesting depth #{depth} at line #{metadata[:line]}; maximum is #{@max_nesting_depth}")]
+      [new_violation(path, "function body nesting depth #{depth} at line #{metadata[:line]}; maximum is #{@max_nesting_depth}")]
     else
       []
     end
@@ -240,7 +286,7 @@ defmodule SymphonyElixir.Locality do
 
     if remote_call?(call_metadata, arguments) and depth > @max_remote_call_depth do
       line = Keyword.get(call_metadata, :line, Keyword.get(metadata, :line, 1))
-      [violation(path, "nested remote-call depth #{depth} at line #{line}; maximum is #{@max_remote_call_depth}")]
+      [new_violation(path, "nested remote-call depth #{depth} at line #{line}; maximum is #{@max_remote_call_depth}")]
     else
       []
     end
@@ -272,12 +318,22 @@ defmodule SymphonyElixir.Locality do
       |> Enum.join("\n")
 
     []
-    |> maybe_add(not String.contains?(header, "Generated from: #{source}"), path, "first five non-empty lines must declare Generated from: #{source}")
-    |> maybe_add(not String.contains?(header, "DO NOT EDIT"), path, "first five non-empty lines must declare DO NOT EDIT")
+    |> maybe_prepend_violation(
+      not String.contains?(header, "Generated from: #{source}"),
+      path,
+      "first five non-empty lines must declare Generated from: #{source}"
+    )
+    |> maybe_prepend_violation(
+      not String.contains?(header, "DO NOT EDIT"),
+      path,
+      "first five non-empty lines must declare DO NOT EDIT"
+    )
   end
 
-  defp maybe_add(violations, true, path, message), do: [violation(path, message) | violations]
-  defp maybe_add(violations, false, _path, _message), do: violations
+  defp maybe_prepend_violation(violations, true, path, message),
+    do: [new_violation(path, message) | violations]
+
+  defp maybe_prepend_violation(violations, false, _path, _message), do: violations
 
   defp code_path?(path, settings) do
     Path.extname(path) in settings.code_extensions or Path.basename(path) in settings.code_basenames
@@ -299,5 +355,5 @@ defmodule SymphonyElixir.Locality do
     |> Enum.any?(&String.contains?(&1, "Locality split index:"))
   end
 
-  defp violation(path, message), do: %{path: path, message: message}
+  defp new_violation(path, message), do: %{path: path, message: message}
 end

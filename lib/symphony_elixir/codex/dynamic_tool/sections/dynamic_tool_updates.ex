@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.Codex.DynamicTool.Sections.Updates do
+defmodule SymphonyElixir.Codex.DynamicTool.Sections.DynamicToolUpdates do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()

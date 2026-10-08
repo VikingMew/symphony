@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.Workspace.Sections.Lifecycle do
+defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()

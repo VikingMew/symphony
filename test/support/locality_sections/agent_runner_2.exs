@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.AgentRunnerTest.Sections.AgentRunner2 do
+defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()

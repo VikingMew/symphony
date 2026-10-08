@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.CoreTest.Sections.Core2 do
+defmodule SymphonyElixir.TestSupport.LocalitySections.Core2 do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()

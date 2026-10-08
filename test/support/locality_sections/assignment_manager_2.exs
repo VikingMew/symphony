@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.Worker.AssignmentManagerTest.Sections.AssignmentManager2 do
+defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()

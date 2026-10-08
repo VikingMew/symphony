@@ -18,7 +18,7 @@ contract is owned by [code-locality.md](code-locality.md).
 ## Intended structure
 
 `SymphonyElixir.Locality` reads the single `config/locality.exs` manifest and checks the sorted Git
-file set. `Mix.Tasks.Locality.Check` is the command boundary, and the existing `mix lint` path makes
+file set. The `mix.exs` `locality.check` alias is the command boundary, and the existing `mix lint` path makes
 it part of `scripts/check.sh`. Output is sorted by path and message, so a commit produces the same
 text and exit status on repeated runs.
 

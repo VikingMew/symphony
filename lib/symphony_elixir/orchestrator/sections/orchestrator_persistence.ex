@@ -1,5 +1,5 @@
 # Locality split index: docs/code-locality.md#temporary-clause-splits
-defmodule SymphonyElixir.Orchestrator.Sections.Persistence do
+defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
   @moduledoc false
 
   @spec __using__(term()) :: Macro.t()
