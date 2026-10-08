@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
+  import SymphonyElixir.TestSupport.RetryTimerAssertions
 
   alias SymphonyElixir.Codex.MessageHumanizer
 
@@ -1390,6 +1391,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
+    trace_retry_timers(pid)
+
     {state, log} =
       with_log(fn ->
         monitor = Process.monitor(worker_pid)
@@ -1413,6 +1416,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert elapsed_ms > 1_000
     assert is_integer(due_at_ms)
     assert log =~ "in 10000ms (attempt 1)"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 10_000)
   end
 
   test "orchestrator blocks input-required agent results without scheduling retry" do

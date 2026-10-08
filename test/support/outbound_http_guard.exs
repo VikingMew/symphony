@@ -1,7 +1,7 @@
-defmodule SymphonyElixir.TestSupport.OutboundHTTPGuard do
+defmodule SymphonyElixir.TestSupport.OutboundHttpGuard do
   @moduledoc false
 
-  def request(req, finch_req, name, options) do
+  def guarded_finch_request(req, finch_req, name, options) do
     case get_in(req.options, [:connect_options, :proxy]) do
       nil -> :ok
       {_scheme, host, _port, _options} -> ensure_loopback!(host)

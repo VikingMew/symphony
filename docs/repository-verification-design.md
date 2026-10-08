@@ -135,3 +135,36 @@ fixture 保留同一入口；最终 repository verification 文件单独复核�
 `scripts/listening-off.sh`，不在 drift 检查器扫描的 `lib/` 或 `config/` 中。
 该项不是本次 V 组引入的问题，不能标为通过；后续应由文档体系 owner 为脚本拥有的配置
 登记可定位的取证规则。这里不扩大 D 组检查器范围或修改部署合同。
+
+## 同步 main 后的门禁强度复核
+
+上述样本保留为 rebase 前证据。本次以 `2b353ac`（包含 #148、#150、#151）为复核基点，
+冲突处理保留新增 observability 门禁，以及 check/unit 对
+`scripts/prepare_navigation_git_history.sh` 的调用；该浅历史修复脚本与 main 内容一致。
+`.DS_Store` 已从 Git 索引移除，沿用现有 ignore，本地文件保留。
+
+改软扫描逐项结论：
+
+- 没有删除测试场景；唯一原有测试名称变化是 `two-second reconciliation` 改为
+  `blocked reconciliation`。两个响应性用例用显式释放消息代替两秒 sleep：heartbeat/audit
+  必须在释放 reconciliation 前返回，因此不再依赖机器速度与一秒墙钟阈值。
+- 没有反写成功/失败断言。重试用例通过 VM trace 校验真正传给定时器的 1000、10000、40000ms，
+  并核对捕获的单调时钟值加延迟及既有 400ms 显示余量等于 `due_at_ms`；错误延迟与错误到期
+  时间的负例都会失败。日志断言作为补充，不替代实际行为断言。
+- heartbeat 合并用例保留唯一 pending timer、清空 pending 和恰好一次持久化调用的精确断言，
+  通过主动触发 flush 控制时间；claim 的过期时间与注入时钟精确相等。
+- 没有新增 skip/exemption；覆盖率配置、六项总纲阈值、豁免表、observability 基线与 main
+  相同。原有两个手动验证 skip 保留，指定的 multi-project 测试无 diff。
+- N 基线仍为 559 条，57 条仅更新位置，无新增语义 identity。N owner 同步明确 Git 对未改写
+  声明行的位置映射规则；改写声明、新增聚合位置、陈旧记录、缺失历史和 diff 失败仍为失败。
+  该修复由独立提交承载，不能把忽略位置或放宽 identity 当作解决方式。
+
+N 与验证相关定向测试共 129 tests、0 failures。新增辅助代码不改动原有意图注释；新增出站
+守卫注释仅说明 V-08 安全边界。完整门禁最终证据见下文。
+
+最终成功样本：`_build/quality/1791463046760236-83235/summary.json`，check 9.651s、
+unit 104.552s、dialyzer 6.595s，总计 120.800s，三项 exit 0。unit 为 core 35 tests /
+0 failures，加覆盖率 suite 1274 tests / 0 failures / 2 skipped，覆盖率 86.90%。
+`evidence/weakening-audit.json` 保留相对 main 的测试名称、skip、阈值、基线位置与浅历史脚本
+比对；`evidence/targeted-tests.log` 保留 129 项定向结果。V-09 仍为 record_only，未增加时间
+豁免或放宽门禁阈值。此前失败 run 同样保留，最终成功不覆盖前后审计。

@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  import SymphonyElixir.TestSupport.RetryTimerAssertions
   alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.RunAdmission
 
@@ -1169,6 +1170,8 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    trace_retry_timers(pid)
+
     {state, log} =
       with_log(fn ->
         send(pid, {:DOWN, ref, :process, self(), :normal})
@@ -1180,6 +1183,7 @@ defmodule SymphonyElixir.CoreTest do
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
     assert log =~ "in 1000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 1_000)
   end
 
   defp stop_registered_orchestrator do
@@ -1227,6 +1231,8 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    trace_retry_timers(pid)
+
     {state, log} =
       with_log(fn ->
         send(pid, {:DOWN, ref, :process, self(), :boom})
@@ -1244,6 +1250,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert is_integer(due_at_ms)
     assert log =~ "in 40000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 40_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -1276,6 +1283,8 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
+    trace_retry_timers(pid)
+
     {state, log} =
       with_log(fn ->
         send(pid, {:DOWN, ref, :process, self(), :boom})
@@ -1293,6 +1302,7 @@ defmodule SymphonyElixir.CoreTest do
 
     assert is_integer(due_at_ms)
     assert log =~ "in 10000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 10_000)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do

@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.RepositoryVerificationTest do
   use ExUnit.Case, async: false
 
+  alias SymphonyElixir.TestSupport.RetryTimerAssertions
+
   @root Path.expand("../..", __DIR__)
 
   @tag :verification_selection
@@ -83,6 +85,38 @@ defmodule SymphonyElixir.RepositoryVerificationTest do
     assert length(Path.wildcard(Path.join(root, "_build/quality/*/summary.json"))) == 2
   end
 
+  test "retry timer evidence rejects a wrong scheduled delay without relying on log text" do
+    owner = self()
+    token = make_ref()
+
+    pid =
+      spawn(fn ->
+        receive do
+          :schedule ->
+            due_at_ms = System.monotonic_time(:millisecond) + 11_000 + 400
+            timer_ref = Process.send_after(self(), {:retry_issue, "fixture", token}, 11_000)
+            send(owner, {:scheduled, timer_ref, due_at_ms})
+            receive do: (:stop -> :ok)
+        end
+      end)
+
+    on_exit(fn -> send(pid, :stop) end)
+    RetryTimerAssertions.trace_retry_timers(pid)
+    send(pid, :schedule)
+    assert_receive {:scheduled, timer_ref, due_at_ms}
+    entry = %{retry_token: token, timer_ref: timer_ref, due_at_ms: due_at_ms}
+
+    assert_raise ExUnit.AssertionError, fn ->
+      RetryTimerAssertions.assert_retry_delay(pid, "fixture", %{entry | due_at_ms: due_at_ms + 1}, 11_000)
+    end
+
+    assert_raise ExUnit.AssertionError, fn ->
+      RetryTimerAssertions.assert_retry_delay(pid, "fixture", entry, 10_000)
+    end
+
+    RetryTimerAssertions.assert_retry_delay(pid, "fixture", entry, 11_000)
+  end
+
   test "outbound boundary rejects external hosts before DNS or transport" do
     for host <- ["api.linear.app", "example.invalid", "192.0.2.1", "localhost"] do
       assert_raise RuntimeError, ~r/violation=external_http.*expected=literal_loopback/, fn ->
@@ -120,6 +154,10 @@ defmodule SymphonyElixir.RepositoryVerificationTest do
     assert workflow =~ "run: scripts/quality.sh"
     assert workflow =~ "if: always()"
     assert workflow =~ "path: _build/quality/"
+
+    for gate <- ~w(check unit) do
+      assert File.read!(Path.join(@root, "scripts/#{gate}.sh")) =~ "scripts/prepare_navigation_git_history.sh"
+    end
 
     for path <- ~w(scripts/quality.sh scripts/quality.exs scripts/unit.sh .github/workflows/make-all.yml) do
       content = File.read!(Path.join(@root, path))
