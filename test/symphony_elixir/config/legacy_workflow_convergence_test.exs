@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.Config.LegacyWorkflowConvergenceTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.Persistence.Project
   alias SymphonyElixir.Workflow
 
@@ -21,7 +21,12 @@ defmodule SymphonyElixir.Config.LegacyWorkflowConvergenceTest do
              LegacyWorkflowConvergence.plan([row], false)
 
     assert instance_value == WorkflowScopes.dump_instance(candidate.instance)
-    assert candidate.project_config == Map.take(context.config, WorkflowScopes.project_sections())
+
+    assert candidate.project_config ==
+             context.config
+             |> Map.take(WorkflowScopes.project_sections())
+             |> ProjectAuthority.strip()
+
     assert Enum.sort(Map.keys(candidate.project_config)) == ["project", "tracker"]
     assert candidate.raw_workflow_md == Workflow.to_markdown(candidate.project_config, "")
     assert candidate.raw_workflow_md =~ "profiles:" == false
@@ -127,7 +132,11 @@ defmodule SymphonyElixir.Config.LegacyWorkflowConvergenceTest do
     assert {:ok, %{candidates: [candidate], setting: :none}} =
              LegacyWorkflowConvergence.plan([row], true)
 
-    assert candidate.project_config == Map.take(context.config, WorkflowScopes.project_sections())
+    assert candidate.project_config ==
+             context.config
+             |> Map.take(WorkflowScopes.project_sections())
+             |> ProjectAuthority.strip()
+
     assert candidate.raw_workflow_md == Workflow.to_markdown(candidate.project_config, "")
   end
 

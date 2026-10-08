@@ -25,6 +25,7 @@ defmodule SymphonyElixir.Worker.LinearToolAuditRecorderTest do
         profile: "implementation",
         run_id: "run-1",
         session_id: "codex-session-1",
+        tool_call_id: "call-1",
         audit_recorder: recorder,
         task_reader: fn _ -> {:ok, %{"identifier" => "SYM-87"}} end
       )
@@ -33,12 +34,19 @@ defmodule SymphonyElixir.Worker.LinearToolAuditRecorderTest do
 
     assert_receive {:event, identity, "task-1", "linear.tool_call", payload}
     assert identity == %{"worker_id" => "worker-1", "session_id" => "worker-session-1", "protocol_version" => "worker-api-v1"}
-    assert payload.correlation == %{"run_id" => "run-1", "task_id" => "task-1"}
+
+    assert payload.correlation == %{
+             "run_id" => "run-1",
+             "task_id" => "task-1",
+             "tool_call_id" => "call-1"
+           }
+
     assert payload.tool == "linear_task_read"
     assert payload.status == "success"
     assert payload.arguments["api_token"] == "[REDACTED]"
     assert payload.run_id == "run-1"
     assert payload.session_id == "codex-session-1"
+    assert payload.tool_call_id == "call-1"
   end
 
   test "transport failure is visible and does not replace the tool response" do

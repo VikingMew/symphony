@@ -4,7 +4,7 @@ genre: guide
 domain: [deployment, operations, persistence]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-03
 owner: compose.yaml
 ---
 
@@ -39,7 +39,8 @@ conflicts with this rule is persisted as a blocker and fails closed through the 
 
 Configure each project through Settings (or Settings / Import for a package file) before starting
 the Panel. PostgreSQL stores one installation-wide `app_settings["instance_workflow"]` value and one
-tracker/repository workflow slice per project; both are required before dispatch. Direct SQL updates
+minimal tracker/project workflow slice per project; the project row separately owns its Linear slug
+and repository/source settings. Both workflow scopes are required before dispatch. Direct SQL updates
 to either store are unsupported. The package under `docs/examples/` is example and import material,
 not a synchronization source.
 
@@ -291,6 +292,13 @@ Workflows imported from a host may contain host-only workspace paths. Before ena
 listening, change the active workflow workspace root to `/data/workspaces` and verify repository,
 hook, SSH, and worktree paths are container-visible.
 
+Runtime / Agents Save and confirmed Settings / Import validate the expanded Panel-local
+`workspace.root` before persistence. In this Compose topology `/data/workspaces` is the writable Panel root; a host
+path such as `~/code/symphony-workspaces` expands inside the Panel and is rejected when it cannot
+be accessed, created, or written. This gate is separate from the execution worker's
+`/worker/workspaces` lease root. The complete contract is owned by
+[Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
+
 ## Legacy Instance Workflow Reconciliation
 
 The first upgrade containing the legacy convergence migration rewrites every project workflow to
@@ -399,10 +407,9 @@ After the catalog checks pass, start the upgraded services:
 docker compose up -d
 ```
 
-6. Save one non-default model and reasoning-effort pair through `/settings/import`, reload
-   `/settings/runtime` to confirm the selectors, trigger the next issue turn, and confirm its
-   `turn/start.params` contains that exact `model` and `effort`. A direct Runtime submit remains a
-   typed rejection for instance-owned `codex` fields.
+6. Save one non-default model and reasoning-effort pair through `/settings/runtime` or
+   `/settings/import`, reload Runtime to confirm the selectors, trigger the next issue turn, and
+   confirm its `turn/start.params` contains that exact `model` and `effort`.
 
 The migration job runs before the new service. Verify both health endpoints and recent
 project/run/event state. To roll application code back, restore the prior image tag in Compose (or

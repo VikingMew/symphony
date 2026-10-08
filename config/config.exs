@@ -2,6 +2,8 @@ import Config
 
 config :phoenix, :json_library, Jason
 
+config :logger, :default_formatter, metadata: :all
+
 config :symphony_elixir, ecto_repos: [SymphonyElixir.Repo]
 
 config :symphony_elixir, :start_repo, config_env() != :test

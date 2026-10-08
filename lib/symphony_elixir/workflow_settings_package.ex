@@ -7,7 +7,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   without a LiveView process.
   """
 
-  alias SymphonyElixir.Config.{CodexCommand, WorkflowScopes}
+  alias SymphonyElixir.Config.{CodexCommand, ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.{Workflow, WorkflowForm}
 
   @spec require_import_content(String.t() | nil) :: :ok | {:error, String.t()}
@@ -25,10 +25,11 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
   @spec stage_import(String.t(), WorkflowForm.draft(), keyword()) :: {:ok, map()} | {:error, term()}
   def stage_import(yaml, current, opts \\ []) do
     with {:ok, parsed} <- Workflow.parse_settings_yaml(yaml),
-         {:ok, label, draft} <- do_import_draft(parsed, current) do
+         {:ok, label, draft} <- do_import_draft(parsed, current),
+         {:ok, durable_diff} <- diff(current, draft, parsed) do
       type = package_type(parsed)
       import_diff = legacy_codex_conversion_diff(parsed)
-      changes = import_diff ++ diff(current, draft)
+      changes = import_diff ++ durable_diff
 
       {:ok,
        %{
@@ -38,6 +39,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
          draft: draft,
          owning_tab: owning_tab(type),
          affected_areas: affected_areas(changes),
+         affected_scopes: affected_scopes(changes),
          diff: changes,
          warnings: [],
          preview: preview(yaml)
@@ -70,7 +72,11 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
   defp do_import_draft({:workflow, workflow_config}, current) do
     current_config = draft_config_or_base(current)
-    workflow_config = migrate_legacy_codex_command(workflow_config)
+
+    workflow_config =
+      workflow_config
+      |> migrate_legacy_codex_command()
+      |> ProjectAuthority.inherit_missing(current_config)
 
     loaded = %{
       config:
@@ -112,6 +118,7 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
         |> Enum.map(fn key ->
           %{
             area: "Runtime",
+            scope: "Instance",
             path: "codex.#{key}",
             before: inspect_for_diff(Map.get(before, key)),
             after: inspect_for_diff(Map.get(migrated_codex, key))
@@ -135,7 +142,37 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     |> Enum.uniq()
   end
 
-  defp diff(current, draft) do
+  defp affected_scopes(changes) do
+    changes
+    |> Enum.map(& &1.scope)
+    |> Enum.uniq()
+  end
+
+  defp diff(current, draft, parsed) do
+    with {:ok, current_instance, current_project} <- WorkflowForm.to_scopes(current),
+         {:ok, draft_instance, draft_project} <- WorkflowForm.to_scopes(draft) do
+      authority_paths = parsed |> package_config() |> ProjectAuthority.carrier_values() |> Map.keys()
+      current_project = portable_project_values(current, current_project, authority_paths)
+      draft_project = portable_project_values(draft, draft_project, authority_paths)
+
+      {:ok,
+       scope_diff("Instance", instance_values(current_instance), instance_values(draft_instance)) ++
+         scope_diff("Project", current_project, draft_project)}
+    end
+  end
+
+  defp portable_project_values(draft, durable_project, authority_paths) do
+    draft
+    |> draft_config_or_base()
+    |> ProjectAuthority.carrier_values()
+    |> Map.take(authority_paths)
+    |> Map.merge(durable_project)
+  end
+
+  defp package_config({:workflow, config}), do: config
+  defp package_config({:profiles, _profile_package}), do: %{}
+
+  defp scope_diff(scope, current, draft) do
     current_flat = flatten(current)
     draft_flat = flatten(draft)
 
@@ -146,11 +183,16 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
     |> Enum.map(fn path ->
       %{
         area: diff_area(path),
+        scope: scope,
         path: path,
         before: inspect_for_diff(Map.get(current_flat, path)),
         after: inspect_for_diff(Map.get(draft_flat, path))
       }
     end)
+  end
+
+  defp instance_values(%{config: config, prompt_body: prompt_body}) do
+    Map.put(config, "prompt_body", prompt_body)
   end
 
   defp flatten(value), do: flatten_value(value, [])
@@ -164,10 +206,11 @@ defmodule SymphonyElixir.WorkflowSettingsPackage do
 
   defp diff_area("prompt_body"), do: "Agents"
   defp diff_area("profiles." <> _rest), do: "Agents"
-  defp diff_area("workspace_" <> _rest), do: "Runtime"
-  defp diff_area("polling_" <> _rest), do: "Runtime"
-  defp diff_area("agent_max_" <> _rest), do: "Runtime"
-  defp diff_area("codex_" <> _rest), do: "Runtime"
+  defp diff_area("workspace." <> _rest), do: "Runtime"
+  defp diff_area("polling." <> _rest), do: "Runtime"
+  defp diff_area("agent." <> _rest), do: "Runtime"
+  defp diff_area("codex." <> _rest), do: "Runtime"
+  defp diff_area("hooks." <> _rest), do: "Runtime"
   defp diff_area(_path), do: "Workflow"
 
   defp inspect_for_diff(nil), do: "n/a"

@@ -7,8 +7,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   use Mix.Task
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.LegacyWorkflowConvergence
-  alias SymphonyElixir.{Persistence, Repo, SQLiteImporter}
+  alias SymphonyElixir.{BlockingDecision, Config.LegacyWorkflowConvergence, Persistence, Repo, SQLiteImporter}
   alias SymphonyElixir.Persistence.{EventRecord, Project, WorkflowStore}
   alias SymphonyElixir.Workflow
 
@@ -27,6 +26,9 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @pre_convergence_migration 20_260_907_000_000
   @convergence_migration 20_260_914_000_000
   @codex_selector_migration 20_260_923_000_000
+  @blocking_decision_migration 20_260_926_000_000
+  @failure_classification_migration 20_260_927_000_000
+  @issue_state_migration 20_261_003_000_000
   @legacy_project_ids [
     "70000000-0000-0000-0000-000000000001",
     "70000000-0000-0000-0000-000000000002"
@@ -50,10 +52,13 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   @spec run([String.t()]) :: :ok
   def run([]) do
     sqlite_path = Path.join(System.tmp_dir!(), "symphony-pg-smoke-#{System.unique_integer([:positive])}.db")
+    invalid_sqlite_path = sqlite_path <> ".invalid"
 
     try do
       create_sqlite_fixture!(sqlite_path)
+      create_sqlite_fixture!(invalid_sqlite_path, "mystery")
       migrate_and_rebuild!()
+      assert_unknown_import_rejected!(invalid_sqlite_path)
 
       counts = import_and_exercise!(sqlite_path)
 
@@ -65,6 +70,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       :ok
     after
       File.rm(sqlite_path)
+      File.rm(invalid_sqlite_path)
     end
   end
 
@@ -88,12 +94,17 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         rebuild_pre_codex_selector_schema!(repo, migrations_path)
         expected = seed_codex_selector_fixture!(repo)
         migrate_and_verify_codex_selectors!(repo, migrations_path, expected)
+        blocking_decisions = seed_blocking_decision_fixture!(repo)
+        migrate_and_verify_blocking_decisions!(repo, migrations_path, blocking_decisions)
+        seed_run_failure_fixture!(repo)
+        migrate_and_verify_run_failures!(repo, migrations_path)
         convergence_snapshot!(repo)
       end)
 
     migrate_release!()
 
     with_repo!(fn repo ->
+      verify_issue_state_migration!(repo, migrations_path)
       ^expected_snapshot = convergence_snapshot!(repo)
       Mix.shell().info("smoke release_migrator_noop=PASS")
       cleanup_legacy_fixture!(repo)
@@ -226,6 +237,296 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     "gpt-5.5" = get_in(instance_config, ["codex", "model"])
     "xhigh" = get_in(instance_config, ["codex", "reasoning_effort"])
     Mix.shell().info("smoke codex_selector_migration result=PASS")
+  end
+
+  defp seed_blocking_decision_fixture!(repo) do
+    rows = [
+      legacy_blocking_decision_row(1, "SYM-130", "In Progress", "Todo", "failure_retries_exhausted", "retry budget exhausted"),
+      legacy_blocking_decision_row(2, "SYM-136", "Blocked", "Ready", "reported_blocker", "operator input required"),
+      legacy_blocking_decision_row(3, "SYM-138", "In Progress", "Todo", "handoff_failed", "需宿主 push"),
+      legacy_blocking_decision_row(4, "SYM-139", "Blocked", "Ready", "no_progress", "two runs without progress"),
+      legacy_blocking_decision_row(
+        5,
+        "SYM-SCOPED",
+        "Blocked",
+        "Todo",
+        "reported_blocker",
+        "existing canonical scope"
+      )
+      |> put_in([:decision, "origin_state"], "Ready to Merge")
+    ]
+
+    Enum.each(rows, fn row ->
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO issues (
+          id, project_id, tracker_issue_id, identifier, title, state, labels, snapshot,
+          blocking_decision, no_progress_streak, inserted_at, updated_at
+        )
+        VALUES (
+          $1::text::uuid, $2::text::uuid, $3, $4, $5, $6, '{}'::jsonb, '{}'::jsonb,
+          $7::jsonb, 2, NOW(), NOW()
+        )
+        """,
+        [row.issue_id, hd(@legacy_project_ids), row.tracker_issue_id, row.identifier, row.identifier, row.state, row.decision]
+      )
+
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO runs (
+          id, project_id, issue_id, issue_identifier, status, failure_reason, attempt,
+          execution_mode, kind, started_at, inserted_at, updated_at
+        )
+        VALUES (
+          $1::text::uuid, $2::text::uuid, $3::text::uuid, $4, 'failed', $5, 0,
+          'centralized', 'issue', NOW(), NOW(), NOW()
+        )
+        """,
+        [row.run_id, hd(@legacy_project_ids), row.issue_id, row.identifier, row.decision["reason"]]
+      )
+    end)
+
+    rows
+  end
+
+  defp migrate_and_verify_blocking_decisions!(repo, migrations_path, rows) do
+    [@blocking_decision_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @blocking_decision_migration)
+
+    [] = Ecto.Migrator.run(repo, migrations_path, :up, to: @blocking_decision_migration)
+
+    Enum.each(rows, fn row ->
+      %{rows: [[decision, streak]]} =
+        SQL.query!(
+          repo,
+          "SELECT blocking_decision, no_progress_streak FROM issues WHERE identifier = $1",
+          [row.identifier]
+        )
+
+      expected_decision = Map.put_new(row.decision, "origin_state", row.state)
+      ^expected_decision = decision
+      2 = streak
+      {:stale, :state_mismatch} = BlockingDecision.validity(decision, row.live_state, row.run_id)
+      {:ok, :cleared} = Persistence.compare_and_clear_blocking_decision(row.identifier, decision)
+
+      %{rows: [[nil, 0]]} =
+        SQL.query!(
+          repo,
+          "SELECT blocking_decision, no_progress_streak FROM issues WHERE identifier = $1",
+          [row.identifier]
+        )
+    end)
+
+    %{rows: column_rows} =
+      SQL.query!(
+        repo,
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'issues'
+          AND column_name IN ('blocking_decision', 'no_progress_streak')
+        ORDER BY column_name
+        """,
+        []
+      )
+
+    [["blocking_decision"], ["no_progress_streak"]] = column_rows
+    Mix.shell().info("smoke blocking_decision_migration legacy_rows=4 existing_scope=preserved rerun=noop first_claim=stale result=PASS")
+  end
+
+  defp legacy_blocking_decision_row(index, identifier, state, live_state, reason, evidence) do
+    suffix = String.pad_leading(Integer.to_string(index), 12, "0")
+    run_id = "92000000-0000-0000-0000-#{suffix}"
+
+    %{
+      issue_id: "91000000-0000-0000-0000-#{suffix}",
+      tracker_issue_id: "linear-#{identifier}",
+      identifier: identifier,
+      state: state,
+      live_state: live_state,
+      run_id: run_id,
+      decision: %{
+        "reason" => reason,
+        "evidence" => evidence,
+        "run_id" => run_id,
+        "decided_at" => "2026-09-24T00:00:00Z",
+        "references" => %{"source" => identifier},
+        "comment_status" => "completed",
+        "transition_status" => "pending"
+      }
+    }
+  end
+
+  defp seed_run_failure_fixture!(repo) do
+    Enum.with_index(run_failure_rows(), 1)
+    |> Enum.each(fn {row, index} ->
+      SQL.query!(
+        repo,
+        """
+        INSERT INTO runs (
+          id, issue_identifier, status, failure_reason, attempt, execution_mode, kind,
+          started_at, inserted_at, updated_at
+        )
+        VALUES ($1::text::uuid, $2, $3, $4, 0, 'centralized', 'issue', NOW(), NOW(), NOW())
+        """,
+        [run_failure_id(index), row.identifier, row.status, row.reason]
+      )
+    end)
+  end
+
+  defp migrate_and_verify_run_failures!(repo, migrations_path) do
+    [@failure_classification_migration] =
+      Ecto.Migrator.run(repo, migrations_path, :up, to: @failure_classification_migration)
+
+    Enum.each(run_failure_rows(), fn row ->
+      %{rows: [[status, reason, evidence]]} =
+        SQL.query!(
+          repo,
+          "SELECT status, failure_reason, failure_evidence FROM runs WHERE issue_identifier = $1",
+          [row.identifier]
+        )
+
+      ^status = row.expected_status
+      ^reason = row.expected_reason
+      ^evidence = row.expected_evidence
+    end)
+
+    %{rows: grouped} =
+      SQL.query!(
+        repo,
+        """
+        SELECT failure_reason, COUNT(*)
+        FROM runs
+        WHERE issue_identifier LIKE 'FAILURE-SMOKE-%'
+        GROUP BY failure_reason
+        ORDER BY failure_reason NULLS FIRST
+        """,
+        []
+      )
+
+    expected_grouped =
+      run_failure_rows()
+      |> Enum.frequencies_by(& &1.expected_reason)
+      |> Enum.sort_by(fn {reason, _count} -> reason || "" end)
+      |> Enum.map(fn {reason, count} -> [reason, count] end)
+
+    ^expected_grouped = grouped
+    assert_run_failure_checks!(repo)
+    Mix.shell().info("smoke run_failure_migration result=PASS")
+  end
+
+  defp verify_issue_state_migration!(repo, migrations_path) do
+    assert_issue_state_column!(repo, false)
+
+    [@issue_state_migration] = Ecto.Migrator.run(repo, migrations_path, :down, step: 1)
+    assert_issue_state_column!(repo, true)
+
+    [@issue_state_migration] = Ecto.Migrator.run(repo, migrations_path, :up, to: @issue_state_migration)
+    assert_issue_state_column!(repo, false)
+    Mix.shell().info("smoke issue_state_migration up=absent down=nullable_text reup=absent result=PASS")
+  end
+
+  defp assert_issue_state_column!(repo, expected?) do
+    %{rows: rows} =
+      SQL.query!(
+        repo,
+        """
+        SELECT data_type, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'issues'
+          AND column_name = 'state'
+        """,
+        []
+      )
+
+    case expected? do
+      true -> [["text", "YES"]] = rows
+      false -> [] = rows
+    end
+  end
+
+  defp run_failure_rows do
+    [
+      failure_row("running", "ignored", "running", nil, nil),
+      failure_row("completed", "ignored", "completed", nil, nil),
+      failure_row("succeeded", nil, "completed", nil, nil),
+      failure_row("success", "ignored", "completed", nil, nil),
+      failure_row("failed", "runtime_failure", "failed", "runtime_failure", %{
+        "migration" => "historical_classification"
+      }),
+      failure_row("failed", "%File.Error{reason: :erofs}", "failed", "environment_unavailable", %{
+        "kind" => "environment_unavailable",
+        "legacy_failure_reason" => "%File.Error{reason: :erofs}",
+        "migration" => "historical_mapping"
+      }),
+      failure_row("blocked", "checkout timed_out", "blocked", "source_preparation_timeout", %{
+        "legacy_failure_reason" => "checkout timed_out",
+        "migration" => "historical_mapping",
+        "phase" => "checkout"
+      }),
+      failure_row("cancelled", "Linear Req.TransportError timeout", "cancelled", "external_dependency_timeout", %{
+        "dependency" => "linear",
+        "legacy_failure_reason" => "Linear Req.TransportError timeout",
+        "migration" => "historical_mapping"
+      }),
+      failure_row("stopped", nil, "stopped", "unknown", %{"migration" => "missing_failure_reason"}),
+      failure_row("failed", "opaque legacy", "failed", "unknown", %{
+        "legacy_failure_reason" => "opaque legacy",
+        "migration" => "unclassified_legacy_reason"
+      }),
+      failure_row("failed", "clone timeout", "failed", "source_preparation_timeout", %{
+        "legacy_failure_reason" => "clone timeout",
+        "migration" => "historical_mapping",
+        "phase" => "clone"
+      })
+    ]
+    |> Enum.with_index(1)
+    |> Enum.map(fn {row, index} -> Map.put(row, :identifier, "FAILURE-SMOKE-#{index}") end)
+  end
+
+  defp failure_row(status, reason, expected_status, expected_reason, expected_evidence) do
+    %{
+      status: status,
+      reason: reason,
+      expected_status: expected_status,
+      expected_reason: expected_reason,
+      expected_evidence: expected_evidence
+    }
+  end
+
+  defp run_failure_id(index),
+    do: "91000000-0000-0000-0000-#{index |> Integer.to_string() |> String.pad_leading(12, "0")}"
+
+  defp assert_run_failure_checks!(repo) do
+    invalid_rows = [
+      {"mystery", nil, nil},
+      {"completed", "runtime_failure", %{"reason" => "invalid"}},
+      {"failed", nil, %{"reason" => "invalid"}},
+      {"failed", "runtime_failure", nil},
+      {"failed", "outside_vocabulary", %{"reason" => "invalid"}},
+      {"failed", "runtime_failure", %{}},
+      {"failed", "runtime_failure", []}
+    ]
+
+    Enum.with_index(invalid_rows, 100)
+    |> Enum.each(fn {{status, reason, evidence}, index} ->
+      {:error, %Postgrex.Error{postgres: %{code: :check_violation}}} =
+        SQL.query(
+          repo,
+          """
+          INSERT INTO runs (
+            id, issue_identifier, status, failure_reason, failure_evidence,
+            attempt, execution_mode, kind, started_at, inserted_at, updated_at
+          )
+          VALUES ($1::text::uuid, 'FAILURE-CHECK', $2, $3, $4::jsonb, 0, 'centralized', 'issue', NOW(), NOW(), NOW())
+          """,
+          [run_failure_id(index), status, reason, evidence]
+        )
+    end)
   end
 
   defp seed_legacy_fixture!(_repo, :zero), do: []
@@ -439,6 +740,12 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
     SQL.query!(
       repo,
+      "DELETE FROM runs WHERE issue_identifier LIKE 'FAILURE-SMOKE-%' OR id::text LIKE '92000000-0000-0000-0000-%'",
+      []
+    )
+
+    SQL.query!(
+      repo,
       "DELETE FROM app_settings WHERE key IN ('instance_workflow', 'legacy_instance_workflow_candidates')",
       []
     )
@@ -489,6 +796,8 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         })
 
       concurrent_event_writes!(project.id, run.id)
+      verify_worker_event_transaction!(project, run)
+      verify_claim_run_identity!(project)
 
       {:ok, marker} =
         Persistence.record_event(%{
@@ -502,6 +811,70 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       %EventRecord{event_type: "smoke.persistence_usable"} = Repo.get!(EventRecord, marker.id)
       counts
     end)
+  end
+
+  defp assert_unknown_import_rejected!(sqlite_path) do
+    with_repo!(fn repo ->
+      {:error, {:sqlite_import_failed, %RuntimeError{message: "Unknown legacy run status: \"mystery\""}}} =
+        SQLiteImporter.import_backup(repo, sqlite_path)
+
+      Enum.each(SQLiteImporter.app_tables(), fn table ->
+        %{rows: [[0]]} = SQL.query!(repo, "SELECT COUNT(*) FROM #{table}", [])
+      end)
+
+      Mix.shell().info("smoke sqlite_unknown_status_rejected=PASS")
+    end)
+  end
+
+  defp verify_claim_run_identity!(project) do
+    run_id = Ecto.UUID.generate()
+    issue_attrs = %{project_id: project.id, identifier: "SMOKE-CLAIM", title: "Stable claim identity"}
+    run_attrs = %{id: run_id, project_id: project.id, issue_identifier: "SMOKE-CLAIM", status: "running"}
+    {:ok, %{run: %{id: ^run_id}}} = Persistence.admit_issue_run(issue_attrs, run_attrs)
+    %{id: ^run_id, status: "running"} = Persistence.get_run(run_id)
+    {:error, {:active_run, ^run_id}} = Persistence.admit_issue_run(issue_attrs, run_attrs)
+    {:ok, _run} = Persistence.finish_run(run_id, "completed", :completed)
+    Mix.shell().info("smoke claim_run_identity=PASS")
+  end
+
+  defp verify_worker_event_transaction!(project, run) do
+    alias SymphonyElixir.Worker.EventWriter
+
+    assignment = %{
+      project_id: project.id,
+      run_id: run.id,
+      issue_identifier: run.issue_identifier,
+      correlation: %{"worker_id" => "smoke-worker", "worker_session_id" => "smoke-session", "assignment_id" => "smoke-assignment"}
+    }
+
+    request = %{
+      id: Ecto.UUID.generate(),
+      worker_id: "smoke-worker",
+      session_id: "smoke-session",
+      assignment_id: "smoke-assignment",
+      event_type: "task.completed",
+      payload: %{},
+      summary: nil,
+      terminal: :completed
+    }
+
+    # A failure after both history writes and the run update rolls back the entire worker delivery.
+    {:error, :injected_commit_failure} =
+      Persistence.worker_event_transaction(fn ->
+        {:ok, {_event, :written}} = EventWriter.write(Persistence, request, {:ok, assignment})
+        {:error, :injected_commit_failure}
+      end)
+
+    nil = Persistence.get_event(request.id)
+    %{status: "running"} = Persistence.get_run(run.id)
+    [] = Persistence.list_events(run_id: run.id, event_type: "run.completed")
+
+    {:ok, {event, :written}} = EventWriter.write(Persistence, request, {:ok, assignment})
+    {:ok, {^event, :replayed}} = EventWriter.write(Persistence, request, {:error, :lease_not_active})
+    %{status: "completed"} = Persistence.get_run(run.id)
+    [_event] = Persistence.list_events(run_id: run.id, event_type: "run.completed")
+    {:error, :event_id_conflict} = EventWriter.write(Persistence, %{request | worker_id: "other-worker"}, {:error, :lease_not_active})
+    Mix.shell().info("smoke worker_event_atomicity_and_replay=PASS")
   end
 
   defp concurrent_event_writes!(project_id, run_id) do
@@ -633,8 +1006,39 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
         [@project_id]
       )
 
-    %{rows: [[@run_id, @issue_id]]} =
-      SQL.query!(repo, "SELECT id::text, issue_id::text FROM runs WHERE id = $1::text::uuid", [@run_id])
+    %{rows: [[@run_id, @issue_id, "completed", nil, nil]]} =
+      SQL.query!(
+        repo,
+        "SELECT id::text, issue_id::text, status, failure_reason, failure_evidence FROM runs WHERE id = $1::text::uuid",
+        [@run_id]
+      )
+
+    %{rows: [[%{"state" => "In Progress"}]]} =
+      SQL.query!(repo, "SELECT snapshot FROM issues WHERE id = $1::text::uuid", [@issue_id])
+
+    %{rows: legacy_failures} =
+      SQL.query!(
+        repo,
+        """
+        SELECT status, failure_reason, failure_evidence
+        FROM runs
+        WHERE issue_identifier LIKE 'SYM-LEGACY-%'
+        ORDER BY issue_identifier
+        """,
+        []
+      )
+
+    [
+      ["failed", "unknown", %{"import" => "unclassified_legacy_reason", "legacy_failure_reason" => "opaque legacy"}],
+      ["blocked", "unknown", %{"import" => "missing_failure_reason"}],
+      ["cancelled", "environment_unavailable", environment_evidence]
+    ] = legacy_failures
+
+    %{
+      "import" => "historical_mapping",
+      "kind" => "environment_unavailable",
+      "legacy_failure_reason" => "workspace erofs"
+    } = environment_evidence
 
     %{rows: [[@session_id, @worker_id]]} =
       SQL.query!(
@@ -664,16 +1068,16 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     end
   end
 
-  defp create_sqlite_fixture!(path) do
+  defp create_sqlite_fixture!(path, run_status \\ "succeeded") do
     sqlite3 = System.find_executable("sqlite3") || Mix.raise("sqlite3 is required for the PostgreSQL smoke test")
 
-    case System.cmd(sqlite3, [path, sqlite_fixture_sql()], stderr_to_stdout: true) do
+    case System.cmd(sqlite3, [path, sqlite_fixture_sql(run_status)], stderr_to_stdout: true) do
       {_output, 0} -> :ok
       {output, status} -> Mix.raise("Failed to create SQLite smoke fixture: exit=#{status} output=#{output}")
     end
   end
 
-  defp sqlite_fixture_sql do
+  defp sqlite_fixture_sql(run_status) do
     """
     PRAGMA foreign_keys = ON;
     CREATE TABLE users (id TEXT, username TEXT, password_hash TEXT, inserted_at TEXT, updated_at TEXT);
@@ -693,8 +1097,11 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     INSERT INTO projects VALUES ('#{@project_id}', 'Imported', 'imported', 'cutover fixture', 1, 'SYM', 'https://github.com/example/symphony.git', 'main', 1, 'clone', 1, 1, NULL, NULL, NULL, NULL, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO tracker_configs VALUES ('11000000-0000-0000-0000-000000000001', '#{@project_id}', 'linear', 'https://api.linear.app/graphql', 'SYM', NULL, '{"values":["Todo"]}', '{"values":["Done"]}', 1, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workflow_versions VALUES ('#{@workflow_id}', '#{@project_id}', 1, '--- workflow fixture ---', '{"tracker":{"kind":"linear","project_slug":"SYM"},"project":{"repository_url":"https://github.com/example/symphony.git"}}', 'Smoke prompt', 'import', 1, '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO issues VALUES ('#{@issue_id}', '#{@project_id}', 'linear-1', 'SYM-2', 'Cut over', 'In Progress', 'https://linear.app/example/SYM-2', '{"values":["migration"]}', '{"priority":1}', '#{@timestamp}', '#{@timestamp}');
-    INSERT INTO runs VALUES ('#{@run_id}', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-2', '/data/workspaces/SYM-2', 'succeeded', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO issues VALUES ('#{@issue_id}', '#{@project_id}', 'linear-1', 'SYM-2', 'Cut over', 'Stale Mirror', 'https://linear.app/example/SYM-2', '{"values":["migration"]}', '{"state":"In Progress"}', '#{@timestamp}', '#{@timestamp}');
+    INSERT INTO runs VALUES ('#{@run_id}', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-2', '/data/workspaces/SYM-2', '#{run_status}', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000002', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-1', NULL, 'failed', 1, 'opaque legacy', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000003', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-2', NULL, 'blocked', 1, NULL, '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
+    INSERT INTO runs VALUES ('40000000-0000-0000-0000-000000000004', '#{@project_id}', '#{@workflow_id}', '#{@issue_id}', 'SYM-LEGACY-3', NULL, 'cancelled', 1, 'workspace erofs', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', 'centralized', 'issue', NULL, NULL);
     INSERT INTO agent_turns VALUES ('12000000-0000-0000-0000-000000000001', '#{@run_id}', 1, 'succeeded', 'Imported turn', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');
     INSERT INTO workspaces VALUES ('13000000-0000-0000-0000-000000000001', '#{@project_id}', 'SYM-2', '/data/workspaces/SYM-2', NULL, 'active', '#{@timestamp}', NULL, '#{@timestamp}', '#{@timestamp}');
     INSERT INTO events VALUES ('14000000-0000-0000-0000-000000000001', '#{@project_id}', '#{@run_id}', 'SYM-2', 'run.completed', '{"result":"ok"}', '#{@timestamp}', '#{@timestamp}', '#{@timestamp}');

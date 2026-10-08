@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   require Logger
 
   alias Ecto.Adapters.SQL
-  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, Schema, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectAuthority, Schema, WorkflowScopes}
   alias SymphonyElixir.Persistence.{AppSetting, Project, WorkflowRecord}
   alias SymphonyElixir.{Repo, Text, Workflow}
 
@@ -98,6 +98,34 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     end
   end
 
+  @spec save_project_settings(String.t() | nil, map(), String.t()) ::
+          {:ok, %{project: Project.t(), workflow: WorkflowRecord.t()}}
+          | {:error, term()}
+  def save_project_settings(project_id, attrs, raw_workflow_md)
+      when (is_binary(project_id) or is_nil(project_id)) and is_map(attrs) and
+             is_binary(raw_workflow_md) do
+    with :ok <- reject_project_hook_fields(attrs),
+         {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
+         {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded),
+         {:ok, _settings} <- Schema.parse(project_config),
+         true <- repo_available?() || {:error, :repo_unavailable} do
+      canonical_raw = Workflow.to_markdown(project_config, "")
+
+      Repo.transaction(fn ->
+        persist_project_settings(project_id, attrs, project_config, canonical_raw)
+      end)
+    end
+  end
+
+  defp persist_project_settings(project_id, attrs, project_config, canonical_raw) do
+    with {:ok, project} <- persist_project(project_id, attrs),
+         {:ok, workflow} <- persist_project_workflow(project, project_config, canonical_raw) do
+      %{project: project, workflow: workflow}
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
   @spec import_workflow(Project.t(), String.t(), String.t()) ::
           {:ok, WorkflowRecord.t()} | {:error, term()}
   def import_workflow(%Project{} = project, raw_workflow_md, source \\ "import")
@@ -122,7 +150,8 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   def import_package(%Project{} = project, raw_workflow_md, source \\ "import")
       when is_binary(raw_workflow_md) do
     with {:ok, loaded} <- Workflow.parse_content(raw_workflow_md),
-         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
+         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt),
+         :ok <- validate_project_authority(project, loaded.config) do
       Repo.transaction(fn ->
         instance = upsert_instance_workflow!(instance)
         project_workflow = upsert_project_workflow!(project, project_config, source)
@@ -305,22 +334,22 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   @spec export_package(WorkflowScopes.instance_workflow(), WorkflowRecord.t()) ::
           {:ok, String.t()} | {:error, term()}
   def export_package(instance, %WorkflowRecord{} = workflow) do
-    project_config = apply_project_runtime_settings(workflow.yaml_config || %{}, workflow.project_id)
+    project = project_for_runtime(workflow.project_id)
+    project_config = ProjectAuthority.strip(workflow.yaml_config || %{})
 
     with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
-      {:ok, Workflow.to_markdown(loaded.config, loaded.prompt)}
+      portable = ProjectAuthority.inject(loaded.config, project)
+      {:ok, Workflow.to_markdown(portable, loaded.prompt)}
     end
   end
 
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
     case project_for_runtime(project_id) do
       %Project{} = project ->
-        config
-        |> put_in_path(["tracker", "project_slug"], project.linear_project_slug)
-        |> update_project_config(project)
+        ProjectAuthority.inject(ProjectAuthority.strip(config), project)
 
       _ ->
-        config
+        ProjectAuthority.strip(config)
     end
   end
 
@@ -370,44 +399,10 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
     Logger.error("Workflow persistence query failed operation=#{operation} outcome=failed kind=#{kind} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
   end
 
-  defp update_project_config(config, %Project{} = project) do
-    existing = Map.get(config, "project", %{})
-
-    project_config =
-      existing
-      |> put_project_value("repository_url", project.repository_url)
-      |> put_project_value("default_branch", project.default_branch || "main")
-      |> put_project_value("checkout_depth", project.checkout_depth || 1)
-      |> put_project_value("source_strategy", project.source_strategy || "clone")
-      |> put_project_value("worktree_fetch", project.worktree_fetch != false)
-      |> put_project_value("worktree_cleanup", project.worktree_cleanup != false)
-
-    Map.put(config, "project", project_config)
-  end
-
-  defp put_project_value(config, key, value) when is_binary(value) do
-    value = String.trim(value)
-    if value == "", do: Map.delete(config, key), else: Map.put(config, key, value)
-  end
-
-  defp put_project_value(config, key, nil), do: Map.delete(config, key)
-  defp put_project_value(config, key, value), do: Map.put(config, key, value)
-
-  defp put_in_path(config, path, value), do: put_in_path(config, path, value, [nil])
-
-  defp put_in_path(config, path, value, delete_values) do
-    case value in delete_values or (is_binary(value) and String.trim(value) == "") do
-      true -> delete_in_path(config, path)
-      false -> put_in(config, Enum.map(path, &Access.key(&1, %{})), value)
-    end
-  end
-
-  defp delete_in_path(config, [key]), do: Map.delete(config, key)
-
-  defp delete_in_path(config, [key | rest]) do
-    case Map.get(config, key) do
-      nested when is_map(nested) -> Map.put(config, key, delete_in_path(nested, rest))
-      _ -> config
+  defp validate_project_authority(project, config) do
+    case ProjectAuthority.conflicts(project, config) do
+      [] -> :ok
+      conflicts -> {:error, {:project_authority_conflict, conflicts}}
     end
   end
 
@@ -428,6 +423,41 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
         workflow
       end
     end)
+  end
+
+  defp persist_project(nil, attrs) do
+    %Project{}
+    |> Project.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  defp persist_project(project_id, attrs) do
+    case Repo.one(from(p in Project, where: p.id == ^project_id, lock: "FOR UPDATE")) do
+      nil -> {:error, :not_found}
+      project -> project |> Project.changeset(attrs) |> Repo.update()
+    end
+  end
+
+  defp persist_project_workflow(project, project_config, canonical_raw) do
+    attrs = %{
+      project_id: project.id,
+      raw_workflow_md: canonical_raw,
+      yaml_config: project_config,
+      prompt_body: "",
+      source: "web_project_settings"
+    }
+
+    case Repo.get_by(WorkflowRecord, project_id: project.id) do
+      %WorkflowRecord{} = existing ->
+        if workflow_changed?(existing, attrs),
+          do: existing |> WorkflowRecord.changeset(attrs) |> Repo.update(),
+          else: {:ok, existing}
+
+      nil ->
+        %WorkflowRecord{}
+        |> WorkflowRecord.changeset(attrs)
+        |> Repo.insert()
+    end
   end
 
   defp upsert_project_workflow!(project, project_config, source) do

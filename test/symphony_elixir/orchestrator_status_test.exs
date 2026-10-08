@@ -25,6 +25,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       {:ok, %{"data" => %{"issueUpdate" => %{"success" => true}}}}
     end
 
+    def graphql(_query, %{issueId: issue_id, body: body}) do
+      send(test_pid(), {:create_comment, issue_id, body})
+      {:ok, %{"data" => %{"commentCreate" => %{"success" => true}}}}
+    end
+
     defp test_pid, do: Application.fetch_env!(:symphony_elixir, :rollback_linear_test_pid)
   end
 
@@ -1374,6 +1379,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_message: nil,
       last_codex_timestamp: stale_activity_at,
       last_codex_event: :notification,
+      admission: %{workspace_authority: {:panel_local}},
       started_at: stale_activity_at
     }
 
@@ -1395,9 +1401,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              attempt: 1,
              due_at_ms: due_at_ms,
              identifier: "MT-STALL",
-             error: "stalled for " <> _
+             error: "budget_exhausted",
+             failure_evidence: %{"elapsed_ms" => elapsed_ms, "timeout_ms" => 1_000}
            } = state.retry_attempts[issue_id]
 
+    assert elapsed_ms > 1_000
     assert is_integer(due_at_ms)
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
@@ -1422,6 +1430,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       %{
         identifier: "MT-BLOCK",
         tracker_issue_id: issue_id,
+        state: "In Progress",
         blocking_decision: nil,
         no_progress_streak: 0
       }
@@ -1432,6 +1441,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     running_entry = %Orchestrator.RunningIssue{
       pid: worker_pid,
       ref: ref,
+      run_id: "run-input-blocked",
       identifier: "MT-BLOCK",
       issue: %Issue{id: issue_id, identifier: "MT-BLOCK", state: "In Progress"},
       session_id: "thread-block",
@@ -1464,11 +1474,164 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.claimed, issue_id)
     assert state.retry_attempts == %{}
-    assert %{reason: "blocked_on_push_auth", detail: detail} = state.blocked[issue_id]
-    assert detail =~ "refresh GitHub credentials"
+    assert %{reason: "runtime_failure", detail: detail} = state.blocked[issue_id]
+    assert detail["reason"] == "blocked_on_push_auth"
+    assert detail["detail"] == %{"action" => "refresh GitHub credentials"}
 
     snapshot = GenServer.call(pid, :snapshot)
-    assert [%{issue_id: ^issue_id, reason: "blocked_on_push_auth"}] = snapshot.blocked
+    assert [%{issue_id: ^issue_id, reason: "runtime_failure"}] = snapshot.blocked
+  end
+
+  test "Codex willRetry false still consumes the existing failure budget" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
+    use_noop_linear_client()
+    orchestrator_name = Module.concat(__MODULE__, :CodexFailureBudgetOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    evidence = %{"codex_error_info" => "serverOverloaded", "turn_status" => "failed", "will_retry" => false}
+    failure = SymphonyElixir.RunFailure.classify({:codex_upstream_capacity, evidence})
+    initial_state = :sys.get_state(pid)
+
+    running = fn issue_id, identifier, run_id ->
+      %Orchestrator.RunningIssue{
+        run_id: run_id,
+        identifier: identifier,
+        issue: %Issue{id: issue_id, identifier: identifier, state: "Refining"},
+        project_id: "fake-project-id",
+        session_id: "session-#{run_id}",
+        started_at: DateTime.utc_now(),
+        admission: %{workspace_authority: {:panel_local}},
+        session_history: [],
+        session_history_total_count: 0
+      }
+    end
+
+    retry_issue_id = "issue-capacity-retry"
+    retry_running = running.(retry_issue_id, "SYM-CAPACITY-RETRY", "run-capacity-retry")
+
+    :sys.replace_state(pid, fn _state ->
+      initial_state
+      |> Map.put(:running, %{retry_issue_id => retry_running})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, retry_issue_id))
+    end)
+
+    Orchestrator.worker_task_finished(retry_issue_id, {:failed, failure}, pid)
+
+    eventually(fn ->
+      state = :sys.get_state(pid)
+      state.failure_counts[retry_issue_id] == 1 and match?(%{attempt: 1}, state.retry_attempts[retry_issue_id])
+    end)
+
+    exhausted_issue_id = "issue-capacity-exhausted"
+    exhausted_running = running.(exhausted_issue_id, "SYM-CAPACITY-EXHAUSTED", "run-capacity-exhausted")
+
+    FakePersistence.put_issues([
+      %{
+        identifier: "SYM-CAPACITY-EXHAUSTED",
+        tracker_issue_id: exhausted_issue_id,
+        state: "Refining",
+        blocking_decision: nil,
+        no_progress_streak: 0
+      }
+    ])
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | running: Map.put(state.running, exhausted_issue_id, exhausted_running),
+          claimed: MapSet.put(state.claimed, exhausted_issue_id),
+          failure_counts: Map.put(state.failure_counts, exhausted_issue_id, 3)
+      }
+    end)
+
+    Orchestrator.worker_task_finished(exhausted_issue_id, {:failed, failure}, pid)
+
+    eventually(fn -> Map.has_key?(:sys.get_state(pid).blocked, exhausted_issue_id) end)
+    exhausted = :sys.get_state(pid)
+    assert exhausted.failure_counts[exhausted_issue_id] == nil
+    assert exhausted.blocked[exhausted_issue_id].reason == "budget_exhausted"
+    assert exhausted.blocked[exhausted_issue_id].detail["cause"] == "codex_upstream_capacity"
+    assert exhausted.blocked[exhausted_issue_id].detail["cause_evidence"]["will_retry"] == false
+  end
+
+  test "missing refinement completion blocks the Refining issue through the existing decision path" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      project_repository_url: "git@example.com:org/repo.git"
+    )
+
+    use_noop_linear_client()
+    orchestrator_name = Module.concat(__MODULE__, :MissingRefinementCompletionOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid), do: Process.exit(pid, :normal)
+    end)
+
+    issue_id = "issue-refinement-completion"
+    identifier = "SYM-REFINEMENT-COMPLETION"
+
+    FakePersistence.put_issues([
+      %{
+        identifier: identifier,
+        tracker_issue_id: issue_id,
+        state: "Refining",
+        blocking_decision: nil,
+        no_progress_streak: 0
+      }
+    ])
+
+    running = %Orchestrator.RunningIssue{
+      run_id: "run-refinement-completion",
+      identifier: identifier,
+      issue: %Issue{id: issue_id, identifier: identifier, state: "Refining"},
+      project_id: "fake-project-id",
+      session_id: "session-refinement-completion",
+      started_at: DateTime.utc_now(),
+      session_history: [],
+      session_history_total_count: 0
+    }
+
+    initial_state = :sys.get_state(pid)
+
+    :sys.replace_state(pid, fn _state ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    detail = %{
+      "missing" => ["linear_task_update(target_state: Needs Refinement Review)"],
+      "reason" => "missing_refinement_completion"
+    }
+
+    summary = %{
+      "phase" => "validation",
+      "outcome" => "blocked",
+      "reason" => "handoff_failed",
+      "detail" => Jason.encode!(%{"detail" => detail, "reason" => ["handoff_failed", "missing_refinement_completion"]})
+    }
+
+    failure = SymphonyElixir.RunFailure.from_worker_summary("task.failed", summary)
+    Orchestrator.worker_task_finished(issue_id, {:blocked, failure}, pid)
+
+    eventually(fn -> Map.has_key?(:sys.get_state(pid).blocked, issue_id) end)
+
+    blocked = :sys.get_state(pid).blocked[issue_id]
+    assert blocked.state == "Blocked"
+    assert blocked.reason == "contract_violation"
+    assert blocked.detail["reason"] == "handoff_failed"
+
+    decision = FakePersistence.get_issue_by_identifier(identifier).blocking_decision
+    assert decision["run_id"] == running.run_id
+    assert decision["origin_state"] == "Refining"
+    assert decision["transition_status"] == "completed"
   end
 
   test "stalled sessions consume the failure budget without inspecting protocol events" do
@@ -1509,6 +1672,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_message: %{"method" => "turn/input_required", "params" => %{"reason" => "operator decision"}},
       last_codex_timestamp: stale_activity_at,
       last_codex_event: :turn_input_required,
+      admission: %{workspace_authority: {:panel_local}},
       started_at: stale_activity_at,
       session_history: [],
       session_history_total_count: 0
@@ -1952,7 +2116,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   test "application keeps the default console logger handler" do
     assert {:ok, handler_config} = :logger.get_handler_config(:default)
-    assert handler_config.formatter == {:logger_formatter, %{single_line: true}}
+    assert handler_config.formatter == {SymphonyElixir.LogFormatter, %{}}
     assert handler_config.level == :info
   end
 
@@ -2162,6 +2326,50 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert MessageHumanizer.humanize_codex_message(fallback_reasoning) == "reasoning update"
   end
 
+  test "stale decision projection cleanup releases the old run and preserves a newer running run" do
+    name = Module.concat(__MODULE__, "DecisionClear#{System.unique_integer([:positive])}")
+    pid = start_supervised!({Orchestrator, name: name})
+    issue_id = "issue-decision-clear"
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | blocked: %{issue_id => %{run_id: "run-old"}},
+          retry_attempts: %{issue_id => %{timer_ref: nil}},
+          failure_counts: %{issue_id => 3},
+          claimed: MapSet.put(state.claimed, issue_id)
+      }
+    end)
+
+    Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+    cleared = :sys.get_state(pid)
+    assert cleared.blocked == %{}
+    assert cleared.retry_attempts == %{}
+    assert cleared.failure_counts == %{}
+    assert cleared.claimed == MapSet.new()
+
+    newer = %Orchestrator.RunningIssue{run_id: "run-new", identifier: "SYM-NEW"}
+
+    :sys.replace_state(pid, fn state ->
+      %{
+        state
+        | running: %{issue_id => newer},
+          blocked: %{issue_id => %{run_id: "run-old"}},
+          retry_attempts: %{issue_id => %{timer_ref: nil}},
+          failure_counts: %{issue_id => 1},
+          claimed: MapSet.put(state.claimed, issue_id)
+      }
+    end)
+
+    Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+    preserved = :sys.get_state(pid)
+    assert preserved.running[issue_id].run_id == "run-new"
+    assert MapSet.member?(preserved.claimed, issue_id)
+    assert preserved.blocked == %{}
+    assert preserved.retry_attempts == %{}
+    assert preserved.failure_counts == %{}
+  end
+
   test "application stop logs offline status" do
     log =
       capture_log(fn ->
@@ -2174,6 +2382,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
   defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
     deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
     do_wait_for_snapshot(pid, predicate, deadline_ms)
+  end
+
+  defp eventually(fun, timeout_ms \\ 500) when is_function(fun, 0) do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    do_eventually(fun, deadline_ms)
   end
 
   defp streaming_delta(fragment, timestamp) do
@@ -2196,10 +2409,13 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
   defp use_noop_linear_client do
     previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
+    previous_test_pid = Application.get_env(:symphony_elixir, :rollback_linear_test_pid)
     Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
+    Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
 
     on_exit(fn ->
       restore_app_env(:linear_client_module, previous_linear_client)
+      restore_app_env(:rollback_linear_test_pid, previous_test_pid)
     end)
   end
 
@@ -2215,6 +2431,19 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       else
         Process.sleep(5)
         do_wait_for_snapshot(pid, predicate, deadline_ms)
+      end
+    end
+  end
+
+  defp do_eventually(fun, deadline_ms) do
+    if fun.() do
+      :ok
+    else
+      if System.monotonic_time(:millisecond) >= deadline_ms do
+        assert fun.()
+      else
+        Process.sleep(5)
+        do_eventually(fun, deadline_ms)
       end
     end
   end

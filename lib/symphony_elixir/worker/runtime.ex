@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Worker.Runtime do
   require Logger
 
   alias SymphonyElixir.Worker.{Cleanup, Config, Paths}
+  alias SymphonyElixir.WorkerResult
 
   @spec start_link(Config.t()) :: GenServer.on_start()
   def start_link(config), do: GenServer.start_link(__MODULE__, config, name: __MODULE__)
@@ -262,7 +263,7 @@ defmodule SymphonyElixir.Worker.Runtime do
             phase: :delivering_terminal,
             watchdog: nil,
             terminal_type: event_type,
-            terminal_payload: %{summary: terminal_summary(result, state.config, active.claim)},
+            terminal_payload: %{"event_id" => Ecto.UUID.generate(), summary: terminal_summary(result, state.config, active.claim)},
             attempts: 0
           })
 
@@ -285,7 +286,8 @@ defmodule SymphonyElixir.Worker.Runtime do
 
       {:error, reason} ->
         log_delivery_failure(active.claim, active.terminal_type, reason, attempt)
-        %{state | active: Map.delete(state.active, task_id)}
+        schedule({:retry_terminal, task_id}, state.config.lifecycle_retry_seconds)
+        put_active(state, task_id, %{active | attempts: attempt})
     end
   end
 
@@ -325,11 +327,11 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_summary(result, config, claim) do
     status = Map.get(result, :status, :failed)
     outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
-    phase = if status == :completed, do: "complete", else: "validation"
+    phase = terminal_phase(status, result)
     reason = if status == :completed, do: "completed", else: reason_for(status, result)
     {validation_status, gates} = validation_evidence(result, get_in(claim, ["execution", "required_gates"]))
 
-    %{
+    summary = %{
       "phase" => phase,
       "outcome" => outcome,
       "reason" => reason,
@@ -340,7 +342,17 @@ defmodule SymphonyElixir.Worker.Runtime do
       "gates" => gates,
       "detail" => terminal_detail(result)
     }
+
+    case Map.get(result, :failure_evidence) do
+      %{} = evidence -> Map.put(summary, "failure_evidence", evidence)
+      nil -> summary
+    end
   end
+
+  defp terminal_phase(:completed, _result), do: "complete"
+  defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
+  defp terminal_phase(_status, %{reason: reason}) when reason in [:codex_upstream_capacity, :codex_turn_failed], do: "codex"
+  defp terminal_phase(_status, _result), do: "validation"
 
   defp reason_for(:cancelled, _), do: "cancelled"
   defp reason_for(:blocked, _), do: "handoff_failed"
@@ -350,8 +362,17 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp reason_for(_, %{validation: %{overall_status: :timed_out}}), do: "timed_out"
   defp reason_for(_, %{validation: %{overall_status: :cancelled}}), do: "cancelled"
 
-  defp reason_for(_, %{reason: reason}) when reason in [:timed_out, :handoff_failed, :execution_capability_unavailable],
-    do: Atom.to_string(reason)
+  defp reason_for(_, %{reason: reason})
+       when reason in [
+              :timed_out,
+              :handoff_failed,
+              :execution_capability_unavailable,
+              :codex_upstream_capacity,
+              :codex_turn_failed
+            ],
+       do: Atom.to_string(reason)
+
+  defp reason_for(_, %{reason: :source_preparation_timeout}), do: "source_preparation_timeout"
 
   defp reason_for(_, _), do: "worker_error"
 
@@ -398,11 +419,14 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp gate_status(:toolchain_unavailable), do: "not_run"
 
   defp put_failure_detail(gate, %{status: :passed}), do: gate
-  defp put_failure_detail(gate, result), do: Map.put(gate, "failure_detail", Map.fetch!(result, :detail))
+
+  defp put_failure_detail(gate, result) do
+    Map.put(gate, "failure_detail", result |> Map.fetch!(:detail) |> WorkerResult.normalize_detail())
+  end
 
   defp terminal_detail(result) do
     result
-    |> Map.take([:status, :reason, :detail])
+    |> Map.take([:status, :reason])
     |> json_value()
     |> Jason.encode!()
   end
@@ -415,6 +439,7 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp json_value(value) when is_tuple(value), do: value |> Tuple.to_list() |> Enum.map(&json_value/1)
   defp json_value(value) when is_list(value), do: Enum.map(value, &json_value/1)
+  defp json_value(value) when is_boolean(value), do: value
   defp json_value(value) when is_atom(value), do: Atom.to_string(value)
   defp json_value(value) when is_pid(value), do: "pid"
   defp json_value(value) when is_reference(value), do: "reference"

@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Persistence do
   import Ecto.Query
 
   alias SymphonyElixir.Config.WorkflowScopes
-  alias SymphonyElixir.{PersistenceProvider, Repo, RunLifecycle, Workflow}
+  alias SymphonyElixir.{PersistenceProvider, Repo, RunFailure, RunLifecycle, Workflow}
   alias SymphonyElixir.PRReview.Store, as: ReviewStore
   alias SymphonyElixir.WorkflowStore, as: RuntimeWorkflowStore
 
@@ -64,6 +64,17 @@ defmodule SymphonyElixir.Persistence do
   def update_project(project_or_id, attrs) do
     project_or_id
     |> WorkflowStore.update_project(attrs)
+    |> publish_runtime_snapshot()
+  end
+
+  @spec save_project_settings(String.t() | nil, map(), String.t()) ::
+          {:ok, %{project: Project.t(), workflow: WorkflowRecord.t()}}
+          | {:error,
+             term()
+             | {:runtime_publication_failed, %{project: Project.t(), workflow: WorkflowRecord.t()}, term()}}
+  def save_project_settings(project_id, attrs, raw_workflow_md) do
+    project_id
+    |> WorkflowStore.save_project_settings(attrs, raw_workflow_md)
     |> publish_runtime_snapshot()
   end
 
@@ -184,25 +195,41 @@ defmodule SymphonyElixir.Persistence do
     end
   end
 
+  @spec admit_issue_run(map(), map(), keyword()) ::
+          {:ok, %{issue: IssueRecord.t(), run: RunRecord.t(), replaced_run: RunRecord.t() | nil}}
+          | {:error, term()}
+  def admit_issue_run(issue_attrs, run_attrs, opts \\ [])
+      when is_map(issue_attrs) and is_map(run_attrs) do
+    with {:ok, _project_id} <- required_project_id(issue_attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
+      Repo.transaction(fn ->
+        issue = upsert_admission_issue!(issue_attrs)
+        issue = Repo.one!(from(i in IssueRecord, where: i.id == ^issue.id, lock: "FOR UPDATE"))
+        active_run = Repo.one(from(r in RunRecord, where: r.issue_id == ^issue.id and r.status == "running", limit: 1))
+        replaced_run = replace_or_reject_active_run!(active_run, issue, opts)
+
+        attrs =
+          run_attrs
+          |> Map.put(:issue_id, issue.id)
+          |> Map.put_new(:project_id, issue.project_id)
+          |> Map.put_new(:status, "running")
+          |> Map.put_new(:started_at, DateTime.utc_now())
+
+        run = %RunRecord{id: Map.get(run_attrs, :id)} |> RunRecord.changeset(attrs) |> Repo.insert!()
+        %{issue: issue, run: run, replaced_run: replaced_run}
+      end)
+    end
+  end
+
   @spec update_run(RunRecord.t(), map()) :: {:ok, RunRecord.t()} | {:error, Ecto.Changeset.t()}
   def update_run(%RunRecord{} = run, attrs),
     do: run |> RunRecord.changeset(attrs) |> Repo.update()
 
-  @spec finish_run(String.t(), String.t(), String.t() | nil, keyword()) ::
+  @spec finish_run(String.t(), String.t(), :completed | SymphonyElixir.RunFailure.t(), keyword()) ::
           {:ok, RunRecord.t()} | {:error, term()}
-  def finish_run(run_id, status, failure_reason \\ nil, opts \\ [])
+  def finish_run(run_id, status, terminal, opts \\ [])
       when is_binary(run_id) and is_binary(status) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         %RunRecord{} = run <- Repo.get(RunRecord, run_id) || {:error, :not_found} do
-      update_run(
-        run,
-        RunLifecycle.terminal_attrs(
-          status,
-          failure_reason,
-          Keyword.get(opts, :finished_at, DateTime.utc_now())
-        )
-      )
-    end
+    RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
   end
 
   @spec get_run(String.t()) :: RunRecord.t() | nil
@@ -238,6 +265,27 @@ defmodule SymphonyElixir.Persistence do
   def update_issue(%IssueRecord{} = issue, attrs),
     do: issue |> IssueRecord.changeset(attrs) |> Repo.update()
 
+  @spec compare_and_clear_blocking_decision(String.t(), map()) ::
+          {:ok, :cleared | :replaced} | {:error, :repo_unavailable}
+  def compare_and_clear_blocking_decision(identifier, decision)
+      when is_binary(identifier) and is_map(decision) do
+    if repo_available?() do
+      {count, _rows} =
+        Repo.update_all(
+          from(issue in IssueRecord,
+            where:
+              issue.identifier == ^identifier and
+                issue.blocking_decision == ^decision
+          ),
+          set: [blocking_decision: nil, no_progress_streak: 0]
+        )
+
+      {:ok, if(count == 1, do: :cleared, else: :replaced)}
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
   @spec list_runs_for_issue(String.t(), keyword()) :: [RunRecord.t()] | {:error, read_error()}
   def list_runs_for_issue(identifier, opts \\ []) when is_binary(identifier) do
     limit = Keyword.get(opts, :limit, 100)
@@ -252,6 +300,21 @@ defmodule SymphonyElixir.Persistence do
       )
     end)
   end
+
+  @spec get_event(String.t()) :: EventRecord.t() | nil | {:error, read_error()}
+  def get_event(id), do: read(fn -> Repo.get(EventRecord, id) end)
+
+  @spec worker_event_transaction((-> {:ok, term()} | {:error, term()})) :: {:ok, term()} | {:error, term()}
+  def worker_event_transaction(fun) do
+    if repo_available?() do
+      Repo.transaction(fn -> worker_event_result(fun.()) end)
+    else
+      {:error, :repo_unavailable}
+    end
+  end
+
+  defp worker_event_result({:ok, result}), do: result
+  defp worker_event_result({:error, reason}), do: Repo.rollback(reason)
 
   @spec record_event(map()) :: {:ok, EventRecord.t()} | {:error, term()}
   def record_event(attrs) do
@@ -343,6 +406,72 @@ defmodule SymphonyElixir.Persistence do
     else
       {:error, :repo_unavailable}
     end
+  end
+
+  defp upsert_admission_issue!(attrs) do
+    fields = [:tracker_issue_id, :title, :url, :labels, :snapshot, :updated_at]
+
+    %IssueRecord{}
+    |> IssueRecord.changeset(attrs)
+    |> Repo.insert!(
+      on_conflict: {:replace, fields},
+      conflict_target: [:project_id, :identifier],
+      returning: true
+    )
+  end
+
+  defp replace_or_reject_active_run!(nil, _issue, _opts), do: nil
+
+  defp replace_or_reject_active_run!(active_run, issue, opts) do
+    cutoff = Keyword.get(opts, :orphan_cutoff)
+
+    if Keyword.get(opts, :manual_rerun?, false) and orphaned_before?(active_run, cutoff) do
+      now = Keyword.get(opts, :now, DateTime.utc_now())
+
+      failure =
+        RunFailure.classify(
+          {:assignment_expired,
+           %{
+             reason: "operator_manual_rerun",
+             phase: "admission",
+             prior_run_id: active_run.id
+           }}
+        )
+
+      case RunLifecycle.finish_run(__MODULE__, active_run.id, "failed", failure, finished_at: now) do
+        {:ok, replaced_run} ->
+          record_replaced_orphan_event!(issue, replaced_run, failure, now)
+          replaced_run
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    else
+      Repo.rollback({:active_run, active_run.id})
+    end
+  end
+
+  defp orphaned_before?(%RunRecord{started_at: %DateTime{} = started_at}, %DateTime{} = cutoff),
+    do: DateTime.compare(started_at, cutoff) == :lt
+
+  defp orphaned_before?(_run, _cutoff), do: false
+
+  defp record_replaced_orphan_event!(issue, run, failure, now) do
+    fields = RunFailure.terminal_fields(failure)
+
+    %EventRecord{}
+    |> EventRecord.changeset(%{
+      project_id: issue.project_id,
+      run_id: run.id,
+      issue_identifier: issue.identifier,
+      event_type: "run.failed",
+      occurred_at: now,
+      payload: %{
+        "failure_reason" => fields.failure_reason,
+        "failure_evidence" => fields.failure_evidence
+      }
+    })
+    |> Repo.insert!()
   end
 
   defp publish_runtime_snapshot({:ok, persisted} = success) do

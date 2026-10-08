@@ -2,6 +2,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
@@ -16,7 +17,11 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     def fetch_candidate_issues do
       slug = Config.settings!().tracker.project_slug
       send(test_pid(), {:candidate_fetch, slug})
-      {:ok, Map.get(candidates(), slug, [])}
+
+      case Application.get_env(:symphony_elixir, :multi_project_candidate_error) do
+        nil -> {:ok, Map.get(candidates(), slug, [])}
+        reason -> {:error, reason}
+      end
     end
 
     def fetch_issue_states_by_ids(ids) do
@@ -45,6 +50,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
       Application.delete_env(:symphony_elixir, :multi_project_test_pid)
       Application.delete_env(:symphony_elixir, :multi_project_candidates)
+      Application.delete_env(:symphony_elixir, :multi_project_candidate_error)
     end)
 
     :ok
@@ -97,9 +103,29 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     refute log =~ "Skipping startup terminal workspace cleanup"
   end
 
+  test "worker-mode startup skips Panel terminal workspace cleanup" do
+    previous_mode = Application.get_env(:symphony_elixir, :execution_mode)
+    Application.put_env(:symphony_elixir, :execution_mode, :worker)
+    on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
+
+    raw = sample_workflow_markdown()
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, _workflow} = FakePersistence.import_package(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    orchestrator_name = Module.concat(__MODULE__, :WorkerStartupCleanupOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert Process.alive?(pid)
+    refute_receive {:states_fetch, _, _}, 100
+  end
+
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 
   test "poll cycle fetches candidates for every enabled project" do
@@ -139,6 +165,71 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     assert_receive {:candidate_fetch, "project"}, 2_000
     assert_receive {:candidate_fetch, "linear-b"}, 2_000
+  end
+
+  test "poll cycle shares one candidate fetch across workflows with the same Linear slug" do
+    raw = sample_workflow_markdown()
+    {:ok, project_a} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project-a.git",
+      linear_project_slug: "shared-linear"
+    })
+
+    {:ok, _} = FakePersistence.import_package(project_a, raw, "test")
+
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Project B",
+        slug: "project-b",
+        linear_project_slug: "shared-linear",
+        repository_url: "git@github.com:VikingMew/project-b.git",
+        enabled: true
+      })
+
+    {:ok, _} = FakePersistence.import_package(project_b, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    orchestrator_name = Module.concat(__MODULE__, :SharedSlugPollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert %{listening?: true} = GenServer.call(pid, :start_listening)
+
+    assert_receive {:candidate_fetch, "shared-linear"}, 2_000
+    refute_receive {:candidate_fetch, "shared-linear"}, 200
+  end
+
+  test "poll failure records one project-scoped Linear event and waits for the next round" do
+    raw = sample_workflow_markdown()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project.git",
+      linear_project_slug: "linear-failure"
+    })
+
+    {:ok, _} = FakePersistence.import_package(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+    Application.put_env(:symphony_elixir, :multi_project_candidate_error, {:linear_api_status, 429, "limited"})
+
+    orchestrator_name = Module.concat(__MODULE__, :FailedPollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert %{listening?: true} = GenServer.call(pid, :start_listening)
+
+    assert_receive {:candidate_fetch, "linear-failure"}, 2_000
+    refute_receive {:candidate_fetch, "linear-failure"}, 200
+
+    eventually(fn -> length(FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed")) == 1 end)
+
+    assert [%{payload: payload}] = FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed")
+    assert payload == %{"operation" => "orchestrator_poll", "project_slug" => "linear-failure", "status" => 429, "reason" => "http_status"}
+
+    Application.delete_env(:symphony_elixir, :multi_project_candidate_error)
+    send(pid, :run_poll_cycle)
+    assert_receive {:candidate_fetch, "linear-failure"}, 2_000
   end
 
   test "disabled project is not polled" do
@@ -361,8 +452,6 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     Application.put_env(:symphony_elixir, :execution_mode, :worker)
     on_exit(fn -> restore_app_env(:execution_mode, previous_mode) end)
 
-    start_supervised!({AssignmentManager, name: AssignmentManager, tracker: MultiProjectLinearClient, persistence: FakePersistence, workflows: WorkflowStore, reconcile_interval_ms: :timer.hours(1)})
-
     {:ok, base} = Workflow.load()
     {:ok, project} = FakePersistence.default_project()
 
@@ -393,33 +482,55 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     assert :ok = WorkflowStore.force_reload()
 
-    {:ok, registration} =
-      FakePersistence.register_worker(%{
-        "worker_name" => "worker-capacity-timeout",
-        "total_slots" => 3
-      })
-
-    :ok = AssignmentManager.observe_session(registration.worker, registration.session)
-
     orchestrator_name =
       Module.concat(__MODULE__, "CapacityTimeoutOrchestrator#{System.unique_integer([:positive])}")
 
-    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    test_pid = self()
+
+    worker_capacity_query = fn ->
+      ref = make_ref()
+      send(test_pid, {:worker_capacity_query, self(), ref})
+
+      receive do
+        {:worker_capacity_reply, ^ref, {:capacity, capacity}} ->
+          capacity
+
+        {:worker_capacity_reply, ^ref, :timeout} ->
+          exit({:timeout, {GenServer, :call, [AssignmentManager, :available_worker_slots, 5_000]}})
+      end
+    end
+
+    {:ok, pid} =
+      Orchestrator.start_link(
+        name: orchestrator_name,
+        worker_capacity_query: worker_capacity_query
+      )
+
     on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
-    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
 
-    :sys.replace_state(pid, &%{&1 | max_concurrent_agents: 9})
-    :sys.suspend(AssignmentManager)
+    :sys.replace_state(
+      pid,
+      fn state ->
+        Process.cancel_timer(state.tick_timer_ref)
 
-    on_exit(fn ->
-      if manager = Process.whereis(AssignmentManager), do: :sys.resume(manager)
-    end)
+        %{
+          state
+          | listening_mode: :listening_all,
+            max_concurrent_agents: 9,
+            next_poll_due_at_ms: nil,
+            tick_timer_ref: nil,
+            tick_token: nil
+        }
+      end,
+      5_000
+    )
 
     log =
       capture_log(fn ->
         send(pid, :run_poll_cycle)
-        Process.sleep(5_100)
-        assert :sys.get_state(pid).max_concurrent_agents == 0
+        assert_receive {:worker_capacity_query, ^pid, timeout_ref}, 5_000
+        send(pid, {:worker_capacity_reply, timeout_ref, :timeout})
+        assert :sys.get_state(pid, 5_000).max_concurrent_agents == 0
       end)
 
     assert Process.alive?(pid)
@@ -432,9 +543,10 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert log =~
              "event=orchestrator.capacity_query_timeout execution_mode=worker timeout_ms=5000 fallback_capacity=0"
 
-    :sys.resume(AssignmentManager)
     send(pid, :run_poll_cycle)
-    eventually(fn -> :sys.get_state(pid).max_concurrent_agents == 3 end)
+    assert_receive {:worker_capacity_query, ^pid, recovery_ref}, 5_000
+    send(pid, {:worker_capacity_reply, recovery_ref, {:capacity, 3}})
+    assert :sys.get_state(pid, 5_000).max_concurrent_agents == 3
   end
 
   test "retry without project context does not crash when multiple projects require explicit context" do
@@ -501,7 +613,11 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   end
 
   defp workflow_markdown(base, prompt, threshold) do
-    config = put_in(base.config, ["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
+    config =
+      base.config
+      |> ProjectAuthority.strip()
+      |> put_in(["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
+
     Workflow.to_markdown(config, prompt)
   end
 

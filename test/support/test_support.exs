@@ -20,10 +20,10 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
       },
       "polling" => %{"interval_ms" => 30_000},
       "project" => %{
-        "repository_url" => "git@github.com:org/imported.git",
+        "repository_url" => "git@github.com:org/repo.git",
         "default_branch" => "main",
         "checkout_depth" => 1,
-        "setup_commands" => [],
+        "setup_commands" => ["mix setup"],
         "cleanup_commands" => []
       },
       "workspace" => %{"root" => "/tmp/imported-workspaces"},
@@ -113,6 +113,7 @@ end
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.Worker.HeartbeatMetrics
@@ -181,6 +182,7 @@ defmodule SymphonyElixir.TestSupport do
         end
 
         FakePersistence.reset!()
+        Application.delete_env(:symphony_elixir, :fake_admit_run_hook)
         Health.reset!()
 
         SymphonyElixir.EnvironmentFailureCircuit.reset()
@@ -265,7 +267,13 @@ defmodule SymphonyElixir.TestSupport do
       {:ok, loaded} = Workflow.load(workflow_path)
       FakePersistence.put_default_project_attrs!(project_attrs_from_workflow_config(loaded.config))
       {:ok, project} = FakePersistence.default_project()
-      {:ok, _version} = FakePersistence.put_package_unchecked(project, loaded.config, loaded.prompt)
+
+      {:ok, _version} =
+        FakePersistence.put_package_unchecked(
+          project,
+          ProjectAuthority.strip(loaded.config),
+          loaded.prompt
+        )
     end
   end
 
@@ -351,7 +359,7 @@ defmodule SymphonyElixir.TestSupport do
           turn_sandbox_policy: nil,
           codex_turn_timeout_ms: 3_600_000,
           codex_read_timeout_ms: 5_000,
-          codex_stall_timeout_ms: 300_000,
+          codex_stall_timeout_ms: 600_000,
           codex_rate_limit_gate_enabled: true,
           codex_rate_limit_gate_5h_threshold_percent: 5.0,
           codex_rate_limit_gate_7d_threshold_percent: 3.0,

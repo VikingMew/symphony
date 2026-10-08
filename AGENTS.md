@@ -6,8 +6,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 
 - Elixir: `1.19.x` (OTP 28) via `mise`.
 - Install deps: `mix setup`.
-- Main quality checks: `scripts/check.sh`, `scripts/unit.sh`, and `scripts/dialyzer.sh`;
-  Make is reserved for build/image targets. `scripts/e2e.sh` is a credentialed manual live E2E suite,
+- Make is reserved for build/image targets. `scripts/e2e.sh` is a credentialed manual live E2E suite,
   not a CI gate.
 
 
@@ -29,31 +28,18 @@ This directory contains the Elixir agent orchestration service that polls Linear
 - Orchestrator behavior is stateful and concurrency-sensitive; preserve retry, reconciliation, and cleanup semantics.
 - Follow `docs/logging.md` for logging conventions and required issue/session context fields.
 
-## Code Value Principles (Linus & Carmack)
+## Code Value Rules
 
-Evaluate every change — and every existing line — against the value it provides, with the
-discipline of Linus Torvalds and John Carmack:
-
-- **Linus: remove complexity, keep good taste.** The kernel philosophy: a change that makes the
-  system simpler is better than one that makes it more elaborate. Refuse architecture-astronaut
-  abstractions — layers with one implementation, config nobody reads, indirection with no
-  consumer. Code must earn its place.
-- **Linus: talk is cheap, show me the code.** Prefer concrete, working, minimal changes over
-  design essays. When in doubt, delete the branch nobody exercises and see whether anything
-  breaks — that is the test of value.
-- **Carmack: minimize the number of things that can go wrong.** Every feature, flag, abstraction,
-  and catch-all rescue is a thing that can go wrong. No speculative config keys, no catch-all
-  rescues that hide real failures, no dual representation of one fact (`listening?` + mode, two
-  lifecycle implementations, string-discriminated state maps).
-- **Carmack: hard to make simple is still worth it.** Code that is hard to understand is hard to
-  make correct. If a reviewer needs a tour through a 2000-line LiveView or a five-way conditional,
-  that is debt — simplify, don't document around it.
-- **No defensive programming.** Trust declared contracts and types: do not add `nil`/fallback
-  checks or branches for states the contract excludes, use catch-all `rescue`, or represent one
-  fact twice. Real failures must remain explicit and typed.
-- **Explicit errors over silent tolerance.** Failures must be visible (structured logs) and
-  typed. Never disguise a database fault as "setup required", never swallow a crash to keep a
-  pipeline alive with no record, never fail open on a rate-limit gate.
+- Remove complexity that does not serve a current consumer. Delete unused branches, speculative
+  configuration, single-implementation layers, and needless indirection.
+- Prefer concrete, working, minimal changes. Prove uncertain value with executable code and tests.
+- Minimize independent states, flags, abstractions, and failure paths. Represent each fact once.
+- Simplify code that needs a tour to understand. Improve its structure instead of documenting
+  around avoidable complexity.
+- Trust declared contracts and types. Do not add fallback branches for excluded states or
+  catch-all rescues that hide failures.
+- Surface failures as explicit typed results and structured logs. Do not disguise database faults,
+  swallow crashes, or fail open at a gate.
 
 ## Pre-release Stance (no external consumers)
 
@@ -87,9 +73,22 @@ Prefer positive assertions of documented behavior and exact expected values.
 Use `refute` only for timing bounds or security/protocol redlines grounded in an
 owning contract, and cite that contract in the adjacent test name or comment.
 
+Code conformance and test conformance are independent; passing either one does not prove the other.
+Tightened gates use a shrinking exact baseline and become one hard path only when that baseline is empty.
+Every unmet or partially met conformance item needs a remediation plan; not-applicable items need a reason.
+
 Symphony agent refinement and implementation must not perform container-engine or image-level
 validation. Review Compose deployment changes against the owning contract in
 [`docs/compose.md`](docs/compose.md); use static source/config tests only.
+
+## Quality Gates
+
+Keep this resident rule file concise and move detailed guidance into on-demand documentation.
+Run these exact repository quality gates:
+
+- `scripts/check.sh`
+- `scripts/unit.sh`
+- `scripts/dialyzer.sh`
 
 ```bash
 scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
@@ -101,11 +100,20 @@ scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
 - `defp` specs are optional.
 - `@impl` callback implementations are exempt from local `@spec` requirement.
 - Keep changes narrowly scoped; avoid unrelated refactors.
+- Keep public interfaces narrow: make required inputs explicit, keep defaults safe, and omit parameters without current consumers.
+- Keep cross-call mutable state in an owned OTP or startup boundary; pass or inject other shared state explicitly.
+- When changing a dependency or tool/action pin, include its lock or pin update and record the upgrade reason in the same change.
+- For uncertain external behavior, add an offline boundary contract test that names the assumed response or failure semantics.
 - Do not add invented version numbers to new or modified documentation or generated content, including
   unsupported title/body versions, badges, or changelog-style labels for one-off plans.
 - Use version numbers only when they carry real release, compatibility, protocol/API, dependency, or
   external meaning, such as repository releases, image tags, pinned tools/runtimes, and lockfiles.
 - Follow existing module/style patterns in `lib/symphony_elixir/*`.
+- Keep comments only for non-obvious intent, surprising decision rationale, external protocol
+  assumptions, or source attribution.
+- Do not restate code in comments or use comments to compensate for unclear names or structure.
+- Preserve comments that remain valid during refactors. Update or remove stale comments with the
+  code, and record the reason for each changed or removed comment in the owning conformance record.
 
 Validation command:
 

@@ -4,9 +4,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Config.{ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
-  alias SymphonyElixir.WorkflowStore
+  alias SymphonyElixir.{WorkflowForm, WorkflowStore}
   alias SymphonyElixirWeb.Admin.SettingsCheck
   alias SymphonyElixirWeb.AdminLive.Settings.Runtime
 
@@ -110,12 +111,16 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     def default_project, do: {:error, :not_found}
 
     defdelegate instance_workflow(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate put_instance_workflow(config, prompt), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate legacy_instance_workflow_status(), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate reconcile_legacy_instance_workflow(slug), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_projects(), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate current_workflow(project), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate workflow_to_loaded(instance, version), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate export_workflow(version), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_runs_page(opts), to: SymphonyElixir.TestSupport.FakePersistence
     defdelegate list_events(opts), to: SymphonyElixir.TestSupport.FakePersistence
+    defdelegate delete_project(id), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
   defmodule BusyOperatorOrchestrator do
@@ -195,6 +200,35 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "fake"
     assert html =~ "git@github.com:org/repo.git"
     assert html =~ "Linear project slug"
+
+    field_names =
+      html
+      |> Floki.parse_document!()
+      |> Floki.find(".project-edit-form input, .project-edit-form select, .project-edit-form textarea")
+      |> Floki.attribute("name")
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    assert field_names ==
+             Enum.sort([
+               "project[active_states]",
+               "project[checkout_depth]",
+               "project[default_branch]",
+               "project[description]",
+               "project[enabled]",
+               "project[id]",
+               "project[linear_project_slug]",
+               "project[name]",
+               "project[project_cleanup_commands]",
+               "project[project_setup_commands]",
+               "project[repository_url]",
+               "project[slug]",
+               "project[source_strategy]",
+               "project[terminal_states]",
+               "project[tracker_assignee]",
+               "project[worktree_cleanup]",
+               "project[worktree_fetch]"
+             ])
   end
 
   test "dashboard shows a friendly flash when a nap is already running" do
@@ -260,13 +294,111 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ ~s(name="workflow[prompt_body]")
   end
 
+  test "Runtime and Agents save with zero projects" do
+    Application.put_env(:symphony_elixir, :persistence_module, NoDefaultPersistence)
+    assert {:ok, _project} = FakePersistence.delete_project("fake-project-id")
+    start_test_endpoint()
+
+    {:ok, runtime_view, runtime_html} = live(build_conn(), "/settings/runtime")
+    assert runtime_html =~ "All projects"
+
+    runtime_saved =
+      runtime_view
+      |> form(".runtime-settings-form", workflow: %{"workspace_root" => "/tmp/zero-projects"})
+      |> render_submit()
+
+    assert runtime_saved =~ "Workflow settings saved installation-wide"
+    assert runtime_saved =~ "No enabled project snapshots required refresh"
+
+    {:ok, agents_view, _agents_html} = live(build_conn(), "/settings/agents")
+
+    agents_saved =
+      agents_view
+      |> form(".agent-settings-form", workflow: %{"prompt_body" => "Shared without projects."})
+      |> render_submit()
+
+    assert agents_saved =~ "Agent settings saved installation-wide"
+    assert FakePersistence.instance_workflow().prompt_body == "Shared without projects."
+  end
+
+  test "project selector changes do not change instance settings" do
+    {:ok, project_b} =
+      FakePersistence.create_project(%{
+        name: "Second Project",
+        slug: "second",
+        linear_project_slug: "second-project",
+        repository_url: "git@github.com:org/repo-b.git",
+        enabled: true
+      })
+
+    start_test_endpoint()
+    {:ok, view, _html} = live(build_conn(), "/settings/agents")
+
+    view
+    |> form(".agent-settings-form", workflow: %{"prompt_body" => "One installation prompt."})
+    |> render_submit()
+
+    selected_html = render_patch(view, "/settings/agents?project=#{project_b.id}")
+    assert selected_html =~ "One installation prompt."
+    assert selected_html =~ ~s(value="/settings/agents?project=#{project_b.id}")
+  end
+
+  test "legacy drift requires an explicit source and refreshes after reconciliation" do
+    {:ok, base} = WorkflowForm.empty() |> WorkflowForm.to_instance_scope()
+    alternate = put_in(base.config["workspace"]["root"], "/tmp/alternate")
+
+    conflict = %{
+      "candidates" => [
+        %{
+          "project_id" => "fake-project-id",
+          "project_slug" => "fake",
+          "candidate" => WorkflowScopes.dump_instance(base)
+        },
+        %{
+          "project_id" => "other-project-id",
+          "project_slug" => "other",
+          "candidate" => WorkflowScopes.dump_instance(alternate)
+        }
+      ],
+      "differing_paths" => [
+        %{
+          "path" => "workspace.root",
+          "contributors" => [
+            %{"project_id" => "fake-project-id", "project_slug" => "fake", "present" => true, "value" => base.config["workspace"]["root"]},
+            %{"project_id" => "other-project-id", "project_slug" => "other", "present" => true, "value" => "/tmp/alternate"}
+          ]
+        }
+      ]
+    }
+
+    FakePersistence.put_legacy_instance_workflow_conflict!(conflict)
+    start_test_endpoint()
+
+    {:ok, view, html} = live(build_conn(), "/settings/runtime")
+    assert html =~ "Legacy instance settings differ across projects"
+    assert html =~ "workspace.root"
+    assert html =~ "fake"
+    assert html =~ "other"
+    assert has_element?(view, "button[phx-click='reconcile_legacy_instance_workflow'][disabled]")
+
+    selected_html = render_patch(view, "/settings/runtime?project=fake-project-id")
+    assert selected_html =~ "Selected source:"
+    assert has_element?(view, "button[phx-click='reconcile_legacy_instance_workflow']:not([disabled])")
+
+    reconciled_html = render_click(view, "reconcile_legacy_instance_workflow")
+    assert reconciled_html =~ "Legacy instance settings reconciled"
+    assert reconciled_html =~ "fake was used as the explicit source"
+    assert {:reconcile_legacy_instance_workflow, "fake"} in FakePersistence.calls()
+    assert SettingsCheck.legacy_instance_drift(elem(FakePersistence.legacy_instance_workflow_status(), 1)) == nil
+  end
+
   test "settings import package writes instance and project scopes together" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, _agents_view, _agents_html} = live(build_conn(), "/settings/agents")
 
-    {:ok, view, html} = live(build_conn(), "/settings/import")
+    {:ok, view, html} = live(build_conn(), "/settings/import?project=fake-project-id")
     assert html =~ "Import Settings Package"
     assert html =~ ~s(name="import[yaml]")
     assert html =~ ">Review import</button>"
@@ -283,40 +415,12 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert workflow_staged_html =~ "workflow.yml staged"
     assert workflow_staged_html =~ "Detected"
     assert workflow_staged_html =~ "workflow.yml"
+    assert workflow_staged_html =~ "Instance"
+    assert workflow_staged_html =~ "Project — Fake Project (fake)"
 
-    render_click(view, "confirm_settings_import")
-
-    render_patch(view, "/settings/import")
-
-    profiles_staged_html =
-      view
-      |> form("form[phx-submit='stage_settings_import']",
-        import: %{
-          "yaml" => split_profiles_yaml()
-        }
-      )
-      |> render_submit()
-
-    assert profiles_staged_html =~ "profiles.yml staged"
-    profiles_imported_html = render_click(view, "confirm_settings_import")
-    assert profiles_imported_html =~ "Imported base prompt."
-
-    render_patch(view, "/settings/agents")
-
-    saved_html =
-      view
-      |> form("form[phx-submit='save_workflow_form']",
-        workflow: %{
-          "prompt_body" => "Imported base prompt.",
-          "profiles" => %{
-            "implementation" => %{"prompt_template" => "Imported implementation prompt."}
-          }
-        }
-      )
-      |> render_submit()
-
-    assert saved_html =~ "Agent settings saved"
-    assert FakePersistence.instance_workflow().prompt_body == "Imported base prompt."
+    imported_html = render_click(view, "confirm_settings_import")
+    assert imported_html =~ "Instance and Project settings imported"
+    assert imported_html =~ "both durable scopes saved"
 
     assert Enum.any?(FakePersistence.calls(), fn
              {:import_package, _project, _raw, "web_settings_import"} -> true
@@ -324,7 +428,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
            end)
   end
 
-  test "settings import profiles package populates unsaved agent draft" do
+  test "settings import profiles package writes the instance singleton" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
@@ -341,11 +445,102 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert staged_html =~ "profiles.yml staged"
     imported_html = render_click(view, "confirm_settings_import")
-    assert imported_html =~ "Imported base prompt."
+    assert imported_html =~ "Instance settings imported"
+    assert String.trim(FakePersistence.instance_workflow().prompt_body) == "Imported base prompt."
 
     agents_draft_html = render_patch(view, "/settings/agents")
     assert agents_draft_html =~ "Imported base prompt."
     assert agents_draft_html =~ "Imported implementation prompt."
+  end
+
+  @tag :tmp_dir
+  test "normal Settings save rejects an invalid workspace root before persistence", %{tmp_dir: tmp_dir} do
+    invalid_root = Path.join(tmp_dir, "workspace-file")
+    File.write!(invalid_root, "not a directory")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/agents")
+    current_before = WorkflowStore.current()
+    writes_before = persistence_write_count()
+
+    rejected_html =
+      render_submit(view, "save_workflow_form", %{
+        "workflow" => %{
+          "workspace_root" => invalid_root,
+          "prompt_body" => "Draft retained after root rejection."
+        }
+      })
+
+    assert rejected_html =~ "Agent settings save failed"
+    assert rejected_html =~ Path.expand(invalid_root)
+    assert rejected_html =~ "cannot be created"
+    assert rejected_html =~ "Settings / Import: workspace.root"
+    assert rejected_html =~ "/data/workspaces"
+    assert WorkflowStore.current() == current_before
+    assert persistence_write_count() == writes_before
+
+    retained_html =
+      view
+      |> form("form[phx-submit='save_workflow_form']",
+        workflow: %{"prompt_body" => "Draft retained after root rejection."}
+      )
+      |> render_submit()
+
+    assert retained_html =~ Path.expand(invalid_root)
+    assert persistence_write_count() == writes_before
+  end
+
+  @tag :tmp_dir
+  test "confirmed Settings import uses the same workspace root gate before package persistence", %{tmp_dir: tmp_dir} do
+    invalid_root = Path.join(tmp_dir, "workspace-file")
+    File.write!(invalid_root, "not a directory")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+    current_before = WorkflowStore.current()
+    writes_before = persistence_write_count()
+
+    invalid_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        "/tmp/imported-workspaces",
+        invalid_root
+      )
+
+    view
+    |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => invalid_yaml})
+    |> render_submit()
+
+    rejected_html = render_click(view, "confirm_settings_import")
+
+    assert rejected_html =~ "Package import failed"
+    assert rejected_html =~ Path.expand(invalid_root)
+    assert rejected_html =~ "cannot be created"
+    assert rejected_html =~ "Settings / Import: workspace.root"
+    assert rejected_html =~ "/data/workspaces"
+    assert WorkflowStore.current() == current_before
+    assert persistence_write_count() == writes_before
+
+    valid_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        "/tmp/imported-workspaces",
+        tmp_dir
+      )
+
+    view
+    |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => valid_yaml})
+    |> render_submit()
+
+    saved_html = render_click(view, "confirm_settings_import")
+
+    assert saved_html =~ "Instance and Project settings imported"
+    assert get_in(FakePersistence.instance_workflow(), [:config, "workspace", "root"]) == tmp_dir
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:import_package, _project, _raw, "web_settings_import"} -> true
+             _call -> false
+           end)
   end
 
   test "settings import accepts uploaded package files and can cancel staged changes" do
@@ -398,7 +593,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert runtime_html =~ "Set LINEAR_API_KEY"
   end
 
-  test "agent settings page keeps fields visible and rejects project-scoped instance saves" do
+  test "agent settings page saves the shared prompt and profiles installation-wide" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
     start_test_endpoint()
@@ -446,9 +641,19 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       |> form("form[phx-submit='save_workflow_form']", workflow: params)
       |> render_submit()
 
-    assert html =~ "Agent settings save failed"
-    assert html =~ "out_of_scope_workflow_fields"
-    assert html =~ "prompt_body"
+    assert html =~ "Agent settings saved installation-wide"
+    assert html =~ "Future runtime snapshots refreshed for enabled projects: Fake Project"
+    assert FakePersistence.instance_workflow().prompt_body == "Changed shared base prompt."
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:put_instance_workflow, _config, "Changed shared base prompt."} -> true
+             _ -> false
+           end)
+
+    assert Enum.all?(FakePersistence.calls(), fn
+             {:import_workflow, _project, _raw, _source} -> false
+             _ -> true
+           end)
   end
 
   test "settings tabs render only the active settings surface" do
@@ -468,10 +673,12 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert runtime_html =~ "Codex Runtime"
   end
 
-  test "runtime settings page keeps selectors visible and rejects project-scoped instance saves" do
+  @tag :tmp_dir
+  test "runtime settings page saves workspace hooks and Codex selectors to the singleton", %{tmp_dir: tmp_dir} do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
     start_test_endpoint()
+    workspace_root = Path.join(tmp_dir, "workspaces")
 
     {:ok, view, html} = live(build_conn(), "/settings/runtime")
     assert html =~ "Codex Runtime"
@@ -487,6 +694,18 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ ~s(id="workflow-codex-reasoning-effort")
     assert html =~ ~s(name="workflow[codex_reasoning_effort]")
     assert html =~ "ultra - Maximum reasoning with automatic task delegation"
+    assert html =~ ~s(name="workflow[workspace_root]")
+    assert html =~ ~s(name="workflow[workspace_repository_base_root]")
+    assert html =~ ~s(name="workflow[workspace_worktree_base_root]")
+    assert html =~ ~s(name="workflow[initialize_timeout_ms]")
+    assert html =~ ~s(name="workflow[workspace_min_free_gib]")
+    assert html =~ ~s(name="workflow[hook_after_create]")
+    assert html =~ ~s(name="workflow[hook_before_run]")
+    assert html =~ ~s(name="workflow[hook_after_run]")
+    assert html =~ ~s(name="workflow[hook_before_remove]")
+    assert html =~ ~s(name="workflow[codex_approval_policy]")
+    assert html =~ ~s(name="workflow[codex_thread_sandbox]")
+    assert html =~ ~s(name="workflow[codex_turn_sandbox_preset]")
 
     sol_html =
       view
@@ -501,20 +720,38 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       |> render_change()
 
     assert reasoning_effort_values(luna_html) == ["", "low", "medium", "high", "xhigh", "max"]
-    instance_before_save = FakePersistence.instance_workflow()
 
     saved_html =
       view
       |> form(".runtime-settings-form",
-        workflow: %{"codex_model" => "gpt-6-luna", "codex_reasoning_effort" => "max"}
+        workflow: %{
+          "workspace_root" => workspace_root,
+          "workspace_repository_base_root" => Path.join(tmp_dir, "repositories"),
+          "workspace_worktree_base_root" => Path.join(tmp_dir, "worktrees"),
+          "initialize_timeout_ms" => "90000",
+          "workspace_min_free_gib" => "2",
+          "hook_after_create" => "mix setup",
+          "hook_before_run" => "mix test",
+          "hook_after_run" => "echo done",
+          "hook_before_remove" => "echo cleanup",
+          "hook_timeout_ms" => "45000",
+          "codex_model" => "gpt-6-luna",
+          "codex_reasoning_effort" => "max",
+          "codex_approval_policy" => "never",
+          "codex_thread_sandbox" => "workspace-write",
+          "codex_turn_sandbox_preset" => "danger_full_access"
+        }
       )
       |> render_submit()
 
-    assert saved_html =~ "workflow-save-toast-error"
-    assert saved_html =~ "Workflow settings save failed"
-    assert saved_html =~ "out_of_scope_workflow_fields"
-    assert saved_html =~ "codex"
-    assert FakePersistence.instance_workflow() == instance_before_save
+    assert saved_html =~ "workflow-save-toast-success"
+    assert saved_html =~ "Workflow settings saved installation-wide"
+    instance = FakePersistence.instance_workflow()
+    assert get_in(instance.config, ["workspace", "root"]) == workspace_root
+    assert get_in(instance.config, ["hooks", "after_create"]) == "mix setup"
+    assert get_in(instance.config, ["codex", "model"]) == "gpt-6-luna"
+    assert get_in(instance.config, ["codex", "reasoning_effort"]) == "max"
+    assert get_in(instance.config, ["codex", "turn_sandbox_policy", "type"]) == "dangerFullAccess"
 
     {:ok, _reloaded_view, reloaded_html} = live(build_conn(), "/settings/runtime")
     assert reloaded_html =~ ~s(id="workflow-codex-model")
@@ -588,6 +825,8 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     {:ok, view, _html} = live(build_conn(), "/settings/projects")
 
+    publications_before_create = FakePersistence.runtime_publication_count()
+
     html =
       view
       |> form(".project-create-form",
@@ -609,9 +848,10 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert html =~ "Project settings saved"
     assert html =~ "Second Project"
     assert html =~ "git@github.com:org/second.git"
+    assert FakePersistence.runtime_publication_count() == publications_before_create + 1
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:create_project, attrs} ->
+             {:save_project_settings, nil, attrs, _raw} ->
                attrs.name == "Second Project" and attrs.repository_url == "git@github.com:org/second.git" and
                  attrs.checkout_depth == 3 and attrs.source_strategy == "worktree" and
                  attrs.worktree_fetch == true and
@@ -620,6 +860,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
              _ ->
                false
            end)
+
+    created = Enum.find(FakePersistence.list_projects(), &(&1.slug == "second"))
+    assert FakePersistence.current_workflow(created).prompt_body == ""
+
+    publications_before_update = FakePersistence.runtime_publication_count()
 
     html =
       view
@@ -640,6 +885,121 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "Renamed Project"
     assert html =~ "git@github.com:org/renamed.git"
+    assert FakePersistence.runtime_publication_count() == publications_before_update + 1
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:save_project_settings, "fake-project-id", attrs, _raw} ->
+               attrs.name == "Renamed Project" and attrs.linear_project_slug == "renamed-linear"
+
+             _ ->
+               false
+           end)
+  end
+
+  test "project settings rejects invalid durable writes atomically and remains usable" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+
+    baseline_params = project_settings_params(%{"repository_url" => "git@github.com:org/baseline.git"})
+
+    baseline_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: baseline_params)
+      |> render_submit()
+
+    assert baseline_html =~ "Project settings saved"
+    baseline_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    baseline_workflow = FakePersistence.current_workflow(baseline_project)
+    publications_after_baseline = FakePersistence.runtime_publication_count()
+
+    invalid_html =
+      view
+      |> form(
+        ~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: project_settings_params(%{"name" => ""})
+      )
+      |> render_submit()
+
+    assert invalid_html =~ "workflow-save-toast-error"
+    assert invalid_html =~ "Project settings failed"
+    assert invalid_html =~ "can&#39;t be blank"
+    assert Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id")) == baseline_project
+    assert FakePersistence.current_workflow(baseline_project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline
+
+    FakePersistence.fail_next_import_workflow!(:injected_workflow_failure)
+
+    rejected_params =
+      project_settings_params(%{
+        "repository_url" => "git@github.com:org/rejected.git",
+        "source_strategy" => "worktree",
+        "project_setup_commands" => "mix rejected"
+      })
+
+    rejected_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: rejected_params)
+      |> render_submit()
+
+    assert rejected_html =~ "workflow-save-toast-error"
+    assert rejected_html =~ "injected_workflow_failure"
+    assert Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id")) == baseline_project
+    assert FakePersistence.current_workflow(baseline_project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline
+
+    saved_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: rejected_params)
+      |> render_submit()
+
+    assert saved_html =~ "workflow-save-toast-success"
+    assert saved_html =~ "Project settings saved"
+    saved_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    saved_workflow = FakePersistence.current_workflow(saved_project)
+    assert saved_project.repository_url == "git@github.com:org/rejected.git"
+    assert saved_project.source_strategy == "worktree"
+    assert get_in(saved_workflow.yaml_config, ["project", "setup_commands"]) == ["mix rejected"]
+    assert saved_workflow.prompt_body == ""
+    assert FakePersistence.runtime_publication_count() == publications_after_baseline + 1
+    assert {:ok, runtime} = WorkflowStore.for_project(saved_project.id)
+    assert get_in(runtime.config, ["project", "repository_url"]) == "git@github.com:org/rejected.git"
+  end
+
+  test "project settings reports post-commit publication failure and retains the durable save" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/projects")
+    publications_before = FakePersistence.runtime_publication_count()
+    FakePersistence.fail_next_runtime_publication!({:refresh_failed, :injected})
+
+    params = project_settings_params(%{"repository_url" => "git@github.com:org/durable.git"})
+
+    failed_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: params)
+      |> render_submit()
+
+    assert failed_html =~ "workflow-save-toast-error"
+    assert failed_html =~ "runtime_publication_failed"
+    durable_project = Enum.find(FakePersistence.list_projects(), &(&1.id == "fake-project-id"))
+    assert durable_project.repository_url == "git@github.com:org/durable.git"
+    assert FakePersistence.current_workflow(durable_project).prompt_body == ""
+    assert FakePersistence.runtime_publication_count() == publications_before + 1
+
+    saved_html =
+      view
+      |> form(~s(.project-edit-form[data-project-id="fake-project-id"]), project: params)
+      |> render_submit()
+
+    assert saved_html =~ "workflow-save-toast-success"
+    assert FakePersistence.runtime_publication_count() == publications_before + 2
+    assert {:ok, runtime} = WorkflowStore.for_project(durable_project.id)
+    assert get_in(runtime.config, ["project", "repository_url"]) == "git@github.com:org/durable.git"
   end
 
   test "project settings save refreshes runtime project configuration" do
@@ -679,6 +1039,49 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert get_in(workflow.config, ["project", "source_strategy"]) == "worktree"
     assert Map.has_key?(get_in(workflow.config, ["project"]), "worktree_base_path") == false
     assert Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root") == false
+  end
+
+  test "project settings shows legacy authority drift and save converges every carrier to clean" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, loaded} = SymphonyElixir.Workflow.load()
+
+    legacy_config =
+      loaded.config
+      |> put_in([Access.key("tracker", %{}), "project_slug"], project.linear_project_slug)
+      |> put_in([Access.key("project", %{}), "repository_url"], "git@github.com:org/legacy.git")
+      |> put_in([Access.key("project", %{}), "default_branch"], project.default_branch)
+      |> put_in([Access.key("project", %{}), "checkout_depth"], 9)
+      |> put_in([Access.key("project", %{}), "source_strategy"], project.source_strategy)
+      |> put_in([Access.key("project", %{}), "worktree_fetch"], false)
+      |> put_in([Access.key("project", %{}), "worktree_cleanup"], project.worktree_cleanup)
+
+    assert {:ok, _legacy} = FakePersistence.put_package_unchecked(project, legacy_config, loaded.prompt)
+    assert :ok = WorkflowStore.force_reload()
+    assert {:ok, runtime_before} = WorkflowStore.for_project(project.id)
+
+    start_test_endpoint()
+    {:ok, view, html} = live(build_conn(), "/settings/projects")
+
+    statuses_before = authority_statuses(html)
+    assert Enum.count(statuses_before, &(&1 == "legacy_duplicate")) == 4
+    assert Enum.count(statuses_before, &(&1 == "conflict")) == 3
+
+    saved_html =
+      view
+      |> form(
+        ~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: project_settings_params(%{})
+      )
+      |> render_submit()
+
+    assert authority_statuses(saved_html) == List.duplicate("clean", 7)
+
+    workflow = FakePersistence.current_workflow(project)
+    assert ProjectAuthority.diagnostics(project, workflow.yaml_config) |> Enum.all?(&(&1.status == :clean))
+    assert {:ok, runtime_after} = WorkflowStore.for_project(project.id)
+    assert runtime_after.config["tracker"]["project_slug"] == runtime_before.config["tracker"]["project_slug"]
+    assert runtime_after.config["project"]["repository_url"] == runtime_before.config["project"]["repository_url"]
   end
 
   test "settings save controls show saving feedback and saved notices" do
@@ -727,14 +1130,13 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       )
       |> render_submit()
 
-    assert agent_saved_html =~ "workflow-save-toast-error"
-    assert agent_saved_html =~ "Agent settings save failed"
-    assert agent_saved_html =~ "out_of_scope_workflow_fields"
+    assert agent_saved_html =~ "workflow-save-toast-success"
+    assert agent_saved_html =~ "Agent settings saved installation-wide"
 
     {:ok, _runtime_view, _runtime_html} = live(build_conn(), "/settings/runtime")
   end
 
-  test "settings project workflow saves reject instance fields without persistence" do
+  test "instance and project settings save through isolated persistence paths" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
 
     write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@github.com:org/repo.git")
@@ -750,14 +1152,14 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       )
       |> render_submit()
 
-    assert agent_noop_html =~ "workflow-save-toast-error"
-    assert agent_noop_html =~ "Agent settings save failed"
-    assert agent_noop_html =~ "out_of_scope_workflow_fields"
+    assert agent_noop_html =~ "workflow-save-toast-success"
+    assert agent_noop_html =~ "Agent settings saved installation-wide"
+    instance_after_agent_save = FakePersistence.instance_workflow()
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:import_workflow, _project, _raw, _source} -> true
+             {:put_instance_workflow, _config, _prompt} -> true
              _ -> false
-           end) == false
+           end)
 
     {:ok, project_view, _project_html} = live(build_conn(), "/settings/projects")
 
@@ -775,6 +1177,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
           "source_strategy" => "clone",
           "worktree_fetch" => "true",
           "worktree_cleanup" => "true",
+          "tracker_assignee" => "ops@example.test",
+          "active_states" => "Todo\nReady\nIn Progress",
+          "terminal_states" => "Done\nCanceled\nCancelled\nDuplicate",
+          "project_setup_commands" => "mix setup",
+          "project_cleanup_commands" => "mix clean",
           "description" => "",
           "enabled" => "true"
         }
@@ -783,11 +1190,17 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert project_noop_html =~ "workflow-save-toast-success"
     assert project_noop_html =~ "Project settings saved"
+    assert FakePersistence.instance_workflow() == instance_after_agent_save
 
     assert Enum.any?(FakePersistence.calls(), fn
-             {:update_project, "fake-project-id", _attrs} -> true
+             {:save_project_settings, "fake-project-id", _attrs, _raw} -> true
              _ -> false
            end)
+
+    workflow = FakePersistence.current_workflow(%{id: "fake-project-id"})
+    assert get_in(workflow.yaml_config, ["tracker", "assignee"]) == "ops@example.test"
+    assert get_in(workflow.yaml_config, ["project", "setup_commands"]) == ["mix setup"]
+    assert get_in(workflow.yaml_config, ["project", "cleanup_commands"]) == ["mix clean"]
   end
 
   test "settings pages do not expose workflow history or restore controls" do
@@ -829,7 +1242,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     assert html =~ "workflow-save-toast-error"
     assert html =~ "Agent settings save failed"
-    assert html =~ "out_of_scope_workflow_fields"
+    assert html =~ "exceeds Linear state name limit"
   end
 
   test "settings header renders project switcher and preserves project in tab links" do
@@ -913,6 +1326,48 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     |> Floki.find("#{selector} option[selected]")
     |> Floki.attribute("value")
     |> List.first()
+  end
+
+  defp authority_statuses(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(".project-authority-diagnostics tbody tr td:last-child span")
+    |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
+  end
+
+  defp persistence_write_count do
+    Enum.count(FakePersistence.calls(), fn
+      {:put_instance_workflow, _config, _prompt} -> true
+      {:import_workflow, _project, _raw, _source} -> true
+      {:import_package, _project, _raw, _source} -> true
+      {:save_project_settings, _project_id, _attrs, _raw} -> true
+      _call -> false
+    end)
+  end
+
+  defp project_settings_params(overrides) do
+    Map.merge(
+      %{
+        "id" => "fake-project-id",
+        "name" => "Fake Project",
+        "slug" => "fake",
+        "linear_project_slug" => "project",
+        "repository_url" => "git@github.com:org/repo.git",
+        "default_branch" => "main",
+        "checkout_depth" => "1",
+        "source_strategy" => "clone",
+        "worktree_fetch" => "true",
+        "worktree_cleanup" => "true",
+        "tracker_assignee" => "",
+        "active_states" => "Todo\nReady\nIn Progress",
+        "terminal_states" => "Done\nCanceled\nCancelled\nDuplicate",
+        "project_setup_commands" => "",
+        "project_cleanup_commands" => "",
+        "description" => "",
+        "enabled" => "true"
+      },
+      overrides
+    )
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

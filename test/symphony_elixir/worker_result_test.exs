@@ -3,6 +3,36 @@ defmodule SymphonyElixir.WorkerResultTest do
 
   alias SymphonyElixir.WorkerResult
 
+  test "publishes the producer and receiver limits" do
+    assert WorkerResult.limits() == %{
+             max_gates: 32,
+             max_text: 512,
+             max_detail: 2_048,
+             max_source_output: 4_096
+           }
+  end
+
+  test "normalizes worker-local paths before retaining bounded head and tail evidence" do
+    limits = WorkerResult.limits()
+
+    detail =
+      "command=scripts/check.sh HEAD /tmp/worker/check.log " <>
+        String.duplicate("中", limits.max_detail) <>
+        " TAIL C:\\worker\\validation.log"
+
+    normalized = WorkerResult.normalize_detail(detail)
+
+    assert String.length(normalized) == limits.max_detail
+    assert normalized =~ "command=scripts/check.sh HEAD [worker-local path]"
+    assert normalized =~ "... (truncated) ..."
+    assert String.ends_with?(normalized, " TAIL [worker-local path]")
+    refute normalized =~ "/tmp/worker"
+    refute normalized =~ "C:\\worker"
+
+    assert {:ok, _summary} =
+             WorkerResult.validate(summary([gate("check", "failed", 1, normalized)]))
+  end
+
   test "accepts ordered passed, failed, timed-out, and not-run gate evidence" do
     gates = [
       gate("compile", "passed", 0),
@@ -43,6 +73,11 @@ defmodule SymphonyElixir.WorkerResultTest do
 
     assert message =~ "filesystem path"
 
+    assert {:error, {:invalid_worker_summary, oversized_message}} =
+             WorkerResult.validate(summary([gate("test", "failed", 1, String.duplicate("x", 2_049))]))
+
+    assert oversized_message == "gate 0: failure_detail exceeds 2048 characters"
+
     assert {:error, {:invalid_worker_summary, secret_message}} =
              WorkerResult.validate(summary([gate("test", "failed", 1, "token=super-secret")]))
 
@@ -52,6 +87,22 @@ defmodule SymphonyElixir.WorkerResultTest do
 
   test "allows lightweight progress events without a summary" do
     assert WorkerResult.validate_event("task.progress", %{"phase" => "execution_started"}) == {:ok, nil}
+  end
+
+  test "accepts typed source preparation timeout evidence" do
+    timeout =
+      summary([])
+      |> Map.put("phase", "source_preparation")
+      |> Map.put("reason", "source_preparation_timeout")
+      |> Map.put("failure_evidence", %{
+        "phase" => "fetch_failed",
+        "command_status" => "timed_out",
+        "duration_ms" => 1_001,
+        "output" => "fetch progress"
+      })
+
+    assert {:ok, validated} = WorkerResult.validate(timeout)
+    assert validated["failure_evidence"]["phase"] == "fetch_failed"
   end
 
   test "requires a valid summary for terminal task events" do

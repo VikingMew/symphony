@@ -92,9 +92,27 @@ defmodule SymphonyElixir.FirstRunDefaults do
       project ->
         raw = Workflow.to_markdown(loaded.config, loaded.prompt)
 
-        with {:ok, _workflow} <- deps.import_package.(project, raw, @source) do
-          deps.log.(:info, "Imported default workflow.yml and profiles.yml into the database.")
-          :ok
+        case deps.import_package.(project, raw, @source) do
+          {:ok, _workflow} ->
+            deps.log.(:info, "Imported default workflow.yml and profiles.yml into the database.")
+            :ok
+
+          {:error, {:project_authority_conflict, _conflicts} = reason} ->
+            Logger.warning(
+              "Default YAML first-run import was rejected: #{inspect(reason)}; start in setup-required mode and resolve the project authority conflict in Settings.",
+              event: "workflow.first_run_import.rejected",
+              operation: "import_first_run_defaults",
+              location: root,
+              offending_value: inspect(reason, limit: 20, printable_limit: 1_000),
+              expected_shape: "portable project authority equal to the selected project row",
+              error_code: "project_authority_conflict",
+              retryable: false
+            )
+
+            :ok
+
+          {:error, _reason} = error ->
+            error
         end
     end
   end

@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, projects, persistence, admin-ui]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -42,6 +42,13 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
    `%Project{name: "Default", slug: "default", default_branch: "main", enabled: false}`。
    该记录是 Settings 可见的引导占位,不参与 runtime dispatch；first-run combined package
    导入仍要求显式选择 enabled project，并在同一事务写入 instance singleton 与该 project slice。
+   Settings / Import 的 review 按 durable ownership 分成 Instance 与 Project 两组，并显示显式选择的
+   project identity；preview rows 与 `affected_scopes` 直接来自确认写入使用的相同 Instance/Project
+   slices。只含 Instance 变化时不要求 project target，直接写 singleton；含 Project 变化但没有显式
+   target 时返回 `project_target_required`。确认 combined package 后由原子 import transaction 一次写
+   singleton 与所选 project slice，并分别报告两 scope 的结果。交互式 first-run 导入若因 portable
+   project-owned 值与所选 project 行不同而返回 `project_authority_conflict`，启动路径记录 warning、
+   保持 setup-required 并继续启动，不能用 package 值或默认值掩盖冲突。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建新的 Default。无显式 project context 的 runtime settings 和诊断选择已配置的
    Default workflow；没有可用 Default 时,只有恰好一个 enabled 且已加载 workflow 的真实
@@ -66,6 +73,10 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
   同样保持 setup-required；临时候选记录和 legacy full project row 都不会被选为 singleton fallback。
   disabled Default placeholder 即使关联旧 workflow candidate，也只作为显式对账可选来源，不会自动
   成为 authority、enabled project 或 dispatch 输入。
+- **Import 不猜 project**：header selector 的 All projects 状态不是 target。只含 profiles/base prompt
+  或其他 Instance-owned 字段的 package 可直接写 singleton；任何 Project scope diff 都要求 operator
+  显式选择 project，且确认后立即执行 durable save，不再经由另一个页面的 draft/Save 步骤。scope
+  grouping 不维护独立字段表，而是复用持久化的 durable ownership slices。
 - **删除语义**：CASCADE workflows（project 移除 = 其 workflow 配置随之移除）；
   runs/issues/tasks.project_id SET NULL(审计历史保留但不绑定已删 project)。
 - **移除按钮的确认**:phx-click + data-confirm,防误删。

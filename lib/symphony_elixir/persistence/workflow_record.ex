@@ -21,8 +21,15 @@ defmodule SymphonyElixir.Persistence.WorkflowRecord do
   @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
   def changeset(workflow, attrs) do
     workflow
-    |> cast(attrs, [:project_id, :raw_workflow_md, :yaml_config, :prompt_body, :source])
-    |> validate_required([:project_id, :raw_workflow_md, :yaml_config, :prompt_body, :source])
+    |> cast(attrs, [:project_id, :raw_workflow_md, :yaml_config, :prompt_body, :source], empty_values: [])
+    |> validate_required([:project_id, :raw_workflow_md, :yaml_config, :source])
+    |> validate_prompt_body_present()
     |> unique_constraint(:project_id)
+  end
+
+  defp validate_prompt_body_present(changeset) do
+    if is_nil(get_field(changeset, :prompt_body)),
+      do: add_error(changeset, :prompt_body, "can't be nil"),
+      else: changeset
   end
 end

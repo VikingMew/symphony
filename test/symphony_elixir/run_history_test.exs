@@ -199,6 +199,7 @@ defmodule SymphonyElixir.RunHistoryTest do
           payload: %{
             "tool" => "linear_issue_create",
             "status" => "success",
+            "tool_call_id" => "call-success",
             "result" => %{"identifier" => "CCR-10", "url" => "https://linear.app/acme/issue/CCR-10"}
           },
           occurred_at: ~U[2026-05-21 00:00:01Z]
@@ -208,6 +209,7 @@ defmodule SymphonyElixir.RunHistoryTest do
           payload: %{
             "tool" => "linear_issue_create",
             "status" => "failure",
+            "tool_call_id" => "call-failure",
             "error" => %{"class" => "workflow_profile_unavailable", "message" => "Workflow profile is unavailable for this Codex session."}
           },
           occurred_at: ~U[2026-05-21 00:00:02Z]
@@ -218,11 +220,13 @@ defmodule SymphonyElixir.RunHistoryTest do
     assert success.detail == "linear_issue_create succeeded: CCR-10 https://linear.app/acme/issue/CCR-10"
     assert success.source == :linear
     assert success.severity == :info
+    assert success.metadata["tool_call_id"] == "call-success"
 
     assert failure.label == "Linear tool failure"
     assert failure.detail == "linear_issue_create failed: workflow_profile_unavailable: Workflow profile is unavailable for this Codex session."
     assert failure.source == :linear
     assert failure.severity == :error
+    assert failure.metadata["tool_call_id"] == "call-failure"
   end
 
   test "projects completed nap raw events into aligned readable history" do

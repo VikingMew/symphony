@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
   Persistence payload shaping for orchestrator events.
   """
 
-  alias SymphonyElixir.{Config, Linear.Issue}
+  alias SymphonyElixir.{Config, Linear.Issue, RunAdmission, RunFailure}
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
   @spec issue_snapshot(Issue.t()) :: map()
@@ -26,27 +26,26 @@ defmodule SymphonyElixir.Orchestrator.Events do
       tracker_issue_id: issue.id,
       identifier: issue.identifier,
       title: issue.title,
-      state: issue.state,
       url: issue.url,
       labels: %{"values" => issue.labels || []},
       snapshot: issue_snapshot(issue)
     }
   end
 
-  @spec run_attrs(Issue.t(), map() | nil, String.t(), integer() | nil) :: map()
-  def run_attrs(%Issue{} = issue, _workflow, execution_mode, attempt)
-      when execution_mode in ["centralized", "worker"] do
+  @spec run_attrs(Issue.t(), RunAdmission.t(), integer() | nil) :: map()
+  def run_attrs(%Issue{} = issue, %RunAdmission{} = admission, attempt) do
     %{
       issue_identifier: issue.identifier,
       status: "running",
-      execution_mode: execution_mode,
+      execution_mode: admission.execution_mode,
       attempt: RetryPolicy.normalize_attempt(attempt),
       started_at: DateTime.utc_now()
     }
   end
 
-  @spec worker_assignment_payload(Issue.t(), map(), map() | nil, String.t(), String.t() | nil) :: map()
-  def worker_assignment_payload(%Issue{} = issue, run, _workflow, prompt, profile) when is_map(run) do
+  @spec worker_assignment_payload(Issue.t(), map(), RunAdmission.t(), String.t(), String.t() | nil) :: map()
+  def worker_assignment_payload(%Issue{} = issue, run, %RunAdmission{} = admission, prompt, profile)
+      when is_map(run) do
     settings = Config.settings!()
 
     %{
@@ -58,13 +57,8 @@ defmodule SymphonyElixir.Orchestrator.Events do
         "issue" => issue_snapshot(issue),
         "prompt" => prompt,
         "workflow_profile" => profile,
-        "execution_mode" => "worker",
-        "repository" => %{
-          "project_id" => run.project_id,
-          "url" => settings.project.repository_url,
-          "source_ref" => settings.project.default_branch,
-          "implementation_branch" => issue.branch_name
-        },
+        "execution_mode" => admission.execution_mode,
+        "source" => stringify_keys(admission.source),
         "required_gates" => settings.project.required_gates,
         "hooks" => %{
           "after_create" => settings.hooks.after_create,
@@ -73,13 +67,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
           "before_remove" => settings.hooks.before_remove,
           "timeout_ms" => settings.hooks.timeout_ms
         },
-        "limits" => %{
-          "max_turns" => settings.agent.max_turns,
-          "max_failure_retries" => settings.agent.max_failure_retries,
-          "turn_timeout_ms" => settings.codex.turn_timeout_ms,
-          "read_timeout_ms" => settings.codex.read_timeout_ms,
-          "stall_timeout_ms" => settings.codex.stall_timeout_ms
-        },
+        "limits" => stringify_keys(admission.limits),
         "codex" => codex_payload(settings.codex),
         "handoff" => %{
           "branch" => issue.branch_name,
@@ -92,6 +80,8 @@ defmodule SymphonyElixir.Orchestrator.Events do
       }
     }
   end
+
+  defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {Atom.to_string(key), value} end)
 
   defp codex_payload(codex) do
     %{
@@ -127,14 +117,19 @@ defmodule SymphonyElixir.Orchestrator.Events do
     event_attrs("run.started", issue.identifier, %{issue_id: issue.id, run_id: run.id, worker_host: worker_host}, run.id)
   end
 
-  @spec run_finished_event(map(), String.t(), String.t() | nil) :: map()
-  def run_finished_event(running_entry, status, failure_reason) when is_map(running_entry) and is_binary(status) do
+  @spec run_finished_event(map(), String.t(), :completed | RunFailure.t()) :: map()
+  def run_finished_event(running_entry, status, terminal) when is_map(running_entry) and is_binary(status) do
     run_id = Map.get(running_entry, :run_id)
+    failure = RunFailure.terminal_fields(terminal)
 
     event_attrs(
       "run.#{status}",
       Map.get(running_entry, :identifier),
-      %{run_id: run_id, failure_reason: failure_reason},
+      %{
+        run_id: run_id,
+        failure_reason: failure.failure_reason,
+        failure_evidence: failure.failure_evidence
+      },
       run_id
     )
   end

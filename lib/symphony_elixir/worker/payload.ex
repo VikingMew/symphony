@@ -16,8 +16,17 @@ defmodule SymphonyElixir.Worker.Payload do
     stall_timeout_ms
   )
 
-  @enforce_keys [:repository, :default_branch, :branch, :codex, :gates]
-  defstruct @enforce_keys ++ [repository_url: nil, hooks: [], handoff: %{}]
+  @enforce_keys [
+    :repository,
+    :default_branch,
+    :branch,
+    :source_strategy,
+    :checkout_depth,
+    :initialize_timeout_seconds,
+    :codex,
+    :gates
+  ]
+  defstruct @enforce_keys ++ [hooks: [], handoff: %{}]
 
   @type command :: %{required(:command) => String.t(), required(:timeout_seconds) => pos_integer()}
   @type codex :: %{
@@ -32,9 +41,11 @@ defmodule SymphonyElixir.Worker.Payload do
         }
   @type t :: %__MODULE__{
           repository: String.t(),
-          repository_url: String.t(),
           default_branch: String.t(),
           branch: String.t(),
+          source_strategy: String.t(),
+          checkout_depth: pos_integer(),
+          initialize_timeout_seconds: pos_integer(),
           codex: codex(),
           hooks: [command()],
           gates: [command()],
@@ -48,15 +59,20 @@ defmodule SymphonyElixir.Worker.Payload do
          :ok <- reject_repository_credentials(repository),
          {:ok, default_branch} <- required_string(payload, "default_branch"),
          {:ok, branch} <- required_string(payload, "branch"),
+         :ok <- clone_strategy(payload),
+         {:ok, checkout_depth} <- positive_integer(payload, "checkout_depth"),
+         {:ok, initialize_timeout_seconds} <- positive_integer(payload, "initialize_timeout_seconds"),
          {:ok, codex} <- codex(Map.get(payload, "codex")),
          {:ok, hooks} <- commands(Map.get(payload, "hooks", []), "hooks", true),
          {:ok, gates} <- commands(Map.get(payload, "required_gates"), "required_gates", true) do
       {:ok,
        %__MODULE__{
          repository: repository,
-         repository_url: Map.get(payload, "repository_url", repository),
          default_branch: default_branch,
          branch: branch,
+         source_strategy: "clone",
+         checkout_depth: checkout_depth,
+         initialize_timeout_seconds: initialize_timeout_seconds,
          codex: codex,
          hooks: hooks,
          gates: gates,
@@ -158,6 +174,16 @@ defmodule SymphonyElixir.Worker.Payload do
     case Map.get(payload, key) do
       value when is_binary(value) -> {:ok, value}
       _ -> error("#{key} must be a string")
+    end
+  end
+
+  defp clone_strategy(%{"source_strategy" => "clone"}), do: :ok
+  defp clone_strategy(_payload), do: error("source_strategy must be clone")
+
+  defp positive_integer(payload, key) do
+    case Map.get(payload, key) do
+      value when is_integer(value) and value > 0 -> {:ok, value}
+      _ -> error("#{key} must be a positive integer")
     end
   end
 

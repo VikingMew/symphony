@@ -45,10 +45,11 @@ defmodule SymphonyElixir.Codex.ToolRequestHandler do
        ) do
     tool_name = tool_call_name(params)
     arguments = tool_call_arguments(params)
+    tool_call_id = tool_call_id(params)
 
     result =
       tool_name
-      |> tool_executor.(arguments)
+      |> tool_executor.(arguments, tool_call_id: tool_call_id)
       |> normalize_dynamic_tool_result()
 
     event =
@@ -58,7 +59,7 @@ defmodule SymphonyElixir.Codex.ToolRequestHandler do
         _ -> :tool_call_failed
       end
 
-    {:reply, %{"id" => id, "result" => result}, event, %{}}
+    {:reply, %{"id" => id, "result" => result}, event, %{tool_call_id: tool_call_id}}
   end
 
   defp maybe_handle_request(
@@ -270,6 +271,15 @@ defmodule SymphonyElixir.Codex.ToolRequestHandler do
   end
 
   defp tool_call_arguments(_params), do: %{}
+
+  defp tool_call_id(params) when is_map(params) do
+    case SymphonyElixir.Payload.get_any(params, ["callId", :callId, "tool_call_id", :tool_call_id]) do
+      value when is_binary(value) and value != "" -> value
+      _ -> nil
+    end
+  end
+
+  defp tool_call_id(_params), do: nil
 
   defp mcp_elicitation_request?(method) when is_binary(method) do
     method in [

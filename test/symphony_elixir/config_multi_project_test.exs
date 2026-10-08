@@ -2,6 +2,7 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.{Config, TestSupport.FakePersistence, Workflow, WorkflowStore}
+  alias SymphonyElixir.Config.ProjectAuthority
 
   defp loaded_workflow_with_prompt(prompt) do
     raw =
@@ -38,7 +39,6 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
     assert result.tracker_a == "project"
     assert result.inner.prompt == "Project B agent for this repository."
 
-    # Context is restored after the block.
     assert Config.workflow_prompt() == default_prompt
   end
 
@@ -160,6 +160,8 @@ defmodule SymphonyElixir.ConfigMultiProjectTest do
 
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 end

@@ -1,7 +1,9 @@
 defmodule SymphonyElixir.Worker.HttpIntegrationTest do
   use ExUnit.Case, async: false
 
-  alias SymphonyElixir.Worker.{Client, Config, ExecutionPayload, Executor}
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.{AssignmentManager, Client, Config, ExecutionPayload, Executor}
+  alias SymphonyElixir.WorkerResult
 
   defmodule WorkerApiSurface do
     use Plug.Router
@@ -162,6 +164,80 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
              "Linear issue SYM-12: Integration test"
   end
 
+  test "worker HTTP accepts normalized path and oversized gate evidence while rejecting raw summaries", %{root: root} do
+    FakePersistence.reset!()
+
+    manager =
+      start_supervised!({AssignmentManager, name: AssignmentManager, persistence: FakePersistence, reconcile_interval_ms: :timer.hours(1)})
+
+    identity = %{
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "protocol_version" => Client.protocol_version()
+    }
+
+    cases = [
+      {"path", "command=scripts/check.sh failed at /tmp/worker/output.log", "worker-local filesystem path"},
+      {"oversized", "command=scripts/check.sh " <> String.duplicate("x", 2_100) <> " TAIL", "exceeds 2048 characters"}
+    ]
+
+    Enum.each(cases, fn {suffix, raw_detail, rejection} ->
+      task_id = "task-#{suffix}"
+      run_id = "run-#{suffix}"
+      assignment = seed_http_assignment(manager, task_id, run_id)
+      raw_summary = http_failure_summary(raw_detail)
+
+      assert {:error, {:http_error, 422, %{"error" => %{"code" => "invalid_worker_summary", "message" => message}}}} =
+               Client.event(
+                 config(root),
+                 identity,
+                 task_id,
+                 "task.failed",
+                 %{"correlation" => assignment.correlation, "summary" => raw_summary}
+               )
+
+      assert message =~ rejection
+
+      normalized_summary =
+        raw_summary
+        |> put_in(["gates", Access.at(0), "failure_detail"], WorkerResult.normalize_detail(raw_detail))
+        |> Map.put("detail", Jason.encode!(%{"reason" => "non_zero", "status" => "failed"}))
+
+      assert {:ok, %{"accepted" => true}} =
+               Client.event(
+                 config(root),
+                 identity,
+                 task_id,
+                 "task.failed",
+                 %{"correlation" => assignment.correlation, "summary" => normalized_summary}
+               )
+
+      run = FakePersistence.get_run(run_id)
+      assert run.status == "failed"
+      assert run.failure_reason == "validation_failed"
+      assert run.execution_summary == normalized_summary
+      assert get_in(run.failure_evidence, ["gates", Access.at(0), "status"]) == "failed"
+      assert get_in(run.failure_evidence, ["gates", Access.at(0), "exit_code"]) == 7
+      refute inspect(run) =~ raw_detail
+    end)
+
+    secret_assignment = seed_http_assignment(manager, "task-secret", "run-secret")
+
+    assert {:error, {:http_error, 422, %{"error" => %{"code" => "invalid_worker_summary", "message" => secret_message}}}} =
+             Client.event(
+               config(root),
+               identity,
+               "task-secret",
+               "task.failed",
+               %{
+                 "correlation" => secret_assignment.correlation,
+                 "summary" => http_failure_summary("token=super-secret")
+               }
+             )
+
+    assert secret_message =~ "secret-bearing text"
+  end
+
   test "surfaces app-server turn failures in the worker result detail", %{
     root: root,
     codex_trace: codex_trace,
@@ -192,6 +268,54 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     assert result.detail =~ "worker fixture failure"
   end
 
+  test "failed completion stops before validation and preserves the SYM-152 error fields", %{
+    root: root,
+    codex_trace: codex_trace
+  } do
+    turn_events =
+      ~s({"method":"error","params":{"error":{"message":"Selected model is at capacity. Please try a different model.","codexErrorInfo":"serverOverloaded"},"willRetry":false}}\n{"method":"turn/completed","params":{"turn":{"status":"failed"}}})
+
+    codex_binary = fake_codex!(root, codex_trace, turn_events)
+    gate_marker = Path.join(root, "validation-ran")
+
+    result =
+      execute_profile(
+        root,
+        codex_binary,
+        "failed-completion-task",
+        "test",
+        "printf validation-ran > #{gate_marker}"
+      )
+
+    assert result.status == :failed
+    assert result.reason == :codex_upstream_capacity
+
+    assert result.detail == %{
+             "codex_error_info" => "serverOverloaded",
+             "turn_status" => "failed",
+             "will_retry" => false
+           }
+
+    assert File.exists?(gate_marker) == false
+  end
+
+  test "successful refinement turn without review update evidence becomes blocked", %{
+    root: root,
+    codex_binary: codex_binary
+  } do
+    result = execute_profile(root, codex_binary, "refinement-missing-completion", "refinement")
+
+    evidence = %{
+      "missing" => ["linear_task_update(target_state: Needs Refinement Review)"],
+      "reason" => "missing_refinement_completion"
+    }
+
+    assert result.status == :blocked
+    assert result.reason == {:handoff_failed, {:missing_refinement_completion, evidence}}
+    assert result.detail == evidence
+    assert result.validation.overall_status == :passed
+  end
+
   defp claim_payload do
     %{task: task, lease: lease, correlation: correlation} = Agent.get(Persistence, & &1.claim)
 
@@ -207,6 +331,72 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       "lease_attempt" => lease.attempt,
       "worker_session_id" => correlation["worker_session_id"],
       "execution" => ExecutionPayload.from_task_payload(task.payload)
+    }
+  end
+
+  defp seed_http_assignment(manager, task_id, run_id) do
+    {:ok, _run} =
+      FakePersistence.create_run(%{
+        id: run_id,
+        project_id: "fake-project-id",
+        issue_identifier: "SYM-126",
+        status: "running",
+        started_at: DateTime.utc_now()
+      })
+
+    correlation = %{
+      "project_id" => "fake-project-id",
+      "run_id" => run_id,
+      "issue_id" => "issue-126",
+      "issue_identifier" => "SYM-126",
+      "run_attempt" => 0,
+      "task_id" => task_id,
+      "lease_id" => task_id,
+      "lease_attempt" => 1,
+      "worker_id" => "worker-1",
+      "worker_session_id" => "session-1",
+      "assignment_id" => task_id
+    }
+
+    assignment = %{
+      id: task_id,
+      task_id: task_id,
+      lease_id: task_id,
+      issue: %{id: "issue-126"},
+      issue_identifier: "SYM-126",
+      project_id: "fake-project-id",
+      run_id: run_id,
+      worker_id: "worker-1",
+      session_id: "session-1",
+      expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
+      correlation: correlation,
+      last_terminal_rejection: nil
+    }
+
+    :sys.replace_state(manager, &%{&1 | assignment: assignment})
+    assignment
+  end
+
+  defp http_failure_summary(detail) do
+    %{
+      "phase" => "validation",
+      "outcome" => "failed",
+      "reason" => "non_zero",
+      "occurred_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+      "source_revision" => "worker-revision",
+      "runtime" => %{"image_tag" => "worker:test", "worker_source_revision" => "worker-revision"},
+      "validation_status" => "failed",
+      "gates" => [
+        %{
+          "name" => "check",
+          "status" => "failed",
+          "exit_code" => 7,
+          "duration_ms" => 42,
+          "timeout_ms" => 120_000,
+          "failure_detail" => detail
+        }
+      ],
+      "detail" => detail
     }
   end
 
@@ -235,7 +425,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       fake_codex!(
         root,
         codex_trace,
-        ~s({"method":"turn/completed"}),
+        ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
         "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
       )
 
@@ -264,7 +454,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       fake_codex!(
         root,
         codex_trace,
-        ~s({"method":"turn/completed"}),
+        ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
         "printf '%s\\n' 'binary-safe patch' > SYM-12.patch"
       )
 
@@ -327,6 +517,30 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     Executor.execute(config(root), claim)
   end
 
+  defp execute_profile(root, codex_binary, task_id, profile, gate_command \\ "git status --porcelain") do
+    source = Path.join(root, "source")
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => task_id,
+      "lease_id" => "profile-lease",
+      "issue_id" => "issue-1",
+      "issue_identifier" => "SYM-12",
+      "run_id" => "run-1",
+      "run_attempt" => 0,
+      "lease_attempt" => 1,
+      "worker_id" => "worker-1",
+      "session_id" => "session-1",
+      "protocol_version" => Client.protocol_version(),
+      "execution" =>
+        panel_payload(source, codex_binary, profile)
+        |> put_in(["required_gates", Access.at(0), "command"], gate_command)
+        |> ExecutionPayload.from_task_payload()
+    }
+
+    Executor.execute(config(root), claim)
+  end
+
   defp config(root) do
     %Config{
       panel_url: "http://panel.test",
@@ -341,16 +555,18 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp panel_payload(source, codex_binary, profile \\ "refinement") do
+  defp panel_payload(source, codex_binary, profile \\ "test") do
     %{
       "issue" => %{"identifier" => "SYM-12", "title" => "Integration test", "description" => "Run the fixture."},
       "prompt" => "Complete the task.",
       "workflow_profile" => profile,
       "execution_mode" => "worker",
-      "repository" => %{
-        "url" => source,
-        "source_ref" => "main",
-        "implementation_branch" => "vikingmew-sym-12"
+      "source" => %{
+        "repository" => source,
+        "default_branch" => "main",
+        "implementation_branch" => "vikingmew-sym-12",
+        "source_strategy" => "clone",
+        "checkout_depth" => 1
       },
       "hooks" => %{
         "after_create" => "git rev-parse HEAD",
@@ -367,6 +583,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
         "turn_sandbox_policy" => nil
       },
       "limits" => %{
+        "initialize_timeout_ms" => 60_000,
         "turn_timeout_ms" => 10_000,
         "read_timeout_ms" => 5_000,
         "stall_timeout_ms" => 5_000
@@ -376,7 +593,12 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp fake_codex!(root, trace_file, turn_event \\ ~s({"method":"turn/completed"}), turn_command \\ ":") do
+  defp fake_codex!(
+         root,
+         trace_file,
+         turn_event \\ ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}}),
+         turn_command \\ ":"
+       ) do
     codex_binary = Path.join(root, "fake-codex")
 
     File.write!(codex_binary, """

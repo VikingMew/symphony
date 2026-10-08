@@ -325,7 +325,11 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     FakePersistence.reset!()
     FakePersistence.put_default_project_attrs!(%{linear_project_slug: "db-project"})
     {:ok, project} = FakePersistence.default_project()
-    assert {:ok, _version} = FakePersistence.import_package(project, raw, "web_workflow_settings")
+    assert {:ok, loaded} = Workflow.parse_content(raw)
+
+    assert {:ok, _version} =
+             FakePersistence.put_package_unchecked(project, loaded.config, loaded.prompt)
+
     assert :ok = WorkflowStore.force_reload()
 
     diagnostics = Diagnostics.run()

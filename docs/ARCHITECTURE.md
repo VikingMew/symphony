@@ -266,8 +266,10 @@ Locations:
 - `lib/symphony_elixir/http_server.ex`
 - `lib/symphony_elixir_web/*`
 
-Symphony exposes runtime visibility through structured logs and an optional Phoenix service. When a
-port is configured, the service provides:
+Symphony exposes runtime visibility through one-object-per-line JSON logs and an optional Phoenix
+service. Stable event/error fields and issue, run, session, and tool-call identifiers make the log
+and persisted event paths joinable without parsing messages. The canonical field table and operator
+commands are in [logging.md](logging.md). When a port is configured, the service provides:
 
 - `/`: LiveView dashboard
 - `/api/v1/state`: full state snapshot
@@ -276,7 +278,7 @@ port is configured, the service provides:
 - `/api/v1/runs?issue_identifier=<identifier>`: bounded newest-first runs and event timeline
 - `/api/v1/refresh`: manual refresh endpoint
 - `/runs`, `/events`, `/workers`, `/settings/*`: management pages
-- `/settings/import`: staged split-package import and diff review before applying to editable Settings draft
+- `/settings/import`: Instance/Project split-package review and confirmed durable import; Project changes require an explicit target
 - `/diagnostics/linear`: validation for the active Linear runtime configuration
 
 ### 6.10 Persistence and Worker API
@@ -310,9 +312,12 @@ request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 ## 7. Configuration Model
 
 PostgreSQL stores installation runtime/profile policy once in
-`app_settings["instance_workflow"]` and tracker/repository properties in one workflow row per
-project. `WorkflowStore` composes both scopes before parsing and atomically publishes the complete
-enabled-project set. Startup remains setup-required when either scope is absent.
+`app_settings["instance_workflow"]`. A workflow row per project stores only tracker
+kind/endpoint/assignee/states plus project gates/setup/cleanup; the `projects` row solely stores the
+Linear project slug and six repository/source values. `WorkflowStore` reports legacy carrier drift
+when first observed or changed, strips it, injects project-row authority, composes the singleton, and
+atomically publishes the complete enabled-project set. Unchanged background refreshes do not repeat
+the drift warning. Startup remains setup-required when either workflow scope is absent.
 `workflow.yml` and `profiles.yml` are package artifacts for import/export and examples, not startup
 authority.
 

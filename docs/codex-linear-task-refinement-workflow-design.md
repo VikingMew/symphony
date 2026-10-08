@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-08
+updated: 2026-10-03
 design_status: landed
 ---
 
@@ -325,9 +325,14 @@ profile 不受影响。完成请求缺少非空 description 时也视为门禁�
 返回同一 violation 集合的 typed quality-gate error，让 agent 可在当前 run
 修正并重试。comment API 失败则返回 typed Linear error，不伪装成门禁通过。
 
-如果 run 未修正并成功进入 review，Orchestrator 沿用唯一的 `no_progress_streak`：第一次完成但无状态
-进展后仍为 `Refining`，连续第二次通过既有持久 `blocking_decision` 投递 `Blocked`。后续成功状态进展
-按现有逻辑清零 streak 和 decision；门禁不拥有独立计数或阈值。
+执行 worker 只把当前 Codex session 内成功的
+`linear_task_update(target_state: "Needs Refinement Review")` 审计记录视为 refinement 完成证据，
+目标状态比较使用规范化状态名。turn 成功结束但缺少该证据时，executor 生成
+`blocked / handoff_failed / missing_refinement_completion`，保留有界的缺失证据，并复用现有
+`BlockingDecision` 投递路径把 issue 从 `Refining` 转到 `Blocked`。该路径不会自动把未经 quality
+gate 确认的 description 推进到 review，也不依赖默认未包含 `Refining` 的 `tracker.active_states`
+重新 claim。存在成功 review 状态更新证据时保持原有成功路径；implementation 的 PR、handoff、
+validation 和 `Ready to Merge` 完成证据不受此规则影响。
 
 `Needs Refinement Review -> Ready` 必须由人执行。Symphony 不自动确认需求。
 
@@ -382,6 +387,9 @@ profile 不受影响。完成请求缺少非空 description 时也视为门禁�
 - Codex 可更新当前 task detail。
 - Codex 可追加当前 task comment。
 - Codex 可请求 `Refining -> Needs Refinement Review`。
+- 执行 worker 的 refinement turn 只有在同一 session 留下成功的 review 状态更新审计时才能成功；
+  缺失证据时以 `handoff_failed / missing_refinement_completion` 阻塞并把 `Refining` issue 投递到
+  `Blocked`。
 - Codex 不能移动其它 issue。
 - Codex 不能跳过人工确认直接进入 `Ready`。
 - Codex 不能在未读取评论的情况下处理打回任务。

@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.ProjectAuthority
+  alias SymphonyElixir.RunFailure
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixirWeb.WorkerApiController
 
@@ -107,15 +109,16 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert Process.alive?(pid)
     assert exhausted.running == %{}
     assert exhausted.retry_attempts == %{}
-    assert %{reason: "failure_retries_exhausted", project_id: ^project_id} = exhausted.blocked[issue_id]
+    assert %{reason: "budget_exhausted", project_id: ^project_id} = exhausted.blocked[issue_id]
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == "completed"
 
     assert_receive {:linear_comment, ^issue_id, comment}
-    assert comment =~ "failure_retries_exhausted"
+    assert comment =~ "budget_exhausted"
     assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
   end
@@ -141,12 +144,12 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       capture_log(fn ->
         Orchestrator.worker_task_finished(issue_id, {:failed, "persistent worker failure"}, orchestrator)
         state = :sys.get_state(pid)
-        assert %{reason: "failure_retries_exhausted", project_id: ^project_id} = state.blocked[issue_id]
+        assert %{reason: "budget_exhausted", project_id: ^project_id} = state.blocked[issue_id]
       end)
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
+    assert persisted.snapshot["state"] == "Ready"
     assert persisted.blocking_decision["comment_status"] == %{"failed" => ":comment_down"}
     assert persisted.blocking_decision["transition_status"] == "completed"
     assert log =~ "Blocking decision delivery step failed"
@@ -175,13 +178,14 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
         Orchestrator.worker_task_finished(issue_id, {:failed, "persistent worker failure"}, orchestrator)
         state = :sys.get_state(pid)
 
-        assert %{reason: "failure_retries_exhausted", state: "In Progress", project_id: ^project_id} =
+        assert %{reason: "budget_exhausted", state: "In Progress", project_id: ^project_id} =
                  state.blocked[issue_id]
       end)
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "In Progress"
+    assert persisted.snapshot["state"] == "Ready"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert persisted.blocking_decision["comment_status"] == "completed"
     assert persisted.blocking_decision["transition_status"] == %{"failed" => ":transition_down"}
     assert log =~ "Blocking decision delivery step failed"
@@ -207,12 +211,13 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       capture_log(fn ->
         Orchestrator.worker_task_finished(issue_id, {:blocked, "operator blocker"}, orchestrator)
         state = :sys.get_state(pid)
-        assert %{reason: "operator blocker", state: "In Progress", project_id: "missing-project"} = state.blocked[issue_id]
+        assert %{reason: "runtime_failure", state: "In Progress", project_id: "missing-project"} = state.blocked[issue_id]
       end)
 
     assert Process.alive?(pid)
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "In Progress"
+    assert persisted.snapshot["state"] == "Ready"
+    assert persisted.blocking_decision["origin_state"] == "In Progress"
     assert %{"failed" => comment_failure} = persisted.blocking_decision["comment_status"]
     assert %{"failed" => transition_failure} = persisted.blocking_decision["transition_status"]
     assert comment_failure =~ "workflow_context_unavailable"
@@ -247,10 +252,11 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
              due_at_ms: due_at_ms
            } = first.retry_attempts[issue_id]
 
-    assert first_error =~ "transient worker failure"
+    assert first_error == "runtime_failure"
     remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
     assert remaining_ms >= 9_500
     assert remaining_ms <= 10_500
+    retry_token = first.retry_attempts[issue_id].retry_token
 
     assert [
              %{
@@ -261,7 +267,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
              }
            ] = Orchestrator.snapshot(orchestrator, 100).retrying
 
-    assert snapshot_error =~ "transient worker failure"
+    assert snapshot_error == "runtime_failure"
 
     put_running(pid, issue_id, identifier,
       retry_attempt: 1,
@@ -277,37 +283,44 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     exhausted = :sys.get_state(pid)
     assert exhausted.running == %{}
     assert exhausted.retry_attempts == %{}
-    assert %{reason: "failure_retries_exhausted"} = exhausted.blocked[issue_id]
+    assert %{reason: "budget_exhausted"} = exhausted.blocked[issue_id]
 
     assert [
              %{
                issue_id: ^issue_id,
                identifier: ^identifier,
                run_id: "run-worker-failed-2",
-               reason: "failure_retries_exhausted",
+               reason: "budget_exhausted",
                detail: blocked_detail
              }
            ] = Orchestrator.snapshot(orchestrator, 100).blocked
 
-    assert blocked_detail =~ "persistent worker failure"
+    assert blocked_detail["detail"] == "persistent worker failure"
+    assert blocked_detail["failure_attempt"] == 2
+    assert blocked_detail["cause"] == "runtime_failure"
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
-    assert persisted.blocking_decision["reason"] == "failure_retries_exhausted"
-    assert persisted.blocking_decision["evidence"] =~ "persistent worker failure"
-    assert persisted.blocking_decision["evidence"] =~ "failure_attempt: 2"
+    assert persisted.snapshot["state"] == "Ready"
+    assert persisted.blocking_decision["reason"] == "budget_exhausted"
+    assert persisted.blocking_decision["evidence"]["detail"] == "persistent worker failure"
+    assert persisted.blocking_decision["evidence"]["failure_attempt"] == 2
 
     assert_receive {:linear_comment, ^issue_id, comment}
-    assert comment =~ "failure_retries_exhausted"
+    assert comment =~ "budget_exhausted"
     assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
+
+    send(pid, {:retry_issue, issue_id, retry_token})
+    after_stale_retry = :sys.get_state(pid)
+    assert after_stale_retry.running == %{}
+    assert after_stale_retry.retry_attempts == %{}
+    assert after_stale_retry.blocked[issue_id].run_id == "run-worker-failed-2"
   end
 
   test "structured handoff blockers persist and deliver immediately without entering the budget" do
     {orchestrator, pid} = start_orchestrator(max_failure_retries: 2)
     issue_id = "issue-worker-blocked"
     identifier = "SYM-WORKER-BLOCKED"
-    reason = ~s(handoff_failed\n{"marker":"需宿主 push","patch_path":"SYM-110.patch"})
     put_persisted_issue(issue_id, identifier)
     put_running(pid, issue_id, identifier, run_id: "run-worker-blocked")
 
@@ -320,28 +333,36 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
         "gates" => [%{"name" => "check", "status" => "failed"}]
       })
 
-    assert outcome == {:blocked, reason}
+    assert {:blocked, %RunFailure{classification: "contract_violation"}} = outcome
     Orchestrator.worker_task_finished(issue_id, outcome, orchestrator)
 
     state = :sys.get_state(pid)
     assert state.failure_counts == %{}
     assert state.retry_attempts == %{}
-    assert %{reason: ^reason, detail: ^reason} = state.blocked[issue_id]
+
+    assert %{
+             reason: "contract_violation",
+             detail: %{"reason" => "handoff_failed", "outcome" => "blocked"}
+           } = state.blocked[issue_id]
 
     assert [
              %{
                issue_id: ^issue_id,
                identifier: ^identifier,
                run_id: "run-worker-blocked",
-               reason: ^reason,
-               detail: ^reason
+               reason: "contract_violation",
+               detail: %{
+                 "reason" => "handoff_failed",
+                 "detail" => ~s({"marker":"需宿主 push","patch_path":"SYM-110.patch"})
+               }
              }
            ] = Orchestrator.snapshot(orchestrator, 100).blocked
 
     persisted = FakePersistence.get_issue_by_identifier(identifier)
-    assert persisted.state == "Blocked"
-    assert persisted.blocking_decision["reason"] == reason
-    assert persisted.blocking_decision["evidence"] == reason
+    assert persisted.snapshot["state"] == "Ready"
+    assert persisted.blocking_decision["reason"] == "contract_violation"
+    assert persisted.blocking_decision["evidence"]["reason"] == "handoff_failed"
+    assert persisted.blocking_decision["evidence"]["detail"] =~ "SYM-110.patch"
 
     assert_receive {:linear_comment, ^issue_id, comment}
     assert comment =~ "SYM-110.patch"
@@ -396,43 +417,48 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
     assert WorkerApiController.terminal_outcome("task.completed", %{}) == :success
 
-    for success <- ["succeeded", "success"] do
-      assert WorkerApiController.terminal_outcome(
-               "task.failed",
-               Map.put(evidence, "outcome", success)
-             ) == :success
-    end
+    assert WorkerApiController.terminal_outcome(
+             "task.failed",
+             %{"outcome" => "succeeded", "reason" => "completed"}
+           ) == :success
 
     assert WorkerApiController.terminal_outcome(
              "task.cancelled",
              Map.put(evidence, "outcome", "cancelled")
            ) == :cancelled
 
-    assert WorkerApiController.terminal_outcome(
-             "task.failed",
-             Map.put(evidence, "outcome", "blocked")
-           ) == {:blocked, "handoff_failed\nopaque detail"}
+    assert {:blocked,
+            %RunFailure{
+              classification: "contract_violation",
+              evidence: %{"reason" => "handoff_failed", "detail" => "opaque detail"}
+            }} =
+             WorkerApiController.terminal_outcome(
+               "task.failed",
+               Map.put(evidence, "outcome", "blocked")
+             )
 
-    assert WorkerApiController.terminal_outcome(
-             "task.failed",
-             Map.put(evidence, "outcome", "failed")
-           ) == {:failed, "handoff_failed\nopaque detail"}
+    assert {:failed, %RunFailure{classification: "contract_violation"}} =
+             WorkerApiController.terminal_outcome(
+               "task.failed",
+               Map.put(evidence, "outcome", "failed")
+             )
 
-    assert WorkerApiController.terminal_outcome("task.failed", evidence) ==
-             {:failed, "handoff_failed\nopaque detail"}
+    assert {:failed, %RunFailure{classification: "contract_violation"}} =
+             WorkerApiController.terminal_outcome("task.failed", evidence)
 
-    assert WorkerApiController.terminal_outcome(
-             "task.failed",
-             Map.put(evidence, "outcome", "unknown")
-           ) == {:failed, "handoff_failed\nopaque detail"}
+    assert {:failed, %RunFailure{classification: "contract_violation"}} =
+             WorkerApiController.terminal_outcome(
+               "task.failed",
+               Map.put(evidence, "outcome", "unknown")
+             )
   end
 
   test "missing and unknown controller outcomes consume failure attempts" do
     {orchestrator, pid} = start_orchestrator(max_failure_retries: 2)
 
     outcomes = [
-      {"issue-missing-outcome", "SYM-MISSING-OUTCOME", %{"reason" => "missing outcome"}},
-      {"issue-unknown-outcome", "SYM-UNKNOWN-OUTCOME", %{"outcome" => "unknown", "reason" => "unknown outcome"}}
+      {"issue-missing-outcome", "SYM-MISSING-OUTCOME", %{"reason" => "worker_error", "detail" => "missing outcome"}},
+      {"issue-unknown-outcome", "SYM-UNKNOWN-OUTCOME", %{"outcome" => "unknown", "reason" => "worker_error", "detail" => "unknown outcome"}}
     ]
 
     Enum.each(outcomes, fn {issue_id, identifier, summary} ->
@@ -473,7 +499,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert state.running == %{}
     assert state.blocked == %{}
     assert state.retry_attempts[issue_id].failure_count == 1
-    assert state.retry_attempts[issue_id].error =~ "pull_request_conflict"
+    assert state.retry_attempts[issue_id].error == "runtime_failure"
   end
 
   defp start_orchestrator(overrides \\ []) do
@@ -490,7 +516,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
   defp setup_multi_project_without_default do
     {:ok, loaded} = Workflow.load()
-    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    raw = Workflow.to_markdown(ProjectAuthority.strip(loaded.config), loaded.prompt)
     {:ok, project_a} = FakePersistence.default_project()
 
     FakePersistence.put_default_project_attrs!(%{
@@ -522,7 +548,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       %{
         identifier: identifier,
         tracker_issue_id: issue_id,
-        state: "In Progress",
+        snapshot: %{"state" => "Ready"},
         blocking_decision: nil,
         no_progress_streak: 0
       }
@@ -548,6 +574,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
       issue: issue,
       project_id: project_id,
       session_id: "worker-session",
+      admission: %{workspace_authority: {:http_worker, "worker", "worker-session"}},
       retry_attempt: Keyword.get(opts, :retry_attempt, 0),
       started_at: DateTime.utc_now()
     }

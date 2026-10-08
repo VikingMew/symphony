@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-09-19
+updated: 2026-10-03
 ---
 
 # Orchestration Specification
@@ -175,9 +175,47 @@ Worker HTTP claim and listening controls share the Orchestrator mailbox. `not_li
 empty claim before tracker access and all run, issue-transition, assignment, and accepted-event side
 effects. In refine-only mode the listening check is part of sorted candidate admission, so a filtered
 implementation candidate does not stop selection of a later refinement candidate. The second issue
-read repeats listening admission before assignment creation. A successful stop response is ordered
-after any earlier in-flight claim and before every later claim; it does not cancel an assignment
-that already exists.
+read repeats listening admission before assignment creation. A successful stop response gates later
+claims. An earlier admitted commit may finish after its
+HTTP caller times out and after stop is acknowledged; ordinary stop does not revoke that commit
+or cancel an existing assignment.
+
+### Worker claim preparation and commit
+
+- One in-memory reservation MUST cover both preparation and commit; concurrent claim requests
+  MUST NOT start another claim while that reservation exists.
+- Preparation (candidate read, history admission, second issue read, execution admission) has a
+  5000 ms total deadline. A preparation timeout MUST identify its active stage and MUST NOT be
+  mislabeled as a Linear timeout when the pending operation is a database read.
+- Commit MUST allocate stable run, assignment, and accepted-event identities before its first
+  write. The preparation timer MUST NOT terminate commit. Adapter I/O deadlines still apply.
+- An uncertain write or task exit MUST retain commit ownership. Recovery MUST look up the same
+  run, confirm the current tracker state before retrying transition, and deduplicate the accepted
+  event by its identity. Confirmed transition rejection MUST finish the admitted run as failed;
+  an uncertain failure write MUST also retain ownership until confirmed. Recovery uses 30/60-second
+  backoff and MUST NOT create a replacement identity merely because a response was lost.
+- The public claim call waits at most 6000 ms. A timeout returns retryable `worker_claim_pending`
+  while the admitted commit continues. Force stop during unresolved commit MUST report
+  `claim_commit_pending` rather than claim that cancellation completed or no work exists.
+- Lease time starts at publication. A repeated positive-slot claim from the same worker/session
+  MUST return its existing unexpired assignment unless cancellation or event persistence is in
+  progress. Replay MUST NOT create a run, accepted event, or second orchestrator notification.
+- Every preparation and commit stage records claim/worker/session identity, phase, stage, result
+  status, and elapsed milliseconds; issue identity is included once known. A task failure or
+  deadline log identifies the last stage. Candidate reads and history reads MUST be distinguishable.
+- The reservation is ephemeral. Panel restart uses the existing orphan-run reconciliation policy;
+  it does not replay a persisted work queue.
+
+Candidate selection and the second tracker read also apply one persisted-decision validity rule. A
+decision with `transition_status = completed` expects live state `Blocked`; otherwise it expects its
+`origin_state`. The decision blocks only when that state matches and its non-empty `run_id` equals
+the latest persisted issue run id. Missing scope is typed `missing_scope`; either mismatch makes the
+decision stale. The same claim compares the observed JSON and atomically clears
+`blocking_decision` and `no_progress_streak`, records `issue.blocking_decision_cleared`, releases
+only the old run projection, and continues all remaining gates. A replacement race is re-read
+without clearing the replacement's streak or projections. Cleanup preserves any newer run's
+claimed/running projection; a manually newer run is explicit retry intent and does not inherit the
+old blocker.
 
 `Ready to Merge` has no ordinary issue route. The only allowed execution there is a durable
 post-handoff review job, keyed by project, issue, PR URL, and backend-resolved immutable head OID.
@@ -192,7 +230,8 @@ pre-transition intents per poll to close the successful-Linear-write/enqueue cra
 `Ready to Merge` issues for this reconciliation path; those issues do not enter the ordinary
 dispatch route and no coding-agent worker is started for them.
 
-For each issue, the reconciler reads the latest completed `implementation_handoff` event for that
+For each issue, the reconciler reads the latest completed `implementation_handoff` event with a
+non-empty owning run id for that
 issue identifier and uses the recorded PR URL plus any repository/base/head identity as the only
 handoff evidence eligible for blocking. It queries GitHub mergeability for the current issue and
 project. A missing handoff PR, a non-definitive mergeability result, unknown/behind/CI states, or a
@@ -255,7 +294,60 @@ and leave the Orchestrator process and listening mode unchanged. The next refres
 in-memory liveness again. Other exits remain explicit failures, and centralized capacity behavior
 is unchanged.
 
+#### Worker Event Persistence and Lease Isolation
+
+The assignment manager MUST execute worker event persistence and expiry persistence outside its
+mailbox callbacks. It permits one event write in flight; additional event submissions receive
+retryable HTTP 503 `worker_event_unavailable`, with `Retry-After` and `retry_after_seconds` set to 1.
+Active heartbeats continue to apply the existing in-memory ownership and unexpired-lease checks.
+A completed write MUST preserve any intervening lease renewal or cancellation state.
+
+The worker event, terminal run update through `RunLifecycle`, and terminal run history event MUST
+commit in one PostgreSQL transaction. The Panel acknowledges an event only after commit. The
+5000 ms event-call budget returns the same retryable 503 without cancelling the write: an HTTP
+timeout is not evidence of a database rollback. Database errors and writer exits are logged with
+delivery context and surfaced as retryable failures; failed expiry persistence retains assignment
+ownership and retries on the next expiry check instead of releasing capacity.
+
+Worker-v1 event requests MUST include a UUID `payload.event_id`. The worker generates it before
+HTTP retries, and retains it across terminal delivery attempts. This identifier is the persisted
+`events.id`, whose primary key prevents duplicate insertion. A committed retry returns the original
+acknowledgement only when worker, session, assignment, event type, and normalized payload match.
+Reuse for another delivery is HTTP 409 `event_id_conflict`. Missing or invalid IDs are HTTP 422
+`invalid_event_id`. A matching committed receipt can be acknowledged after assignment completion
+or Panel restart; it does not recreate an assignment, update the run again, or republish a terminal
+notification after ownership has been released. New events still require a current matching lease.
+
+An admitted terminal write retains the assignment until its result is known and takes precedence
+over subsequent lease expiry. A failed or uncertain terminal write retains ownership and retries
+the same event ID after one second; a committed receipt resolves the outcome before any expiry
+write is allowed. Expiry cannot run concurrently with that write. An admitted progress
+write finishes before an overdue assignment starts expiry persistence. Once expiry persistence
+starts, late events are rejected and expired leases cannot be renewed. The Panel holds no unbounded
+queue of pending event writes and never interprets persisted events as executable work.
+
+#### 8.3.1 Run Admission Decision
+
+`SymphonyElixir.RunAdmission.execution_mode/0` is the only Orchestrator deployment-mode projection.
+After state, dependency, listening, capacity, candidate revalidation, and host/session selection,
+`resolve/3` MUST produce one immutable decision before any run, workspace, assignment, or executor
+write. The decision contains exactly `execution_mode`, `workspace_authority`, `source`, and `limits`.
+Run persistence, the running entry, agent invocation, and worker assignment/payload MUST consume the
+same decision.
+
+Readiness rejection is `environment_unavailable` with the selected surface and specific adapter
+kind. Panel-local readiness uses `WorkspacePreflight`; centralized SSH uses the selected host
+adapter; HTTP worker readiness uses the selected live worker/session context and exposes no local
+path. A rejection creates no run, workspace, or executor. Centralized operator tasks resolve the
+same decision before run persistence; worker-mode operator requests are unavailable before host
+selection or writes.
+
 ### 8.4 Retry and Backoff
+
+Persisted terminal runs, retry metadata, and `BlockingDecision.reason` use the classification owned
+by [Run Failure Classification Design](run-failure-classification-design.md). Opaque failure detail
+is retained as structured evidence. Runtime terminal writes pass through `RunLifecycle`; admission
+rejections before run creation remain outside this contract.
 
 Retry entry creation:
 
@@ -270,9 +362,20 @@ Backoff formula:
 - `agent.max_retry_backoff_ms` applies only to this orchestrator failure-retry schedule. Worker
   claim requests carry no prospective issue id and maintain no per-issue retry/cooldown state;
   worker re-claim cadence uses the service-provided `poll_after_seconds` and Panel admission.
+- A worker-mode active retry MUST release its claim/retry ownership, preserve the existing failure
+  count, and wait for a fresh live claim. It MUST NOT enter centralized issue dispatch.
 - A worker attempt ending in explicit `failed`, crash, or stall consumes one failure attempt.
   After the initial failure plus `agent.max_failure_retries` automatic retries, the orchestrator
   persists a blocking decision and delivers the Linear comment and `Blocked` transition.
+- Every producer writes the same JSON representation with live `origin_state` and owning `run_id`.
+  Failure/no-progress use the current running entry; merge conflict uses the second
+  `Ready to Merge` read and scoped handoff; review findings use their review run and delivery-time
+  state. The normalization migration adds `origin_state` from `issues.state` only when the JSON key
+  is absent, preserves an existing scope on repeated execution, and retains both existing columns
+  and all other decision content.
+- Persisting a terminal decision cancels the pending automatic retry. Automatic dispatch remains
+  suppressed while the decision is valid; a new run is allowed after CAS clear or explicit human
+  retry intent invalidates the old run scope.
 - Continuations, capacity requeues, and tracker failures while polling a retry do not consume the
   failure budget. A successful run clears the issue's current failure chain.
 
@@ -322,11 +425,11 @@ Reconciliation runs every tick and has two parts.
 
 Part A: Stall detection
 
-- For each running issue, compute `elapsed_ms` since:
-  - `last_codex_timestamp` if any event has been seen, else
-  - `started_at`
-- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry.
-- If `stall_timeout_ms <= 0`, skip stall detection entirely.
+- For each running issue with a `last_codex_timestamp`, compute `elapsed_ms` from that timestamp.
+- If no `last_codex_timestamp` exists, keep the issue active; `started_at` is not a fallback.
+- If `elapsed_ms > codex.stall_timeout_ms`, terminate the worker and queue a retry. Equality remains
+  active.
+- If `codex.stall_timeout_ms <= 0`, skip stall detection entirely.
 
 Part B: Tracker state refresh
 
@@ -341,9 +444,11 @@ Part B: Tracker state refresh
 
 When the service starts:
 
-1. Query tracker for issues in terminal states.
-2. For each returned issue identifier, remove the corresponding workspace directory.
-3. If the terminal-issues fetch fails, log a warning and continue startup.
+1. Resolve cleanup authorities from each enabled workflow.
+2. In worker mode, return no Panel authority and perform no Panel workspace cleanup.
+3. In centralized mode, query tracker for terminal issues and remove each workspace only through
+   the explicit Panel-local or centralized-SSH authority returned by the resolver.
+4. If the terminal-issues fetch fails, log a warning and continue startup.
 
 This prevents stale terminal workspaces from accumulating after restarts.
 

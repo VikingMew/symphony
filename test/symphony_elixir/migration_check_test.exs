@@ -34,4 +34,32 @@ defmodule SymphonyElixir.MigrationCheckTest do
 
     assert MigrationCheck.format_error(query_error) =~ "migration_query"
   end
+
+  test "assignment expiry migration replaces only the failure reason closed set" do
+    source =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261004000000_add_assignment_expired_run_failure.exs")
+      |> File.read!()
+
+    assert source =~ "DROP CONSTRAINT runs_failure_reason_closed"
+    assert source =~ "ADD CONSTRAINT runs_failure_reason_closed"
+    assert source =~ "assignment_expired"
+    assert source =~ "unknown"
+    refute source =~ "DROP CONSTRAINT runs_terminal_failure_matrix"
+    refute source =~ "def down"
+  end
+
+  test "running issue admission migration closes duplicates before adding the partial unique index" do
+    source =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261006000000_enforce_one_running_issue_run.exs")
+      |> File.read!()
+
+    assert source =~ "row_number() OVER"
+    assert source =~ "duplicate_running_run_migration"
+    assert source =~ "status = 'running'"
+    assert source =~ ~s(where: "kind = 'issue' AND status = 'running' AND issue_id IS NOT NULL")
+    assert source =~ "runs_one_running_issue"
+    refute source =~ "def down"
+  end
 end

@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-09-23
+updated: 2026-10-03
 ---
 
 # Workflow and Configuration Specification
@@ -32,7 +32,9 @@ Workflow source precedence:
    `SymphonyElixir.Config.Schema.default_workflow_policy/0`.
 2. Installation runtime/profile policy comes from the fixed PostgreSQL
    `app_settings["instance_workflow"]` value.
-3. Tracker/repository settings come from the current PostgreSQL workflow slice for that project.
+3. Tracker kind/endpoint/assignee/state lists and project gates/setup/cleanup come from the current
+   PostgreSQL workflow slice; Linear project slug and repository/source settings come only from the
+   selected `projects` row.
 4. Setup-required mode applies when either the singleton or every enabled project workflow is absent.
 
 Loader behavior:
@@ -42,6 +44,11 @@ Loader behavior:
 - Each project has exactly one operator-visible current workflow slice. Runtime publication composes
   the singleton with every enabled project slice before parsing and atomically replaces the complete
   derived snapshot set.
+- Project Settings create and update MUST validate the canonical project slice before committing the
+  project row and its unique workflow row in one database transaction. The workflow row MUST store
+  the canonical minimal YAML/Markdown representation with `prompt_body = ""`; it MUST NOT copy the
+  instance singleton prompt, `tracker.project_slug`, or the six repository/source fields owned by the
+  project row.
 - Reads without explicit project context select a configured, enabled `slug=default` workflow when
   present; otherwise they select the only enabled, loaded, non-placeholder project workflow when
   exactly one exists. If two or more enabled loaded workflows exist without a configured Default,
@@ -62,6 +69,13 @@ YAML:
 Design note:
 
 - A package SHOULD be self-contained enough to recreate the instance policy and one project's settings.
+- A combined package MAY carry `tracker.project_slug` plus project repository URL, default branch,
+  checkout depth, source strategy, worktree fetch, and worktree cleanup for review and transport.
+  Those values are not a durable workflow scope. Import MUST compare every explicit value with the
+  selected project before beginning a transaction; any mismatch returns
+  `{:project_authority_conflict, conflicts}` with path, installed value, and package value and leaves
+  both durable workflow scopes and the published snapshot unchanged. Matching values MUST be removed
+  before workflow persistence; omitted values use the selected project row.
 - The package under `docs/examples/` is example and import material. Runtime code MUST read the
   project's PostgreSQL snapshot rather than files from the source checkout.
 - `workflow` keys are portable example metadata only. Durable instance and project slices MUST NOT
@@ -86,6 +100,8 @@ Parsing rules:
 - Implementations MUST validate imported package data before atomically replacing its two durable scopes.
 - Project persistence and project-slice export MUST reject out-of-scope fields with a typed error;
   they MUST NOT silently discard instance keys, profiles, base prompts, workflow policy, or secrets.
+- Project-slice export MUST omit the seven project-row-owned fields. Combined export MUST materialize
+  them from the selected project row.
 
 Returned workflow object:
 
@@ -113,8 +129,9 @@ Note:
   changing the core schema above.
 - Extensions SHOULD document their field schema, defaults, validation rules, and whether changes
   apply dynamically or require restart.
-- A Symphony instance maintains one runtime/profile singleton and one tracker/repository workflow
-  slice per enabled project. Workspace roots, initialization/disk thresholds, lifecycle hooks,
+- A Symphony instance maintains one runtime/profile singleton, one minimal tracker/project workflow
+  slice per enabled project, and project-row authority for Linear slug and repository/source fields.
+  Workspace roots, initialization/disk thresholds, lifecycle hooks,
   Codex policy, observability, analytics, server/worker policy, base prompt, and profiles have no
   per-project override. Persisted runs, issues, events, and worker tasks carry the originating
   `project_id`.
@@ -133,6 +150,8 @@ Fields:
   - Canonical environment variable for `tracker.kind == "linear"`: `LINEAR_API_KEY`.
 - `project_slug` (string)
   - REQUIRED for dispatch when `tracker.kind == "linear"`.
+  - The selected `projects.linear_project_slug` field is its sole durable authority. A portable package
+    may carry the value, but a workflow row MUST NOT persist it.
 - `active_states` (list of strings)
   - Default: `Todo`, `Ready`, `In Progress`
 - `terminal_states` (list of strings)
@@ -174,6 +193,14 @@ declares independent `check`, `unit`, and `dialyzer` script gates plus PR descri
 E2E is a credentialed manual suite run with `SYMPHONY_RUN_LIVE_E2E=1 mix test --only live_e2e` or
 `scripts/e2e.sh`; it is not currently connected to CI.
 
+#### 5.3.3 `project.checkout_depth` (positive integer)
+
+Project Settings and the `projects.checkout_depth` column own `project.checkout_depth`. Its default is `1`,
+and values must be positive integers. The resolved execution decision copies it unchanged to
+assignment `source.checkout_depth`; the execution worker uses that value for fresh clone and every
+explicit default/task branch fetch. The worker does not define a depth default or a full-clone
+fallback.
+
 #### 5.3.3 `workspace` (object)
 
 Fields:
@@ -183,6 +210,14 @@ Fields:
   - `~` is expanded.
   - Relative paths are resolved relative to an implementation-defined runtime base directory.
   - The effective workspace root is normalized to an absolute path before use.
+- `initialize_timeout_ms` (positive integer)
+  - The instance workflow singleton and Runtime Settings own this field; projects do not override it.
+  - Default: `60000`.
+  - The resolved execution decision copies the value unchanged to
+    `limits.initialize_timeout_ms`.
+  - `Worker.ExecutionPayload` rounds it upward to seconds once. The worker then applies that one
+    budget to clone, default/task fetch, remote branch lookup, and checkout without a worker-side
+    fallback.
 
 #### 5.3.4 `hooks` (object)
 
@@ -288,14 +323,15 @@ Validation rules:
   `codex.command` and direct the operator to the Settings / Runtime selectors. Other command
   options and other `-c` / `--config` keys remain valid.
 
-Settings / Import converts the supported legacy command representation before it builds the
-editable draft. Existing explicit selectors win; missing selectors are populated from the legacy
-flags; the migrated flags are removed; and the staged diff exposes the command and selector
-changes. This is an import-time conversion only. Launch, dispatch, and turn creation MUST NOT parse
-model or effort from `codex.command`. The PostgreSQL data migration applies the same precedence to
-persisted current workflows, updates legacy full workflow rows' `yaml_config` and `raw_workflow_md`
-together, and updates the converged instance singleton or unresolved instance candidates when the
-earlier scope migration has already moved Codex configuration there.
+Settings / Import converts the supported legacy command representation before it stages the review
+preview, then applies the staged changes on confirmation. Existing explicit selectors win; missing
+selectors are populated from the legacy flags; the migrated flags are removed; and the staged diff
+exposes the command and selector changes. This is an import-time conversion only. Launch, dispatch,
+and turn creation MUST NOT parse model or effort from `codex.command`. The PostgreSQL data migration
+applies the same precedence to persisted current workflows, updates legacy full workflow rows'
+`yaml_config` and `raw_workflow_md` together, and updates the converged instance singleton or
+unresolved instance candidates when the earlier scope migration has already moved Codex
+configuration there.
 
 The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
 Codex block carries explicit `thread_sandbox: "danger-full-access"` and
@@ -332,7 +368,7 @@ runtime workflow that omits an explicit `turn_sandbox_policy`.
 - `read_timeout_ms` (integer)
   - Default: `5000`
 - `stall_timeout_ms` (integer)
-  - Default: `300000` (5 minutes)
+  - Default: `600000` (10 minutes)
   - If `<= 0`, stall detection is disabled.
 
 ### 5.4 Prompt Template Contract
@@ -453,8 +489,9 @@ Dynamic reload is REQUIRED:
 - Runtime reads MUST NOT query persistence, trigger refresh-on-read, or wait behind persistence
   refresh work. An absent cache owner MUST NOT cause caller-side database fallback.
 - Successful instance, workflow, and project mutations MUST persist first and publish the complete replacement
-  snapshot before reporting full success. Persistence success followed by publication failure MUST
-  return a typed partial/refresh failure.
+  snapshot before reporting full success. A Project Settings transaction MUST publish exactly once
+  after commit. Persistence success followed by publication failure MUST return a typed
+  `runtime_publication_failed` partial/refresh failure and MUST NOT roll back the durable commit.
 - The software MUST detect externally saved current-workflow changes in the background with at
   most one refresh in flight. Timer ticks during a stall MUST coalesce or skip.
 - Background publication MUST use a generation guard so work started before a newer mutation cannot
@@ -476,6 +513,12 @@ Dynamic reload is REQUIRED:
 - Invalid or unavailable refreshes MUST NOT crash the service or expose a partial project set; keep
   the complete last-known-good snapshot, including setup-required, and emit a structured
   operator-visible error.
+- When a legacy workflow row carries any of the seven project-owned fields, composition MUST emit a
+  structured `project_authority_drift` warning containing project identity, field path, and duplicate
+  or conflict status when that drift is first observed or changes. An unchanged background refresh
+  MUST NOT emit the same warning again. Composition MUST strip the carrier and inject only the
+  project-row value. Saving that project through Project Settings MUST rebuild both workflow
+  representations without the carriers.
 
 ### 6.3 Dispatch Preflight Validation
 
@@ -519,7 +562,14 @@ not require recognizing or validating extension fields unless that extension is 
 - `tracker.active_states`: list of strings, default `["Todo", "Ready", "In Progress"]`
 - `tracker.terminal_states`: list of strings, default `["Canceled", "Cancelled", "Duplicate", "Done"]`
 - `polling.interval_ms`: integer, default `30000`
-- `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`
+- `workspace.root`: path resolved to absolute, default `<system-temp>/symphony_workspaces`;
+  Runtime / Agents Save and confirmed Settings / Import validate it before change detection and
+  persistence. An existing root
+  MUST be a writable directory. A missing root is valid when its nearest existing ancestor accepts
+  a write probe; the check does not create the configured root. Existing non-directories,
+  inaccessible paths, and roots that cannot be created or written receive a typed rejection. The
+  owning behavior and pre-listen contract are defined in
+  [Workspace Source Layout 设计](workspace-source-layout-design.md#workspace-root-有效性门禁).
 - `hooks.after_create`: instance-owned shell script or null
 - `hooks.before_run`: instance-owned shell script or null
 - `hooks.after_run`: instance-owned shell script or null
@@ -539,4 +589,4 @@ not require recognizing or validating extension fields unless that extension is 
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined
 - `codex.turn_timeout_ms`: integer, default `3600000`
 - `codex.read_timeout_ms`: integer, default `5000`
-- `codex.stall_timeout_ms`: integer, default `300000`
+- `codex.stall_timeout_ms`: integer, default `600000`

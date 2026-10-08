@@ -6,6 +6,9 @@ defmodule SymphonyElixir.Worker.PayloadTest do
   test "accepts the versioned opaque execution contract" do
     assert {:ok, payload} = Payload.parse(valid_payload())
     assert payload.repository == "https://example.test/repo.git"
+    assert payload.source_strategy == "clone"
+    assert payload.checkout_depth == 1
+    assert payload.initialize_timeout_seconds == 60
     assert payload.codex.prompt == "Implement the task."
 
     assert payload.codex.issue == %{
@@ -30,6 +33,17 @@ defmodule SymphonyElixir.Worker.PayloadTest do
   test "accepts an empty required gates list" do
     assert {:ok, payload} = Payload.parse(Map.put(valid_payload(), "required_gates", []))
     assert payload.gates == []
+  end
+
+  test "rejects incomplete or invalid source decisions without defaults" do
+    for invalid <- [
+          Map.delete(valid_payload(), "checkout_depth"),
+          Map.put(valid_payload(), "checkout_depth", 0),
+          Map.put(valid_payload(), "initialize_timeout_seconds", 0),
+          Map.put(valid_payload(), "source_strategy", "worktree")
+        ] do
+      assert {:error, {:invalid_execution_payload, _message}} = Payload.parse(invalid)
+    end
   end
 
   test "preserves validation of configured gates" do
@@ -69,6 +83,9 @@ defmodule SymphonyElixir.Worker.PayloadTest do
       "repository" => "https://example.test/repo.git",
       "default_branch" => "main",
       "branch" => "work",
+      "source_strategy" => "clone",
+      "checkout_depth" => 1,
+      "initialize_timeout_seconds" => 60,
       "hooks" => [],
       "codex" => %{
         "command" => "codex app-server",

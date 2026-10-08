@@ -4,7 +4,10 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.TestSupport.WorkflowFixtures
+  alias SymphonyElixir.{Workflow, WorkflowForm}
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -46,11 +49,84 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
            end) == false
   end
 
-  test "legacy Codex command import stages conversion details and applies selector values" do
+  test "project-scope import requires an explicit target" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
 
     {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']",
+        import: %{"yaml" => WorkflowFixtures.settings_workflow_yaml()}
+      )
+      |> render_submit()
+
+    assert staged_html =~ "Project — no target selected"
+    rejected_html = render_click(view, "confirm_settings_import")
+    assert rejected_html =~ "Project target required"
+    assert rejected_html =~ "project_target_required"
+
+    assert Enum.all?(FakePersistence.calls(), fn
+             {:import_package, _project, _raw, _source} -> false
+             _ -> true
+           end)
+  end
+
+  test "initialization-timeout-only import confirms without a project target" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    yaml =
+      WorkflowForm.empty()
+      |> workflow_config!()
+      |> Map.delete("profiles")
+      |> put_in(["workspace", "initialize_timeout_ms"], 61_000)
+      |> WorkflowFixtures.workflow_package_yaml()
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => yaml})
+      |> render_submit()
+
+    assert staged_html =~ "Review staged import"
+    assert staged_html =~ "Durable scopes"
+    assert staged_html =~ "Instance"
+    assert staged_html =~ "workspace.initialize_timeout_ms"
+    assert staged_html =~ "61000"
+
+    assert staged_html
+           |> Floki.parse_document!()
+           |> Floki.find(".settings-import-scope-group h4")
+           |> Floki.text(deep: false)
+           |> String.trim() == "Instance"
+
+    confirmed_html = render_click(view, "confirm_settings_import")
+
+    assert confirmed_html =~ "Instance settings imported"
+
+    assert Enum.any?(FakePersistence.calls(), fn
+             {:put_instance_workflow, config, _prompt} ->
+               get_in(config, ["workspace", "initialize_timeout_ms"]) == 61_000
+
+             _other ->
+               false
+           end)
+
+    assert Enum.all?(FakePersistence.calls(), fn
+             {:import_package, _project, _raw, _source} -> false
+             {:import_workflow, _project, _raw, _source} -> false
+             _other -> true
+           end)
+  end
+
+  test "legacy Codex command import stages conversion details and applies selector values" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
 
     legacy_yaml = """
     codex:
@@ -74,7 +150,6 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
     |> element("button[phx-click='confirm_settings_import']")
     |> render_click()
 
-    assert_patch(view, "/settings")
     runtime_html = render_patch(view, "/settings/runtime")
 
     assert has_element?(view, "#workflow-codex-model option[selected][value='gpt-5.5']")
@@ -88,6 +163,78 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
     assert runtime_html =~ "Use selected model or Codex default"
   end
 
+  test "combined import shows and rejects project authority conflicts without durable writes" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, project} = FakePersistence.default_project()
+    baseline_instance = FakePersistence.instance_workflow()
+    baseline_workflow = FakePersistence.current_workflow(project)
+    baseline_publications = FakePersistence.runtime_publication_count()
+
+    conflicting_yaml =
+      String.replace(
+        WorkflowFixtures.settings_workflow_yaml(),
+        project.repository_url,
+        "git@github.com:org/conflict.git"
+      )
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => conflicting_yaml})
+      |> render_submit()
+
+    assert staged_html =~ "project.repository_url"
+    assert staged_html =~ "git@github.com:org/conflict.git"
+
+    rejected_html = render_click(view, "confirm_settings_import")
+    assert rejected_html =~ "project_authority_conflict"
+    assert rejected_html =~ "installed_value"
+    assert rejected_html =~ "git@github.com:org/repo.git"
+    assert rejected_html =~ "package_value"
+    assert rejected_html =~ "git@github.com:org/conflict.git"
+    assert FakePersistence.instance_workflow() == baseline_instance
+    assert FakePersistence.current_workflow(project) == baseline_workflow
+    assert FakePersistence.runtime_publication_count() == baseline_publications
+  end
+
+  test "combined import inherits omitted project authority and persists only the minimal slice" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    {:ok, project} = FakePersistence.default_project()
+    assert {:ok, {:workflow, config}} = Workflow.parse_settings_yaml(WorkflowFixtures.settings_workflow_yaml())
+
+    yaml =
+      config
+      |> ProjectAuthority.strip()
+      |> put_in([Access.key("project", %{}), "setup_commands"], ["mix omitted-authority"])
+      |> WorkflowFixtures.workflow_package_yaml()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import?project=fake-project-id")
+
+    staged_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => yaml})
+      |> render_submit()
+
+    assert staged_html =~ "project.setup_commands"
+    assert staged_html =~ "project.repository_url" == false
+
+    confirmed_html = render_click(view, "confirm_settings_import")
+    assert confirmed_html =~ "Instance and Project settings imported"
+
+    workflow = FakePersistence.current_workflow(project)
+    assert ProjectAuthority.carrier_values(workflow.yaml_config) == %{}
+    assert get_in(workflow.yaml_config, ["project", "setup_commands"]) == ["mix omitted-authority"]
+
+    assert {:ok, loaded} = FakePersistence.workflow_to_loaded(FakePersistence.instance_workflow(), workflow)
+    assert get_in(loaded.config, ["tracker", "project_slug"]) == project.linear_project_slug
+    assert get_in(loaded.config, ["project", "repository_url"]) == project.repository_url
+  end
+
   defp start_test_endpoint do
     endpoint_config =
       :symphony_elixir
@@ -96,6 +243,13 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
 
     Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, endpoint_config)
     start_supervised!({SymphonyElixirWeb.Endpoint, []})
+  end
+
+  defp workflow_config!(draft) do
+    case WorkflowForm.to_config(draft) do
+      {:ok, config} -> config
+      {:error, reason} -> flunk("expected workflow config, got #{inspect(reason)}")
+    end
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

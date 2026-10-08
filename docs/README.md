@@ -4,7 +4,7 @@ genre: meta
 domain: [governance, docs]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-08
 ---
 
 # Documentation Index
@@ -53,7 +53,11 @@ other documents link instead of restating.
 | [remove-default-project-dependency-design.md](remove-default-project-dependency-design.md) | Multi-project first: default project becomes optional, no auto-create. | landed |
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
+| [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
+| [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |
+| [issue-persistence-design.md](issue-persistence-design.md) | Persisted issue identity, poll snapshots, worker-owned state, and history projection. | landed |
+| [observability-errors-design.md](observability-errors-design.md) | Structured logs, request/tool error envelopes, correlation, operator commands, and source ratchet. | landed |
 
 ## L4 — Normative Contracts
 
@@ -76,6 +80,8 @@ other documents link instead of restating.
 | [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
 | [spec-agent-facing-code.md](spec-agent-facing-code.md) | Agent-facing code definitions, threshold semantics, evidence classes, conformance levels, declaration, and sources. |
 | [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 36-unit constitution audit with reproducible repository evidence. |
+| [agent-facing-code-x-conformance.md](agent-facing-code-x-conformance.md) | Current X-01 through X-05 test-governance facts, checker calibration, and hard-gate waterline. |
+| [agent-facing-code-o-conformance.md](agent-facing-code-o-conformance.md) | Current O-01 through O-08 observability/error evidence and ratchet waterline. |
 
 ## L5 — Operational Guides
 

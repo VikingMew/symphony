@@ -48,12 +48,12 @@ Elixir / Phoenix Web Service
 
 当前已知对齐说明：
 
-- `已落地`：唯一 PostgreSQL instance workflow singleton + 每项目唯一 tracker/source slice、Settings tabbed configuration、`/settings/import` 双 scope package 导入、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。Agents/Runtime 的 instance 字段暂时仍显示，但普通 project save 会 typed reject，等待后续 UI 收敛。
-- `已落地`：Project source/bootstrap 由 project slice 和 instance singleton 共同控制。Project Settings 拥有 repository URL、default branch、checkout depth、source strategy 和 project setup/cleanup commands；singleton 拥有 `workspace.initialize_timeout_ms`、workspace roots、disk threshold 与所有 lifecycle hooks，不接受 project hook override。
+- `已落地`：唯一 PostgreSQL instance workflow singleton + 每项目唯一最小 tracker/project slice；project row 是 Linear project slug 与 6 个 source 字段的唯一 durable authority。Settings tabbed configuration、`/settings/import` 双 scope package 导入、profile-aware prompt、restricted Linear task tools、project bootstrap schema、缺失 `project.repository_url` 阻止调度、每次 run 使用新 workspace、Codex session 启动后由 Symphony 执行 `Ready -> In Progress`。Agents/Runtime 直接保存 singleton，Projects 原子保存 project record 与最小 slice，并展示 legacy carrier drift。
+- `已落地`：Project source/bootstrap 由 project row、最小 project slice 和 instance singleton 共同控制。Project row 唯一拥有 repository URL、default branch、checkout depth、source strategy 与 worktree fetch/cleanup；project slice 拥有 setup/cleanup commands；singleton 拥有 `workspace.initialize_timeout_ms`、workspace roots、disk threshold 与所有 lifecycle hooks，不接受 project hook override。
 - `已落地`：运行时完全 DB-only。Orchestrator、diagnostics、Settings 和 agent runner 读取组合后的内存 snapshot；本地 split package 文件只作为导入/导出格式和示例存在。singleton 或 enabled project slice 任一缺失时进入 setup-required，且不会开始监听或调度。
 - `已落地`：Run Detail 同时展示 raw persisted events 和按 run_id 隔离的历史 Session History。live dashboard 的 session history 是运行中视图；run detail 的历史 session history 由 persisted events 映射出来，按单个 run chronological 展示，不混合同一 issue 的其他 attempts。
 - `已落地`：中心化 agent run 终态必须持久化 `status`、`finished_at` 和失败原因；Orchestrator 启动时会把上一次 runtime 遗留的 `running` rows 标记为 failed 并写入明确原因，避免 Runs 页面长期显示多个过期 running attempts。
-- `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，展示 staged diff/review，并在确认后写入 editable draft；运行时仍只在正常 Save 后变化。
+- `已落地`：`/settings/import` 是独立 Settings tab，支持粘贴或上传 `workflow.yml` / `profiles.yml`，自动识别 package 类型，按 Instance/Project 展示 staged diff/review；project-owned 载体值不同会在事务前 typed reject，相同值剥离后才在同一事务中写 singleton 与显式选择 project 的最小 slice。
 - `已落地`：input-required / approval-required / MCP elicitation 会作为 blocked session 暴露在 snapshot、API 和 dashboard 中，不再当作普通 retry failure。
 - `已落地`：默认交付使用 refinement/implementation 两个 Codex profile；实现完成后由
   `AgentRunner` 确保 open GitHub PR，再进入 `Ready to Merge` 等待人 review。后端不 merge，
@@ -61,6 +61,10 @@ Elixir / Phoenix Web Service
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、宿主或外部基础设施启动的容器隔离 worker 和更强 sandbox runner 仍是后续阶段；这不表示 Compose 内 DinD 或容器引擎 socket passthrough，边界见 [Compose 运维契约](compose.md#container-control-plane-boundary)。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
 - `已落地`：独立历史 Analytics 页面已落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
+- `已落地`：console 与 rotating-file 第一方日志统一为 JSON Lines；restricted tool 的 typed
+  error 与 `tool_call_id` 可在中心化、worker audit 和历史事件中关联。稳定字段和唯一的 logs、
+  trace、metrics/state 命令由 [Logging and Error Contract](logging.md) 管理，存量 source debt 由
+  deletion-only `mix observability.check` baseline 显式计数。
 - `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已落地，部署说明维护在 [Deployment Guide](deployment.md)。
 - `已落地`：GitHub 风格顶层 README 已落地，顶层 README 是项目入口文档。
 - 文档对齐矩阵维护在 [Documentation Alignment Matrix](documentation-alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的实现完成时，应同步更新该矩阵或对应 canonical docs。
@@ -176,8 +180,10 @@ secrets_metadata（后续）
 
 ### 5.3 workflows
 
-每个 `workflows` row 只保存所属 project 的 tracker/repository/source slice。instance-owned 字段、
-base prompt、profiles、code-owned workflow policy 和 tracker secret 不写入该 row；project
+每个 `workflows` row 只保存所属 project 的 tracker kind/endpoint/assignee/state lists 与
+project gates/setup/cleanup。Linear project slug 与 repository URL/default branch/checkout depth/
+source strategy/worktree fetch/cleanup 只保存在 `projects` 行。instance-owned 字段、base prompt、
+profiles、code-owned workflow policy 和 tracker secret 不写入该 row；project
 persistence/export 携带这些字段时 typed reject。
 
 典型字段：
@@ -194,8 +200,8 @@ persistence/export 携带这些字段时 typed reject。
 
 run 不绑定 workflow 记录；后续 dispatch、retry 和 resumed turn 在安全边界解析 current workflow。
 
-`raw_workflow_md` 与 `yaml_config` 都只包含 project slice，`prompt_body` 为空。portable combined
-package 由 export helper 在边界重新组合，不把完整 package 复制进 project row。
+`raw_workflow_md` 与 `yaml_config` 都只包含最小 project slice，`prompt_body` 为空。portable combined
+package 由 export helper 在边界从 project 行物化 7 个 project-owned 值，不把它们复制进 workflow row。
 
 ### 5.3.1 app_settings instance_workflow
 
@@ -279,10 +285,10 @@ states/transitions 不提供第二套 UI 编辑入口，导入保存后的 Postg
 
 Settings 页面提供几个互相一致的 tab/入口：
 
-- `/settings/projects` 项目配置：编辑多个 project。每个 project 拥有自己的 Linear project slug、repository URL、default branch、checkout depth、source strategy、worktree 路径策略、enabled 状态和描述，并提供只读 Linear discovery 辅助复制 Linear project slug。
-- `/settings/agents` 暂时展示 profiles/base prompt 字段；普通 project save typed reject instance-owned 字段，后续 UI 工作再提供正确 singleton 编辑面。
-- `/settings/runtime` 暂时展示 runtime selector；普通 project save 同样不能修改 singleton。
-- Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，显示 staged diff 和校验结果，确认后的 Save 把 combined draft 分拆写入 singleton 与所选 project slice。
+- `/settings/projects` 项目配置：编辑多个 project。project row 拥有 Linear project slug 与 repository/source，最小 workflow slice 拥有其余 tracker 与 setup/cleanup；页面逐字段展示 effective/carrier/status，并通过正常 Save 收敛 legacy workflow carriers。
+- `/settings/agents` 编辑 installation-wide base prompt 与 profiles，直接保存 instance singleton。
+- `/settings/runtime` 编辑 installation-wide workspace、hooks 与 Codex selector，直接保存 instance singleton；legacy drift 对账要求显式选择来源 project。
+- Split package 导入：`/settings/import` 支持粘贴或上传 `workflow.yml` / `profiles.yml`，按 Instance 与具名 Project 显示 staged diff 和校验结果；显式 project-owned 值必须与目标 project 相同，否则在事务前 typed reject。相同值写 workflow 前剥离，一次确认把两个 workflow scope 原子写入。
 
 这些入口必须遵守同一 ownership matrix。combined package 在边界拆成两个 durable scopes，导出时再组合；运行时只读取其原子发布的 composed snapshot。
 
@@ -507,10 +513,12 @@ Dashboard 的长期视觉语言应使用语义化配色，而不是临时页面�
 - 暂停/恢复 project。
 - 手动 refresh tracker。
 - 停止、重试、清理 run。
-- 在 Projects 配置 Linear project slug、repository URL、default branch；在 Workflow 配置 active states、terminal states、human review states 和 transitions。
-- 配置 workspace root、hooks、Codex command。
-- 编辑完整 workflow package contract 的结构化字段，包括 `workflow.yml` 和 `profiles.yml`。当前已覆盖核心字段，仍需补齐所有配置域和更细字段校验。
-- 预览 workflow diff，并在保存前运行字段/schema 校验；跨字段和 Linear 外部匹配问题保存为 configuration check。当前已运行 schema 校验，diff 预览仍是后续。
+- Projects 只配置 per-project tracker、repository/source、setup/cleanup；Runtime 配置 installation-wide
+  workspace roots、初始化/磁盘阈值、hooks 与 Codex selectors；Agents 配置 installation-wide base prompt/profiles。
+- Import 按 Instance 与显式选择的 Project 展示 portable package diff，并在一次确认中原子写两个 scope；
+  legacy instance drift 在 Runtime configuration check 中列出 key/contributor，必须由 operator 显式选择来源。
+- workflow routing、transitions、human review states 与 tool policy 是 code-owned contract，不提供持久化编辑面。
+- 保存前运行字段/schema 校验；跨字段和 Linear 外部匹配问题显示为 configuration check。
 - 查看时间范围内的 runtime/project/profile 成果统计，见 `/analytics`。
 - 通过 run/event 记录查看执行审计；run 不绑定历史 workflow。
 

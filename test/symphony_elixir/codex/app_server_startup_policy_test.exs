@@ -182,7 +182,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-prestart"}}}'
             ;;
           4)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -406,7 +406,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-1001"}}}'
             ;;
           4)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)
@@ -537,7 +537,7 @@ defmodule SymphonyElixir.Codex.AppServerStartupPolicyTest do
             printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-proxy"}}}'
             ;;
           4)
-            printf '%s\\n' '{"method":"turn/completed"}'
+            printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
             exit 0
             ;;
           *)

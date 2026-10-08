@@ -4,7 +4,7 @@ genre: design
 domain: [hot-update, runtime]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-10-05
 design_status: landed
 ---
 
@@ -26,21 +26,32 @@ Symphony 需要区分三种热更新：
 
 ## 1. 配置热更新：当前主要能力
 
-Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]` 与每项目唯一的 PostgreSQL
-`workflows` slice。portable package 导入在同一事务内写两个 scope；单独保存任一 scope 后，
+Symphony 的长期运行配置来自固定 `app_settings["instance_workflow"]`、每项目唯一的 PostgreSQL
+最小 `workflows` slice，以及 project 行唯一持有的 Linear project slug 与 6 个 source 字段。
+portable package 导入在同一事务内写两个 workflow scope；单独保存任一 scope 后，
 `WorkflowStore` 都重新读取 singleton 与全部 enabled project slices，并一次替换完整内存 snapshot。
 
 关键路径：
 
-- `/settings/import` 导入 combined portable package，并拆分为 instance/project durable scopes；这是
-  保存 instance-owned Codex selector 的受支持入口，保存后可在 `/settings/runtime` 回读。
-- base prompt、profiles 与 Codex runtime selectors 属于 instance singleton。当前 Agents/Runtime 字段仍
-  显示，但普通 project save 携带这些字段会在 persistence boundary 收到 typed rejection；字段收敛由后续 UI 工作负责。
+- `/settings/import` 导入 combined portable package，并拆分为 instance/project durable scopes。
+- base prompt、profiles 与 Runtime workspace/hooks/Codex selectors 属于 instance singleton。
+  Agents/Runtime 直接保存 singleton，不要求 project，也不随 project selector 改变。Projects form 只包含
+  tracker/repository/source/setup/cleanup，因此 project save 不会提交或改变 instance 字段。
 - Runtime model/effort 可选集来自 `SymphonyElixir.Codex.ModelCatalog`。该 code-owned catalog
   与 `Dockerfile` 的 exact bundled `CODEX_VERSION` pin（当前 `0.156.0`）同步派生；升级 CLI
-  需要重建镜像并同步 catalog。Runtime 表单只负责呈现和联动，普通 submit 继续收到 typed
-  rejection；通过 Import 保存当前 catalog 的值属于 workflow 配置热更新。
+  需要重建镜像并同步 catalog。从 Runtime 或 Import 保存当前 catalog 的值属于 workflow 配置热更新。
 - 保存成功后，持久化边界在返回成功前发布所有 project 的完整 derived snapshot；发布失败会返回显式错误，页面不会误报 runtime refreshed。
+- Projects save 在一个 durable transaction 内提交 project metadata 与 canonical project workflow，
+  commit 后只发布一次完整 snapshot。发布失败返回 typed `runtime_publication_failed`，保留已经提交的
+  durable state，页面显示失败且不会尝试跨 PostgreSQL 与内存 snapshot 回滚。
+- Projects save 先把 7 个 project-owned 字段写入 project 行，再把 tracker kind/endpoint/assignee/states
+  与 project gates/setup/cleanup 保存为最小 workflow slice；保存会同时清除 legacy
+  `yaml_config` / `raw_workflow_md` 载体副本。重新发布时始终从 project 行注入 7 个生效值。
+- combined import 在事务前比较 package 中显式出现的 project-owned 值与目标 project；不同则返回
+  typed `project_authority_conflict` 且不写任一 durable scope、不发布 snapshot，相同则只用于 review
+  并在 workflow 写入前剥离。省略值继续使用目标 project 行。legacy duplicate/conflict 在组合时告警，
+  但不会覆盖 project 行或成为 fallback；`WorkflowStore` 只在 drift 首次发现或状态变化时记录 warning，
+  固定节奏后台刷新不会重复放大同一状态。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。
@@ -81,7 +92,10 @@ http://127.0.0.1:4000/settings
 修改配置后点击对应页面的保存按钮：
 
 - Projects 页面：保存 project 字段，例如 Linear project slug、repository URL、default branch。
-- Import 页面：导入 singleton runtime/profile policy 与所选 project slice。
+- Agents 页面：保存 installation-wide base prompt 与 profiles。
+- Runtime 页面：保存 installation-wide workspace、hooks 与 Codex selectors。
+- Import 页面：分组预览 singleton、最小 project slice 与 portable project-owned 值；combined confirm
+  在权威值一致时原子写两个 workflow scope，冲突时在任何事务或发布前拒绝。
 
 保存成功后，页面会显示 saved 反馈；Linear 相关配置建议再打开 `/diagnostics/linear` 验证。
 
@@ -99,8 +113,8 @@ http://127.0.0.1:4000/settings
   的 `model` / `model_reasoning_effort` 或 `-m` / `--model` 建立第二份 authority。显式 selector 只影响
   后续 turn/session，不改写已经启动的 turn。
 - Runtime selector 与 workflow validation 读取同一个 `ModelCatalog`，因此页面可选的
-  model/effort 组合与 bundled CLI pin 对应的 code-owned 快照保持一致。Import 持久化后，
-  Runtime reload 显示该值，后续 turn/session 才读取并发送对应 override。
+  model/effort 组合与 bundled CLI pin 对应的 code-owned 快照保持一致。Runtime 或 Import 持久化后，
+  Runtime 显示该值，后续 turn/session 才读取并发送对应 override。
 - worker claim 每次从最新 workflow 构造 ephemeral payload；不存在尚未 claim 的 persisted task，
   payload 会携带当次 snapshot 中的 Codex model/effort selector；已发放的当前 assignment
   不在保存时改写。

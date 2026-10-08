@@ -22,7 +22,8 @@ defmodule SymphonyElixir.Persistence.EventRecord do
   @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
   def changeset(event, attrs) do
     event
-    |> cast(attrs, [:project_id, :run_id, :issue_identifier, :event_type, :payload, :occurred_at])
+    |> cast(attrs, [:id, :project_id, :run_id, :issue_identifier, :event_type, :payload, :occurred_at])
+    |> unique_constraint(:id, name: :events_pkey)
     |> validate_required([:event_type, :occurred_at])
   end
 end

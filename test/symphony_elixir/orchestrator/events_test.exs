@@ -3,6 +3,8 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.Events
+  alias SymphonyElixir.RunAdmission
+  alias SymphonyElixir.RunFailure
 
   test "issue attrs include the persisted issue snapshot" do
     issue = issue(labels: ["bug"])
@@ -11,7 +13,6 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
              tracker_issue_id: "issue-1",
              identifier: "MT-1",
              title: "Fix it",
-             state: "Ready",
              url: "https://linear.example/MT-1",
              labels: %{"values" => ["bug"]},
              snapshot: %{
@@ -29,10 +30,11 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
   test "run and assignment payload attrs preserve existing contract" do
     issue = issue()
-    workflow = %{}
-    run = %{id: "run-1", project_id: "project-1"}
 
-    run_attrs = Events.run_attrs(issue, workflow, "worker", 2)
+    run = %{id: "run-1", project_id: "project-1"}
+    admission = admission()
+
+    run_attrs = Events.run_attrs(issue, admission, 2)
     assert run_attrs.issue_identifier == "MT-1"
     assert run_attrs.status == "running"
     assert run_attrs.execution_mode == "worker"
@@ -40,7 +42,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
 
     assignment_attrs =
       SymphonyElixir.Config.with_workflow_context(workflow_context(), fn ->
-        Events.worker_assignment_payload(issue, run, workflow, "Prompt", "implementation")
+        Events.worker_assignment_payload(issue, run, admission, "Prompt", "implementation")
       end)
 
     payload = assignment_attrs.payload
@@ -56,9 +58,20 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
              "scripts/dialyzer.sh"
            ]
 
-    assert payload["repository"]["implementation_branch"] == "feature/mt-1"
+    assert payload["source"] == %{
+             "repository" => "https://decision.example/repo.git",
+             "default_branch" => "trunk",
+             "implementation_branch" => "feature/mt-1",
+             "source_strategy" => "clone",
+             "checkout_depth" => 7
+           }
+
+    assert Map.has_key?(payload, "repository") == false
     assert payload["codex"]["model"] == "gpt-5.5"
     assert payload["codex"]["reasoning_effort"] == "xhigh"
+    assert payload["limits"]["stall_timeout_ms"] == 600_000
+    assert payload["limits"]["initialize_timeout_ms"] == 61_001
+    assert payload["limits"]["retry_backoff_ms"] == 300_000
     assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 
@@ -67,15 +80,15 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     run = %{id: "run-1"}
     running_entry = %{identifier: "MT-1", run_id: "run-1", workspace_path: "/tmp/work", worker_host: "worker-a"}
 
-    failure_reason =
-      "class=agent_domain_failure reason={:codex_startup_failed, %{stage: :thread_start, timeout_ms: 30000}}"
-
     assert Events.run_started_event(issue, run, "worker-a") ==
              Events.event_attrs("run.started", "MT-1", %{issue_id: "issue-1", run_id: "run-1", worker_host: "worker-a"}, "run-1")
 
-    assert Events.run_finished_event(running_entry, "failed", failure_reason).payload == %{
+    failure = RunFailure.classify({:runtime_failure, %{reason: "worker_error", detail: "boom"}})
+
+    assert Events.run_finished_event(running_entry, "failed", failure).payload == %{
              run_id: "run-1",
-             failure_reason: failure_reason
+             failure_reason: "runtime_failure",
+             failure_evidence: %{"detail" => "boom", "reason" => "worker_error"}
            }
 
     assert Events.workspace_attrs(running_entry) == %{
@@ -114,18 +127,44 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
           "default_branch" => "main",
+          "source_strategy" => "clone",
+          "checkout_depth" => 1,
           "required_gates" => [
             %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
             %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
             %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
           ]
         },
+        "workspace" => %{"initialize_timeout_ms" => 60_000},
         "codex" => %{
           "model" => "gpt-5.5",
           "reasoning_effort" => "xhigh"
         }
       },
       prompt_template: "Prompt"
+    }
+  end
+
+  defp admission do
+    %RunAdmission{
+      execution_mode: "worker",
+      workspace_authority: {:http_worker, "worker-1", "session-1"},
+      source: %{
+        repository: "https://decision.example/repo.git",
+        default_branch: "trunk",
+        implementation_branch: "feature/mt-1",
+        source_strategy: "clone",
+        checkout_depth: 7
+      },
+      limits: %{
+        initialize_timeout_ms: 61_001,
+        max_turns: 20,
+        max_failure_retries: 3,
+        retry_backoff_ms: 300_000,
+        turn_timeout_ms: 3_600_000,
+        read_timeout_ms: 5_000,
+        stall_timeout_ms: 600_000
+      }
     }
   end
 

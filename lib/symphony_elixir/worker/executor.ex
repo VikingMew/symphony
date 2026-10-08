@@ -24,7 +24,7 @@ defmodule SymphonyElixir.Worker.Executor do
          {:ok, log_dir} <- Paths.log_dir(config, claim["task_id"], claim["lease_id"]),
          :ok <- File.mkdir_p(workspace),
          :ok <- not_cancelled(),
-         {:ok, source} <- prepare(payload, workspace),
+         {:ok, source} <- prepare(payload, workspace, progress),
          :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
@@ -60,6 +60,14 @@ defmodule SymphonyElixir.Worker.Executor do
 
       {:blocked, reason, detail, validation} ->
         %{status: :blocked, reason: reason, detail: detail, validation: validation}
+
+      {:error, :source_preparation_timeout, evidence} ->
+        %{
+          status: :failed,
+          reason: :source_preparation_timeout,
+          detail: evidence.output,
+          failure_evidence: evidence
+        }
 
       {:error, reason, detail} ->
         %{status: :failed, reason: reason, detail: detail}
@@ -121,7 +129,7 @@ defmodule SymphonyElixir.Worker.Executor do
           ]
 
           result = run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
-          {result, completed_delivery_evidence(Process.delete(audit_key))}
+          {result, completion_evidence(codex.profile, Process.delete(audit_key))}
         end)
       end)
 
@@ -146,6 +154,9 @@ defmodule SymphonyElixir.Worker.Executor do
           proof_secret: proof_secret,
           duration_ms: duration_ms
         }
+
+      {:error, {reason, detail}} when reason in [:codex_upstream_capacity, :codex_turn_failed] ->
+        %{status: :failed, reason: reason, duration_ms: duration_ms, detail: detail}
 
       {:error, reason} ->
         %{status: :failed, reason: codex_failure_reason(reason), duration_ms: duration_ms, detail: inspect(reason)}
@@ -227,6 +238,10 @@ defmodule SymphonyElixir.Worker.Executor do
   defp codex_failure_reason(:execution_capability_unavailable), do: :execution_capability_unavailable
   defp codex_failure_reason(_reason), do: :failed
 
+  defp completion_evidence("implementation", events), do: completed_delivery_evidence(events)
+  defp completion_evidence("refinement", events), do: refinement_completion_evidence(events)
+  defp completion_evidence(_profile, _events), do: nil
+
   defp forward_codex_progress(%{event: :session_started, session_id: session_id} = message, progress) do
     progress.("codex_session_started", %{session_id: session_id, codex: message})
   end
@@ -242,7 +257,7 @@ defmodule SymphonyElixir.Worker.Executor do
       config: %{
         "workspace" => %{"root" => config.workspace_root},
         "codex" => codex.config,
-        "project" => %{"repository_url" => payload.repository_url, "default_branch" => payload.default_branch}
+        "project" => %{"repository_url" => payload.repository, "default_branch" => payload.default_branch}
       },
       prompt: "",
       prompt_template: ""
@@ -250,17 +265,29 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   @doc false
-  @spec prepare(Payload.t(), Path.t()) :: {:ok, map()} | {:error, term()} | :cancelled | map()
-  def prepare(payload, workspace) do
+  @spec prepare(Payload.t(), Path.t(), (String.t(), map() -> term())) ::
+          {:ok, map()} | {:error, term()} | {:error, term(), map()} | :cancelled | map()
+  def prepare(payload, workspace, progress) do
     default_ref = "refs/remotes/origin/#{payload.default_branch}"
+    timeout = payload.initialize_timeout_seconds
+    depth = payload.checkout_depth
 
     with :ok <- not_cancelled(),
          :ok <- recreate_workspace(workspace),
-         :ok <- command(:clone_failed, "git clone --no-checkout -- #{shell(payload.repository)} .", 300, workspace),
+         :ok <-
+           source_command(
+             "clone_failed",
+             "git_clone",
+             "git clone --progress --depth #{depth} --branch #{shell(payload.default_branch)} --no-checkout -- #{shell(payload.repository)} .",
+             timeout,
+             workspace,
+             progress,
+             :clone_failed
+           ),
          :ok <- not_cancelled(),
-         :ok <- fetch_branch(payload.default_branch, workspace, :default_branch_fetch_failed),
+         :ok <- fetch_branch(payload.default_branch, depth, timeout, workspace, progress, :default_branch_fetch_failed),
          {:ok, base_sha} <- resolve_commit(default_ref, workspace, :base_ref_resolution_failed),
-         :ok <- prepare_task_branch(payload.branch, base_sha, workspace),
+         :ok <- prepare_task_branch(payload.branch, base_sha, depth, timeout, workspace, progress),
          {:ok, prepared_head} <- resolve_commit("HEAD", workspace, :prepared_head_resolution_failed),
          {:ok, prepared_branch} <- current_branch(workspace) do
       {:ok,
@@ -282,42 +309,125 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp fetch_branch(branch, workspace, failure) do
+  defp fetch_branch(branch, depth, timeout, workspace, progress, failure) do
     refspec = "+refs/heads/#{branch}:refs/remotes/origin/#{branch}"
-    command(failure, "git fetch --no-tags -- origin #{shell(refspec)}", 300, workspace)
+
+    source_command(
+      "fetch_failed",
+      "git_fetch",
+      "git fetch --progress --no-tags --depth #{depth} origin #{shell(refspec)}",
+      timeout,
+      workspace,
+      progress,
+      failure
+    )
   end
 
-  defp prepare_task_branch(branch, base_sha, workspace) do
-    lookup = Command.run(%{command: "git ls-remote --exit-code --heads -- origin #{shell(branch)}", timeout_seconds: 120}, workspace)
+  defp prepare_task_branch(branch, base_sha, depth, timeout, workspace, progress) do
+    lookup =
+      run_source_command(
+        "git_branch_lookup",
+        "git ls-remote --exit-code --heads -- origin #{shell(branch)}",
+        timeout,
+        workspace,
+        progress
+      )
 
     case lookup do
       %{status: :passed} ->
-        with :ok <- fetch_branch(branch, workspace, :task_branch_fetch_failed) do
-          command(
-            :task_branch_checkout_failed,
-            "git checkout -b #{shell(branch)} --track #{shell("refs/remotes/origin/#{branch}")}",
-            120,
-            workspace
+        complete_source_progress(progress, "git_branch_lookup", "Remote task branch found")
+
+        with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed) do
+          source_command(
+            "checkout_failed",
+            "git_checkout",
+            "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
+            timeout,
+            workspace,
+            progress,
+            :task_branch_checkout_failed
           )
         end
 
       %{status: :failed, exit_code: 2} ->
-        command(:task_branch_create_failed, "git checkout -b #{shell(branch)} #{shell(base_sha)}", 120, workspace)
+        complete_source_progress(progress, "git_branch_lookup", "Remote task branch not found")
+
+        source_command(
+          "checkout_failed",
+          "git_checkout",
+          "git checkout -b #{shell(branch)} #{shell(base_sha)}",
+          timeout,
+          workspace,
+          progress,
+          :task_branch_create_failed
+        )
 
       %{status: :cancelled} = result ->
         result
 
+      %{status: :timed_out} = result ->
+        failed_source_progress(progress, "git_branch_lookup", result.detail)
+        source_timeout("fetch_failed", result)
+
       result ->
+        failed_source_progress(progress, "git_branch_lookup", result.detail)
         {:error, {:source_preparation_failed, :task_branch_lookup_failed, result}}
     end
   end
 
-  defp command(failure, command, timeout_seconds, workspace) do
-    case Command.run(%{command: command, timeout_seconds: timeout_seconds}, workspace) do
-      %{status: :passed} -> :ok
-      %{status: :cancelled} = result -> result
-      result -> {:error, {:source_preparation_failed, failure, result}}
+  defp source_command(phase, operation, command, timeout, workspace, progress, failure) do
+    result = run_source_command(operation, command, timeout, workspace, progress)
+
+    case result do
+      %{status: :passed} ->
+        complete_source_progress(progress, operation, "#{operation} completed")
+        :ok
+
+      %{status: :cancelled} = cancelled ->
+        failed_source_progress(progress, operation, cancelled.detail)
+        cancelled
+
+      %{status: :timed_out} = timed_out ->
+        failed_source_progress(progress, operation, timed_out.detail)
+        source_timeout(phase, timed_out)
+
+      failed ->
+        failed_source_progress(progress, operation, failed.detail)
+        {:error, {:source_preparation_failed, failure, failed}}
     end
+  end
+
+  defp run_source_command(operation, command, timeout, workspace, progress) do
+    source_progress(progress, operation, "started", "#{operation} started")
+
+    Command.run(%{command: command, timeout_seconds: timeout}, workspace, fn detail ->
+      source_progress(progress, operation, "output", detail)
+    end)
+  end
+
+  defp complete_source_progress(progress, operation, detail),
+    do: source_progress(progress, operation, "completed", detail)
+
+  defp failed_source_progress(progress, operation, detail),
+    do: source_progress(progress, operation, "failed", detail)
+
+  defp source_progress(progress, operation, status, detail) do
+    progress.("source_preparation", %{
+      source: "worker",
+      operation: operation,
+      status: status,
+      detail: detail
+    })
+  end
+
+  defp source_timeout(phase, result) do
+    {:error, :source_preparation_timeout,
+     %{
+       phase: phase,
+       command_status: "timed_out",
+       duration_ms: result.duration_ms,
+       output: result.detail
+     }}
   end
 
   defp resolve_commit(ref, workspace, failure) do
@@ -392,6 +502,16 @@ defmodule SymphonyElixir.Worker.Executor do
         {:incomplete, evidence} = codex.delivery_evidence
         {:error, {:handoff_failed, :missing_handoff}, evidence}
     end
+  end
+
+  def handoff_requirement(
+        %{codex: %{profile: "refinement"}},
+        %{delivery_evidence: {:incomplete, evidence}},
+        _workspace
+      ) do
+    detail = Map.put(evidence, "reason", "missing_refinement_completion")
+
+    {:ok, {:blocked, {:handoff_failed, {:missing_refinement_completion, detail}}, detail}}
   end
 
   def handoff_requirement(_payload, _codex, _workspace), do: {:ok, :ready}
@@ -471,6 +591,31 @@ defmodule SymphonyElixir.Worker.Executor do
   end
 
   defp linear_update_evidence_missing(%{}), do: "linear_task_update.arguments.target_state"
+
+  @doc false
+  @spec refinement_completion_evidence([map()]) :: {:complete | :incomplete, map()}
+  def refinement_completion_evidence(events) do
+    update =
+      Enum.find(events, fn
+        %{
+          tool: "linear_task_update",
+          status: "success",
+          arguments: %{"target_state" => state}
+        } ->
+          StateName.normalize(state) == StateName.normalize("Needs Refinement Review")
+
+        _event ->
+          false
+      end)
+
+    case update do
+      nil ->
+        {:incomplete, %{"missing" => ["linear_task_update(target_state: Needs Refinement Review)"]}}
+
+      _update ->
+        {:complete, %{"linear_state" => "Needs Refinement Review"}}
+    end
+  end
 
   defp handoff(config, claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do

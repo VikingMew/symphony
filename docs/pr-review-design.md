@@ -56,8 +56,12 @@ them through its current workflow snapshot.
 Delivery is idempotent and remains separate from the read-only review session. An approve result
 adds a concise Linear comment and leaves the issue in `Ready to Merge`. Findings first persist a
 typed `blocking_decision`, then deliver the comment and request `Ready to Merge -> Blocked`.
-Existing blocker evidence is never replaced; the review job records the conflict for operator
-resolution.
+Immediately before that persistence, delivery re-reads Linear and requires the issue to still be
+`Ready to Merge`. It builds the decision through the shared canonical constructor with that live
+state as `origin_state` and the review job's non-empty run id as `run_id`; persisted issue state is
+not a scope source. The decision is stored before comment delivery, and the completed transition is
+recorded only after Linear reaches `Blocked`. Existing blocker evidence is never replaced; the
+review job records the conflict for operator resolution.
 
 Neither outcome merges the pull request or moves the issue to `Done`. Human review owns change
 requests and merge decisions, and Linear's merged-PR automation exclusively owns successful

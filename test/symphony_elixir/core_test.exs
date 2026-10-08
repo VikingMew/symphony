@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
   alias SymphonyElixir.Orchestrator.DispatchPolicy
+  alias SymphonyElixir.RunAdmission
 
   defmodule EmptyIssueLinearClient do
     def fetch_issue_states_by_ids(_issue_ids), do: {:ok, []}
@@ -895,6 +896,7 @@ defmodule SymphonyElixir.CoreTest do
             ref: nil,
             identifier: issue_identifier,
             issue: %Issue{id: issue_id, state: "In Progress", identifier: issue_identifier},
+            admission: centralized_admission(),
             started_at: DateTime.utc_now()
           }
         },
@@ -1157,6 +1159,7 @@ defmodule SymphonyElixir.CoreTest do
       ref: ref,
       identifier: "MT-558",
       issue: %Issue{id: issue_id, identifier: "MT-558", state: "In Progress"},
+      admission: centralized_admission(),
       started_at: DateTime.utc_now()
     }
 
@@ -1213,6 +1216,7 @@ defmodule SymphonyElixir.CoreTest do
       identifier: "MT-559",
       retry_attempt: 2,
       issue: %Issue{id: issue_id, identifier: "MT-559", state: "In Progress"},
+      admission: centralized_admission(),
       started_at: DateTime.utc_now()
     }
 
@@ -1228,7 +1232,13 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 3, due_at_ms: due_at_ms, identifier: "MT-559", error: "agent crashed: :boom"} =
+    assert %{
+             attempt: 3,
+             due_at_ms: due_at_ms,
+             identifier: "MT-559",
+             error: "worker_process_termination",
+             failure_evidence: %{"phase" => "agent", "reason" => "boom"}
+           } =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 39_500, 40_500)
@@ -1253,6 +1263,7 @@ defmodule SymphonyElixir.CoreTest do
       ref: ref,
       identifier: "MT-560",
       issue: %Issue{id: issue_id, identifier: "MT-560", state: "In Progress"},
+      admission: centralized_admission(),
       started_at: DateTime.utc_now()
     }
 
@@ -1268,7 +1279,13 @@ defmodule SymphonyElixir.CoreTest do
     Process.sleep(50)
     state = :sys.get_state(pid)
 
-    assert %{attempt: 1, due_at_ms: due_at_ms, identifier: "MT-560", error: "agent crashed: :boom"} =
+    assert %{
+             attempt: 1,
+             due_at_ms: due_at_ms,
+             identifier: "MT-560",
+             error: "worker_process_termination",
+             failure_evidence: %{"phase" => "agent", "reason" => "boom"}
+           } =
              state.retry_attempts[issue_id]
 
     assert_due_after(due_at_ms, scheduled_from_ms, 9_000, 10_500)
@@ -1390,6 +1407,29 @@ defmodule SymphonyElixir.CoreTest do
 
     assert delay_ms >= min_delay_ms
     assert delay_ms <= max_delay_ms
+  end
+
+  defp centralized_admission do
+    %RunAdmission{
+      execution_mode: "centralized",
+      workspace_authority: {:panel_local},
+      source: %{
+        repository: "git@example.com:org/repo.git",
+        default_branch: "main",
+        implementation_branch: "vikingmew-sym-156",
+        source_strategy: "worktree",
+        checkout_depth: 1
+      },
+      limits: %{
+        initialize_timeout_ms: 1,
+        max_turns: 1,
+        max_failure_retries: 0,
+        retry_backoff_ms: 1,
+        turn_timeout_ms: 1,
+        read_timeout_ms: 1,
+        stall_timeout_ms: 0
+      }
+    }
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

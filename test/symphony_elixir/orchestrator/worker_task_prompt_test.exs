@@ -2,6 +2,7 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Orchestrator.Events
+  alias SymphonyElixir.RunAdmission
 
   test "worker task attrs carry the implementation profile prompt extension" do
     write_workflow_file!(Workflow.workflow_file_path(), prompt: "Base worker prompt.")
@@ -31,7 +32,7 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
         Events.worker_assignment_payload(
           issue,
           %{id: "run-worker-prompt", project_id: "fake-project-id"},
-          %{},
+          admission(issue),
           prompt,
           profile
         )
@@ -70,7 +71,7 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
         Events.worker_assignment_payload(
           issue,
           %{id: "run-worker-refinement-prompt", project_id: "fake-project-id"},
-          %{},
+          admission(issue),
           prompt,
           profile
         )
@@ -86,10 +87,36 @@ defmodule SymphonyElixir.Orchestrator.WorkerTaskPromptTest do
       config: %{
         "project" => %{
           "repository_url" => "https://github.com/openai/symphony",
-          "default_branch" => "main"
-        }
+          "default_branch" => "main",
+          "source_strategy" => "clone",
+          "checkout_depth" => 1
+        },
+        "workspace" => %{"initialize_timeout_ms" => 60_000}
       },
       prompt_template: "Base worker prompt."
+    }
+  end
+
+  defp admission(issue) do
+    %RunAdmission{
+      execution_mode: "worker",
+      workspace_authority: {:http_worker, "worker-1", "session-1"},
+      source: %{
+        repository: "https://github.com/openai/symphony",
+        default_branch: "main",
+        implementation_branch: issue.branch_name,
+        source_strategy: "clone",
+        checkout_depth: 1
+      },
+      limits: %{
+        initialize_timeout_ms: 60_000,
+        max_turns: 20,
+        max_failure_retries: 3,
+        retry_backoff_ms: 300_000,
+        turn_timeout_ms: 3_600_000,
+        read_timeout_ms: 5_000,
+        stall_timeout_ms: 600_000
+      }
     }
   end
 end

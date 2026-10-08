@@ -23,7 +23,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuardTest do
     assert reason.reason == :low_disk_space
     assert reason.free_bytes == 99
     assert reason.min_free_bytes == 100
-    assert reason.setting == "Settings / Workflow / Runtime / Minimum free GiB"
+    assert reason.setting == "Settings / Import: workspace.min_free_bytes"
   end
 
   test "zero minimum disables the disk-space check" do
@@ -47,7 +47,7 @@ defmodule SymphonyElixir.WorkspaceDiskGuardTest do
     assert reason.reason == :disk_space_unavailable
     assert reason.detail == ":no_stat"
     assert reason.min_free_bytes == 100
-    assert reason.setting == "Settings / Workflow / Runtime / Minimum free GiB"
+    assert reason.setting == "Settings / Import: workspace.min_free_bytes"
   end
 
   test "checks unique workspace, repository, and worktree roots" do

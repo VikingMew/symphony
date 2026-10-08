@@ -142,8 +142,10 @@ defmodule SymphonyElixir.Codex.ProtocolTest do
 
   describe "turn stream decoding" do
     test "classifies terminal turn notifications" do
-      assert Protocol.decode_turn_stream_line(~s({"method":"turn/completed","params":{"status":"ok"}})) ==
-               {:turn_completed, %{"method" => "turn/completed", "params" => %{"status" => "ok"}}, ~s({"method":"turn/completed","params":{"status":"ok"}})}
+      line = ~s({"method":"turn/completed","params":{"turn":{"status":"completed"}}})
+
+      assert Protocol.decode_turn_stream_line(line) ==
+               {:turn_completed, %{"method" => "turn/completed", "params" => %{"turn" => %{"status" => "completed"}}}, line}
 
       assert Protocol.decode_turn_stream_line(~s({"method":"turn/failed","params":{"reason":"boom"}})) ==
                {:turn_failed, %{"method" => "turn/failed", "params" => %{"reason" => "boom"}}, %{"reason" => "boom"}, ~s({"method":"turn/failed","params":{"reason":"boom"}})}

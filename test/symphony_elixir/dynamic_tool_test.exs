@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.Codex.DynamicToolTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.Codex.DynamicTool
+  alias SymphonyElixir.Codex.{DynamicTool, LinearToolAudit}
   alias SymphonyElixir.Codex.LinearToolAudit.PanelRecorder
   alias SymphonyElixir.Linear.Issue
 
@@ -29,7 +29,9 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
+               "code" => "dynamic_tool_failed",
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
+               "retryable" => false,
                "supportedTools" => [
                  "linear_task_read",
                  "linear_task_update",
@@ -296,9 +298,38 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert event.payload.tool == "linear_issue_create"
     assert event.payload.status == "failure"
     assert event.payload.profile == "day_dreaming"
-    assert event.payload.error.class == "validation_failed"
+    assert event.payload.error.class == "invalid_issue_create_payload"
+    assert event.payload.error.code == "invalid_issue_create_payload"
+    assert event.payload.error.retryable == false
     assert event.payload.error.message =~ "requires non-empty"
     assert event.payload.arguments["title"] == "Incomplete"
+  end
+
+  test "typed audit classification is independent of human message wording" do
+    for message <- ["first wording", "completely different wording"] do
+      response = %{
+        "success" => false,
+        "output" =>
+          Jason.encode!(%{
+            "error" => %{
+              "code" => "linear_transport_failed",
+              "retryable" => true,
+              "message" => message
+            }
+          })
+      }
+
+      assert :ok =
+               LinearToolAudit.record("linear_task_read", %{}, response, audit_recorder: &PanelRecorder.record/2)
+    end
+
+    errors =
+      FakePersistence.list_events(event_type: "linear.tool_call")
+      |> Enum.map(& &1.payload.error)
+
+    assert Enum.map(errors, & &1.class) == ["linear_transport_failed", "linear_transport_failed"]
+    assert Enum.map(errors, & &1.retryable) == [true, true]
+    assert errors |> Enum.map(& &1.message) |> Enum.uniq() |> length() == 2
   end
 
   test "missing workflow profile is captured as a stable Linear tool failure class" do
@@ -582,7 +613,15 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert response["success"] == false
 
     assert Jason.decode!(response["output"]) == %{
-             "error" => %{"message" => "Linear task context is unavailable for this Codex session."}
+             "error" => %{
+               "code" => "linear_context_unavailable",
+               "expected_shape" => "successful tool result or typed error envelope",
+               "location" => "SymphonyElixir.Codex.DynamicTool",
+               "retryable" => false,
+               "message" => "Linear task context is unavailable for this Codex session.",
+               "offending_value" => "linear_context_unavailable",
+               "operation" => "execute_dynamic_tool"
+             }
            }
   end
 

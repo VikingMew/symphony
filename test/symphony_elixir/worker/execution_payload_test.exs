@@ -12,12 +12,16 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert execution["default_branch"] == "main"
     assert Map.has_key?(execution, "revision") == false
     assert execution["branch"] == "vikingmew-sym-45"
+    assert execution["source_strategy"] == "clone"
+    assert execution["checkout_depth"] == 3
+    assert execution["initialize_timeout_seconds"] == 61
     assert execution["codex"]["command"] == "codex app-server"
     assert execution["codex"]["model"] == "gpt-5.5"
     assert execution["codex"]["reasoning_effort"] == "xhigh"
     assert execution["codex"]["thread_sandbox"] == "danger-full-access"
     assert execution["codex"]["turn_sandbox_policy"] == %{"type" => "dangerFullAccess"}
     assert execution["codex"]["turn_timeout_ms"] == 3_600_001
+    assert execution["codex"]["stall_timeout_ms"] == 600_000
 
     assert execution["codex"]["issue"] == %{
              "identifier" => "SYM-45",
@@ -41,7 +45,10 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
     assert Map.has_key?(execution["handoff"], "command") == false
     assert {:ok, parsed} = Payload.parse(execution)
     assert parsed.repository == "https://example.test/repo.git"
+    assert parsed.checkout_depth == 3
+    assert parsed.initialize_timeout_seconds == 61
     assert parsed.codex.prompt == execution["codex"]["prompt"]
+    assert parsed.codex.config["stall_timeout_ms"] == 600_000
 
     assert parsed.codex.issue == %{
              identifier: "SYM-45",
@@ -65,10 +72,12 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
       "prompt" => "Implement and validate the task.",
       "workflow_profile" => "implementation",
       "execution_mode" => "worker",
-      "repository" => %{
-        "url" => "https://example.test/repo.git",
-        "source_ref" => "main",
-        "implementation_branch" => "vikingmew-sym-45"
+      "source" => %{
+        "repository" => "https://example.test/repo.git",
+        "default_branch" => "main",
+        "implementation_branch" => "vikingmew-sym-45",
+        "source_strategy" => "clone",
+        "checkout_depth" => 3
       },
       "required_gates" => [
         %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
@@ -83,9 +92,10 @@ defmodule SymphonyElixir.Worker.ExecutionPayloadTest do
         "timeout_ms" => 30_000
       },
       "limits" => %{
+        "initialize_timeout_ms" => 60_001,
         "turn_timeout_ms" => 3_600_001,
         "read_timeout_ms" => 5_000,
-        "stall_timeout_ms" => 300_000
+        "stall_timeout_ms" => 600_000
       },
       "codex" => %{
         "command" => "codex app-server",
