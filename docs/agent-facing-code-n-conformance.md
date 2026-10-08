@@ -33,7 +33,7 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
 Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
-current baseline waterline is 562 exact findings; the N group is not fully compliant while that
+current baseline waterline is 563 exact findings; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
