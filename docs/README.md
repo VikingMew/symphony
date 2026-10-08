@@ -79,7 +79,8 @@ other documents link instead of restating.
 | [test_database_isolation.md](test_database_isolation.md) | Test database-isolation contract. |
 | [negative-assertion-audit.md](negative-assertion-audit.md) | Reproducible negative-assertion inventory and disposition record. |
 | [spec-agent-facing-code.md](spec-agent-facing-code.md) | Agent-facing code definitions, threshold semantics, evidence classes, conformance levels, declaration, and sources. |
-| [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 36-unit constitution audit with reproducible repository evidence. |
+| [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 35-unit constitution audit with reproducible repository evidence. |
+| [agent-facing-code-n-conformance.md](agent-facing-code-n-conformance.md) | Current N-01 through N-09 navigation facts, glossary, deterministic rules, and ratchet waterline. |
 | [agent-facing-code-x-conformance.md](agent-facing-code-x-conformance.md) | Current X-01 through X-05 test-governance facts, checker calibration, and hard-gate waterline. |
 | [agent-facing-code-o-conformance.md](agent-facing-code-o-conformance.md) | Current O-01 through O-08 observability/error evidence and ratchet waterline. |
 

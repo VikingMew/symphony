@@ -5,13 +5,14 @@ domain: [governance, code-quality, agents]
 status: current
 language: zh-CN
 owner: SymphonyElixir.AgentCodeCheck
-updated: 2026-10-03
+updated: 2026-10-08
 ---
 
 # 面向 Agent 的代码规范总纲
 
 本 L4 文档由 [L3 设计](agent-facing-code-design.md)拥有。它只定义共同总纲；
-G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成。
+G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成。N-01 至 N-09 的当前事实见
+[N 组符合性记录](agent-facing-code-n-conformance.md)。
 
 ## 1. 规范性定义
 
