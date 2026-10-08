@@ -3,6 +3,7 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
 
   import Phoenix.ConnTest
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.{Orchestrator, Workflow, WorkflowStore}
   alias SymphonyElixir.TestSupport.FakePersistence
 
@@ -122,7 +123,9 @@ defmodule SymphonyElixir.DefaultProjectPlaceholderTest do
 
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 
   defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)

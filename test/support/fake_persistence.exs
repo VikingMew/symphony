@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.TestSupport.FakePersistence do
   @moduledoc false
 
-  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+  alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.Persistence.Project
 
   @name __MODULE__
@@ -251,7 +251,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
     ensure_started()
 
     with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
-         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt) do
+         {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt),
+         :ok <- validate_project_authority(project, loaded.config) do
       workflow = project_workflow(project, project_config, source)
 
       result =
@@ -758,10 +759,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   end
 
   def export_package(instance, workflow) do
-    project_config = apply_project_runtime_settings(Map.fetch!(workflow, :yaml_config), project_for_workflow(workflow))
+    project = project_for_workflow(workflow)
+    project_config = ProjectAuthority.strip(Map.fetch!(workflow, :yaml_config))
 
     with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
-      {:ok, SymphonyElixir.Workflow.to_markdown(loaded.config, loaded.prompt)}
+      portable = ProjectAuthority.inject(loaded.config, project)
+      {:ok, SymphonyElixir.Workflow.to_markdown(portable, loaded.prompt)}
     end
   end
 
@@ -868,7 +871,16 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
 
   def workflow_to_loaded(instance, record) do
     project = project_for_workflow(record)
-    project_config = apply_project_runtime_settings(Map.fetch!(record, :yaml_config), project)
+    config = Map.fetch!(record, :yaml_config)
+
+    project_config =
+      case project do
+        nil ->
+          ProjectAuthority.strip(config)
+
+        project ->
+          ProjectAuthority.inject(ProjectAuthority.strip(config), project)
+      end
 
     WorkflowScopes.compose(instance, project_config, record.project_id)
   end
@@ -926,50 +938,10 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
   defp text_blank?(nil), do: true
   defp text_blank?(_value), do: false
 
-  defp apply_project_runtime_settings(config, nil), do: config
-
-  defp apply_project_runtime_settings(config, project) do
-    config
-    |> put_in_path(["tracker", "project_slug"], Map.get(project, :linear_project_slug))
-    |> update_project_config(project)
-  end
-
-  defp update_project_config(config, project) do
-    existing = Map.get(config, "project", %{})
-
-    project_config =
-      existing
-      |> put_project_value("repository_url", Map.get(project, :repository_url))
-      |> put_project_value("default_branch", Map.get(project, :default_branch) || "main")
-      |> put_project_value("checkout_depth", Map.get(project, :checkout_depth) || 1)
-      |> put_project_value("source_strategy", Map.get(project, :source_strategy) || "clone")
-      |> put_project_value("worktree_fetch", Map.get(project, :worktree_fetch) != false)
-      |> put_project_value("worktree_cleanup", Map.get(project, :worktree_cleanup) != false)
-
-    Map.put(config, "project", project_config)
-  end
-
-  defp put_project_value(config, key, value) when is_binary(value) do
-    value = String.trim(value)
-    if value == "", do: Map.delete(config, key), else: Map.put(config, key, value)
-  end
-
-  defp put_project_value(config, key, nil), do: Map.delete(config, key)
-  defp put_project_value(config, key, value), do: Map.put(config, key, value)
-
-  defp put_in_path(config, path, value) do
-    case is_nil(value) or (is_binary(value) and String.trim(value) == "") do
-      true -> delete_in_path(config, path)
-      false -> put_in(config, Enum.map(path, &Access.key(&1, %{})), value)
-    end
-  end
-
-  defp delete_in_path(config, [key]), do: Map.delete(config, key)
-
-  defp delete_in_path(config, [key | rest]) do
-    case Map.get(config, key) do
-      nested when is_map(nested) -> Map.put(config, key, delete_in_path(nested, rest))
-      _ -> config
+  defp validate_project_authority(project, config) do
+    case ProjectAuthority.conflicts(project, config) do
+      [] -> :ok
+      conflicts -> {:error, {:project_authority_conflict, conflicts}}
     end
   end
 

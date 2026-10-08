@@ -21,7 +21,20 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
 
     assert {:ok, instance, project} = WorkflowScopes.split_package(loaded.config, loaded.prompt)
     assert instance.config == Map.take(loaded.config, WorkflowScopes.instance_sections())
-    assert project == Map.take(loaded.config, WorkflowScopes.project_sections())
+
+    assert project == %{
+             "tracker" => %{
+               "active_states" => ["Todo", "Ready", "In Progress"],
+               "kind" => "linear",
+               "terminal_states" => ["Canceled", "Cancelled", "Duplicate", "Done"]
+             },
+             "project" => %{
+               "cleanup_commands" => ["mise exec -- mix workspace.before_remove"],
+               "required_gates" => loaded.config["project"]["required_gates"],
+               "setup_commands" => loaded.config["project"]["setup_commands"]
+             }
+           }
+
     assert instance.prompt_body == loaded.prompt
     assert Map.has_key?(instance.config, "workflow") == false
     assert Map.has_key?(project, "workflow") == false

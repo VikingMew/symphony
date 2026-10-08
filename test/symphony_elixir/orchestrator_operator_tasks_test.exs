@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.ProjectAuthority
+
   defmodule FakeAgentRunner do
     def run_operator(kind, run_id, recipient, opts) do
       parent = Application.fetch_env!(:symphony_elixir, :operator_runner_test_pid)
@@ -447,6 +449,8 @@ defmodule SymphonyElixir.OrchestratorOperatorTasksTest do
 
   defp create_project_with_workflow(name, slug, repository_url) do
     raw_workflow = FakePersistence.current_workflow().raw_workflow_md
+    {:ok, loaded} = Workflow.parse_content(raw_workflow)
+    raw_workflow = Workflow.to_markdown(ProjectAuthority.strip(loaded.config), loaded.prompt)
     {:ok, project} = create_project(name, slug, true, repository_url)
     {:ok, _version} = FakePersistence.import_package(project, raw_workflow, "test")
     :ok = WorkflowStore.force_reload()

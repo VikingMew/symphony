@@ -4,6 +4,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   import Phoenix.Component, only: [assign: 3]
 
   alias SymphonyElixir.{Config, PersistenceProvider, WorkflowForm, WorkflowStore}
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.Worker.AssignmentManager
   alias SymphonyElixirWeb.Admin.ProjectSettings
 
@@ -50,6 +51,7 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:current_workflow, workflow)
     |> assign(:current_instance_workflow, instance_workflow)
     |> assign(:project_workflow_forms, project_workflow_forms(projects, instance_workflow))
+    |> assign(:project_authority_diagnostics, project_authority_diagnostics(projects))
     |> assign(:settings_import_form, import_form(instance_workflow, explicit_project))
     |> assign(:legacy_instance_workflow_status, legacy_status)
     |> assign(:legacy_reconciliation_notice, Map.get(socket.assigns, :legacy_reconciliation_notice))
@@ -178,6 +180,21 @@ defmodule SymphonyElixirWeb.AdminLive.State do
   defp project_workflow_forms(projects, instance_workflow) do
     Map.new(projects, fn project ->
       {ProjectSettings.value(project, :id), project_workflow_form(project, instance_workflow)}
+    end)
+  end
+
+  defp project_authority_diagnostics(projects) do
+    Map.new(projects, fn project ->
+      diagnostics =
+        case persistence().current_workflow(project) do
+          workflow when is_map(workflow) ->
+            ProjectAuthority.diagnostics(project, Map.get(workflow, :yaml_config, %{}))
+
+          _workflow ->
+            ProjectAuthority.diagnostics(project, %{})
+        end
+
+      {ProjectSettings.value(project, :id), diagnostics}
     end)
   end
 

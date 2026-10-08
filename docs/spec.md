@@ -56,8 +56,9 @@ The service solves four operational problems:
 - It turns issue execution into a repeatable daemon workflow instead of manual scripts.
 - It isolates agent execution in per-issue workspaces so agent commands run only inside per-issue
   workspace directories.
-- It keeps installation runtime/profile policy in one singleton, tracker/repository properties in
-  one workflow slice per project, and workflow routing in immutable code-owned policy.
+- It keeps installation runtime/profile policy in one singleton, minimal tracker/project policy in
+  one workflow slice per project, Linear slug and repository/source properties in the project row,
+  and workflow routing in immutable code-owned policy.
   Implementations MAY import/export a combined package format for portability, but its
   workflow-policy keys are not a runtime source.
 - It provides enough observability to operate and debug multiple concurrent agent runs.

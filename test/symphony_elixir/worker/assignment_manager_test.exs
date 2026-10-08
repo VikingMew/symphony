@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
   import ExUnit.CaptureLog
 
   alias SymphonyElixir.BlockingDecision
-  alias SymphonyElixir.Config.WorkflowScopes
+  alias SymphonyElixir.Config.{ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.EnvironmentFailureCircuit
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator
@@ -1969,7 +1969,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerTest do
     |> Map.put("detail", detail)
   end
 
-  defp workflow_markdown(base, prompt), do: Workflow.to_markdown(base.config, prompt)
+  defp workflow_markdown(base, prompt),
+    do: Workflow.to_markdown(ProjectAuthority.strip(base.config), prompt)
 
   defp enable_active_state(state_name) do
     workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)

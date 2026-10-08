@@ -12,6 +12,7 @@ defmodule SymphonyElixir.WorkflowStore do
   use GenServer
   require Logger
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.{PersistenceProvider, Text, Workflow}
 
   @poll_interval_ms 1_000
@@ -25,7 +26,7 @@ defmodule SymphonyElixir.WorkflowStore do
   defmodule State do
     @moduledoc false
 
-    defstruct [:workflows, :default_project_id, :source, :generation, :refresh]
+    defstruct [:workflows, :default_project_id, :source, :generation, :refresh, authority_drift: %{}]
   end
 
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -79,6 +80,7 @@ defmodule SymphonyElixir.WorkflowStore do
   @impl true
   def init(_opts) do
     state = load_initial_state()
+    warn_authority_drift_changes(%{}, state.authority_drift)
 
     if registered_owner?() do
       publish(state)
@@ -96,6 +98,7 @@ defmodule SymphonyElixir.WorkflowStore do
     case safe_load_state() do
       {:ok, loaded_state} ->
         new_state = %{loaded_state | generation: generation, refresh: state.refresh}
+        warn_authority_drift_changes(state.authority_drift, new_state.authority_drift)
         publish(new_state)
         {:reply, :ok, new_state}
 
@@ -162,6 +165,7 @@ defmodule SymphonyElixir.WorkflowStore do
   defp handle_refresh_result(%State{} = state, start_generation, {:ok, loaded_state})
        when start_generation == state.generation do
     new_state = %{loaded_state | generation: state.generation + 1, refresh: nil}
+    warn_authority_drift_changes(state.authority_drift, new_state.authority_drift)
     publish(new_state)
     new_state
   end
@@ -198,14 +202,15 @@ defmodule SymphonyElixir.WorkflowStore do
 
   defp load_state do
     case load_database_workflows() do
-      {:ok, workflows, default_project_id} ->
+      {:ok, workflows, default_project_id, authority_drift} ->
         {:ok,
          %State{
            workflows: workflows,
            default_project_id: default_project_id,
            source: database_source(workflows, default_project_id),
            generation: 0,
-           refresh: nil
+           refresh: nil,
+           authority_drift: authority_drift
          }}
 
       :setup_required ->
@@ -294,9 +299,39 @@ defmodule SymphonyElixir.WorkflowStore do
     result = Enum.reduce_while(workflow_records, {:ok, %{}}, &compose_workflow(&1, &2, instance_workflow))
 
     case result do
-      {:ok, workflows} -> {:ok, workflows, default_project_id(workflows, projects)}
-      error -> error
+      {:ok, workflows} ->
+        {:ok, workflows, default_project_id(workflows, projects), authority_drift(projects, workflow_records)}
+
+      error ->
+        error
     end
+  end
+
+  defp authority_drift(projects, workflow_records) do
+    projects_by_id = Map.new(projects, &{Map.fetch!(&1, :id), &1})
+
+    Map.new(workflow_records, fn {project_id, workflow} ->
+      project = Map.fetch!(projects_by_id, project_id)
+      config = Map.get(workflow, :yaml_config) || %{}
+
+      signature =
+        project
+        |> ProjectAuthority.diagnostics(config)
+        |> Enum.reject(&(&1.status == :clean))
+
+      {project_id, %{project: project, config: config, signature: signature}}
+    end)
+    |> Map.reject(fn {_project_id, drift} -> drift.signature == [] end)
+  end
+
+  defp warn_authority_drift_changes(previous, current) do
+    Enum.each(current, fn {project_id, drift} ->
+      previous_signature = get_in(previous, [project_id, :signature])
+
+      if previous_signature != drift.signature do
+        ProjectAuthority.warn_drift(drift.project, drift.config)
+      end
+    end)
   end
 
   defp compose_workflow({project_id, workflow}, {:ok, loaded}, instance_workflow) do
@@ -359,7 +394,8 @@ defmodule SymphonyElixir.WorkflowStore do
       default_project_id: nil,
       source: %{type: :setup_required},
       generation: 0,
-      refresh: nil
+      refresh: nil,
+      authority_drift: %{}
     }
   end
 
@@ -369,7 +405,8 @@ defmodule SymphonyElixir.WorkflowStore do
       default_project_id: nil,
       source: %{type: :error, reason: normalize_current_error(reason)},
       generation: 0,
-      refresh: nil
+      refresh: nil,
+      authority_drift: %{}
     }
   end
 

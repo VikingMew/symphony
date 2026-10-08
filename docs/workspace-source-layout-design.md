@@ -102,6 +102,11 @@ Project Settings 应展示并保存 project-specific source 信息：
 - clean stale worktree
 - setup / cleanup commands
 
+其中 repository URL、default branch、checkout depth、source strategy、fetch before worktree 与
+clean stale worktree 只持久化在 `projects` 行。portable combined package 可以携带它们用于 review 和
+export，但 project workflow 的 `yaml_config` / `raw_workflow_md` 不保存副本；运行时只从 project 行
+注入这些 source 字段。setup / cleanup commands 仍属于最小 project workflow slice。
+
 instance workflow singleton 应定义并保存：
 
 - initialize timeout

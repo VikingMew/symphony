@@ -46,7 +46,9 @@ Settings 可见的引导入口,但该入口必须是 disabled placeholder,不能
    project identity；preview rows 与 `affected_scopes` 直接来自确认写入使用的相同 Instance/Project
    slices。只含 Instance 变化时不要求 project target，直接写 singleton；含 Project 变化但没有显式
    target 时返回 `project_target_required`。确认 combined package 后由原子 import transaction 一次写
-   singleton 与所选 project slice，并分别报告两 scope 的结果。
+   singleton 与所选 project slice，并分别报告两 scope 的结果。交互式 first-run 导入若因 portable
+   project-owned 值与所选 project 行不同而返回 `project_authority_conflict`，启动路径记录 warning、
+   保持 setup-required 并继续启动，不能用 package 值或默认值掩盖冲突。
 2. **有真实 project 时**:`default_project!` 返回 `{:error, :not_found}`(现有行为),
    不创建新的 Default。无显式 project context 的 runtime settings 和诊断选择已配置的
    Default workflow；没有可用 Default 时,只有恰好一个 enabled 且已加载 workflow 的真实

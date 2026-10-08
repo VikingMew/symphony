@@ -32,6 +32,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
       FakePersistence.create_project(%{
         name: "Project B",
         slug: "project-b",
+        linear_project_slug: get_in(base.config, ["tracker", "project_slug"]),
         repository_url: "git@example.test:b.git",
         enabled: true
       })
@@ -618,6 +619,7 @@ defmodule SymphonyElixir.PromptBuilderTest do
     {:ok, loaded} = Workflow.load(repo_workflow_path)
     raw = Workflow.to_markdown(loaded.config, loaded.prompt)
     {:ok, project} = FakePersistence.default_project()
+    {:ok, project} = align_project_authority(project, loaded.config)
     {:ok, _version} = FakePersistence.import_package(project, raw, "test")
     WorkflowStore.force_reload()
 
@@ -670,5 +672,17 @@ defmodule SymphonyElixir.PromptBuilderTest do
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
     assert prompt == "Retry #2"
+  end
+
+  defp align_project_authority(project, config) do
+    FakePersistence.update_project(project.id, %{
+      linear_project_slug: get_in(config, ["tracker", "project_slug"]),
+      repository_url: get_in(config, ["project", "repository_url"]),
+      default_branch: get_in(config, ["project", "default_branch"]),
+      checkout_depth: get_in(config, ["project", "checkout_depth"]),
+      source_strategy: get_in(config, ["project", "source_strategy"]),
+      worktree_fetch: get_in(config, ["project", "worktree_fetch"]),
+      worktree_cleanup: get_in(config, ["project", "worktree_cleanup"])
+    })
   end
 end

@@ -312,9 +312,12 @@ request without occupying `WorkflowStore`, `Orchestrator`, or `StatusDashboard`.
 ## 7. Configuration Model
 
 PostgreSQL stores installation runtime/profile policy once in
-`app_settings["instance_workflow"]` and tracker/repository properties in one workflow row per
-project. `WorkflowStore` composes both scopes before parsing and atomically publishes the complete
-enabled-project set. Startup remains setup-required when either scope is absent.
+`app_settings["instance_workflow"]`. A workflow row per project stores only tracker
+kind/endpoint/assignee/states plus project gates/setup/cleanup; the `projects` row solely stores the
+Linear project slug and six repository/source values. `WorkflowStore` reports legacy carrier drift
+when first observed or changed, strips it, injects project-row authority, composes the singleton, and
+atomically publishes the complete enabled-project set. Unchanged background refreshes do not repeat
+the drift warning. Startup remains setup-required when either workflow scope is absent.
 `workflow.yml` and `profiles.yml` are package artifacts for import/export and examples, not startup
 authority.
 
