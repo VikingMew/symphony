@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Config.LegacyWorkflowConvergenceTest do
   alias SymphonyElixir.Workflow
 
   setup do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
     %{config: loaded.config, prompt: loaded.prompt}
   end
 

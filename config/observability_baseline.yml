@@ -141,16 +141,6 @@
       "reason": "silent_rescue returns success without a registered failure event or typed error"
     },
     {
-      "identifier": "silent_error_branch:32f81c7ce921",
-      "path": "lib/symphony_elixir/first_run_defaults.ex",
-      "reason": "error tuple branch returns success without a registered failure event or typed error"
-    },
-    {
-      "identifier": "silent_error_branch:c921bbb08278",
-      "path": "lib/symphony_elixir/first_run_defaults.ex",
-      "reason": "error tuple branch returns success without a registered failure event or typed error"
-    },
-    {
       "identifier": "silent_catch:ae06f0a8e3b9",
       "path": "lib/symphony_elixir/git.ex",
       "reason": "silent_catch returns success without a registered failure event or typed error"

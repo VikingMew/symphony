@@ -149,17 +149,9 @@ Open [http://127.0.0.1:4000/](http://127.0.0.1:4000/), then configure:
    an immutable code contract.
 
 If PostgreSQL lacks either `app_settings["instance_workflow"]` or an enabled project workflow slice,
-Symphony starts in setup-required mode and does not listen for Linear work until an explicit import creates both.
-
-On a fresh database, Symphony can also offer to import the example package at
-`docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first instance/project pair.
-If its explicit project-owned values conflict with the selected installed project, Symphony logs the
-typed conflict, keeps setup-required mode, and continues startup without importing the package.
-To skip it and remain in setup-required mode, start with:
-
-```bash
-mise exec -- ./bin/symphony --port 4000 --no-default-yaml-prompt
-```
+Symphony starts in setup-required mode and does not listen for Linear work until an explicit Settings /
+Import operation creates both. Neither the source `bin/symphony` entrypoint nor the OTP release start
+script reads or imports the checked-in example package during startup.
 
 ## Configuration
 
@@ -186,7 +178,6 @@ mise exec -- ./bin/symphony \
 
 - `--port` enables the Phoenix dashboard and JSON API.
 - `--logs-root` changes the runtime log directory (default: `./log`).
-- `--no-default-yaml-prompt` disables the first-run package import prompt.
 
 The split package is organized by concern: `workflow.yml` contains project tracker/source fields plus
 instance runtime settings and a non-runtime workflow-policy example; `profiles.yml` contains the base

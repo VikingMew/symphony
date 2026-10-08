@@ -5,7 +5,7 @@ domain: [spec, workflow-config]
 status: current
 language: en
 owner: SymphonyElixir.Config
-updated: 2026-10-03
+updated: 2026-10-08
 ---
 
 # Workflow and Configuration Specification
@@ -57,6 +57,9 @@ Loader behavior:
   there is no package synchronization command and no drift contract between those files and the
   database. Manual workflow-table updates are outside the supported lifecycle; Settings / Import is
   the supported operator path.
+- Source CLI startup and OTP release startup MUST NOT read or import the checked-in example package.
+  Missing durable scopes keep the service alive in setup-required mode without a package prompt or
+  workflow write.
 
 ### 5.2 Package Format
 
@@ -77,7 +80,10 @@ Design note:
   both durable workflow scopes and the published snapshot unchanged. Matching values MUST be removed
   before workflow persistence; omitted values use the selected project row.
 - The package under `docs/examples/` is example and import material. Runtime code MUST read the
-  project's PostgreSQL snapshot rather than files from the source checkout.
+  project's PostgreSQL snapshot rather than files from the source checkout. General no-argument
+  loading MUST require an explicitly configured application path. Tests and smoke checks that
+  intentionally validate the checked-in package MUST use an explicitly named example loader/root or
+  pass an explicit path.
 - `workflow` keys are portable example metadata only. Durable instance and project slices MUST NOT
   persist them; runtime dispatch, transition validation, human-review classification, and profile
   routing MUST use `Schema.default_workflow_policy/0`.
@@ -335,7 +341,7 @@ configuration there.
 
 The checked-in `docs/examples/workflow.yml` package is import material, not runtime authority. Its
 Codex block carries explicit `thread_sandbox: "danger-full-access"` and
-`turn_sandbox_policy.type: "dangerFullAccess"` so new Settings / Import or cold-start imports do not
+`turn_sandbox_policy.type: "dangerFullAccess"` so new Settings / Import operations do not
 omit the worker non-bwrap policy. This does not change the implementation-defined behavior for a
 runtime workflow that omits an explicit `turn_sandbox_policy`.
 

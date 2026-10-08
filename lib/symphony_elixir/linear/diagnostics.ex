@@ -177,7 +177,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     case PersistenceProvider.read(fn -> PersistenceProvider.module().list_projects() end) do
       projects when is_list(projects) ->
         projects
-        |> Enum.filter(&(project_value(&1, :enabled) == true))
+        |> Enum.filter(&(diagnostic_project_value(&1, :enabled) == true))
         |> Enum.map(&project_setup_items/1)
         |> Enum.min_by(&length/1, fn -> all_project_setup_items() end)
 
@@ -199,10 +199,10 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   defp all_project_setup_items, do: ["the Linear project slug", "the repository URL"]
 
   defp maybe_add_project_setup_item(items, project, key, label) do
-    if blank?(project_value(project, key)), do: items ++ [label], else: items
+    if blank?(diagnostic_project_value(project, key)), do: items ++ [label], else: items
   end
 
-  defp project_value(project, key) do
+  defp diagnostic_project_value(project, key) do
     Map.get(project, key) || Map.get(project, to_string(key))
   end
 

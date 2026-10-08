@@ -188,7 +188,7 @@ defmodule SymphonyElixir.RunAdmissionTest do
   end
 
   defp workflow(root, opts \\ []) do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     config =
       loaded.config

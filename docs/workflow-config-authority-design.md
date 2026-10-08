@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-10-07
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -12,7 +12,7 @@ design_status: landed
 
 本文维护「项目 settings 与 profiles 在运行时由谁拥有」这一长期契约，以及仓库内 package 文件的角色。
 它不拥有 package 格式规范（见 [spec-workflow-config.md](spec-workflow-config.md) §5），
-也不拥有 first-run 引导与 Default project 语义（见
+也不拥有启动引导与 Default project 语义（见
 [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md)）。
 
 ## 契约
@@ -59,11 +59,14 @@ design_status: landed
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret
   或 project hook override 时返回 typed rejection，不接受也不静默丢弃。一次性迁移完成后，project
   row 只保留 canonical tracker/project slice 与空 prompt，四个旧 hook columns 已删除。
-- `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 是示例与导入素材：它们记录 package
-  格式、提供一次性导入的便利来源，永远不是同步源。
+- `docs/examples/workflow.yml` 与 `docs/examples/profiles.yml` 是示例与显式导入素材：它们记录 package
+  格式，供 operator 在 Settings / Import 主动选择，或供明确命名的 test/smoke fixture loader 读取。
+  通用无参 loader、source CLI 启动链与 OTP release 启动链都不得隐式读取它们；它们永远不是身份、
+  运行时配置或同步源。`Workflow.load/0` 只读取调用方显式设置的 application path，
+  `Workflow.load_example_package/0` 才表示有意读取签入示例。
 - 示例作为导入素材时仍必须避免携带已知不可用的运行形态；当前 `docs/examples/workflow.yml`
   的 Codex 配置显式使用 `thread_sandbox: "danger-full-access"` 与
-  `turn_sandbox_policy.type: "dangerFullAccess"`，使 Settings / Import 与空库冷启动素材不依赖
+  `turn_sandbox_policy.type: "dangerFullAccess"`，使 Settings / Import 的显式导入不依赖
   worker 容器内嵌套 bwrap/user namespace。显式 Settings / Import 会把 combined package 拆成
   singleton 与所选 project slice，并在同一事务内写入。
 - 示例中的 `codex.model` 与 `codex.reasoning_effort` 是基于当前代码内 Codex catalog snapshot
@@ -75,8 +78,8 @@ design_status: landed
   预览 durable 变化，并在一次确认中原子写入 singleton 与显式选择的 project。预览行与
   `affected_scopes` 直接来自 `WorkflowForm.to_scopes/1` 按 `WorkflowScopes` ownership 拆出的
   Instance/Project slices，与确认时的持久化目标共用同一事实来源；每个 semantic field 只以 canonical
-  durable path 出现一次，不维护另一套 prefix/default scope classifier。空库冷启动使用同一显式双
-  scope 导入；拒绝导入、缺少 project target、缺少
+  durable path 出现一次，不维护另一套 prefix/default scope classifier。空库由 operator 在
+  Settings / Import 使用同一显式双 scope 导入；拒绝导入、缺少 project target、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
 - portable combined package 可以携带 7 个 project-owned 字段用于 review/export，但它不是这些字段的
   durable authority。确认 import 时先选择目标 project，再在事务开始前对每个显式载体值做规范化比较；
@@ -100,7 +103,10 @@ design_status: landed
   artifact。release record 记录 merge 后宿主访问 `/settings/import`、导入并确认 package；预期结果是
   import validation 成功，且保存后的 instance singleton 包含新 prompt。worker 不执行该发布，
   不把宿主路径不可用视为 blocker/retry，也不把 checked-in YAML 报告为 live runtime effect。
-- 运行时代码 MUST NOT 从源码 checkout 读取配置。
+- 运行时代码 MUST NOT 从源码 checkout 读取配置。`bin/symphony` 经 `CLI.main/1` 完成依赖与数据库
+  准备后直接启动 supervision tree；OTP release 的 `bin/symphony start` 由 release boot script 启动，
+  不经过 `CLI.main/1`。两条启动链都不读取或导入签入示例，缺少 durable scope 时保留既有
+  setup-required 语义。
 
 ## 一次性 legacy 收敛
 
@@ -160,4 +166,4 @@ design_status: landed
 
 - 不拥有 workflow schema 与校验规则（[spec-workflow-config.md](spec-workflow-config.md) §5.3 起）。
 - 不拥有 Settings UI 布局与 import 预览格式。
-- 不拥有 first-run 引导与 Default project 语义。
+- 不拥有启动引导与 Default project 语义。

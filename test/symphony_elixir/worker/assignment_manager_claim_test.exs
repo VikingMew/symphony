@@ -50,7 +50,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
 
   defmodule Workflows do
     def list_enabled do
-      {:ok, loaded} = Workflow.load()
+      {:ok, loaded} = Workflow.load_example_package()
       [Map.put(loaded, :project_id, "fake-project-id")]
     end
   end

@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, projects, persistence]
 status: current
 language: zh-CN
-updated: 2026-08-09
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -18,7 +18,7 @@ Symphony 曾存在一个「default project」的隐式强制依赖:只要数据�
 
 1. **设计不需要它**:Symphony 的设计是多 project 并行(Koroni、ccrr 等真实 project 各自有自己的 workflow),不存在「默认 project」的概念,却被迫存在一个自动创建的魔法记录。
 2. **隐式行为掩盖配置错误**:自动创建导致「未配置任何 project」和「已配置但缺 default」无法区分——系统永远看起来有 default,真实配置状态被掩盖。
-3. **单 project 时代的遗留**：无参 `current_workflow()`、`current()` 的默认解析、worker_queue 的 project 兜底、first_run 导入目标，全部硬编码依赖 default project，与多 project 设计冲突。
+3. **单 project 时代的遗留**：无参 `current_workflow()`、`current()` 的默认解析和 worker_queue 的 project 兜底硬编码依赖 default project，与多 project 设计冲突。
 
 ## 2. 目标
 
@@ -29,7 +29,6 @@ Symphony 曾存在一个「default project」的隐式强制依赖:只要数据�
 - 若空表引导路径创建 `slug=default` 占位,该记录必须是 disabled,且缺少 `repository_url`
   的 Default 占位即使旧数据中仍为 enabled,也不得发布为 runtime workflow；
 - worker_queue 的 task 必须显式带 project_id,不带就报错;
-- first_run 导入目标显式化,不再硬编码 default;
 - 存量 `slug=default` 记录清理,真实 project(Koroni、ccrr)成为唯一事实来源。
 
 ## 3. 现状分析
@@ -43,7 +42,6 @@ Symphony 曾存在一个「default project」的隐式强制依赖:只要数据�
 | `WorkflowStore.load_database_workflows` (workflow_store.ex:221-230) | 加载全部 enabled projects 的 workflow,`default_project_id` 优先配置完整 default；否则只接受唯一 loaded workflow | default 优先且禁止多项目猜测 |
 | `WorkflowStore.default_project_id/2` (workflow_store.ex:272-277) | default 在 workflows 里就用它的 id；否则只有一个 loaded workflow 时使用该 id | default 优先且多项目缺上下文 |
 | `Persistence.WorkerQueue.enqueue_task/1` (worker_queue.ex:79) | task 不带 project 就 `Map.put_new(:project_id, default.id)` | **静默兜底** |
-| `FirstRunDefaults.import_if_needed` (first_run_defaults.ex:82) | 导入默认 workflow 必须 `default_project()` | 导入目标硬编码 |
 | `HealthController.workflow_state/1` | `current_workflow()` 无参判断 setup 状态 | 无参调用 |
 | `Orchestrator.current_workflow_record/1` | 按 workflow context 的 project id 解析 current workflow | 无参调用 |
 | `AdminLive.State` / `WorkflowState` | admin 界面 selected_project 默认 default | UI 默认值 |
@@ -118,9 +116,12 @@ end
 
 task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required}`。
 
-### 4.4 first_run 导入目标显式化
+### 4.4 启动与导入边界
 
-`FirstRunDefaults.import_if_needed` 不再硬编码 `default_project()`。交互模式下询问用户选择目标 project(列出 enabled projects),非交互/无 project 时跳过导入并进入 setup_required。
+启动引导、显式 Settings / Import 与 Default placeholder 的现行契约由
+[default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) 拥有；
+示例包的显式读取边界由
+[workflow-config-authority-design.md](workflow-config-authority-design.md) 拥有。本文不复述启动导入行为。
 
 ### 4.5 存量数据清理
 
@@ -141,7 +142,6 @@ task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required
 - `lib/symphony_elixir/persistence/workflow_store.ex` — `default_project!/0`、`current_workflow/0`
 - `lib/symphony_elixir/workflow_store.ex` — `default_project_id/2`(fallback 不依赖未配置 Default 占位)
 - `lib/symphony_elixir/persistence/worker_queue.ex` — `enqueue_task/1`
-- `lib/symphony_elixir/first_run_defaults.ex` — `import_if_needed`
 - `lib/symphony_elixir_web/controllers/health_controller.ex` — 无参调用确认
 - `lib/symphony_elixir/orchestrator.ex` — `current_workflow_record/1` 确认
 - `lib/symphony_elixir_web/live/admin_live/state.ex` — `selected_project` 默认值
@@ -153,6 +153,6 @@ task 必须显式带 `project_id`,不带就返回 `{:error, :project_id_required
 1. 空库首次启动:`default_project()` 最多创建 disabled Default 占位,不会创建 enabled runtime Default;
 2. 有 enabled projects 无配置完整 default：恰好一个 enabled loaded workflow 时 `current_workflow()` 解析到该 workflow；两个或更多 enabled loaded workflows 时返回 `:missing_project_context`；
 3. `enqueue_task` 不带 project_id 返回 `{:error, :project_id_required}`;
-4. first_run 导入支持选择目标 project;
+4. 启动与显式导入行为符合上述 owning designs;
 5. 存量 default 记录清理后,健康检查、orchestrator、admin UI 均正常;
 6. `make all` 通过。
