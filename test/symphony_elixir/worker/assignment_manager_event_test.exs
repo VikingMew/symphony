@@ -209,7 +209,16 @@ defmodule SymphonyElixir.Worker.AssignmentManagerEventTest do
     response = api_event(params)
     assert response.status == 503
     assert Plug.Conn.get_resp_header(response, "retry-after") == ["1"]
-    assert Jason.decode!(response.resp_body) == %{"error" => %{"code" => "worker_event_unavailable", "message" => "Worker event persistence is unavailable"}, "retry_after_seconds" => 1}
+
+    assert Jason.decode!(response.resp_body) == %{
+             "error" => %{
+               "code" => "worker_event_unavailable",
+               "message" => "Worker event persistence is unavailable",
+               "retryable" => true
+             },
+             "retry_after_seconds" => 1
+           }
+
     invalid = api_event(%{params | "payload" => %{}})
     assert invalid.status == 422
     assert get_in(Jason.decode!(invalid.resp_body), ["error", "code"]) == "invalid_event_id"

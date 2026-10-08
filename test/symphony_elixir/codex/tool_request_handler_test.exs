@@ -30,15 +30,16 @@ defmodule SymphonyElixir.Codex.ToolRequestHandlerTest do
         "id" => 7,
         "params" => %{
           "tool" => "linear_task_read",
+          "callId" => "call-7",
           "arguments" => %{"issue_identifier" => "ABC-1"}
         }
       }
 
-      executor = fn "linear_task_read", %{"issue_identifier" => "ABC-1"} ->
+      executor = fn "linear_task_read", %{"issue_identifier" => "ABC-1"}, tool_call_id: "call-7" ->
         %{"success" => true, "contentItems" => [%{"text" => "task body"}]}
       end
 
-      assert {:reply, reply, :tool_call_completed, %{}} =
+      assert {:reply, reply, :tool_call_completed, %{tool_call_id: "call-7"}} =
                ToolRequestHandler.handle("item/tool/call", payload,
                  auto_approve_requests: false,
                  tool_executor: executor
@@ -55,7 +56,9 @@ defmodule SymphonyElixir.Codex.ToolRequestHandlerTest do
       assert {:reply, reply, :unsupported_tool_call, %{}} =
                ToolRequestHandler.handle("item/tool/call", payload,
                  auto_approve_requests: false,
-                 tool_executor: fn nil, %{} -> %{"success" => false, "output" => "unsupported"} end
+                 tool_executor: fn nil, %{}, tool_call_id: nil ->
+                   %{"success" => false, "output" => "unsupported"}
+                 end
                )
 
       assert get_in(reply, ["result", "success"]) == false
@@ -118,6 +121,6 @@ defmodule SymphonyElixir.Codex.ToolRequestHandlerTest do
 
   defp unused_tool_executor do
     # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
-    fn _tool, _arguments -> flunk("tool executor should not be called") end
+    fn _tool, _arguments, _context -> flunk("tool executor should not be called") end
   end
 end

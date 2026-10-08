@@ -525,7 +525,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     conn = get(build_conn(), "/api/v1/MT-MISSING")
 
     assert json_response(conn, 404) == %{
-             "error" => %{"code" => "issue_not_found", "message" => "Issue not found"}
+             "error" => %{"code" => "issue_not_found", "message" => "Issue not found", "retryable" => false}
            }
 
     conn = post(build_conn(), "/api/v1/refresh", %{})
@@ -539,36 +539,37 @@ defmodule SymphonyElixir.ExtensionsTest do
     start_test_endpoint(orchestrator: unavailable_orchestrator, snapshot_timeout_ms: 5)
 
     assert json_response(post(build_conn(), "/api/v1/state", %{}), 405) ==
-             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed", "retryable" => false}}
 
     assert json_response(get(build_conn(), "/api/v1/refresh"), 405) ==
-             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed", "retryable" => false}}
 
     assert json_response(post(build_conn(), "/", %{}), 405) ==
-             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed", "retryable" => false}}
 
     assert json_response(post(build_conn(), "/api/v1/MT-1", %{}), 405) ==
-             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed", "retryable" => false}}
 
     assert json_response(post(build_conn(), "/api/v1/runs", %{}), 405) ==
-             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed", "retryable" => false}}
 
     assert json_response(get(build_conn(), "/unknown"), 404) ==
-             %{"error" => %{"code" => "not_found", "message" => "Route not found"}}
+             %{"error" => %{"code" => "not_found", "message" => "Route not found", "retryable" => false}}
 
     state_payload = json_response(get(build_conn(), "/api/v1/state"), 200)
 
     assert state_payload ==
              %{
                "generated_at" => state_payload["generated_at"],
-               "error" => %{"code" => "snapshot_unavailable", "message" => "Snapshot unavailable"}
+               "error" => %{"code" => "snapshot_unavailable", "message" => "Snapshot unavailable", "retryable" => true}
              }
 
     assert json_response(post(build_conn(), "/api/v1/refresh", %{}), 503) ==
              %{
                "error" => %{
                  "code" => "orchestrator_unavailable",
-                 "message" => "Orchestrator is unavailable"
+                 "message" => "Orchestrator is unavailable",
+                 "retryable" => true
                }
              }
   end
@@ -583,7 +584,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert timeout_payload ==
              %{
                "generated_at" => timeout_payload["generated_at"],
-               "error" => %{"code" => "snapshot_timeout", "message" => "Snapshot timed out"}
+               "error" => %{"code" => "snapshot_timeout", "message" => "Snapshot timed out", "retryable" => true}
              }
   end
 

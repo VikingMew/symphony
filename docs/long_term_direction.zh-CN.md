@@ -61,6 +61,10 @@ Elixir / Phoenix Web Service
 - `部分落地`：Panel / Worker 数据模型、API、lease、heartbeat 和 dashboard 控制已存在，但生产 worker runtime、宿主或外部基础设施启动的容器隔离 worker 和更强 sandbox runner 仍是后续阶段；这不表示 Compose 内 DinD 或容器引擎 socket passthrough，边界见 [Compose 运维契约](compose.md#container-control-plane-boundary)。
 - `部分落地`：多项目配置、run detail/issue detail/events 页面、hook 审计事件和结构化 workflow diff 已有基础路径；完整多项目生产隔离、secrets metadata 生产化管理和更完整的 logs 视图仍是后续工作。
 - `已落地`：独立历史 Analytics 页面已落地。Dashboard 仍是 live operational view，Runs/Events 是 persisted debug/audit view，Analytics 负责时间范围内的历史统计。
+- `已落地`：console 与 rotating-file 第一方日志统一为 JSON Lines；restricted tool 的 typed
+  error 与 `tool_call_id` 可在中心化、worker audit 和历史事件中关联。稳定字段和唯一的 logs、
+  trace、metrics/state 命令由 [Logging and Error Contract](logging.md) 管理，存量 source debt 由
+  deletion-only `mix observability.check` baseline 显式计数。
 - `已落地`：Nginx / Kubernetes 反向代理、可信 forwarded headers、health/readiness probes 和 copyable deployment examples 已落地，部署说明维护在 [Deployment Guide](deployment.md)。
 - `已落地`：GitHub 风格顶层 README 已落地，顶层 README 是项目入口文档。
 - 文档对齐矩阵维护在 [Documentation Alignment Matrix](documentation-alignment.md)。涉及 runtime、Settings、worker、observability 或 deployment 的实现完成时，应同步更新该矩阵或对应 canonical docs。

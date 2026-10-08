@@ -57,6 +57,7 @@ other documents link instead of restating.
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |
 | [issue-persistence-design.md](issue-persistence-design.md) | Persisted issue identity, poll snapshots, worker-owned state, and history projection. | landed |
+| [observability-errors-design.md](observability-errors-design.md) | Structured logs, request/tool error envelopes, correlation, operator commands, and source ratchet. | landed |
 
 ## L4 — Normative Contracts
 
@@ -81,6 +82,7 @@ other documents link instead of restating.
 | [agent-facing-code-audit.md](agent-facing-code-audit.md) | Exact 35-unit constitution audit with reproducible repository evidence. |
 | [agent-facing-code-n-conformance.md](agent-facing-code-n-conformance.md) | Current N-01 through N-09 navigation facts, glossary, deterministic rules, and ratchet waterline. |
 | [agent-facing-code-x-conformance.md](agent-facing-code-x-conformance.md) | Current X-01 through X-05 test-governance facts, checker calibration, and hard-gate waterline. |
+| [agent-facing-code-o-conformance.md](agent-facing-code-o-conformance.md) | Current O-01 through O-08 observability/error evidence and ratchet waterline. |
 
 ## L5 — Operational Guides
 

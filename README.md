@@ -244,7 +244,11 @@ Centralized execution is the default and does not require registered workers.
 Historical analytics includes range-filtered refinement-description sample counts, character and
 line averages and p95 values, plus over-limit counts and rates from persisted completion events.
 
-Logs are structured application logs. There is no TUI status surface.
+Console and rotating-file application logs are one-object-per-line JSON. Stable event, error, and
+correlation fields plus the canonical logs, trace, and metrics/state commands are defined in
+[docs/logging.md](docs/logging.md). Restricted tool calls preserve `params.callId` as
+`tool_call_id`; typed failures expose stable `code` and `retryable` values without message matching.
+There is no TUI status surface.
 
 ## Deployment
 
