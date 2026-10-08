@@ -82,6 +82,34 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
            }
   end
 
+  test "dispatch scope clears inherited optional values and rejects a project without a team" do
+    {:ok, loaded} = Workflow.load()
+
+    config =
+      Map.put(loaded.config, "dispatch_scope", %{
+        "linear_team_key" => "KRN",
+        "linear_project_slug" => "koroni",
+        "fallback_project_slug" => "default"
+      })
+
+    draft =
+      WorkflowForm.from_loaded(%{loaded | config: config})
+      |> Map.put("dispatch_linear_team_key", "")
+      |> Map.put("dispatch_linear_project_slug", "")
+      |> Map.put("dispatch_fallback_project_slug", "")
+
+    assert {:ok, instance, _project} = WorkflowForm.to_scopes(draft)
+    assert get_in(instance.config, ["dispatch_scope", "linear_team_key"]) == nil
+    assert get_in(instance.config, ["dispatch_scope", "linear_project_slug"]) == nil
+    assert get_in(instance.config, ["dispatch_scope", "fallback_project_slug"]) == nil
+
+    assert {:error, :linear_project_requires_team} =
+             WorkflowScopes.new_instance(
+               %{"dispatch_scope" => %{"linear_project_slug" => "koroni"}},
+               "Prompt"
+             )
+  end
+
   test "slice parsing rejects duplicate canonical keys" do
     assert {:error, {:duplicate_workflow_fields, :instance, ["polling"]}} =
              WorkflowScopes.split_package(

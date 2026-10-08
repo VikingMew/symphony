@@ -35,42 +35,50 @@ defmodule SymphonyElixir.Linear.CandidateQuery do
   pageInfo { hasNextPage endCursor }
   """
 
-  @spec build(map(), [String.t()], keyword()) :: {String.t(), map(), String.t()}
+  @spec build(map(), [String.t()], keyword()) ::
+          {String.t(), map(), String.t()} | {:error, :linear_project_requires_team}
   def build(scope, state_names, opts \\ []) when is_map(scope) and is_list(state_names) do
     scope = DispatchScope.normalize(scope)
-    first = Keyword.fetch!(opts, :first)
-    relation_first = Keyword.fetch!(opts, :relation_first)
-    after_cursor = Keyword.get(opts, :after)
-    {declarations, filter, scoped_variables, shape} = filter_parts(scope)
 
-    declarations =
-      [declarations, "$stateNames: [String!]!", "$first: Int!", "$relationFirst: Int!", "$after: String"]
-      |> Enum.reject(&(&1 == ""))
-      |> Enum.join(", ")
+    with :ok <- DispatchScope.validate_combination(scope) do
+      first = Keyword.fetch!(opts, :first)
+      relation_first = Keyword.fetch!(opts, :relation_first)
+      after_cursor = Keyword.get(opts, :after)
+      {declarations, filter, scoped_variables, shape} = filter_parts(scope)
 
-    query = """
-    query SymphonyLinearPoll(#{declarations}) {
-      issues(filter: {#{filter}state: {name: {in: $stateNames}}}, first: $first, after: $after) {
-        #{@selection}
+      declarations =
+        [declarations, "$stateNames: [String!]!", "$first: Int!", "$relationFirst: Int!", "$after: String"]
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.join(", ")
+
+      query = """
+      query SymphonyLinearPoll(#{declarations}) {
+        issues(filter: {#{filter}state: {name: {in: $stateNames}}}, first: $first, after: $after) {
+          #{@selection}
+        }
       }
-    }
-    """
+      """
 
-    variables =
-      Map.merge(scoped_variables, %{
-        stateNames: state_names,
-        first: first,
-        relationFirst: relation_first,
-        after: after_cursor
-      })
+      variables =
+        Map.merge(scoped_variables, %{
+          stateNames: state_names,
+          first: first,
+          relationFirst: relation_first,
+          after: after_cursor
+        })
 
-    {query, variables, shape}
+      {query, variables, shape}
+    end
   end
 
-  @spec filter_shape(map()) :: String.t()
+  @spec filter_shape(map()) :: String.t() | {:error, :linear_project_requires_team}
   def filter_shape(scope) when is_map(scope) do
-    {_declarations, _filter, _variables, shape} = scope |> DispatchScope.normalize() |> filter_parts()
-    shape
+    scope = DispatchScope.normalize(scope)
+
+    with :ok <- DispatchScope.validate_combination(scope) do
+      {_declarations, _filter, _variables, shape} = filter_parts(scope)
+      shape
+    end
   end
 
   defp filter_parts(%{linear_team_key: nil, linear_project_slug: nil}) do

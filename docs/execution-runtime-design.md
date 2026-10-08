@@ -110,7 +110,9 @@ Each normal Orchestrator poll performs one installation-level candidate query. T
 the union of `tracker.active_states` from every enabled workflow. `dispatch_scope` selects one of
 three exact filter shapes: state only; team key plus state; or team key, Linear project slug, and
 state. Omitting the optional project predicate admits both project-associated and `project = null`
-issues. The offline query contract pins the external `team.key.eq` relation-filter assumption.
+issues. A project predicate without a team is rejected as `linear_project_requires_team` before
+GraphQL construction or transport. The offline query contract pins the external `team.key.eq`
+relation-filter assumption.
 
 Candidate scope and execution context are separate decisions. A candidate with a Linear project is
 resolved to the single enabled workflow whose composed `tracker.project_slug` matches

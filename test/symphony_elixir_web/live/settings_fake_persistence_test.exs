@@ -862,6 +862,62 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
 
     {:ok, _diagnostics, diagnostics_html} = live(build_conn(), "/diagnostics/linear")
     assert diagnostics_html =~ "team_project_state"
+
+    {:ok, team_wide_view, _html} = live(build_conn(), "/settings/runtime")
+
+    widened =
+      team_wide_view
+      |> form(".runtime-settings-form",
+        workflow: %{
+          "dispatch_linear_team_key" => "KRN",
+          "dispatch_linear_project_slug" => "",
+          "dispatch_fallback_project_slug" => ""
+        }
+      )
+      |> render_submit()
+
+    assert widened =~ "workflow-save-toast-success"
+    instance = FakePersistence.instance_workflow()
+    assert get_in(instance.config, ["dispatch_scope", "linear_team_key"]) == "KRN"
+    assert get_in(instance.config, ["dispatch_scope", "linear_project_slug"]) == nil
+    assert get_in(instance.config, ["dispatch_scope", "fallback_project_slug"]) == nil
+
+    {:ok, all_teams_view, _html} = live(build_conn(), "/settings/runtime")
+
+    all_teams =
+      all_teams_view
+      |> form(".runtime-settings-form",
+        workflow: %{
+          "dispatch_linear_team_key" => "",
+          "dispatch_linear_project_slug" => "",
+          "dispatch_fallback_project_slug" => ""
+        }
+      )
+      |> render_submit()
+
+    assert all_teams =~ "workflow-save-toast-success"
+    instance = FakePersistence.instance_workflow()
+    assert get_in(instance.config, ["dispatch_scope", "linear_team_key"]) == nil
+    assert get_in(instance.config, ["dispatch_scope", "linear_project_slug"]) == nil
+  end
+
+  test "saving an unrelated settings tab does not fetch discovery for an unchanged dispatch scope" do
+    assert {:ok, instance} = WorkflowForm.empty() |> WorkflowForm.to_instance_scope()
+    config = Map.put(instance.config, "dispatch_scope", %{"linear_team_key" => "KRN"})
+    assert {:ok, _instance} = FakePersistence.put_instance_workflow(config, instance.prompt_body)
+    assert :ok = WorkflowStore.force_reload()
+    System.delete_env("LINEAR_API_KEY")
+
+    start_test_endpoint()
+    {:ok, view, _html} = live(build_conn(), "/settings/agents")
+
+    saved =
+      view
+      |> form(".agent-settings-form", workflow: %{"prompt_body" => "Changed without discovery."})
+      |> render_submit()
+
+    assert saved =~ "workflow-save-toast-success"
+    assert FakePersistence.instance_workflow().prompt_body == "Changed without discovery."
   end
 
   test "settings import saves a new Codex model and Runtime reloads it" do

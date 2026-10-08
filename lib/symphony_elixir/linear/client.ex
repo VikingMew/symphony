@@ -236,14 +236,19 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp do_fetch_by_states(scope, state_names, assignee_filter, graphql_fun) do
     scope = DispatchScope.normalize(scope)
-    shape = CandidateQuery.filter_shape(scope)
 
-    Logger.info(
-      "event=query_filter team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
-        "active_states=#{inspect(state_names)} filter_shape=#{shape}"
-    )
+    case CandidateQuery.filter_shape(scope) do
+      {:error, reason} ->
+        {:error, reason}
 
-    do_fetch_by_states_page(scope, state_names, assignee_filter, graphql_fun, nil, [], 0)
+      shape ->
+        Logger.info(
+          "event=query_filter team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
+            "active_states=#{inspect(state_names)} filter_shape=#{shape}"
+        )
+
+        do_fetch_by_states_page(scope, state_names, assignee_filter, graphql_fun, nil, [], 0)
+    end
   end
 
   defp do_fetch_by_states_page(
@@ -255,14 +260,13 @@ defmodule SymphonyElixir.Linear.Client do
          acc_issues,
          page_count
        ) do
-    {query, variables, _shape} =
-      CandidateQuery.build(scope, state_names,
-        first: @issue_page_size,
-        relation_first: @issue_page_size,
-        after: after_cursor
-      )
-
-    with {:ok, body} <- graphql_fun.(query, variables),
+    with {query, variables, _shape} <-
+           CandidateQuery.build(scope, state_names,
+             first: @issue_page_size,
+             relation_first: @issue_page_size,
+             after: after_cursor
+           ),
+         {:ok, body} <- graphql_fun.(query, variables),
          {:ok, issues, page_info} <- Pagination.decode_page_response(body, assignee_filter) do
       continue_candidate_pages(
         Pagination.next_page_cursor(page_info),

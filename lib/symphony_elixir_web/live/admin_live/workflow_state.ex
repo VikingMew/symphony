@@ -196,9 +196,18 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
       fallback_project_slug: Map.get(draft, "dispatch_fallback_project_slug")
     }
 
-    with {:ok, discovery} <- dispatch_discovery(scope, socket) do
-      DispatchScope.validate_settings(scope, discovery, socket.assigns.projects)
+    if dispatch_scope_changed?(scope, draft) do
+      with {:ok, discovery} <- dispatch_discovery(scope, socket) do
+        DispatchScope.validate_settings(scope, discovery, socket.assigns.projects)
+      end
+    else
+      :ok
     end
+  end
+
+  defp dispatch_scope_changed?(scope, draft) do
+    persisted_scope = get_in(draft, ["_base_config", "dispatch_scope"]) || %{}
+    DispatchScope.normalize(scope) != DispatchScope.normalize(persisted_scope)
   end
 
   defp dispatch_discovery(scope, socket) do

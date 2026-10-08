@@ -313,9 +313,16 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
         team_key: scope["linear_team_key"],
         project_slug: scope["linear_project_slug"],
         active_states: DispatchScope.active_states(WorkflowStore.list_enabled()),
-        filter_shape: CandidateQuery.filter_shape(settings.dispatch_scope)
+        filter_shape: filter_shape(settings.dispatch_scope)
       }
     }
+  end
+
+  defp filter_shape(scope) do
+    case CandidateQuery.filter_shape(scope) do
+      {:error, reason} -> inspect(reason)
+      shape -> shape
+    end
   end
 
   defp normalize_team_summary(team) when is_map(team) do
