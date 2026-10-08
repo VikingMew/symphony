@@ -114,9 +114,9 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   @doc "Fetches scoped candidates through an injected GraphQL boundary."
-  @spec fetch_candidate_issues(map(), [String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
+  @spec fetch_candidate_issues_with(map(), [String.t()], (String.t(), map() -> {:ok, map()} | {:error, term()})) ::
           {:ok, [Issue.t()]} | {:error, term()}
-  def fetch_candidate_issues(scope, state_names, graphql_fun)
+  def fetch_candidate_issues_with(scope, state_names, graphql_fun)
       when is_map(scope) and is_list(state_names) and is_function(graphql_fun, 2) do
     do_fetch_by_states(scope, Enum.map(state_names, &to_string/1) |> Enum.uniq(), nil, graphql_fun)
   end
@@ -235,16 +235,17 @@ defmodule SymphonyElixir.Linear.Client do
   end
 
   defp do_fetch_by_states(scope, state_names, assignee_filter, graphql_fun) do
-    scope = DispatchScope.normalize(scope)
+    scope = DispatchScope.normalize_dispatch_scope(scope)
 
-    case CandidateQuery.filter_shape(scope) do
+    case CandidateQuery.scope_filter_shape(scope) do
       {:error, reason} ->
         {:error, reason}
 
       shape ->
         Logger.info(
           "event=query_filter team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
-            "active_states=#{inspect(state_names)} filter_shape=#{shape}"
+            "active_states=#{inspect(state_names)} filter_shape=#{shape}",
+          event: "linear.query_filter"
         )
 
         do_fetch_by_states_page(scope, state_names, assignee_filter, graphql_fun, nil, [], 0)
@@ -312,7 +313,8 @@ defmodule SymphonyElixir.Linear.Client do
   defp log_empty_fetch([], scope, state_names, page_count) do
     Logger.info(
       "event=fetch_empty team_key=#{inspect(scope.linear_team_key)} project_slug=#{inspect(scope.linear_project_slug)} " <>
-        "active_states=#{inspect(state_names)} page_count=#{page_count} candidate_count=0"
+        "active_states=#{inspect(state_names)} page_count=#{page_count} candidate_count=0",
+      event: "linear.fetch_empty"
     )
   end
 

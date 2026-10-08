@@ -66,7 +66,7 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
     teams_probe = teams_probe(client)
     project_probe = project_probe(client, tracker.project_slug)
     states_probe = states_probe(project_probe, settings)
-    {candidate_probe, issues} = candidate_probe(client, settings)
+    {candidate_probe, issues} = probe_scoped_candidates(client, settings)
 
     %{
       probes: %{
@@ -186,13 +186,13 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
     probe(:skipped, "Workflow states", "Skipped because project slug did not resolve.")
   end
 
-  @spec candidate_probe(module()) :: {probe(), [map()]}
-  def candidate_probe(client) do
+  @spec probe_candidates(module()) :: {probe(), [map()]}
+  def probe_candidates(client) do
     do_candidate_probe(client, nil)
   end
 
-  @spec candidate_probe(module(), map()) :: {probe(), [map()]}
-  def candidate_probe(client, settings) when is_map(settings) do
+  @spec probe_scoped_candidates(module(), map()) :: {probe(), [map()]}
+  def probe_scoped_candidates(client, settings) when is_map(settings) do
     do_candidate_probe(client, settings)
   end
 
@@ -291,7 +291,7 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
     workflows = WorkflowStore.list_enabled()
 
     Enum.map(issues, fn issue ->
-      case DispatchScope.resolve(issue, workflows, settings.dispatch_scope) do
+      case DispatchScope.resolve_context(issue, workflows, settings.dispatch_scope) do
         {:ok, _workflow, resolved_issue} ->
           normalize_issue(resolved_issue)
 
@@ -313,13 +313,13 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
         team_key: scope["linear_team_key"],
         project_slug: scope["linear_project_slug"],
         active_states: DispatchScope.active_states(WorkflowStore.list_enabled()),
-        filter_shape: filter_shape(settings.dispatch_scope)
+        filter_shape: probe_filter_shape(settings.dispatch_scope)
       }
     }
   end
 
-  defp filter_shape(scope) do
-    case CandidateQuery.filter_shape(scope) do
+  defp probe_filter_shape(scope) do
+    case CandidateQuery.scope_filter_shape(scope) do
       {:error, reason} -> inspect(reason)
       shape -> shape
     end

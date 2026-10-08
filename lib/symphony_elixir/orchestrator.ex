@@ -1178,24 +1178,33 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp group_scoped_issue(issue, groups, workflows, scope) do
-    case DispatchScope.resolve(issue, workflows, scope) do
+    case DispatchScope.resolve_context(issue, workflows, scope) do
       {:ok, workflow, resolved_issue} ->
         Map.update(groups, workflow.project_id, {workflow, [resolved_issue]}, fn {existing, existing_issues} ->
           {existing, [resolved_issue | existing_issues]}
         end)
 
       {:error, reason, rejected_issue} ->
-        log_context_rejection(rejected_issue, reason)
+        log_poll_context_rejection(rejected_issue, reason)
         groups
     end
   end
 
-  defp log_context_rejection(issue, reason) do
-    scope = DispatchScope.evidence(issue)["dispatch_scope"]
+  defp log_poll_context_rejection(issue, reason) do
+    scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
 
     Logger.warning(
       "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
-        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}"
+        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+      event: "linear.admission_rejected",
+      operation: "resolve_poll_candidate_context",
+      location: "SymphonyElixir.Orchestrator.group_scoped_issue/4",
+      offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+      expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+      error_code: "admission_rejected",
+      retryable: false,
+      issue_id: issue.id,
+      issue_identifier: issue.identifier
     )
   end
 
@@ -1863,7 +1872,7 @@ defmodule SymphonyElixir.Orchestrator do
             do_dispatch_issue(state, resolved_issue, attempt, preferred_worker_host)
 
           {:error, reason, rejected_issue} ->
-            log_context_rejection(rejected_issue, reason)
+            log_poll_context_rejection(rejected_issue, reason)
             state
         end
 
@@ -1889,13 +1898,18 @@ defmodule SymphonyElixir.Orchestrator do
     scope = Config.settings!().dispatch_scope
 
     with {:ok, current} <- current_workflow_context(),
-         {:ok, resolved_workflow, resolved_issue} <- DispatchScope.resolve(issue, workflows, scope),
+         {:ok, resolved_workflow, resolved_issue} <- DispatchScope.resolve_context(issue, workflows, scope),
          true <- resolved_workflow.project_id == current.project_id do
       {:ok, resolved_issue}
     else
-      {:error, reason, rejected_issue} -> {:error, reason, rejected_issue}
-      {:error, reason} -> {:error, reason, %{issue | dispatch_scope: DispatchScope.normalize(scope)}}
-      false -> {:error, :issue_project_out_of_scope, %{issue | dispatch_scope: DispatchScope.normalize(scope)}}
+      {:error, reason, rejected_issue} ->
+        {:error, reason, rejected_issue}
+
+      {:error, reason} ->
+        {:error, reason, %{issue | dispatch_scope: DispatchScope.normalize_dispatch_scope(scope)}}
+
+      false ->
+        {:error, :issue_project_out_of_scope, %{issue | dispatch_scope: DispatchScope.normalize_dispatch_scope(scope)}}
     end
   end
 

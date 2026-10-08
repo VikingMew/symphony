@@ -18,7 +18,7 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
     "project" => ~w(repository_url default_branch checkout_depth source_strategy worktree_fetch worktree_cleanup required_gates setup_commands cleanup_commands)
   }
   @instance_modules %{
-    "dispatch_scope" => Schema.DispatchScope,
+    "dispatch_scope" => Schema.DispatchScopeConfig,
     "polling" => Schema.Polling,
     "workspace" => Schema.Workspace,
     "hooks" => Schema.Hooks,

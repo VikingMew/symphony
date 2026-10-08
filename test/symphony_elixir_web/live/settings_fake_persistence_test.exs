@@ -28,19 +28,11 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
       end
     end
 
-    @spec graphql(String.t(), map()) :: {:ok, map()} | {:error, term()}
-    def graphql(query, variables) do
-      operation_name =
-        case Regex.run(~r/query\s+(\w+)/, query) do
-          [_, name] -> name
-          _no_name -> nil
-        end
-
-      graphql(query, variables, operation_name: operation_name)
-    end
-
     @spec fetch_candidate_issues() :: {:ok, list()}
-    def fetch_candidate_issues, do: {:ok, []}
+    defdelegate fetch_candidate_issues(), to: __MODULE__, as: :empty_candidate_result
+
+    @spec empty_candidate_result() :: {:ok, list()}
+    def empty_candidate_result, do: {:ok, []}
 
     defp default_response("SymphonyLinearDiscoveryViewer", _variables) do
       %{"data" => %{"viewer" => %{"id" => "viewer-1", "name" => "Ops User", "email" => "ops@example.test"}}}

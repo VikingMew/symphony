@@ -38,7 +38,7 @@ defmodule SymphonyElixir.Linear.CandidateQuery do
   @spec build(map(), [String.t()], keyword()) ::
           {String.t(), map(), String.t()} | {:error, :linear_project_requires_team}
   def build(scope, state_names, opts \\ []) when is_map(scope) and is_list(state_names) do
-    scope = DispatchScope.normalize(scope)
+    scope = DispatchScope.normalize_dispatch_scope(scope)
 
     with :ok <- DispatchScope.validate_combination(scope) do
       first = Keyword.fetch!(opts, :first)
@@ -71,9 +71,9 @@ defmodule SymphonyElixir.Linear.CandidateQuery do
     end
   end
 
-  @spec filter_shape(map()) :: String.t() | {:error, :linear_project_requires_team}
-  def filter_shape(scope) when is_map(scope) do
-    scope = DispatchScope.normalize(scope)
+  @spec scope_filter_shape(map()) :: String.t() | {:error, :linear_project_requires_team}
+  def scope_filter_shape(scope) when is_map(scope) do
+    scope = DispatchScope.normalize_dispatch_scope(scope)
 
     with :ok <- DispatchScope.validate_combination(scope) do
       {_declarations, _filter, _variables, shape} = filter_parts(scope)

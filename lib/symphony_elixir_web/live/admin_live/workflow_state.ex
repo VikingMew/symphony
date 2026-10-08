@@ -198,7 +198,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
 
     if dispatch_scope_changed?(scope, draft) do
       with {:ok, discovery} <- dispatch_discovery(scope, socket) do
-        DispatchScope.validate_settings(scope, discovery, socket.assigns.projects)
+        DispatchScope.validate_dispatch_settings(scope, discovery, socket.assigns.projects)
       end
     else
       :ok
@@ -207,11 +207,11 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
 
   defp dispatch_scope_changed?(scope, draft) do
     persisted_scope = get_in(draft, ["_base_config", "dispatch_scope"]) || %{}
-    DispatchScope.normalize(scope) != DispatchScope.normalize(persisted_scope)
+    DispatchScope.normalize_dispatch_scope(scope) != DispatchScope.normalize_dispatch_scope(persisted_scope)
   end
 
   defp dispatch_discovery(scope, socket) do
-    normalized = DispatchScope.normalize(scope)
+    normalized = DispatchScope.normalize_dispatch_scope(scope)
 
     if is_nil(normalized.linear_team_key) and is_nil(normalized.linear_project_slug) do
       {:ok, %{teams: [], projects: []}}

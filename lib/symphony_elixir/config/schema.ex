@@ -69,7 +69,7 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
-  defmodule DispatchScope do
+  defmodule DispatchScopeConfig do
     @moduledoc false
     use Ecto.Schema
     import Ecto.Changeset
@@ -82,8 +82,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:fallback_project_slug, :string)
     end
 
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
+    @spec dispatch_scope_changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def dispatch_scope_changeset(schema, attrs) do
       schema
       |> cast(attrs, [:linear_team_key, :linear_project_slug, :fallback_project_slug], empty_values: [])
       |> normalize_optional(:linear_team_key)
@@ -566,7 +566,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   embedded_schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
-    embeds_one(:dispatch_scope, DispatchScope, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:dispatch_scope, DispatchScopeConfig, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
     embeds_one(:project, Project, on_replace: :update, defaults_to_struct: true)
@@ -748,7 +748,7 @@ defmodule SymphonyElixir.Config.Schema do
     %__MODULE__{}
     |> cast(attrs, [:workflow, :profiles])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
-    |> cast_embed(:dispatch_scope, with: &DispatchScope.changeset/2)
+    |> cast_embed(:dispatch_scope, with: &DispatchScopeConfig.dispatch_scope_changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
     |> cast_embed(:project, with: &Project.changeset/2)

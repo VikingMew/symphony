@@ -5,13 +5,13 @@ defmodule SymphonyElixir.Linear.DispatchScope do
 
   alias SymphonyElixir.Linear.Issue
 
-  @type scope :: %{
+  @type dispatch_scope :: %{
           linear_team_key: String.t() | nil,
           linear_project_slug: String.t() | nil,
           fallback_project_slug: String.t() | nil
         }
 
-  @type rejection ::
+  @type context_rejection ::
           :linear_project_requires_team
           | {:unknown_linear_team, String.t()}
           | {:unknown_linear_project, String.t()}
@@ -24,8 +24,8 @@ defmodule SymphonyElixir.Linear.DispatchScope do
           | :missing_fallback_project
           | :ambiguous_linear_project_context
 
-  @spec normalize(map()) :: scope()
-  def normalize(scope) when is_map(scope) do
+  @spec normalize_dispatch_scope(map()) :: dispatch_scope()
+  def normalize_dispatch_scope(scope) when is_map(scope) do
     %{
       linear_team_key: optional_value(scope, :linear_team_key),
       linear_project_slug: optional_value(scope, :linear_project_slug),
@@ -35,21 +35,21 @@ defmodule SymphonyElixir.Linear.DispatchScope do
 
   @spec validate_combination(map()) :: :ok | {:error, :linear_project_requires_team}
   def validate_combination(scope) when is_map(scope) do
-    scope = normalize(scope)
+    scope = normalize_dispatch_scope(scope)
 
     if is_nil(scope.linear_team_key) and is_binary(scope.linear_project_slug),
       do: {:error, :linear_project_requires_team},
       else: :ok
   end
 
-  @spec validate_settings(map(), map(), [map()]) :: :ok | {:error, rejection()}
-  def validate_settings(scope, discovery, projects)
+  @spec validate_dispatch_settings(map(), map(), [map()]) :: :ok | {:error, context_rejection()}
+  def validate_dispatch_settings(scope, discovery, projects)
       when is_map(scope) and is_map(discovery) and is_list(projects) do
-    scope = normalize(scope)
+    scope = normalize_dispatch_scope(scope)
 
     with :ok <- validate_combination(scope),
          :ok <- validate_team(scope.linear_team_key, discovery),
-         :ok <- validate_project(scope, discovery) do
+         :ok <- validate_linear_project(scope, discovery) do
       validate_fallback(scope.fallback_project_slug, projects)
     end
   end
@@ -63,10 +63,10 @@ defmodule SymphonyElixir.Linear.DispatchScope do
     |> Enum.sort()
   end
 
-  @spec resolve(Issue.t(), [map()], map()) ::
-          {:ok, map(), Issue.t()} | {:error, rejection(), Issue.t()}
-  def resolve(%Issue{} = issue, workflows, scope) when is_list(workflows) and is_map(scope) do
-    scope = normalize(scope)
+  @spec resolve_context(Issue.t(), [map()], map()) ::
+          {:ok, map(), Issue.t()} | {:error, context_rejection(), Issue.t()}
+  def resolve_context(%Issue{} = issue, workflows, scope) when is_list(workflows) and is_map(scope) do
+    scope = normalize_dispatch_scope(scope)
 
     with :ok <- issue_in_scope(issue, scope),
          {:ok, workflow, source} <- resolve_workflow(issue, workflows, scope) do
@@ -76,8 +76,8 @@ defmodule SymphonyElixir.Linear.DispatchScope do
     end
   end
 
-  @spec evidence(Issue.t()) :: map()
-  def evidence(%Issue{} = issue) do
+  @spec context_evidence(Issue.t()) :: map()
+  def context_evidence(%Issue{} = issue) do
     %{
       "dispatch_scope" => stringify_scope(issue.dispatch_scope),
       "linear_team_key" => issue.team_key,
@@ -92,7 +92,7 @@ defmodule SymphonyElixir.Linear.DispatchScope do
   def stringify_scope(nil), do: stringify_scope(%{})
 
   def stringify_scope(scope) when is_map(scope) do
-    normalized = normalize(scope)
+    normalized = normalize_dispatch_scope(scope)
 
     %{
       "linear_team_key" => normalized.linear_team_key,
@@ -104,36 +104,39 @@ defmodule SymphonyElixir.Linear.DispatchScope do
   defp validate_team(nil, _discovery), do: :ok
 
   defp validate_team(team_key, discovery) do
-    if Enum.any?(Map.get(discovery, :teams, []), &(project_value(&1, :key) == team_key)),
+    if Enum.any?(Map.get(discovery, :teams, []), &(scope_project_value(&1, :key) == team_key)),
       do: :ok,
       else: {:error, {:unknown_linear_team, team_key}}
   end
 
-  defp validate_project(%{linear_project_slug: nil}, _discovery), do: :ok
+  defp validate_linear_project(%{linear_project_slug: nil}, _discovery), do: :ok
 
-  defp validate_project(scope, discovery) do
-    case Enum.find(Map.get(discovery, :projects, []), &(project_value(&1, :slug) == scope.linear_project_slug)) do
+  defp validate_linear_project(scope, discovery) do
+    case Enum.find(Map.get(discovery, :projects, []), &(scope_project_value(&1, :slug) == scope.linear_project_slug)) do
       nil ->
         {:error, {:unknown_linear_project, scope.linear_project_slug}}
 
       project ->
-        if Enum.any?(project_value(project, :teams) || [], &(project_value(&1, :key) == scope.linear_team_key)),
-          do: :ok,
-          else: {:error, {:linear_project_team_mismatch, scope.linear_team_key, scope.linear_project_slug}}
+        if Enum.any?(
+             scope_project_value(project, :teams) || [],
+             &(scope_project_value(&1, :key) == scope.linear_team_key)
+           ),
+           do: :ok,
+           else: {:error, {:linear_project_team_mismatch, scope.linear_team_key, scope.linear_project_slug}}
     end
   end
 
   defp validate_fallback(nil, _projects), do: :ok
 
   defp validate_fallback(slug, projects) do
-    case Enum.find(projects, &(project_value(&1, :slug) == slug)) do
+    case Enum.find(projects, &(scope_project_value(&1, :slug) == slug)) do
       nil -> {:error, {:unknown_fallback_project, slug}}
       project -> validate_fallback_enabled(project, slug)
     end
   end
 
   defp validate_fallback_enabled(project, slug) do
-    if project_value(project, :enabled) == true,
+    if scope_project_value(project, :enabled) == true,
       do: :ok,
       else: {:error, {:disabled_fallback_project, slug}}
   end
@@ -198,5 +201,5 @@ defmodule SymphonyElixir.Linear.DispatchScope do
     end
   end
 
-  defp project_value(project, key), do: Map.get(project, key) || Map.get(project, to_string(key))
+  defp scope_project_value(project, key), do: Map.get(project, key) || Map.get(project, to_string(key))
 end

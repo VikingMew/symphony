@@ -788,7 +788,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     |> DispatchPolicy.sort_issues_for_dispatch()
     |> Enum.reduce_while(empty, fn issue, skip ->
       select_scoped_issue(
-        DispatchScope.resolve(issue, workflows, scope),
+        DispatchScope.resolve_context(issue, workflows, scope),
         skip,
         state,
         listening_mode,
@@ -813,7 +813,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   end
 
   defp select_scoped_issue({:error, reason, issue}, skip, _state, _mode, _capacity) do
-    log_context_rejection(issue, reason)
+    log_claim_context_rejection(issue, reason)
     {:cont, skip}
   end
 
@@ -847,17 +847,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
            revalidate(candidate, state, dispatch_settings),
          scope <- Config.settings!().dispatch_scope,
          {:ok, resolved_workflow, resolved_issue} <-
-           DispatchScope.resolve(issue, workflows, scope),
+           DispatchScope.resolve_context(issue, workflows, scope),
          true <- resolved_workflow.project_id == workflow.project_id do
       {:ok, resolved_issue}
     else
       {:error, reason, rejected_issue} ->
-        log_context_rejection(rejected_issue, reason)
+        log_claim_context_rejection(rejected_issue, reason)
         {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
 
       false ->
         reason = :issue_project_out_of_scope
-        log_context_rejection(candidate, reason)
+        log_claim_context_rejection(candidate, reason)
         {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
 
       other ->
@@ -865,12 +865,21 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp log_context_rejection(issue, reason) do
-    scope = DispatchScope.evidence(issue)["dispatch_scope"]
+  defp log_claim_context_rejection(issue, reason) do
+    scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
 
     Logger.warning(
       "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
-        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}"
+        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+      event: "linear.admission_rejected",
+      operation: "resolve_claim_candidate_context",
+      location: "SymphonyElixir.Worker.AssignmentManager.resolve_scoped_candidate/4",
+      offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+      expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+      error_code: "admission_rejected",
+      retryable: false,
+      issue_id: issue.id,
+      issue_identifier: issue.identifier
     )
   end
 

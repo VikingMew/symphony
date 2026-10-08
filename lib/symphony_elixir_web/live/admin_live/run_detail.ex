@@ -31,7 +31,7 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
           </tbody>
         </table>
 
-        <%= if context = dispatch_context(@run_detail.events) do %>
+        <%= if context = find_event_dispatch_context(@run_detail.events) do %>
           <h2 class="section-title">Dispatch Context</h2>
           <table class="data-table dispatch-context-table">
             <tbody>
@@ -214,7 +214,7 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
     end
   end
 
-  defp dispatch_context(events) when is_list(events) do
+  defp find_event_dispatch_context(events) when is_list(events) do
     Enum.find_value(events, fn event ->
       Map.get(event.payload, "dispatch_context")
     end)

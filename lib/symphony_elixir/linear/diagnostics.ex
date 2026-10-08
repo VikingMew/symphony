@@ -267,7 +267,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
       dispatch_team_key: display_value(scope.linear_team_key),
       dispatch_project_slug: display_value(scope.linear_project_slug),
       fallback_project_slug: display_value(scope.fallback_project_slug),
-      dispatch_filter_shape: filter_shape(scope),
+      dispatch_filter_shape: diagnostic_filter_shape(scope),
       assignee: display_value(tracker.assignee),
       token_configured: token.configured,
       token: token,
@@ -276,8 +276,8 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     }
   end
 
-  defp filter_shape(scope) do
-    case CandidateQuery.filter_shape(scope) do
+  defp diagnostic_filter_shape(scope) do
+    case CandidateQuery.scope_filter_shape(scope) do
       {:error, reason} -> inspect(reason)
       shape -> shape
     end

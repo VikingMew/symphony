@@ -115,14 +115,14 @@ defmodule SymphonyElixir.LinearDiagnosticsProbesTest do
       candidate_result: {:ok, [issue, %{identifier: "LIN-2"}]}
     })
 
-    assert {%{status: :ok, data: %{issue_count: 2}}, issues} = Probes.candidate_probe(FakeClient)
+    assert {%{status: :ok, data: %{issue_count: 2}}, issues} = Probes.probe_candidates(FakeClient)
     assert [%{identifier: "LIN-1", assignee: "unassigned"}, %{identifier: "LIN-2"}] = issues
 
     Application.put_env(:symphony_elixir, :linear_diagnostics_probe_fake, %{
       candidate_result: {:error, {:token, "secret-token"}}
     })
 
-    assert {%{status: :error, detail: detail}, []} = Probes.candidate_probe(FakeClient)
+    assert {%{status: :error, detail: detail}, []} = Probes.probe_candidates(FakeClient)
     assert detail =~ "[REDACTED]"
     # docs/spec-reliability-security.md redaction boundary: prevent secret disclosure.
     refute detail =~ "secret-token"

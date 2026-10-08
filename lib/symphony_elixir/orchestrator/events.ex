@@ -19,11 +19,11 @@ defmodule SymphonyElixir.Orchestrator.Events do
       "url" => issue.url,
       "labels" => issue.labels || []
     }
-    |> Map.merge(DispatchScope.evidence(issue))
+    |> Map.merge(DispatchScope.context_evidence(issue))
   end
 
-  @spec dispatch_context(Issue.t()) :: map()
-  def dispatch_context(%Issue{} = issue), do: DispatchScope.evidence(issue)
+  @spec event_dispatch_context(Issue.t()) :: map()
+  def event_dispatch_context(%Issue{} = issue), do: DispatchScope.context_evidence(issue)
 
   @spec issue_attrs(Issue.t()) :: map()
   def issue_attrs(%Issue{} = issue) do
