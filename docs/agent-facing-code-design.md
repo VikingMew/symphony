@@ -107,6 +107,10 @@ N-04 和 N-06 的语义部分保留为 `AGENTS.md` 的短人核规则。独立�
 该 alias 到达它；N-09 只验证模块地图与检索入口存在，引用完整性和新鲜度仍由既有
 `mix docs.drift` 判定。
 
+质量入口在执行 checker 或调用它的测试前运行 `scripts/prepare_navigation_git_history.sh`。
+该脚本只在 Git checkout 为 shallow 时补全历史，并要求 `origin/main` 存在，使本地与 CI 都以
+真实 merge base 执行同一棘轮比较；Git 历史不可用时门禁直接失败。
+
 检查器从带 token metadata 的 Elixir AST 取得模块、函数、类型、测试辅助和文件主模块位置，
 按规则、声明类别、规范化名字与排序后的精确位置组成 finding identity。结果与 identity 均排序；
 human 输出只有一行 `navigation baseline remaining: <整数>` 水位，JSON 返回同一整数。

@@ -73,3 +73,7 @@ It has no expiry or bypass. New findings, expanded aggregate locations, addition
 merge base, stale rows, malformed schema, and unsynchronized deletion all fail. Removing a finding
 and its row together passes. When no findings remain, the change must delete both the baseline file
 and the checker's baseline read/compare branch, leaving the direct rules as one hard gate.
+
+`scripts/check.sh` and `scripts/unit.sh` run `scripts/prepare_navigation_git_history.sh` before the
+checker or its task test. Shallow CI checkouts are completed so `origin/main` and the real merge base
+are available; failure to provide that Git history is a hard gate failure.
