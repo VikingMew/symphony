@@ -4,7 +4,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
   import Phoenix.ConnTest
   import Phoenix.LiveViewTest
 
-  alias SymphonyElixir.Config.WorkflowScopes
+  alias SymphonyElixir.Config.{ProjectAuthority, WorkflowScopes}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.{WorkflowForm, WorkflowStore}
@@ -1041,6 +1041,49 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     assert Map.has_key?(get_in(workflow.config, ["project"]), "worktree_root") == false
   end
 
+  test "project settings shows legacy authority drift and save converges every carrier to clean" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, loaded} = SymphonyElixir.Workflow.load()
+
+    legacy_config =
+      loaded.config
+      |> put_in([Access.key("tracker", %{}), "project_slug"], project.linear_project_slug)
+      |> put_in([Access.key("project", %{}), "repository_url"], "git@github.com:org/legacy.git")
+      |> put_in([Access.key("project", %{}), "default_branch"], project.default_branch)
+      |> put_in([Access.key("project", %{}), "checkout_depth"], 9)
+      |> put_in([Access.key("project", %{}), "source_strategy"], project.source_strategy)
+      |> put_in([Access.key("project", %{}), "worktree_fetch"], false)
+      |> put_in([Access.key("project", %{}), "worktree_cleanup"], project.worktree_cleanup)
+
+    assert {:ok, _legacy} = FakePersistence.put_package_unchecked(project, legacy_config, loaded.prompt)
+    assert :ok = WorkflowStore.force_reload()
+    assert {:ok, runtime_before} = WorkflowStore.for_project(project.id)
+
+    start_test_endpoint()
+    {:ok, view, html} = live(build_conn(), "/settings/projects")
+
+    statuses_before = authority_statuses(html)
+    assert Enum.count(statuses_before, &(&1 == "legacy_duplicate")) == 4
+    assert Enum.count(statuses_before, &(&1 == "conflict")) == 3
+
+    saved_html =
+      view
+      |> form(
+        ~s(.project-edit-form[data-project-id="fake-project-id"]),
+        project: project_settings_params(%{})
+      )
+      |> render_submit()
+
+    assert authority_statuses(saved_html) == List.duplicate("clean", 7)
+
+    workflow = FakePersistence.current_workflow(project)
+    assert ProjectAuthority.diagnostics(project, workflow.yaml_config) |> Enum.all?(&(&1.status == :clean))
+    assert {:ok, runtime_after} = WorkflowStore.for_project(project.id)
+    assert runtime_after.config["tracker"]["project_slug"] == runtime_before.config["tracker"]["project_slug"]
+    assert runtime_after.config["project"]["repository_url"] == runtime_before.config["project"]["repository_url"]
+  end
+
   test "settings save controls show saving feedback and saved notices" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()
@@ -1283,6 +1326,13 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     |> Floki.find("#{selector} option[selected]")
     |> Floki.attribute("value")
     |> List.first()
+  end
+
+  defp authority_statuses(html) do
+    html
+    |> Floki.parse_document!()
+    |> Floki.find(".project-authority-diagnostics tbody tr td:last-child span")
+    |> Enum.map(&(&1 |> Floki.text() |> String.trim()))
   end
 
   defp persistence_write_count do

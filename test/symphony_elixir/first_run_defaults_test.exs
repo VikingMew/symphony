@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.FirstRunDefaultsTest do
   use ExUnit.Case, async: true
+  import ExUnit.CaptureLog
 
   alias SymphonyElixir.FirstRunDefaults
 
@@ -59,6 +60,27 @@ defmodule SymphonyElixir.FirstRunDefaultsTest do
 
     assert :ok = FirstRunDefaults.maybe_import([], deps(parent, prompt: fn _prompt -> "no\n" end))
     refute_received {:import_package, _, _, _}
+  end
+
+  test "project authority conflict logs a warning and leaves startup setup-required" do
+    parent = self()
+    conflict = %{path: "project.repository_url", installed_value: "installed", package_value: "package"}
+
+    log =
+      capture_log(fn ->
+        assert :ok =
+                 FirstRunDefaults.maybe_import(
+                   [],
+                   deps(parent,
+                     import_package: fn _project, _raw, _source ->
+                       {:error, {:project_authority_conflict, [conflict]}}
+                     end
+                   )
+                 )
+      end)
+
+    assert log =~ "project_authority_conflict"
+    assert log =~ "setup-required"
   end
 
   test "opt-out flag skips prompt and import" do

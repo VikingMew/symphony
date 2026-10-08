@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.RunFailure
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixirWeb.WorkerApiController
@@ -515,7 +516,7 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
 
   defp setup_multi_project_without_default do
     {:ok, loaded} = Workflow.load()
-    raw = Workflow.to_markdown(loaded.config, loaded.prompt)
+    raw = Workflow.to_markdown(ProjectAuthority.strip(loaded.config), loaded.prompt)
     {:ok, project_a} = FakePersistence.default_project()
 
     FakePersistence.put_default_project_attrs!(%{

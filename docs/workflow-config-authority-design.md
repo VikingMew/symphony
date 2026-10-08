@@ -19,19 +19,23 @@ design_status: landed
 
 - PostgreSQL 持久化两个互斥配置 scope。固定的 `app_settings["instance_workflow"]` 保存一份
   installation-wide runtime/profile slice；每个 enabled project 的唯一 `workflows` 记录只保存
-  tracker/project slice。`WorkflowStore` 在发布边界先组合 singleton 与每个 project slice，再把完整
-  derived set 原子发布为内存 snapshot。
+  最小 tracker/project slice。`projects` 行是 `tracker.project_slug` 与 repository URL、default branch、
+  checkout depth、source strategy、worktree fetch/cleanup 这 7 个字段的唯一 durable authority。
+  `WorkflowStore` 在发布边界把 project 行字段注入最小 slice，再与 singleton 组合，并把完整 derived set
+  原子发布为内存 snapshot。
 - instance singleton 独占 `polling`、`workspace`、`hooks`、`agent`、`codex`、`observability`、
   `analytics`、`server`、`worker`、base prompt 和 `profiles`。project workflow 只接受 tracker 的
-  kind/endpoint/project slug/assignee/state lists，以及 repository/source/setup/cleanup 字段。
+  kind/endpoint/assignee/state lists，以及 project required gates/setup/cleanup；它不持久化上述 7 个
+  project-owned 字段。
 - Settings 按同一 durable ownership 分页：`/settings/runtime` 直接读写 singleton 的 workspace、
   初始化/磁盘阈值、lifecycle hooks 与 Codex model/reasoning/sandbox；`/settings/agents` 直接读写
   singleton 的 base prompt/profiles。两个页面不依赖所选 project，保存后重新发布所有 enabled
   project 的 future runtime snapshot。`/settings/projects` 只提交 project metadata 与
   tracker/repository/source/setup/cleanup slice，不能携带 instance 字段。
 - `/settings/projects` 的新增与编辑都先解析 canonical project slice，再在一个 PostgreSQL
-  transaction 内写 project metadata 与该 project 的唯一 workflow row；任一写入失败时两者一起
-  回滚。project workflow 的 `raw_workflow_md` 与 `yaml_config` 来自同一 canonical slice，
+  transaction 内写 project metadata（包括 7 个 project-owned 字段）与该 project 的唯一最小 workflow
+  row；任一写入失败时两者一起回滚。project workflow 的 `raw_workflow_md` 与 `yaml_config` 来自同一
+  canonical minimal slice，
   `prompt_body` 固定为空字符串；base prompt 仍只存在于 instance singleton。
 - `WorkflowStore` 组合 singleton 与 project slice 后才交给 schema 解析。schema default 只补齐组合
   workflow 中省略的字段；instance singleton 中显式保存的值保持原样并优先于 default。具体到
@@ -74,6 +78,18 @@ design_status: landed
   durable path 出现一次，不维护另一套 prefix/default scope classifier。空库冷启动使用同一显式双
   scope 导入；拒绝导入、缺少 project target、缺少
   singleton 或缺少 enabled project workflow 时都保持 setup-required。
+- portable combined package 可以携带 7 个 project-owned 字段用于 review/export，但它不是这些字段的
+  durable authority。确认 import 时先选择目标 project，再在事务开始前对每个显式载体值做规范化比较；
+  任一值不同就返回 `{:project_authority_conflict, conflicts}`，其中包含 dotted path、installed value 与
+  package value，singleton、project workflow 和已发布 snapshot 均不改变。相同值或省略值可以继续，
+  但 workflow 写入前一律剥离这些载体键。project-slice export 只输出最小 durable slice；combined
+  export 从目标 project 行重新物化 7 个字段。
+- 读取 legacy workflow row 时，载体缺失为 `clean`，相同为 `legacy_duplicate`，不同为 `conflict`。
+  组合边界对首次发现或状态发生变化的后两者记录带 project identity、field path 与 status 的结构化
+  `project_authority_drift` warning；后台刷新遇到未变化的 drift 不重复告警。随后剥离载体并只注入
+  project 行值，不把载体用作 fallback。
+  `/settings/projects` 逐字段展示 effective/carrier/status；operator 核对 project 生效值后正常保存该
+  project，会同时重建 `yaml_config` 与 `raw_workflow_md` 为最小 slice，使 7 项全部收敛为 `clean`。
 - Settings / Import 在生成 staged preview 前转换已知的 legacy Codex command selector：
   `-c` / `--config` 中的 `model`、`model_reasoning_effort` 以及 `-m` / `--model` 会填入尚未显式
   配置的 `codex.model` / `codex.reasoning_effort`，显式 selector 始终优先，随后从 command 删除这些

@@ -20,10 +20,10 @@ defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
       },
       "polling" => %{"interval_ms" => 30_000},
       "project" => %{
-        "repository_url" => "git@github.com:org/imported.git",
+        "repository_url" => "git@github.com:org/repo.git",
         "default_branch" => "main",
         "checkout_depth" => 1,
-        "setup_commands" => [],
+        "setup_commands" => ["mix setup"],
         "cleanup_commands" => []
       },
       "workspace" => %{"root" => "/tmp/imported-workspaces"},
@@ -113,6 +113,7 @@ end
 defmodule SymphonyElixir.TestSupport do
   @workflow_prompt "You are an agent for this repository."
 
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.TestSupport.WorkflowFixtures
   alias SymphonyElixir.Worker.HeartbeatMetrics
@@ -266,7 +267,13 @@ defmodule SymphonyElixir.TestSupport do
       {:ok, loaded} = Workflow.load(workflow_path)
       FakePersistence.put_default_project_attrs!(project_attrs_from_workflow_config(loaded.config))
       {:ok, project} = FakePersistence.default_project()
-      {:ok, _version} = FakePersistence.put_package_unchecked(project, loaded.config, loaded.prompt)
+
+      {:ok, _version} =
+        FakePersistence.put_package_unchecked(
+          project,
+          ProjectAuthority.strip(loaded.config),
+          loaded.prompt
+        )
     end
   end
 

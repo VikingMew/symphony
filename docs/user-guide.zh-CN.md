@@ -171,8 +171,11 @@ workflow slice 尚未齐备。
 
 ## 7. 配置 workflow
 
-运行时配置由 PostgreSQL 中唯一的 `app_settings["instance_workflow"]` 与每项目唯一的 tracker/source
-workflow slice 组合而成。任一 scope 缺失都会进入 setup-required，不会监听 Linear 或调度 agent；
+运行时配置由 PostgreSQL 中唯一的 `app_settings["instance_workflow"]`、每项目唯一的最小 workflow
+slice 与 `projects` 行组合而成。workflow slice 只保存 tracker kind/endpoint/assignee/states 和 project
+gates/setup/cleanup；Linear project slug 与 repository URL、default branch、checkout depth、source
+strategy、worktree fetch/cleanup 只保存在 `projects` 行。任一 workflow scope 缺失都会进入
+setup-required，不会监听 Linear 或调度 agent；
 先在 `/settings/import` 显式导入 combined package。
 
 `workflow.yml` 和 `profiles.yml` 是 split workflow package 的导入/导出格式，不是启动参数，也不
@@ -192,6 +195,13 @@ Project 标题显示明确选择的 project identity。含 Project 变化时必�
 singleton 和所选 project slice。只含 base prompt/profiles 的 package 可直接写 singleton。
 setup-required 页面里的提示文案只是系统状态提示，不是 base prompt。正确的 base prompt 来自
 `profiles.yml` 的 `base_prompt`。
+
+combined package 可以携带上述 7 个 project-owned 值供 review。确认时 Symphony 会在事务前与目标
+project 做规范化比较：任一显式值不同就显示 `project_authority_conflict`，且不写 singleton、workflow
+或 runtime snapshot；相同值只用于确认，workflow row 不保存副本；省略值继续使用目标 project 行。
+Projects 页面每个项目的 authority diagnostics 会展示 effective、legacy carrier 与
+`clean` / `legacy_duplicate` / `conflict`。核对 effective 值后点击 Save project，会重建最小
+`yaml_config` 和 `raw_workflow_md`，刷新后 7 项均应为 `clean`，运行时值保持不变。
 
 `workflow.yml` 里最少需要确认这些字段：
 
@@ -442,8 +452,8 @@ Codex 与 Linear 的交互默认只暴露 `linear_task_read` 和 `linear_task_up
    PR-open automation 不会在 Symphony handoff 后覆盖 `Ready to Merge`。
 2. 让实际 Symphony runtime user 能使用已认证的 `gh`，或提供 `GH_TOKEN` / `GITHUB_TOKEN` 给
    REST fallback。使用 SSH execution 时，worker 还必须保留 branch-push auth。
-3. 部署新代码，创建并校验 installation singleton，再为每个 enabled project 创建、校验、应用
-   tracker/repository workflow slice。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们
+3. 部署新代码，创建并校验 installation singleton，再为每个 enabled project 创建、校验 project 行与
+   最小 tracker/project workflow slice。`workflow.yml` / `profiles.yml` 只是 package artifact，编辑它们
    不会修改运行时。
 4. 手工处理仍处于退休状态 `In Review`、`Merging`、`Merged` 的运行中 issue，并确认没有 live
    issue 依赖旧 route。
@@ -489,7 +499,7 @@ mise exec -- ./bin/symphony \
 
 此时规则是：
 
-- `app_settings["instance_workflow"]` 是 runtime/profile 持久化权威；每个项目 workflow 只保存 tracker/source 属性。启动时组合并原子发布所有 enabled project 的完整 snapshot，日常读取不访问数据库。
+- `app_settings["instance_workflow"]` 是 runtime/profile 持久化权威；每个项目 workflow 只保存最小 tracker/project slice，`projects` 行唯一持有 Linear slug 与 6 个 source 字段。启动时注入 project 行、组合并原子发布所有 enabled project 的完整 snapshot，日常读取不访问数据库。
 - `Default` 项目只在 projects 表为空时作为 disabled 首启占位自动创建，且未配置仓库地址的占位记录不参与运行时派发。无显式 project context 时优先选择已配置的 Default；没有可用 Default 时仅在恰好一个 enabled workflow 存在时选择它。
 - singleton 或 enabled project workflow 任一缺失时系统进入 setup-required；legacy full project row 不作为 singleton fallback。
 - setup-required 状态不会监听 Linear 或调度 agent；先访问 `/settings/import`，导入并保存两个 scope。

@@ -2,6 +2,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
+  alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
@@ -122,7 +123,9 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
   defp sample_workflow_markdown do
     Workflow.load()
-    |> then(fn {:ok, workflow} -> Workflow.to_markdown(workflow.config, workflow.prompt) end)
+    |> then(fn {:ok, workflow} ->
+      Workflow.to_markdown(ProjectAuthority.strip(workflow.config), workflow.prompt)
+    end)
   end
 
   test "poll cycle fetches candidates for every enabled project" do
@@ -610,7 +613,11 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   end
 
   defp workflow_markdown(base, prompt, threshold) do
-    config = put_in(base.config, ["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
+    config =
+      base.config
+      |> ProjectAuthority.strip()
+      |> put_in(["codex", "rate_limit_gate_5h_threshold_percent"], threshold)
+
     Workflow.to_markdown(config, prompt)
   end
 

@@ -61,6 +61,24 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
             </div>
           </header>
 
+          <details class="workflow-form-section project-authority-diagnostics" open>
+            <summary>Project authority diagnostics</summary>
+            <p class="workflow-help-copy">Effective values come from the project record. Carrier values show legacy copies in the workflow row.</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>Field</th><th>Effective</th><th>Carrier</th><th>Status</th></tr></thead>
+                <tbody>
+                  <tr :for={diagnostic <- Map.fetch!(@project_authority_diagnostics, project.id)}>
+                    <td class="mono"><%= diagnostic.path %></td>
+                    <td class="mono"><%= authority_value(diagnostic.effective_value) %></td>
+                    <td class="mono"><%= authority_carrier(diagnostic) %></td>
+                    <td><span class={authority_status_class(diagnostic.status)}><%= diagnostic.status %></span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </details>
+
           <form class="workflow-form settings-editor-form project-edit-form" data-project-id={project.id} phx-submit="save_project_settings">
             <input type="hidden" name="project[id]" value={project.id} />
             <div class="workflow-profile-field-grid">
@@ -201,6 +219,17 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
 
     {:noreply, socket}
   end
+
+  defp authority_carrier(%{status: :clean}), do: "missing"
+  defp authority_carrier(%{carrier_value: value}), do: authority_value(value)
+
+  defp authority_value(nil), do: "nil"
+  defp authority_value(value) when is_binary(value), do: value
+  defp authority_value(value), do: inspect(value)
+
+  defp authority_status_class(:conflict), do: "status-badge status-error"
+  defp authority_status_class(:legacy_duplicate), do: "status-badge status-warning"
+  defp authority_status_class(:clean), do: "status-badge status-info"
 
   attr(:discovery, :any, required: true)
 
