@@ -879,7 +879,6 @@ defmodule SymphonyElixir.TestSupport.FakePersistence do
           ProjectAuthority.strip(config)
 
         project ->
-          ProjectAuthority.warn_drift(project, config)
           ProjectAuthority.inject(ProjectAuthority.strip(config), project)
       end
 

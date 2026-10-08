@@ -153,6 +153,8 @@ Symphony starts in setup-required mode and does not listen for Linear work until
 
 On a fresh database, Symphony can also offer to import the example package at
 `docs/examples/workflow.yml` and `docs/examples/profiles.yml` as the first instance/project pair.
+If its explicit project-owned values conflict with the selected installed project, Symphony logs the
+typed conflict, keeps setup-required mode, and continues startup without importing the package.
 To skip it and remain in setup-required mode, start with:
 
 ```bash

@@ -88,7 +88,21 @@ defmodule SymphonyElixir.Config.ProjectAuthority do
       project_id = project_value(project, :id)
       project_slug = project_value(project, :slug)
 
-      Logger.warning("project_authority_drift project_id=#{project_id} project_slug=#{project_slug} field_path=#{diagnostic.path} status=#{diagnostic.status}")
+      Logger.warning(
+        "project_authority_drift project_id=#{project_id} project_slug=#{project_slug} field_path=#{diagnostic.path} status=#{diagnostic.status}",
+        event: "workflow.project_authority_drift",
+        operation: "compose_project_workflow",
+        location: diagnostic.path,
+        offending_value: %{
+          project_id: project_id,
+          project_slug: project_slug,
+          carrier_value: diagnostic.carrier_value,
+          status: diagnostic.status
+        },
+        expected_shape: "project-owned field absent from the durable workflow slice",
+        error_code: "project_authority_drift",
+        retryable: false
+      )
     end)
   end
 

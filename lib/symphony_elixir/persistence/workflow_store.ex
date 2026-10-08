@@ -346,7 +346,6 @@ defmodule SymphonyElixir.Persistence.WorkflowStore do
   defp apply_project_runtime_settings(config, project_id) when is_map(config) do
     case project_for_runtime(project_id) do
       %Project{} = project ->
-        ProjectAuthority.warn_drift(project, config)
         ProjectAuthority.inject(ProjectAuthority.strip(config), project)
 
       _ ->

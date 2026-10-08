@@ -114,6 +114,45 @@ defmodule SymphonyElixir.WorkflowStoreFakePersistenceTest do
     assert FakePersistence.runtime_publication_count() == baseline_publications
   end
 
+  test "project authority drift warns only when its state changes" do
+    {:ok, project} = FakePersistence.default_project()
+    {:ok, loaded} = Workflow.load()
+
+    legacy_config =
+      loaded.config
+      |> ProjectAuthority.strip()
+      |> put_in([Access.key("project", %{}), "repository_url"], "git@github.com:org/legacy.git")
+
+    initial_log =
+      capture_log(fn ->
+        assert {:ok, _package} = FakePersistence.put_package_unchecked(project, legacy_config, "Legacy")
+        assert :ok = WorkflowStore.force_reload()
+      end)
+
+    assert warning_line_count(initial_log) == 1
+
+    changed_log =
+      capture_log(fn ->
+        changed =
+          put_in(
+            legacy_config,
+            [Access.key("project", %{}), "repository_url"],
+            "git@github.com:org/other-legacy.git"
+          )
+
+        assert {:ok, _package} = FakePersistence.put_package_unchecked(project, changed, "Legacy")
+        assert :ok = WorkflowStore.force_reload()
+      end)
+
+    assert warning_line_count(changed_log) == 1
+  end
+
+  defp warning_line_count(log) do
+    log
+    |> String.split("\n", trim: true)
+    |> Enum.count(&String.contains?(&1, "project_authority_drift"))
+  end
+
   defp matching_package(project, prompt) do
     {:ok, loaded} = Workflow.load()
 

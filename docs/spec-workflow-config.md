@@ -515,8 +515,10 @@ Dynamic reload is REQUIRED:
   operator-visible error.
 - When a legacy workflow row carries any of the seven project-owned fields, composition MUST emit a
   structured `project_authority_drift` warning containing project identity, field path, and duplicate
-  or conflict status. It MUST strip the carrier and inject only the project-row value. Saving that
-  project through Project Settings MUST rebuild both workflow representations without the carriers.
+  or conflict status when that drift is first observed or changes. An unchanged background refresh
+  MUST NOT emit the same warning again. Composition MUST strip the carrier and inject only the
+  project-row value. Saving that project through Project Settings MUST rebuild both workflow
+  representations without the carriers.
 
 ### 6.3 Dispatch Preflight Validation
 

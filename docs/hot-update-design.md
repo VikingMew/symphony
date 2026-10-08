@@ -50,7 +50,8 @@ portable package 导入在同一事务内写两个 workflow scope；单独保存
 - combined import 在事务前比较 package 中显式出现的 project-owned 值与目标 project；不同则返回
   typed `project_authority_conflict` 且不写任一 durable scope、不发布 snapshot，相同则只用于 review
   并在 workflow 写入前剥离。省略值继续使用目标 project 行。legacy duplicate/conflict 在组合时告警，
-  但不会覆盖 project 行或成为 fallback。
+  但不会覆盖 project 行或成为 fallback；`WorkflowStore` 只在 drift 首次发现或状态变化时记录 warning，
+  固定节奏后台刷新不会重复放大同一状态。
 - `WorkflowStore` 以固定的内部节奏启动至多一个后台刷新任务来检测外部 activation。刷新期间读取继续使用
   last-known-good snapshot，timer tick 不累积；generation guard 会丢弃早于新 mutation 的结果。
 - `Config.settings/0`、Linear diagnostics、agent runner 和 orchestrator 读取当前 active workflow。

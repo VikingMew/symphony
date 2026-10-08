@@ -85,8 +85,9 @@ design_status: landed
   但 workflow 写入前一律剥离这些载体键。project-slice export 只输出最小 durable slice；combined
   export 从目标 project 行重新物化 7 个字段。
 - 读取 legacy workflow row 时，载体缺失为 `clean`，相同为 `legacy_duplicate`，不同为 `conflict`。
-  组合边界对后两者记录带 project identity、field path 与 status 的结构化
-  `project_authority_drift` warning，随后剥离载体并只注入 project 行值，不把载体用作 fallback。
+  组合边界对首次发现或状态发生变化的后两者记录带 project identity、field path 与 status 的结构化
+  `project_authority_drift` warning；后台刷新遇到未变化的 drift 不重复告警。随后剥离载体并只注入
+  project 行值，不把载体用作 fallback。
   `/settings/projects` 逐字段展示 effective/carrier/status；operator 核对 project 生效值后正常保存该
   project，会同时重建 `yaml_config` 与 `raw_workflow_md` 为最小 slice，使 7 项全部收敛为 `clean`。
 - Settings / Import 在生成 staged preview 前转换已知的 legacy Codex command selector：
