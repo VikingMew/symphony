@@ -4,7 +4,7 @@ genre: design
 domain: [governance, code-quality, agents]
 status: current
 language: zh-CN
-updated: 2026-10-03
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -17,11 +17,13 @@ design_status: landed
 [L4 总纲](spec-agent-facing-code.md)唯一拥有；结构化数值由
 [`config/agent_code_thresholds.yml`](../config/agent_code_thresholds.yml)拥有；当前偏差由
 [35 单元审计](agent-facing-code-audit.md)记录；X-01 至 X-05 的当前事实由
-[X 组符合性记录](agent-facing-code-x-conformance.md)记录。其他文档只链接这些合同。
+[X 组符合性记录](agent-facing-code-x-conformance.md)记录；N-01 至 N-09 的当前事实由
+[N 组符合性记录](agent-facing-code-n-conformance.md)记录。其他文档只链接这些合同。
 
 本设计拥有阈值注册、确定性取证、精确豁免、检查器输出、质量门禁接入，以及 X 组登记、
-测试层映射、checker 自测/定标记录和门槛棘轮生命周期。除 X-01 至 X-05 外，它不实现或审计
-G/N/L/V/O/D/P/C 八组条款，也不据此填写仓库级正向符合性等级。D 组规则与确定性检查由
+测试层映射、checker 自测/定标记录和门槛棘轮生命周期；它还拥有 N 组独立 checker、无日期
+基线和质量门禁的机制接入。N 的九条当前事实只属于 N 组符合性记录。除这些机制与 X-01 至
+X-05 外，它不实现或审计 G/L/V/O/D/P/C 组条款，也不据此填写仓库级正向符合性等级。D 组规则与确定性检查由
 [文档体系设计](documentation-system-design.md#10-d-组元文档与注释合同)拥有；本文只拥有 D-02
 删除数值门禁后的阈值注册边界。
 
@@ -96,3 +98,22 @@ X-04 棘轮字段、最终状态计数和 X-05 处置字段。错误定位到条
 误报率。接线后，基线外违规立即失败，存量只在活动基线期报告且基线只减不增。唯一翻硬判据
 是 `baseline_remaining=0`；归零时删除活动基线及其放行逻辑，只保留一个硬门禁路径。生命周期
 不使用日期截止、自动过期、豁免路径或 warning/hard 双模式。
+
+## 7. N 组导航门禁
+
+`mix agent_code_n.check` 独立扫描 N-01、N-03、N-05、N-06、N-07、N-08 与 N-09；N-02、
+N-04 和 N-06 的语义部分保留为 `AGENTS.md` 的短人核规则。独立入口避免把 N 的无日期存量
+基线混入六项总纲阈值与到期豁免的严格 schema。`mix lint` 接线一次，`scripts/check.sh` 只经
+该 alias 到达它；N-09 只验证模块地图与检索入口存在，引用完整性和新鲜度仍由既有
+`mix docs.drift` 判定。
+
+检查器从带 token metadata 的 Elixir AST 取得模块、函数、类型、测试辅助和文件主模块位置，
+按规则、声明类别、规范化名字与排序后的精确位置组成 finding identity。结果与 identity 均排序；
+human 输出只有一行 `navigation baseline remaining: <整数>` 水位，JSON 返回同一整数。
+
+[`config/agent_code_navigation_baseline.yml`](../config/agent_code_navigation_baseline.yml)只保存当前
+仍存在的精确 identity，不含 owner、reason、日期或通配符。merge base 尚无文件时，首次集合
+必须等于当前扫描集合；其后当前集合必须是 merge-base 集合的子集。基线外 finding、聚合 finding
+新增位置、基线新增和陈旧记录均失败，修复 finding 必须同次删除记录。水位是剩余记录数且只减
+不增；归零时删除基线文件和 checker 的读取/比较分支，只保留直接硬门禁。此生命周期没有日期、
+自动放行、兼容分支或 warning/hard 双模式。
