@@ -1065,6 +1065,10 @@ defmodule SymphonyElixir.AgentRunnerTest do
       audit = Enum.find(audits, &(&1.payload.tool == "linear_task_update"))
       assert audit.run_id == "run-handoff"
       assert audit.payload.status == "success"
+      assert audit.payload.tool_call_id == "call-handoff"
+
+      pull_request_audit = Enum.find(audits, &(&1.payload.tool == "create_pull_request"))
+      assert pull_request_audit.payload.tool_call_id == "call-pr"
     after
       File.rm_rf(test_root)
     end

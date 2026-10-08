@@ -93,6 +93,6 @@ defmodule SymphonyElixirWeb.ControlApiController do
   defp error_response(conn, status, code, message) do
     conn
     |> put_status(status)
-    |> json(%{error: %{code: code, message: message}})
+    |> json(%{error: %{code: code, retryable: status >= 500, message: message}})
   end
 end

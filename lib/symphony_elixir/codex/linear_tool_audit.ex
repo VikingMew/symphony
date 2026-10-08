@@ -31,6 +31,7 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
           session_id: Keyword.get(opts, :session_id),
           thread_id: Keyword.get(opts, :thread_id),
           turn_id: Keyword.get(opts, :turn_id),
+          tool_call_id: Keyword.get(opts, :tool_call_id),
           arguments: safe_arguments(arguments),
           result: success_result(response),
           error: failure_error(tool, response),
@@ -72,12 +73,14 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp success_result(_response), do: nil
 
-  defp failure_error(tool, %{"success" => false} = response) do
+  defp failure_error(_tool, %{"success" => false} = response) do
     output = decoded_output(response)
     error = if is_map(output), do: Payload.get_any(output, ["error", :error]), else: nil
 
     %{
-      class: failure_class(tool, error, output),
+      class: error_code(error),
+      code: error_code(error),
+      retryable: error_retryable(error),
       message: error_message(error, output),
       reason: error_reason(error)
     }
@@ -123,53 +126,23 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
 
   defp decoded_output(response), do: response
 
-  defp failure_class(tool, error, output) when is_map(error) do
-    message = error_message(error, output)
-    reason = error_reason(error)
-
-    case tool do
-      "create_pull_request" -> pull_request_failure_class(message)
-      "handoff" -> handoff_failure_class(message)
-      _tool -> generic_failure_class(message, reason)
+  defp error_code(error) when is_map(error) do
+    case Payload.get_any(error, ["code", :code]) do
+      code when is_binary(code) and code != "" -> code
+      _ -> "tool_failed"
     end
   end
 
-  defp failure_class(_tool, _error, _output), do: "tool_failed"
+  defp error_code(_error), do: "tool_failed"
 
-  defp pull_request_failure_class(message) do
-    cond do
-      contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
-      contains?(message, "not allowed") -> "pull_request_not_allowed"
-      contains?(message, "creation is unavailable") -> "pull_request_creator_unavailable"
-      contains?(message, "must be a non-empty") -> "validation_failed"
-      contains?(message, "expects a JSON object") -> "validation_failed"
-      true -> "pull_request_backend_failed"
+  defp error_retryable(error) when is_map(error) do
+    case Payload.get_any(error, ["retryable", :retryable]) do
+      retryable when is_boolean(retryable) -> retryable
+      _ -> false
     end
   end
 
-  defp handoff_failure_class(message) do
-    cond do
-      contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
-      contains?(message, "only available") -> "handoff_not_allowed"
-      contains?(message, "Call `create_pull_request`") -> "pull_request_proof_mismatch"
-      contains?(message, "submission is unavailable") -> "handoff_submitter_unavailable"
-      contains?(message, "must be a non-empty") -> "validation_failed"
-      contains?(message, "is required") -> "validation_failed"
-      true -> "handoff_backend_failed"
-    end
-  end
-
-  defp generic_failure_class(message, reason) do
-    cond do
-      contains?(message, "Workflow profile is unavailable") -> "workflow_profile_unavailable"
-      contains?(message, "not allowed") -> "issue_create_not_allowed"
-      contains?(message, "requires non-empty") -> "validation_failed"
-      contains?(message, "payload is too large") -> "payload_too_large"
-      contains?(reason, "linear_graphql") -> "linear_graphql_error"
-      contains?(reason, "context") -> "linear_context_unavailable"
-      true -> "tool_failed"
-    end
-  end
+  defp error_retryable(_error), do: false
 
   defp error_message(error, _output) when is_map(error) do
     case Payload.get_any(error, ["message", :message]) do
@@ -224,14 +197,23 @@ defmodule SymphonyElixir.Codex.LinearToolAudit do
     result = {:error, {:linear_tool_audit_write_failed, reason}}
 
     Logger.error(
-      "Linear tool audit recording failed action=continue_degraded tool=#{tool} task_id=#{inspect(Keyword.get(opts, :task_id))} issue_id=#{inspect(Map.get(payload, :issue_id))} issue_identifier=#{inspect(Map.get(payload, :issue_identifier))} session_id=#{inspect(Map.get(payload, :session_id))} run_id=#{inspect(Map.get(payload, :run_id))} outcome=#{inspect(result, limit: 20, printable_limit: 1_000)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}"
+      "Linear tool audit recording failed action=continue_degraded tool=#{tool} task_id=#{inspect(Keyword.get(opts, :task_id))} issue_id=#{inspect(Map.get(payload, :issue_id))} issue_identifier=#{inspect(Map.get(payload, :issue_identifier))} session_id=#{inspect(Map.get(payload, :session_id))} run_id=#{inspect(Map.get(payload, :run_id))} outcome=#{inspect(result, limit: 20, printable_limit: 1_000)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}",
+      event: "linear.tool_call.audit_failed",
+      operation: "record_linear_tool_audit",
+      location: "SymphonyElixir.Codex.LinearToolAudit.record_event/5",
+      offending_value: %{tool: tool, reason: inspect(reason, limit: 20, printable_limit: 1_000)},
+      expected_shape: ":ok from the configured audit recorder",
+      error_code: "linear_tool_audit_write_failed",
+      retryable: true,
+      tool_call_id: Map.get(payload, :tool_call_id),
+      issue_id: Map.get(payload, :issue_id),
+      issue_identifier: Map.get(payload, :issue_identifier),
+      session_id: Map.get(payload, :session_id),
+      run_id: Map.get(payload, :run_id)
     )
 
     result
   end
-
-  defp contains?(value, needle) when is_binary(value), do: String.contains?(value, needle)
-  defp contains?(_value, _needle), do: false
 
   defp drop_nil_values(map), do: map |> Enum.reject(fn {_key, value} -> is_nil(value) end) |> Map.new()
 end

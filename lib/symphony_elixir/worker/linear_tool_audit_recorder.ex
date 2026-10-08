@@ -11,7 +11,16 @@ defmodule SymphonyElixir.Worker.LinearToolAuditRecorder do
 
   @spec record(context(), map(), map()) :: :ok | {:error, term()}
   def record(context, attrs, payload) do
-    event_payload = Map.put(payload, :correlation, context.correlation)
+    correlation =
+      case Map.get(payload, :tool_call_id) do
+        tool_call_id when is_binary(tool_call_id) ->
+          Map.put(context.correlation, "tool_call_id", tool_call_id)
+
+        _ ->
+          context.correlation
+      end
+
+    event_payload = Map.put(payload, :correlation, correlation)
 
     case context.client.event(
            context.config,

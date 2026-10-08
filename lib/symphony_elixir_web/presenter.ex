@@ -17,10 +17,16 @@ defmodule SymphonyElixirWeb.Presenter do
         state_snapshot_payload(snapshot, generated_at)
 
       :timeout ->
-        %{generated_at: generated_at, error: %{code: "snapshot_timeout", message: "Snapshot timed out"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_timeout", retryable: true, message: "Snapshot timed out"}
+        }
 
       :unavailable ->
-        %{generated_at: generated_at, error: %{code: "snapshot_unavailable", message: "Snapshot unavailable"}}
+        %{
+          generated_at: generated_at,
+          error: %{code: "snapshot_unavailable", retryable: true, message: "Snapshot unavailable"}
+        }
     end
   end
 
@@ -29,6 +35,7 @@ defmodule SymphonyElixirWeb.Presenter do
       generated_at: generated_at,
       error: %{
         code: "database_unavailable",
+        retryable: true,
         message: "Data unavailable: #{Map.get(error, :message, "database read failed")}"
       }
     }

@@ -959,7 +959,9 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   end
 
   defp success_response(payload), do: dynamic_tool_response(true, encode_payload(payload))
-  defp failure_response(payload), do: dynamic_tool_response(false, encode_payload(payload))
+
+  defp failure_response(payload),
+    do: dynamic_tool_response(false, encode_payload(ensure_typed_error(payload)))
 
   defp dynamic_tool_response(success, output) when is_boolean(success) and is_binary(output) do
     %{
@@ -981,137 +983,235 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   defp encode_payload(payload), do: inspect(payload)
 
   defp tool_error_payload(tool, :invalid_arguments) do
-    %{"error" => %{"message" => "`#{tool}` expects a JSON object argument."}}
+    error_payload("invalid_arguments", false, "`#{tool}` expects a JSON object argument.")
   end
 
   defp tool_error_payload(@read_tool, :invalid_include_activity) do
-    %{"error" => %{"message" => "`linear_task_read.include_activity` must be a boolean."}}
+    error_payload("invalid_include_activity", false, "`linear_task_read.include_activity` must be a boolean.")
   end
 
   defp tool_error_payload(@read_tool, :invalid_activity_limit) do
-    %{
-      "error" => %{
-        "message" => "`linear_task_read.activity_limit` must be an integer from 1 to 100."
-      }
-    }
+    error_payload(
+      "invalid_activity_limit",
+      false,
+      "`linear_task_read.activity_limit` must be an integer from 1 to 100."
+    )
   end
 
   defp tool_error_payload(@read_tool, :invalid_since) do
-    %{"error" => %{"message" => "`linear_task_read.since` must be an ISO-8601 string or null."}}
+    error_payload(
+      "invalid_since",
+      false,
+      "`linear_task_read.since` must be an ISO-8601 string or null."
+    )
   end
 
   defp tool_error_payload(@update_tool, :empty_update) do
-    %{"error" => %{"message" => "`linear_task_update` requires at least one update field."}}
+    error_payload(
+      "empty_update",
+      false,
+      "`linear_task_update` requires at least one update field."
+    )
   end
 
   defp tool_error_payload(@update_tool, {:invalid_field, field}) do
-    %{"error" => %{"message" => "`linear_task_update.#{field}` has an invalid type."}}
+    error_payload(
+      "invalid_update_field",
+      false,
+      "`linear_task_update.#{field}` has an invalid type.",
+      %{"field" => field}
+    )
   end
 
   defp tool_error_payload(@update_tool, :pull_request_not_created) do
-    %{
-      "error" => %{
-        "message" => "Call `create_pull_request` successfully in this completion session before requesting Ready to Merge."
-      }
-    }
+    error_payload(
+      "pull_request_proof_mismatch",
+      false,
+      "Call `create_pull_request` successfully in this completion session before requesting Ready to Merge."
+    )
   end
 
   defp tool_error_payload(_tool, :linear_task_context_unavailable) do
-    %{
-      "error" => %{
-        "message" => "Linear task context is unavailable for this Codex session."
-      }
-    }
+    error_payload(
+      "linear_context_unavailable",
+      false,
+      "Linear task context is unavailable for this Codex session."
+    )
   end
 
   defp tool_error_payload(_tool, :workflow_profile_unavailable) do
-    %{
-      "error" => %{
-        "message" => "Workflow profile is unavailable for this Codex session."
-      }
-    }
+    error_payload(
+      "workflow_profile_unavailable",
+      false,
+      "Workflow profile is unavailable for this Codex session."
+    )
   end
 
-  defp tool_error_payload(@handoff_tool, {:handoff_not_allowed, profile}), do: %{"error" => %{"message" => "`handoff` is only available to implementation (got #{inspect(profile)})."}}
-  defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable), do: %{"error" => %{"message" => "handoff submission is unavailable in this session."}}
-  defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}), do: %{"error" => %{"message" => "`handoff.#{field}` is required and must be non-empty."}}
-  defp tool_error_payload(@handoff_tool, :pull_request_not_created), do: %{"error" => %{"message" => "Call `create_pull_request` successfully before calling `handoff`."}}
+  defp tool_error_payload(@handoff_tool, {:handoff_not_allowed, profile}) do
+    error_payload(
+      "handoff_not_allowed",
+      false,
+      "`handoff` is only available to implementation (got #{inspect(profile)})."
+    )
+  end
+
+  defp tool_error_payload(@handoff_tool, :handoff_submitter_unavailable) do
+    error_payload(
+      "handoff_submitter_unavailable",
+      false,
+      "handoff submission is unavailable in this session."
+    )
+  end
+
+  defp tool_error_payload(@handoff_tool, {:invalid_handoff_field, field}) do
+    error_payload(
+      "invalid_handoff_field",
+      false,
+      "`handoff.#{field}` is required and must be non-empty.",
+      %{"field" => field}
+    )
+  end
+
+  defp tool_error_payload(@handoff_tool, :pull_request_not_created) do
+    error_payload(
+      "pull_request_proof_mismatch",
+      false,
+      "Call `create_pull_request` successfully before calling `handoff`."
+    )
+  end
 
   defp tool_error_payload(_tool, {:refinement_quality_gate_failed, items}) do
-    %{
-      "error" => %{
-        "code" => "refinement_quality_gate_failed",
-        "message" => "Refinement quality gate failed.",
-        "missing" => items
-      }
-    }
+    error_payload(
+      "refinement_quality_gate_failed",
+      false,
+      "Refinement quality gate failed.",
+      %{"missing" => items}
+    )
   end
 
   defp tool_error_payload(_tool, {:linear_state_lookup_failed, reason}) do
-    %{
-      "error" => %{
-        "message" => "Unable to resolve requested Linear workflow state.",
-        "reason" => inspect(reason)
-      }
-    }
+    error_payload(
+      "linear_state_lookup_failed",
+      retryable_linear_reason?(reason),
+      "Unable to resolve requested Linear workflow state.",
+      %{"reason" => inspect(reason)}
+    )
   end
 
   defp tool_error_payload(@issue_create_tool, {:issue_create_not_allowed, profile}) do
-    %{
-      "error" => %{
-        "message" => "`linear_issue_create` is not allowed in workflow profile `#{profile}`."
-      }
-    }
+    error_payload(
+      "issue_create_not_allowed",
+      false,
+      "`linear_issue_create` is not allowed in workflow profile `#{profile}`."
+    )
   end
 
   defp tool_error_payload(@issue_create_tool, :invalid_issue_create_payload) do
-    %{
-      "error" => %{
-        "message" => "`linear_issue_create` requires non-empty title, problem, evidence, why_it_matters, suggested_direction, and category."
-      }
-    }
+    error_payload(
+      "invalid_issue_create_payload",
+      false,
+      "`linear_issue_create` requires non-empty title, problem, evidence, why_it_matters, suggested_direction, and category."
+    )
   end
 
   defp tool_error_payload(@issue_create_tool, :issue_create_payload_too_large) do
-    %{"error" => %{"message" => "`linear_issue_create` payload is too large."}}
+    error_payload(
+      "issue_create_payload_too_large",
+      false,
+      "`linear_issue_create` payload is too large."
+    )
   end
 
   defp tool_error_payload(@pull_request_tool, {:pull_request_not_allowed, profile}) do
-    %{
-      "error" => %{
-        "message" => "`create_pull_request` is not allowed in workflow profile `#{profile}`."
-      }
-    }
+    error_payload(
+      "pull_request_not_allowed",
+      false,
+      "`create_pull_request` is not allowed in workflow profile `#{profile}`."
+    )
   end
 
   defp tool_error_payload(@pull_request_tool, {:invalid_pull_request_field, field}) do
-    %{
-      "error" => %{
-        "message" => "`create_pull_request.#{field}` must be a non-empty string."
-      }
-    }
+    error_payload(
+      "invalid_pull_request_field",
+      false,
+      "`create_pull_request.#{field}` must be a non-empty string.",
+      %{"field" => field}
+    )
   end
 
   defp tool_error_payload(@pull_request_tool, :invalid_pull_request_payload) do
-    %{"error" => %{"message" => "`create_pull_request` expects a JSON object argument."}}
+    error_payload(
+      "invalid_pull_request_payload",
+      false,
+      "`create_pull_request` expects a JSON object argument."
+    )
   end
 
   defp tool_error_payload(@pull_request_tool, :pull_request_creator_unavailable) do
-    %{
-      "error" => %{
-        "message" => "Pull request creation is unavailable for this Codex session."
-      }
-    }
+    error_payload(
+      "pull_request_creator_unavailable",
+      false,
+      "Pull request creation is unavailable for this Codex session."
+    )
   end
 
   defp tool_error_payload(_tool, reason) do
+    {code, retryable} = typed_reason(reason)
+
+    error_payload(
+      code,
+      retryable,
+      "Restricted Linear task tool execution failed.",
+      %{"reason" => inspect(reason)}
+    )
+  end
+
+  defp error_payload(code, retryable, message, details \\ %{}) do
     %{
-      "error" => %{
-        "message" => "Restricted Linear task tool execution failed.",
-        "reason" => inspect(reason)
-      }
+      "error" =>
+        Map.merge(details, %{
+          "code" => code,
+          "retryable" => retryable,
+          "message" => message,
+          "operation" => "execute_dynamic_tool",
+          "location" => "SymphonyElixir.Codex.DynamicTool",
+          "offending_value" => Map.get(details, "field") || Map.get(details, "reason") || code,
+          "expected_shape" => "successful tool result or typed error envelope"
+        })
     }
   end
+
+  defp ensure_typed_error(%{"error" => error} = payload) when is_map(error) do
+    typed =
+      error
+      |> Map.put_new("code", "dynamic_tool_failed")
+      |> Map.put_new("retryable", false)
+
+    Map.put(payload, "error", typed)
+  end
+
+  defp ensure_typed_error(payload) do
+    error_payload("dynamic_tool_failed", false, inspect(payload))
+  end
+
+  defp typed_reason({tag, _detail}) when tag in [:linear_graphql_errors, :linear_api_request],
+    do: {"linear_transport_failed", true}
+
+  defp typed_reason({tag, _detail})
+       when tag in [
+              :linear_issue_update_failed,
+              :linear_attachment_link_failed,
+              :linear_comment_create_failed
+            ],
+       do: {Atom.to_string(tag), true}
+
+  defp typed_reason(reason) when reason in [:missing_linear_api_token, :missing_linear_project_slug],
+    do: {Atom.to_string(reason), false}
+
+  defp typed_reason(_reason), do: {"restricted_tool_failed", false}
+
+  defp retryable_linear_reason?({:linear_state_not_found, _state}), do: false
+  defp retryable_linear_reason?(_reason), do: true
 
   defp supported_tool_names do
     Enum.map(tool_specs(), & &1["name"])

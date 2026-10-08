@@ -24,7 +24,9 @@ defmodule SymphonyElixirWeb.AuthPlug do
     else
       conn
       |> put_status(401)
-      |> json(%{error: %{code: "authentication_required", message: "Authentication required"}})
+      |> json(%{
+        error: %{code: "authentication_required", retryable: false, message: "Authentication required"}
+      })
       |> halt()
     end
   end

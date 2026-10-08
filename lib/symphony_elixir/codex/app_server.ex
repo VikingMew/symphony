@@ -116,7 +116,7 @@ defmodule SymphonyElixir.Codex.AppServer do
         review_key = {:codex_review, make_ref()}
 
         tool_executor =
-          Keyword.get(opts, :tool_executor, fn tool, arguments ->
+          Keyword.get(opts, :tool_executor, fn tool, arguments, tool_context ->
             core_tool_opts = [
               issue: issue,
               profile: tool_profile,
@@ -126,6 +126,7 @@ defmodule SymphonyElixir.Codex.AppServer do
               session_id: session_id,
               thread_id: thread_id,
               turn_id: turn_id,
+              tool_call_id: Keyword.get(tool_context, :tool_call_id),
               handoff_submitter: fn payload ->
                 Process.put(handoff_key, payload)
                 :ok

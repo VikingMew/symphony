@@ -266,8 +266,10 @@ Locations:
 - `lib/symphony_elixir/http_server.ex`
 - `lib/symphony_elixir_web/*`
 
-Symphony exposes runtime visibility through structured logs and an optional Phoenix service. When a
-port is configured, the service provides:
+Symphony exposes runtime visibility through one-object-per-line JSON logs and an optional Phoenix
+service. Stable event/error fields and issue, run, session, and tool-call identifiers make the log
+and persisted event paths joinable without parsing messages. The canonical field table and operator
+commands are in [logging.md](logging.md). When a port is configured, the service provides:
 
 - `/`: LiveView dashboard
 - `/api/v1/state`: full state snapshot
