@@ -12,13 +12,12 @@ defmodule SymphonyElixir.Codex.AppServer do
     Codex.Startup,
     Codex.ToolRequestHandler,
     Config,
+    Config.Schema,
     PathSafety,
     Payload,
     RuntimeProxy,
     SSH
   }
-
-  alias SymphonyElixir.Config.Schema
 
   @initialize_id 1
   @thread_start_id 2
