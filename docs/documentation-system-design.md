@@ -239,7 +239,7 @@ rg -n '^\s*#' scripts --glob '*.sh'
 | 条款 | 最终判定 | 证据 |
 | --- | --- | --- |
 | D-01 | 满足 | `AGENTS.md:1,31-42`；`mix docs.check` 验证根文件存在，人工抽查确认原则已改为祈使规则。 |
-| D-02 | 满足 | `AGENTS.md:84-91`; `config/agent_code_thresholds.yml` 恰有 6 项；`mix agent_code.check --format json` 输出 `rules=6` 且没有 `resident_rule_lines` 或 `AGENTS.md` finding。 |
+| D-02 | 满足 | `AGENTS.md:84-91`; `config/agent_code_governance.yml` 恰有 6 项 threshold；`mix agent_code.check --format json` 输出 `thresholds=6` 且没有 `resident_rule_lines` 或 `AGENTS.md` finding。 |
 | D-03 | 满足 | `AGENTS.md:84-95`; `lib/mix/tasks/docs.check.ex:61-106`; `stat -c '%A %n' scripts/check.sh scripts/unit.sh scripts/dialyzer.sh` 均为可执行；`.github/workflows/make-all.yml:34,60,87` 与三条命令一致。 |
 | D-04 | 满足 | `README.md:28-64,120-160,320-352`; `lib/mix/tasks/docs.check.ex:108-135`; 聚焦测试覆盖结构、启动和开发入口缺失。 |
 | D-05 | 满足 | `AGENTS.md:112-113` 与本设计第 11 节逐条审计；四类保留计数为 10/9/25/100。 |

@@ -73,7 +73,7 @@ concept can be understood in the file without navigating elsewhere.
 | --- | --- |
 | `.codex/skills/land/land_watch.py` | Pass — one repository automation command boundary. |
 | `.github/workflows/publish-image.yml` | Pass — one CI workflow and its repository check sequence. |
-| `config/agent_code_thresholds.yml` | Pass — one canonical configuration or threshold inventory. |
+| `config/agent_code_governance.yml` | Pass — one canonical governance and threshold inventory. |
 | `lib/mix/tasks/agent_code_x.check.ex` | Pass — one named Mix command boundary. |
 | `lib/mix/tasks/symphony/postgres_smoke_assertions.ex` | Pass — focused assertions for the PostgreSQL smoke boundary. |
 | `lib/symphony_elixir/auth.ex` | Pass — one authentication boundary. |

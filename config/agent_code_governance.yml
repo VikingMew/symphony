@@ -1,131 +1,211 @@
-schema: agent-facing-code-thresholds
+schema: agent-facing-code-governance
 owner: docs/agent-facing-code-design.md
-rules:
+specification:
+  version: "2026-10-09"
+  effective_on: "2026-10-09"
+  changes:
+    - version: "2026-10-09"
+      effective_on: "2026-10-09"
+      gate: agent_code
+      summary: "G-01 through G-08 establish one closed repository scope, evidence registry, and direct hard-gate mapping."
+scope:
+  handwritten:
+    - path: "**/*.conf"
+    - path: "**/*.css"
+    - path: "**/*.ex"
+    - path: "**/*.exs"
+    - path: "**/*.md"
+    - path: "**/*.py"
+    - path: "**/*.sh"
+    - path: "**/*.toml"
+    - path: "**/*.yaml"
+    - path: "**/*.yml"
+    - path: "**/Dockerfile"
+    - path: ".dockerignore"
+    - path: ".env.example"
+    - path: ".gitattributes"
+    - path: ".gitignore"
+    - path: "Makefile"
+    - path: "bin/symphony"
+  excluded:
+    - path: ".github/media/**"
+      category: binary
+      reason: "Review media are binary assets and do not contain handwritten source text."
+    - path: "docs/negative-assertion-inventory.tsv"
+      category: data
+      reason: "The audit inventory is tabular evidence data consumed independently of source checks."
+    - path: "mix.lock"
+      category: data
+      reason: "The dependency lock is resolver-owned package data rather than handwritten source."
+    - path: "NOTICE"
+      category: data
+      reason: "The legal notice is distribution metadata rather than handwritten source."
+    - path: "LICENSE"
+      category: third_party
+      reason: "The Apache License text is maintained by its upstream publisher."
+clauses:
+  - id: G-01
+    evidence_tier: machine
+    evidence_method: "mix agent_code.check list/stats and check reuse one git ls-files classification result."
+  - id: G-02
+    evidence_tier: machine
+    evidence_method: "Registry validation requires repository calibration dates, methods, samples, values, and structured distributions."
+  - id: G-03
+    evidence_tier: machine
+    evidence_method: "Registry validation requires exactly G-01 through G-08 with one legal tier and a non-empty evidence method."
+  - id: G-04
+    evidence_tier: machine
+    evidence_method: "The zero waterline has no baseline field or release branch; any new enforced violation fails directly."
+  - id: G-05
+    evidence_tier: human
+    evidence_method: "Review 100% of normative terms in docs/spec-agent-facing-code.md and record the conclusion in docs/agent-facing-code-audit.md."
+  - id: G-06
+    evidence_tier: machine
+    evidence_method: "Registry validation binds the current version and effective date to a recorded agent_code gate change."
+  - id: G-07
+    evidence_tier: human
+    evidence_method: "Review 100% of the existing Needs Refinement Review and Ready to Merge workflow evidence linked from README.md."
+  - id: G-08
+    evidence_tier: machine
+    evidence_method: "Registry validation maps each enforced threshold once to an existing checker invoked by scripts/check.sh."
+gates:
+  - id: agent_code
+    checker: "mix agent_code.check"
+    implementation: lib/mix/tasks/agent_code.check.ex
+    fast_chain: scripts/check.sh
+    thresholds: [file_lines]
+thresholds:
   - id: file_lines
     kind: file_lines
     scope:
       paths: ["lib/**/*.ex", "test/**/*.exs"]
       language: Elixir
-      exclusions:
-        - path: "deps/**"
-          reason: Third-party dependency sources are not repository-owned code.
-        - path: "_build/**"
-          reason: Compiler output is generated and is not repository-owned source.
-        - path: "priv/static/assets/**"
-          reason: Bundled static output is generated from repository web sources.
     unit: physical lines
     redline: 2000
     default: 500
     source_nature: "引用：2000 行来自 agent CLI 单次读取默认上限；500 行是来源模板建议值。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: enforced
     default_exceedance_reason: "The pre-existing file is an identified decomposition candidate; this ticket records rather than performs unrelated module splits."
     calibration:
       method: "find lib test -type f matching *.ex or *.exs, then count physical lines with wc -l"
       sample: "2026-09-24 baseline: 77216 physical lines; maximum 4239 in lib/symphony_elixir/orchestrator.ex."
       sample_value: 4239
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "Repository Elixir files in the recorded scan."
+        points:
+          - statistic: total_physical_lines
+            value: 77216
+          - statistic: maximum_file_lines
+            value: 4239
   - id: function_lines
     kind: function_lines
     scope:
       paths: ["lib/**/*.ex", "test/**/*.exs"]
       language: Elixir AST
-      exclusions:
-        - path: "deps/**"
-          reason: Third-party dependency sources are not repository-owned code.
-        - path: "_build/**"
-          reason: Compiler output is generated and is not repository-owned source.
     unit: source lines per def or defp
     redline: 40
     default: 20
     source_nature: "引用＋本规范设定：4 至 20 行来自来源建议区间；40 行红线由本规范设定。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: record_only
     default_exceedance_reason: "The repository calibration is not complete, so this threshold records observations and cannot support a conformance conclusion."
     calibration:
       method: "Parse Elixir with token metadata and measure each def/defp from opening line through end metadata."
       sample: "2026-09-24 scan: 5425 def/defp declarations; maximum span 431 lines at dashboard_live.ex render/1."
       sample_value: 431
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "5425 def/defp declarations in the recorded scan."
+        points:
+          - statistic: maximum_function_lines
+            value: 431
   - id: nesting_depth
     kind: nesting_depth
     scope:
       paths: ["lib/**/*.ex", "test/**/*.exs"]
       language: Elixir AST
-      exclusions:
-        - path: "deps/**"
-          reason: Third-party dependency sources are not repository-owned code.
-        - path: "_build/**"
-          reason: Compiler output is generated and is not repository-owned source.
     unit: maximum nested control forms per function
     redline: 4
     default: 2
     source_nature: "引用＋本规范设定：2 层来自来源模板建议；4 层红线由本规范设定。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: record_only
     default_exceedance_reason: "The repository calibration is not complete, so this threshold records observations and cannot support a conformance conclusion."
     calibration:
       method: "Parse Elixir and count nested case/cond/for/fn/if/receive/try/unless/with forms within each def/defp."
       sample: "2026-09-24 scan: 5425 def/defp declarations; maximum configured control-form depth 4 at app_server.ex run_turn/4."
       sample_value: 4
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "5425 def/defp declarations in the recorded scan."
+        points:
+          - statistic: maximum_nesting_depth
+            value: 4
   - id: identifier_occurrences
     kind: identifier_occurrences
     scope:
       paths: ["lib/**/*.ex", "test/**/*.exs"]
       language: Elixir declarations
-      exclusions:
-        - path: "deps/**"
-          reason: Third-party dependency sources are not repository-owned code.
-        - path: "_build/**"
-          reason: Compiler output is generated and is not repository-owned source.
     unit: repository-wide declarations sharing one module-tail or function name
     redline: 5
     default: 1
     source_nature: "引用：来源建议可检索名字少于 5 个命中；唯一命中由本规范设为默认值。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: record_only
     default_exceedance_reason: "Declaration-name counting is deterministic, but its repository calibration and grouped-clause semantics are not complete."
     calibration:
       method: "Parse Elixir and count equal module-tail and def/defp declaration names across the configured scope."
       sample: "2026-09-24 scan: 3278 distinct declaration names; maximum shared name count 60 for restore_app_env."
       sample_value: 60
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "3278 distinct declaration names in the recorded scan."
+        points:
+          - statistic: maximum_shared_name_count
+            value: 60
   - id: full_gate_minutes
     kind: recorded_sample
     scope:
       paths: ["scripts/quality.sh"]
       language: Bash quality entrypoint
-      exclusions: []
     unit: elapsed minutes
     redline: 10
     default: 5
     source_nature: "本规范设定；必须以本仓实测覆盖后才可用于符合性判定。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: record_only
     default_exceedance_reason: "The timing threshold remains record-only until repeatable repository samples establish a stable merge-gate bound."
     calibration:
       method: "TIMEFORMAT='ELAPSED_SECONDS=%R'; time scripts/quality.sh on the implementation workspace; CI equivalence is checked statically."
       sample: "2026-09-24 final green implementation-host sample: 68.144 seconds with a warm Dialyzer PLT."
       sample_value: 1.1357
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "Recorded implementation-host full-gate samples."
+        points:
+          - statistic: elapsed_minutes
+            value: 1.1357
   - id: change_lines
     kind: recorded_sample
     scope:
       paths: ["git diff --numstat origin/main...HEAD"]
       language: Git added plus deleted lines
-      exclusions:
-        - path: "binary files"
-          reason: Git numstat does not provide meaningful line counts for binary content.
     unit: added plus deleted lines
     redline: pending
     default: pending
     source_nature: "本规范设定：本仓标定前不作判定，只记录。"
-    evidence_mode: machine
+    evidence_tier: machine
     status: record_only
     default_exceedance_reason: "No repository-calibrated default or redline exists, so change size cannot support a conformance conclusion."
     calibration:
       method: "Sum added and deleted numeric fields from git diff --numstat origin/main...HEAD."
       sample: "2026-09-24 SYM-140 staged implementation sample: 1176 added plus 5 deleted lines, 1181 total."
       sample_value: 1181
-      date: 2026-09-24
+      date: "2026-09-24"
+      distribution:
+        population: "Recorded repository change-size samples."
+        points:
+          - statistic: added_plus_deleted_lines
+            value: 1181
