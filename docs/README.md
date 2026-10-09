@@ -54,7 +54,7 @@ other documents link instead of restating.
 | [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md) | Default = empty-DB bootstrap anchor; manual project removal button. | landed |
 | [workflow-config-authority-design.md](workflow-config-authority-design.md) | PostgreSQL current workflow is the sole configuration authority; the repository package is example/import material. | landed |
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency classification, boundary audit, and repeatable checks. | landed |
-| [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code thresholds, evidence, exemptions, checker, and gate integration. | landed |
+| [agent-facing-code-design.md](agent-facing-code-design.md) | G-group governance, closed source scope, calibrated thresholds, waterline, checker, and gate integration. | landed |
 | [code-locality-design.md](code-locality-design.md) | Repository-wide code locality ownership and enforcement architecture. | landed |
 | [repository-verification-design.md](repository-verification-design.md) | Repository setup, gate artifacts, offline tests and V-group audit. | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification, structured evidence, terminal write boundary, and historical normalization. | landed |

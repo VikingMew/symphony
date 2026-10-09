@@ -15,7 +15,7 @@ design_status: landed
 本变更前 V 组没有 L3 owner。本文登记为 V-01 至 V-09 的唯一 owner，拥有初始化入口、
 完整门禁 runner、测试确定性及 HTTP 禁外网守卫和前后审计。
 [面向 Agent 的代码设计](agent-facing-code-design.md)继续拥有 `mix agent_code.check` 的输出、
-阈值、豁免、门禁接入地位与全量门禁时长标定。runner 不复制检查器 finding JSON，
+阈值、G 组零水位、门禁接入地位与全量门禁时长标定。runner 不复制检查器 finding JSON，
 10 分钟仅为观察预算，不改变 `record_only` 或新增硬阈值。
 [文档体系设计](documentation-system-design.md)继续拥有 D 组入口一致性检查。
 无产品配置、数据库、部署拓扑或人工验证流程变更。
@@ -153,9 +153,10 @@ fixture 保留同一入口；最终 repository verification 文件单独复核�
   时间的负例都会失败。日志断言作为补充，不替代实际行为断言。
 - heartbeat 合并用例保留唯一 pending timer、清空 pending 和恰好一次持久化调用的精确断言，
   通过主动触发 flush 控制时间；claim 的过期时间与注入时钟精确相等。
-- 没有新增 skip/exemption；覆盖率配置、六项总纲阈值、豁免表、observability 基线与 main
+- 没有新增 skip/exemption；覆盖率配置、六项总纲阈值、G 组零水位、observability 基线与 main
   相同。原有两个手动验证 skip 保留，指定的 multi-project 测试无 diff。
-- 本次验证工作完成时 N 基线为 559 条。后续 locality 职责拆分将当前水位降低为 411 条；N owner
+- 本次验证工作完成时 N 基线为 559 条。后续 locality 职责拆分将水位降低为 411 条，G 组 checker
+  的明确私有命名继续缩至 410 条；N owner
   以精确 finding 行和 Git 位置映射比较 merge-base，其中跨文件移动还要求含 arity 的规范化声明头
   多重集不扩张，并继续阻断新 identity、聚合位置增加、陈旧记录和缺失历史。
 
