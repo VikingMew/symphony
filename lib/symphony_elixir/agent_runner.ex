@@ -218,13 +218,13 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp prepare_implementation_branch(workspace, %Issue{} = issue, opts) do
     if project_repository_configured?() do
+      default_branch = configured_kickoff_branch()
+
       with {:ok, branch} <- BranchName.validate(issue.branch_name),
-           :ok <-
-             emit_branch_event(issue, :implementation_branch_validation, :completed, %{
-               branch: branch
-             }),
-           {:ok, prepared} <- run_implementation_branch_preparer(workspace, configured_kickoff_branch(), branch, opts) do
-        emit_branch_event(issue, :implementation_branch_checkout, :completed, branch_preparation_payload(branch, prepared))
+           :ok <- emit_branch_event(issue, :implementation_branch_validation, :completed, %{branch: branch}),
+           {:ok, prepared} <- run_implementation_branch_preparer(workspace, default_branch, branch, opts) do
+        payload = branch_preparation_payload(branch, prepared)
+        emit_branch_event(issue, :implementation_branch_checkout, :completed, payload)
       else
         {:error, reason} ->
           emit_branch_event(issue, :implementation_branch_checkout, :failed, %{

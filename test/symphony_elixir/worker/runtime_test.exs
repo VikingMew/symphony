@@ -91,8 +91,8 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     defp claim_result(%{"trap_shutdown" => true}), do: %{status: :cancelled}
 
-    defp claim_result(%{"validation_result" => result}) do
-      if Map.has_key?(result, :status), do: result, else: %{status: :failed, phase: :validation, validation: result}
+    defp claim_result(%{"validation_result" => validation}) do
+      if validation[:status], do: validation, else: %{status: :failed, phase: :validation, validation: validation}
     end
 
     defp claim_result(%{"failed_reason" => reason, "failed_detail" => detail}) do

@@ -284,9 +284,9 @@ defmodule SymphonyElixir.Worker.Executor do
              :clone_failed
            ),
          :ok <- not_cancelled(),
-         :ok <- fetch_branch(payload.default_branch, depth, timeout, workspace, progress, :default_branch_fetch_failed),
-         {:ok, source} <- prepare_source(payload, depth, timeout, workspace, progress) do
-      {:ok, source}
+         :ok <-
+           fetch_branch(payload.default_branch, depth, timeout, workspace, progress, :default_branch_fetch_failed) do
+      prepare_source(payload, depth, timeout, workspace, progress)
     end
   end
 
@@ -437,11 +437,11 @@ defmodule SymphonyElixir.Worker.Executor do
     |> trim_source_value()
   end
 
-  defp current_branch(timeout, workspace, progress) do
+  defp current_branch(workspace) do
+    {timeout, workspace, progress} = workspace
     result = resolve_current_branch(timeout, workspace, progress)
 
-    result
-    |> trim_source_value()
+    trim_source_value(result)
   end
 
   defp run_steps(steps, workspace, failure) do
@@ -1040,7 +1040,7 @@ defmodule SymphonyElixir.Worker.Executor do
          :ok <- verify_prepared_branch(default_ref, base_sha, task_sha, timeout, workspace, progress),
          {:ok, prepared_head} <-
            resolve_commit("HEAD", timeout, workspace, progress, :prepared_head_resolution_failed),
-         {:ok, prepared_branch} <- current_branch(timeout, workspace, progress) do
+         {:ok, prepared_branch} <- current_branch({timeout, workspace, progress}) do
       {:ok,
        %{
          base_sha: base_sha,
