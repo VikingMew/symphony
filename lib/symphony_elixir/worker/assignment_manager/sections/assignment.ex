@@ -23,7 +23,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       }
 
       alias SymphonyElixir.AgentRunner.Policy
-      alias SymphonyElixir.Linear.Issue
+      alias SymphonyElixir.Linear.{DispatchScope, Issue}
       alias SymphonyElixir.Orchestrator.DispatchPolicy
       alias SymphonyElixir.Worker.{ClaimCommit, ClaimStage, EventWriter, HeartbeatHistory}
 
@@ -221,6 +221,46 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
           :ok -> {:ok, issue}
           other -> other
         end
+      end
+
+      defp revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings) do
+        with {:ok, %Issue{} = issue} <- revalidate(candidate, state, dispatch_settings),
+             scope <- Config.settings!().dispatch_scope,
+             {:ok, resolved_workflow, resolved_issue} <-
+               DispatchScope.resolve_context(issue, workflows, scope),
+             true <- resolved_workflow.project_id == workflow.project_id do
+          {:ok, resolved_issue}
+        else
+          {:error, reason, rejected_issue} ->
+            log_claim_context_rejection(rejected_issue, reason)
+            {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
+
+          false ->
+            reason = :issue_project_out_of_scope
+            log_claim_context_rejection(candidate, reason)
+            {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
+
+          other ->
+            other
+        end
+      end
+
+      defp log_claim_context_rejection(issue, reason) do
+        scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
+
+        Logger.warning(
+          "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
+            "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+          event: "linear.admission_rejected",
+          operation: "resolve_claim_candidate_context",
+          location: "SymphonyElixir.Worker.AssignmentManager.resolve_scoped_candidate/4",
+          offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+          expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+          error_code: "admission_rejected",
+          retryable: false,
+          issue_id: issue.id,
+          issue_identifier: issue.identifier
+        )
       end
 
       defp prepare_assignment(state, worker, session, workflow, issue) do
@@ -571,13 +611,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       defp merge_candidate_skip(_current, {:skip, :blocking_decision, evidence}), do: {:skip, :blocking_decision, evidence}
       defp merge_candidate_skip({:skip, :blocking_decision, _evidence} = current, _next), do: current
       defp merge_candidate_skip(_current, {:skip, :listening_mode, evidence}), do: {:skip, :listening_mode, evidence}
-
-      defp merge_empty_evidence(%{reason: :blocking_decision} = evidence, _next_evidence), do: evidence
-      defp merge_empty_evidence(_evidence, %{reason: :blocking_decision} = next_evidence), do: next_evidence
-      defp merge_empty_evidence(%{reason: :listening_mode} = evidence, _next_evidence), do: evidence
-      defp merge_empty_evidence(_evidence, %{reason: :listening_mode} = next_evidence), do: next_evidence
-      defp merge_empty_evidence(_evidence, %{reason: :active_run} = next_evidence), do: next_evidence
-      defp merge_empty_evidence(evidence, _next_evidence), do: evidence
+      defp merge_candidate_skip({:skip, :listening_mode, _evidence} = current, _next), do: current
+      defp merge_candidate_skip(_current, next), do: next
 
       defp log_admission_skip(:blocking_decision, worker_id, session_id, evidence) do
         blocking_reason = get_in(evidence, [:blocking_decision, "reason"])

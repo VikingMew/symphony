@@ -115,18 +115,7 @@ defmodule SymphonyElixir.WorkflowForm do
       config =
         draft
         |> Map.get("_base_config", %{})
-        |> put_optional_or_delete_path(
-          ["dispatch_scope", "linear_team_key"],
-          Map.get(draft, "dispatch_linear_team_key", "")
-        )
-        |> put_optional_or_delete_path(
-          ["dispatch_scope", "linear_project_slug"],
-          Map.get(draft, "dispatch_linear_project_slug", "")
-        )
-        |> put_optional_or_delete_path(
-          ["dispatch_scope", "fallback_project_slug"],
-          Map.get(draft, "dispatch_fallback_project_slug", "")
-        )
+        |> put_dispatch_scope(draft)
         |> put_path(["tracker", "kind"], "linear")
         |> put_path(["tracker", "endpoint"], linear_endpoint(draft))
         |> put_optional_path(["tracker", "project_slug"], Map.get(draft, "tracker_project_slug", ""))
@@ -160,6 +149,22 @@ defmodule SymphonyElixir.WorkflowForm do
 
       {:ok, config}
     end
+  end
+
+  defp put_dispatch_scope(config, draft) do
+    config
+    |> put_optional_or_delete_path(
+      ["dispatch_scope", "linear_team_key"],
+      Map.get(draft, "dispatch_linear_team_key", "")
+    )
+    |> put_optional_or_delete_path(
+      ["dispatch_scope", "linear_project_slug"],
+      Map.get(draft, "dispatch_linear_project_slug", "")
+    )
+    |> put_optional_or_delete_path(
+      ["dispatch_scope", "fallback_project_slug"],
+      Map.get(draft, "dispatch_fallback_project_slug", "")
+    )
   end
 
   @spec to_scopes(draft()) ::

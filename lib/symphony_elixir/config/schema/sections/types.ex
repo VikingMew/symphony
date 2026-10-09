@@ -76,6 +76,40 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         end
       end
 
+      defmodule DispatchScopeConfig do
+        @moduledoc false
+        use Ecto.Schema
+        import Ecto.Changeset
+
+        @primary_key false
+
+        embedded_schema do
+          field(:linear_team_key, :string)
+          field(:linear_project_slug, :string)
+          field(:fallback_project_slug, :string)
+        end
+
+        @spec dispatch_scope_changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+        def dispatch_scope_changeset(schema, attrs) do
+          schema
+          |> cast(attrs, [:linear_team_key, :linear_project_slug, :fallback_project_slug], empty_values: [])
+          |> normalize_optional(:linear_team_key)
+          |> normalize_optional(:linear_project_slug)
+          |> normalize_optional(:fallback_project_slug)
+        end
+
+        defp normalize_optional(changeset, field) do
+          case get_field(changeset, field) do
+            value when is_binary(value) ->
+              trimmed = String.trim(value)
+              put_change(changeset, field, if(trimmed == "", do: nil, else: trimmed))
+
+            _value ->
+              changeset
+          end
+        end
+      end
+
       defmodule Polling do
         @moduledoc false
         use Ecto.Schema

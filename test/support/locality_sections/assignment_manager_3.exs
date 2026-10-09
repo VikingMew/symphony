@@ -113,8 +113,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager3 do
         assert Tracker.fetch_count() == 5
       end
 
-      test "assignment halts workflow traversal and resets empty and error streaks", context do
-        Application.put_env(:symphony_elixir, :assignment_test_workflow_count, 4)
+      test "assignment resets empty and error streaks after the installation-level candidate fetch", context do
         Tracker.put([])
         assert {:ok, {:empty, 5}} = claim(context)
         assert {:ok, {:empty, 30}} = claim(context)
@@ -176,8 +175,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager3 do
         assert Enum.map(WorkflowStore.list_enabled(), & &1.project_id) == [project_a.id, project_b.id]
         assert {:error, :missing_project_context} = WorkflowStore.current()
 
-        issue_b = issue(78)
-        ProjectTracker.put(%{"linear-a" => [], "linear-b" => [issue_b]})
+        issue_b = %{issue(78) | project_slug: "linear-b"}
+        ProjectTracker.put(%{"linear-a" => [issue_b]})
 
         manager_name = Module.concat(__MODULE__, "PersistedManager#{System.unique_integer([:positive])}")
 
@@ -208,7 +207,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager3 do
                    manager
                  )
 
-        assert ProjectTracker.fetches() == ["linear-a", "linear-b"]
+        assert ProjectTracker.fetches() == ["linear-a"]
         assert assignment.project_id == project_b.id
         assert assignment.correlation["project_id"] == project_b.id
         assert assignment.payload["source"]["repository"] == "git@example.test:b.git"
@@ -427,6 +426,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager3 do
       end
 
       defp issue(number) do
+        workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
+
         %Issue{
           id: "issue-#{number}",
           identifier: "SYM-#{number}",
@@ -434,6 +435,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager3 do
           description: "Work",
           priority: number,
           state: "Ready",
+          project_slug: get_in(workflow.config, ["tracker", "project_slug"]),
           branch_name: "sym-#{number}",
           blocked_by: [],
           labels: [],

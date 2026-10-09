@@ -29,7 +29,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
       }
 
       alias SymphonyElixir.Config.Schema
-      alias SymphonyElixir.Linear.Issue
+      alias SymphonyElixir.Linear.{DispatchScope, Issue}
       alias SymphonyElixir.Orchestrator.DispatchPolicy
       alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Orchestrator.InputBlocker
@@ -129,31 +129,27 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         if workflows == [] do
           handle_dispatch_error(state, :setup_required)
         else
-          workflows
-          |> Enum.group_by(&get_in(&1.config, ["tracker", "project_slug"]))
-          |> Enum.reduce(state, fn {_project_slug, grouped_workflows}, state_acc ->
-            dispatch_workflow_group(grouped_workflows, state_acc)
-          end)
+          dispatch_workflows(workflows, state)
         end
       end
 
-      defp dispatch_workflow_group([workflow | _rest] = workflows, state) do
+      defp dispatch_workflows([workflow | _rest] = workflows, state) do
         Config.with_workflow_context(workflow, fn ->
           if RunAdmission.execution_mode() == "worker" do
             state
           else
-            dispatch_workflow_group_centrally(state, workflows)
+            dispatch_workflows_centrally(state, workflows)
           end
         end)
       end
 
-      defp dispatch_workflow_group_centrally(%State{} = state, workflows) do
+      defp dispatch_workflows_centrally(%State{} = state, workflows) do
         with :ok <- Config.validate!(),
              state = reconcile_ready_to_merge_issues(state),
              :allow <- environment_failure_circuit_allows_dispatch(),
              :allow <- rate_limit_gate_allows_dispatch(state),
              {:ok, issues} <- Tracker.fetch_candidate_issues() do
-          dispatch_shared_issues(workflows, issues, %{state | last_config_error: nil})
+          dispatch_scoped_issues(workflows, issues, %{state | last_config_error: nil})
         else
           {:error, reason} ->
             Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
@@ -178,10 +174,47 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp dispatch_shared_issues(workflows, issues, state) do
-        Enum.reduce(workflows, state, fn workflow, state_acc ->
-          Config.with_workflow_context(workflow, fn -> dispatch_fetched_workflow(state_acc, workflow, issues) end)
+      defp dispatch_scoped_issues(workflows, issues, state) do
+        scope = Config.settings!().dispatch_scope
+
+        grouped = Enum.reduce(issues, %{}, &group_scoped_issue(&1, &2, workflows, scope))
+
+        Enum.reduce(grouped, state, fn {_project_id, {workflow, workflow_issues}}, state_acc ->
+          Config.with_workflow_context(workflow, fn ->
+            dispatch_fetched_workflow(state_acc, workflow, Enum.reverse(workflow_issues))
+          end)
         end)
+      end
+
+      defp group_scoped_issue(issue, groups, workflows, scope) do
+        case DispatchScope.resolve_context(issue, workflows, scope) do
+          {:ok, workflow, resolved_issue} ->
+            Map.update(groups, workflow.project_id, {workflow, [resolved_issue]}, fn {existing, existing_issues} ->
+              {existing, [resolved_issue | existing_issues]}
+            end)
+
+          {:error, reason, rejected_issue} ->
+            log_poll_context_rejection(rejected_issue, reason)
+            groups
+        end
+      end
+
+      defp log_poll_context_rejection(issue, reason) do
+        scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
+
+        Logger.warning(
+          "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
+            "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+          event: "linear.admission_rejected",
+          operation: "resolve_poll_candidate_context",
+          location: "SymphonyElixir.Orchestrator.group_scoped_issue/4",
+          offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+          expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+          error_code: "admission_rejected",
+          retryable: false,
+          issue_id: issue.id,
+          issue_identifier: issue.identifier
+        )
       end
 
       defp dispatch_fetched_workflow(state, workflow, issues) do

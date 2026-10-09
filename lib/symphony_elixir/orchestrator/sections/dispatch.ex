@@ -30,7 +30,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
       }
 
       alias SymphonyElixir.Config.Schema
-      alias SymphonyElixir.Linear.Issue
+      alias SymphonyElixir.Linear.{DispatchScope, Issue}
       alias SymphonyElixir.Orchestrator.DispatchPolicy
       alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Orchestrator.InputBlocker
@@ -74,7 +74,14 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
                dispatch_policy_settings(state)
              ) do
           {:ok, %Issue{} = refreshed_issue} ->
-            do_dispatch_issue(state, refreshed_issue, attempt, preferred_worker_host)
+            case resolve_refreshed_context(refreshed_issue) do
+              {:ok, resolved_issue} ->
+                do_dispatch_issue(state, resolved_issue, attempt, preferred_worker_host)
+
+              {:error, reason, rejected_issue} ->
+                log_poll_context_rejection(rejected_issue, reason)
+                state
+            end
 
           {:skip, :missing} ->
             Logger.info("Skipping dispatch; issue no longer active or visible: #{issue_context(issue)}")
@@ -90,6 +97,27 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
             Logger.warning("Skipping dispatch; issue refresh failed for #{issue_context(issue)}: #{inspect(reason)}")
 
             state
+        end
+      end
+
+      defp resolve_refreshed_context(issue) do
+        workflows = WorkflowStore.list_enabled()
+        scope = Config.settings!().dispatch_scope
+
+        with {:ok, current} <- current_workflow_context(),
+             {:ok, resolved_workflow, resolved_issue} <- DispatchScope.resolve_context(issue, workflows, scope),
+             true <- resolved_workflow.project_id == current.project_id do
+          {:ok, resolved_issue}
+        else
+          {:error, reason, rejected_issue} ->
+            {:error, reason, rejected_issue}
+
+          {:error, reason} ->
+            {:error, reason, %{issue | dispatch_scope: DispatchScope.normalize_dispatch_scope(scope)}}
+
+          false ->
+            normalized_scope = DispatchScope.normalize_dispatch_scope(scope)
+            {:error, :issue_project_out_of_scope, %{issue | dispatch_scope: normalized_scope}}
         end
       end
 

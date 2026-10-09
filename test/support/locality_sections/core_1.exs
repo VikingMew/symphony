@@ -653,14 +653,21 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Core1 do
           restart_orchestrator_if_previously_running(orchestrator_pid)
         end)
 
-        issue = %Issue{id: "issue-persistence", identifier: "MT-230", title: "Persistence prerequisite", state: "In Progress"}
-
         Application.put_env(:symphony_elixir, :linear_client_module, NotifyingLinearClient)
         Application.put_env(:symphony_elixir, :linear_client_test_pid, self())
-        Application.put_env(:symphony_elixir, :linear_client_test_issues, [issue])
         Application.put_env(:symphony_elixir, :agent_runner_module, __MODULE__)
         Application.put_env(:symphony_elixir, :agent_runner_test_pid, self())
         write_workflow_file!(Workflow.workflow_file_path(), project_repository_url: "git@example.com:org/repo.git")
+
+        issue = %Issue{
+          id: "issue-persistence",
+          identifier: "MT-230",
+          title: "Persistence prerequisite",
+          state: "In Progress",
+          project_slug: SymphonyElixir.Config.settings!().tracker.project_slug
+        }
+
+        Application.put_env(:symphony_elixir, :linear_client_test_issues, [issue])
 
         {:ok, pid} = Orchestrator.start_link()
         Application.put_env(:symphony_elixir, :persistence_module, SymphonyElixir.Persistence)

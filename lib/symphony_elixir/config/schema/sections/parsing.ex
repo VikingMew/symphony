@@ -10,6 +10,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         Agent,
         Analytics,
         Codex,
+        DispatchScopeConfig,
         Hooks,
         Observability,
         Polling,
@@ -44,6 +45,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
 
       embedded_schema do
         embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
+        embeds_one(:dispatch_scope, DispatchScopeConfig, on_replace: :update, defaults_to_struct: true)
         embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
         embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
         embeds_one(:project, Project, on_replace: :update, defaults_to_struct: true)
@@ -225,6 +227,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         %__MODULE__{}
         |> cast(attrs, [:workflow, :profiles])
         |> cast_embed(:tracker, with: &Tracker.changeset/2)
+        |> cast_embed(:dispatch_scope, with: &DispatchScopeConfig.dispatch_scope_changeset/2)
         |> cast_embed(:polling, with: &Polling.changeset/2)
         |> cast_embed(:workspace, with: &Workspace.changeset/2)
         |> cast_embed(:project, with: &Project.changeset/2)

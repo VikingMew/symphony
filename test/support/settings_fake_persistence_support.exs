@@ -7,10 +7,16 @@ defmodule SymphonyElixir.TestSupport.SettingsFakePersistenceSupport do
 
   defmodule FakeLinearClient do
     @moduledoc false
+
     @spec graphql(String.t(), map(), keyword()) :: {:ok, map()} | {:error, term()}
     defdelegate graphql(query, variables, opts),
       to: SymphonyElixir.TestSupport.SettingsFakePersistenceSupport,
       as: :fake_graphql
+
+    @spec fetch_candidate_issues() :: {:ok, list()}
+    defdelegate fetch_candidate_issues(),
+      to: SymphonyElixir.TestSupport.SettingsFakePersistenceSupport,
+      as: :empty_candidate_result
   end
 
   defmodule NoDefaultPersistence do
@@ -50,6 +56,9 @@ defmodule SymphonyElixir.TestSupport.SettingsFakePersistenceSupport do
       response -> {:ok, response}
     end
   end
+
+  @spec empty_candidate_result() :: {:ok, list()}
+  def empty_candidate_result, do: {:ok, []}
 
   def busy_init(opts) do
     {:ok, Keyword.fetch!(opts, :snapshot)}
