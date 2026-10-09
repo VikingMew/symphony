@@ -273,8 +273,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
         assert preserved.running[issue_id].run_id == "run-new"
         assert MapSet.member?(preserved.claimed, issue_id)
         assert preserved.blocked == %{}
-        assert preserved.retry_attempts == %{}
-        assert preserved.failure_counts == %{}
+        assert preserved.retry_attempts == %{issue_id => %{timer_ref: nil}}
+        assert preserved.failure_counts == %{issue_id => 1}
       end
 
       test "application stop logs offline status" do

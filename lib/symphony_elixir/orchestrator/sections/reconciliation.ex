@@ -264,6 +264,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
               worker_host: nil,
               workspace_path: nil,
               session_id: nil,
+              blocking_decision: blocking_decision_projection(decision),
               session_history: [],
               session_history_total_count: 0
             }
@@ -570,8 +571,6 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
       end
 
       defp clear_blocking_decision_projection(%State{} = state, issue_id, decision_run_id) do
-        state = cancel_issue_retry(state, issue_id)
-
         blocked =
           case Map.get(state.blocked, issue_id) do
             %{run_id: ^decision_run_id} -> Map.delete(state.blocked, issue_id)
@@ -584,16 +583,18 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
             _entry -> false
           end)
 
-        %{
-          state
-          | blocked: blocked,
-            claimed:
-              if(projection_for_newer_run?,
-                do: state.claimed,
-                else: MapSet.delete(state.claimed, issue_id)
-              ),
-            failure_counts: Map.delete(state.failure_counts, issue_id)
-        }
+        if projection_for_newer_run? do
+          %{state | blocked: blocked}
+        else
+          state = cancel_issue_retry(state, issue_id)
+
+          %{
+            state
+            | blocked: blocked,
+              claimed: MapSet.delete(state.claimed, issue_id),
+              failure_counts: Map.delete(state.failure_counts, issue_id)
+          }
+        end
       end
 
       defp restore_persistent_blocked(%State{} = state) do
@@ -625,6 +626,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
             worker_host: nil,
             workspace_path: nil,
             session_id: nil,
+            blocking_decision: blocking_decision_projection(decision),
             session_history: [],
             session_history_total_count: 0
           }
@@ -637,6 +639,15 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         else
           acc
         end
+      end
+
+      defp blocking_decision_projection(decision) do
+        %{
+          reason: Map.fetch!(decision, "reason"),
+          origin_state: Map.fetch!(decision, "origin_state"),
+          run_id: Map.fetch!(decision, "run_id"),
+          decided_at: Map.fetch!(decision, "decided_at")
+        }
       end
 
       defp log_missing_running_issue(%State{} = state, issue_id) when is_binary(issue_id) do

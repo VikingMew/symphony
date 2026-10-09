@@ -117,6 +117,34 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions1 do
           handle_operator_task_request(kind, project_id, state)
         end
 
+        def handle_call({:clear_blocking_decision, issue_identifier}, _from, state) do
+          blocked = Keyword.fetch!(state, :snapshot).blocked
+
+          status =
+            if Enum.any?(blocked, fn entry ->
+                 entry.identifier == issue_identifier and
+                   is_map(Map.get(entry, :blocking_decision))
+               end),
+               do: "cleared",
+               else: "already_cleared"
+
+          updated_blocked =
+            Enum.reject(blocked, fn entry ->
+              entry.identifier == issue_identifier and
+                is_map(Map.get(entry, :blocking_decision))
+            end)
+
+          if owner = Keyword.get(state, :owner),
+            do: send(owner, {:blocking_decision_cleared, issue_identifier})
+
+          state =
+            Keyword.update!(state, :snapshot, fn snapshot ->
+              Map.put(snapshot, :blocked, updated_blocked)
+            end)
+
+          {:reply, %{status: status, issue_identifier: issue_identifier}, state}
+        end
+
         defp handle_operator_task_request(kind, project_id, state) do
           failure_reason = Keyword.get(state, :operator_failure)
 

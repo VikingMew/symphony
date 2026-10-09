@@ -89,6 +89,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Completion do
           workspace_path: running_entry.workspace_path,
           session_id: running_entry.session_id,
           project_id: running_entry.project_id,
+          blocking_decision: blocking_decision_projection(decision),
           session_history: [],
           session_history_total_count: 0
         }

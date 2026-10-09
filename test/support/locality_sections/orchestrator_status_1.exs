@@ -2,8 +2,8 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus1 do
   @moduledoc false
 
+  alias SymphonyElixir.{BlockingDecision, Orchestrator}
   alias SymphonyElixir.Linear.Issue
-  alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.TestSupport.FakePersistence
 
   @spec __using__(term()) :: Macro.t()
@@ -169,6 +169,117 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus1 do
         assert state.running[issue_id].implementation_handoff_completed
         assert FakePersistence.get_issue_by_identifier("SYM-48").blocking_decision == nil
         assert FakePersistence.list_blocked_issues() == []
+      end
+
+      test "manual blocking-decision clear is typed and removes only matching runtime projections" do
+        issue_id = "issue-manual-clear"
+        identifier = "SYM-CLEAR"
+
+        decision =
+          BlockingDecision.new(
+            :reported_blocker,
+            "operator action required",
+            "run-manual-clear",
+            "In Progress"
+          )
+
+        FakePersistence.put_issues([
+          %{
+            identifier: identifier,
+            tracker_issue_id: issue_id,
+            snapshot: %{"state" => "Blocked"},
+            blocking_decision: decision,
+            no_progress_streak: 2
+          }
+        ])
+
+        persisted_run = %{
+          id: "run-manual-clear",
+          issue_identifier: identifier,
+          status: "blocked"
+        }
+
+        FakePersistence.put_runs([persisted_run])
+
+        orchestrator_name = Module.concat(__MODULE__, :ManualDecisionClearOrchestrator)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+        on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+        blocked_entry = %{
+          issue_id: issue_id,
+          identifier: identifier,
+          state: "Blocked",
+          run_id: "run-manual-clear",
+          worker_host: nil,
+          workspace_path: nil,
+          session_id: nil,
+          reason: "reported_blocker",
+          detail: "operator action required",
+          blocked_at: decision["decided_at"],
+          blocking_decision: %{
+            reason: decision["reason"],
+            origin_state: decision["origin_state"],
+            run_id: decision["run_id"],
+            decided_at: decision["decided_at"]
+          },
+          session_history: [],
+          session_history_total_count: 0
+        }
+
+        :sys.replace_state(pid, fn state ->
+          %{
+            state
+            | blocked: %{issue_id => blocked_entry},
+              claimed: MapSet.put(state.claimed, issue_id)
+          }
+        end)
+
+        assert %{
+                 reason: "reported_blocker",
+                 origin_state: "In Progress",
+                 run_id: "run-manual-clear",
+                 decided_at: decided_at
+               } =
+                 Orchestrator.snapshot(orchestrator_name, 1_000).blocked
+                 |> List.first()
+                 |> Map.fetch!(:blocking_decision)
+
+        assert is_binary(decided_at)
+
+        other_issue_id = "issue-unrelated"
+        unrelated_blocked = %{issue_id: other_issue_id, run_id: "run-unrelated"}
+        unrelated_retry = %{timer_ref: nil, attempt: 1}
+
+        :sys.replace_state(pid, fn state ->
+          %{
+            state
+            | blocked: Map.put(state.blocked, other_issue_id, unrelated_blocked),
+              claimed: state.claimed |> MapSet.put(issue_id) |> MapSet.put(other_issue_id),
+              retry_attempts: %{
+                issue_id => %{timer_ref: nil, attempt: 2},
+                other_issue_id => unrelated_retry
+              },
+              failure_counts: %{issue_id => 3, other_issue_id => 1}
+          }
+        end)
+
+        assert %{status: "cleared", issue_identifier: identifier} =
+                 Orchestrator.clear_blocking_decision(identifier, orchestrator_name)
+
+        state = :sys.get_state(pid)
+        assert state.blocked == %{other_issue_id => unrelated_blocked}
+        assert state.claimed == MapSet.new([other_issue_id])
+        assert state.retry_attempts == %{other_issue_id => unrelated_retry}
+        assert state.failure_counts == %{other_issue_id => 1}
+
+        persisted_issue = FakePersistence.get_issue_by_identifier(identifier)
+        assert persisted_issue.blocking_decision == nil
+        assert persisted_issue.no_progress_streak == 0
+        assert persisted_issue.snapshot == %{"state" => "Blocked"}
+        assert FakePersistence.list_runs_for_issue(identifier) == [persisted_run]
+
+        assert %{status: "already_cleared", issue_identifier: identifier} =
+                 Orchestrator.clear_blocking_decision(identifier, orchestrator_name)
       end
 
       test "orchestrator snapshot reflects last codex update and session id" do

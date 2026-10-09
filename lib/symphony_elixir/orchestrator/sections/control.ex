@@ -235,6 +235,15 @@ defmodule SymphonyElixir.Orchestrator.Sections.Control do
           else: :unavailable
       end
 
+      @spec clear_blocking_decision(String.t(), GenServer.server()) ::
+              map() | {:error, term()} | :unavailable
+      def clear_blocking_decision(issue_identifier, server \\ __MODULE__)
+          when is_binary(issue_identifier) do
+        if GenServer.whereis(server),
+          do: GenServer.call(server, {:clear_blocking_decision, issue_identifier}),
+          else: :unavailable
+      end
+
       @spec snapshot() :: map() | :timeout | :unavailable
       def snapshot, do: snapshot(__MODULE__, 15_000)
 
@@ -321,6 +330,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Control do
               reason: metadata.reason,
               detail: metadata.detail,
               blocked_at: metadata.blocked_at,
+              blocking_decision: Map.get(metadata, :blocking_decision),
               session_history: Map.get(metadata, :session_history, []),
               session_history_total_count:
                 Map.get(
@@ -457,6 +467,21 @@ defmodule SymphonyElixir.Orchestrator.Sections.Control do
            cancelled_tasks: cancelled_tasks,
            changed_at: DateTime.utc_now()
          }, state}
+      end
+
+      def handle_call({:clear_blocking_decision, issue_identifier}, _from, state) do
+        case BlockingDecision.clear(issue_identifier) do
+          {:ok, {:cleared, %{issue_id: issue_id, run_id: run_id}}} ->
+            state = clear_blocking_decision_projection(state, issue_id, run_id)
+            notify_dashboard()
+            {:reply, %{status: "cleared", issue_identifier: issue_identifier}, state}
+
+          {:ok, :already_cleared} ->
+            {:reply, %{status: "already_cleared", issue_identifier: issue_identifier}, state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
       end
 
       def handle_call({:request_operator_task, kind}, _from, state)
