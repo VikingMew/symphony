@@ -59,7 +59,7 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
   end
 
   test "dispatch scope round-trips through the instance form and package boundary" do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     config =
       Map.put(loaded.config, "dispatch_scope", %{
@@ -83,7 +83,7 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
   end
 
   test "dispatch scope clears inherited optional values and rejects a project without a team" do
-    {:ok, loaded} = Workflow.load()
+    {:ok, loaded} = Workflow.load_example_package()
 
     config =
       Map.put(loaded.config, "dispatch_scope", %{
