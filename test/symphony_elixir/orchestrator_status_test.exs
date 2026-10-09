@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
+  import SymphonyElixir.TestSupport.RetryTimerAssertions
 
   alias SymphonyElixir.Codex.MessageHumanizer
 
@@ -1390,9 +1391,16 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, {:tick, initial_state.tick_token})
-    Process.sleep(100)
-    state = :sys.get_state(pid)
+    trace_retry_timers(pid)
+
+    {state, log} =
+      with_log(fn ->
+        monitor = Process.monitor(worker_pid)
+        send(pid, :run_poll_cycle)
+        assert_receive {:DOWN, ^monitor, :process, ^worker_pid, _reason}
+        eventually(fn -> not Map.has_key?(:sys.get_state(pid).running, issue_id) end)
+        :sys.get_state(pid)
+      end)
 
     assert Process.alive?(worker_pid) == false
     assert Map.has_key?(state.running, issue_id) == false
@@ -1407,9 +1415,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
 
     assert elapsed_ms > 1_000
     assert is_integer(due_at_ms)
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 9_500
-    assert remaining_ms <= 10_500
+    assert log =~ "in 10000ms (attempt 1)"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 10_000)
   end
 
   test "orchestrator blocks input-required agent results without scheduling retry" do
@@ -1467,8 +1474,6 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     end)
 
     send(pid, {:DOWN, ref, :process, self(), :normal})
-    Process.sleep(50)
-
     state = :sys.get_state(pid)
 
     assert Map.has_key?(state.running, issue_id) == false
@@ -1685,9 +1690,14 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, {:tick, initial_state.tick_token})
-    Process.sleep(100)
-    state = :sys.get_state(pid)
+    {state, _log} =
+      with_log(fn ->
+        monitor = Process.monitor(worker_pid)
+        send(pid, :run_poll_cycle)
+        assert_receive {:DOWN, ^monitor, :process, ^worker_pid, _reason}
+        eventually(fn -> not Map.has_key?(:sys.get_state(pid).running, issue_id) end)
+        :sys.get_state(pid)
+      end)
 
     assert Process.alive?(worker_pid) == false
     assert Map.has_key?(state.running, issue_id) == false
@@ -1746,8 +1756,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       |> Map.put(:listening_mode, :listening_all)
     end)
 
-    send(pid, {:tick, initial_state.tick_token})
-    Process.sleep(100)
+    send(pid, :run_poll_cycle)
     state = :sys.get_state(pid)
 
     assert Process.alive?(worker_pid)
@@ -2058,7 +2067,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     output =
       ExUnit.CaptureIO.capture_io(fn ->
         StatusDashboard.notify_update(dashboard_name)
-        Process.sleep(50)
+        :sys.get_state(pid)
       end)
 
     assert output == ""
@@ -2066,7 +2075,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     log =
       capture_log(fn ->
         StatusDashboard.notify_update(dashboard_name)
-        Process.sleep(50)
+        :sys.get_state(pid)
       end)
 
     assert log == ""

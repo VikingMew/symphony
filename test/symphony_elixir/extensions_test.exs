@@ -49,8 +49,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     def init(:ok), do: {:ok, :ok}
 
     def handle_call(:snapshot, _from, state) do
-      Process.sleep(25)
-      {:reply, %{}, state}
+      {:noreply, state}
     end
 
     def handle_call(:request_refresh, _from, state) do

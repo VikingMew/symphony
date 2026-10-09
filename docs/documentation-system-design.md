@@ -182,7 +182,7 @@ backtick/tilde fenced code block 中的示例）不能抑制 warning。annotatio
 | --- | --- | --- |
 | D-01 | 根 `AGENTS.md` 必须存在，常驻规则使用短、祈使、可执行的句子。 | 文件存在由机器检查；句式质量由人工评审。 |
 | D-02 | 常驻规则保持简短，把细节移入按需文档。 | 只作取向；不设置行数阈值，不进入机器符合性判定。数值注册边界由 [agent-facing code owner](agent-facing-code-design.md)维护。 |
-| D-03 | `AGENTS.md` 的 Quality Gates 只列 `scripts/check.sh`、`scripts/unit.sh`、`scripts/dialyzer.sh`；同名脚本存在且可执行，CI 分别运行相同命令。 | `mix docs.check` 全量硬阻断。 |
+| D-03 | `AGENTS.md` 的 Quality Gates 指向 `scripts/quality.sh`；初始化、完整入口及三个子脚本存在且可执行，CI 运行 `scripts/setup.sh` 和 `scripts/quality.sh`。入口与产物由 [仓库验证设计](repository-verification-design.md) 拥有。 | `mix docs.check` 全量硬阻断。 |
 | D-04 | 根 `README.md` 保留 Project Layout、Quick Start 和 Development，并在后两节保留启动与开发入口命令。 | `mix docs.check` 全量硬阻断。 |
 | D-05 | 注释只保留非显然意图、意外决策理由、外部协议假设、出处四类内容。 | 常驻规则、一次性审计与代码评审；不做 NLP 判断。 |
 | D-06 | 不用注释复述代码，也不用注释弥补坏命名或坏结构。 | 常驻规则、一次性审计与代码评审。 |

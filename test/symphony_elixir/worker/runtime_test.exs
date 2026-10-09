@@ -634,7 +634,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     assert [%{"name" => "check", "status" => "not_run"}] = summary["gates"]
 
     send(runtime, {:retry_terminal, "task-1"})
-    Process.sleep(20)
+    :sys.get_state(runtime)
     assert terminal_count("task-1", "task.cancelled") == 1
   end
 

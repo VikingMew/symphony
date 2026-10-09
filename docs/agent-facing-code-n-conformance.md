@@ -70,10 +70,18 @@ The prohibited entry applies only when the proposed declaration means the concep
 
 The checked-in YAML list contains one sorted, exact current finding identity per row and no metadata.
 It has no expiry or bypass. New findings, expanded aggregate locations, additions relative to the
-merge base, stale rows, malformed schema, and unsynchronized deletion all fail. Removing a finding
+merge base after Git-proven line relocation, stale rows, malformed schema, and unsynchronized deletion all fail. Removing a finding
 and its row together passes. When no findings remain, the change must delete both the baseline file
 and the checker's baseline read/compare branch, leaving the direct rules as one hard gate.
 
 `scripts/check.sh` and `scripts/unit.sh` run `scripts/prepare_navigation_git_history.sh` before the
 checker or its task test. Shallow CI checkouts are completed so `origin/main` and the real merge base
 are available; failure to provide that Git history is a hard gate failure.
+
+The location mapper compares the merge-base source with the current working tree, maps only
+untouched declaration lines in the same path, and retains exact location sets. Rewritten or removed
+declaration lines do not authorize a replacement row. Git diff failures remain hard failures.
+The repository-verification rebase retains all 559 findings with only coordinate changes; it adds
+no exemption or relaxed threshold. `baseline_locations_test.exs` covers line movement, new aggregate
+locations, rewritten declarations, stale deletion, and missing history. Existing comments remain
+unchanged; the new mapper has no explanatory inline comments to reconcile.

@@ -5,7 +5,7 @@ This directory contains the Elixir agent orchestration service that polls Linear
 ## Environment
 
 - Elixir: `1.19.x` (OTP 28) via `mise`.
-- Install deps: `mix setup`.
+- Install deps: `scripts/setup.sh`.
 - Make is reserved for build/image targets. `scripts/e2e.sh` is a credentialed manual live E2E suite,
   not a CI gate.
 
@@ -102,15 +102,12 @@ validation. Review Compose deployment changes against the owning contract in
 ## Quality Gates
 
 Keep this resident rule file concise and move detailed guidance into on-demand documentation.
-Run these exact repository quality gates:
+Run `scripts/quality.sh` before handoff; see [repository verification](docs/repository-verification-design.md).
 
-- `scripts/check.sh`
-- `scripts/unit.sh`
-- `scripts/dialyzer.sh`
-
-```bash
-scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh
-```
+- Keep ordinary tests selectable by file/line and tags without running the full gate.
+- Control time/random inputs that affect outcomes; keep HTTP fixtures offline or on literal loopback.
+- Assert exact actual/expected values and retain localized failure evidence.
+- Keep credentialed or manual validation opt-in and outside the default suite.
 
 ## Required Rules
 

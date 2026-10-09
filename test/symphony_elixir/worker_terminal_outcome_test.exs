@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
   use SymphonyElixir.TestSupport
+  import SymphonyElixir.TestSupport.RetryTimerAssertions
 
   alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.RunFailure
@@ -234,13 +235,18 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     put_persisted_issue(issue_id, identifier)
     put_running(pid, issue_id, identifier, retry_attempt: 0, run_id: "run-worker-failed-1")
 
-    Orchestrator.worker_task_finished(
-      issue_id,
-      {:failed, "transient worker failure"},
-      orchestrator
-    )
+    trace_retry_timers(pid)
 
-    first = :sys.get_state(pid)
+    {first, log} =
+      with_log(fn ->
+        Orchestrator.worker_task_finished(
+          issue_id,
+          {:failed, "transient worker failure"},
+          orchestrator
+        )
+
+        :sys.get_state(pid)
+      end)
 
     assert first.failure_counts == %{issue_id => 1}
     assert first.running == %{}
@@ -253,9 +259,9 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
            } = first.retry_attempts[issue_id]
 
     assert first_error == "runtime_failure"
-    remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-    assert remaining_ms >= 9_500
-    assert remaining_ms <= 10_500
+    assert is_integer(due_at_ms)
+    assert log =~ "in 10000ms (attempt 1)"
+    assert_retry_delay(pid, issue_id, first.retry_attempts[issue_id], 10_000)
     retry_token = first.retry_attempts[issue_id].retry_token
 
     assert [

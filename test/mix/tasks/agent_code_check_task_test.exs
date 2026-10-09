@@ -33,11 +33,10 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
     check = File.read!("scripts/check.sh")
     quality = File.read!("scripts/quality.sh")
 
-    assert Regex.scan(~r/run: scripts\/(check|unit|dialyzer)\.sh/, workflow, capture: :all_but_first)
-           |> List.flatten() == ~w(check unit dialyzer)
-
+    assert workflow =~ "run: scripts/quality.sh"
     assert check =~ "mix agent_code.check"
-    assert quality =~ "scripts/check.sh\nscripts/unit.sh\nscripts/dialyzer.sh"
+    assert quality =~ "elixir scripts/quality.exs"
+    assert File.read!("scripts/quality.exs") =~ "~w(check unit dialyzer)"
   end
 
   test "the checked-in registry and audit contain the six declared rules and 35 constitution units" do

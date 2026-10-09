@@ -129,10 +129,8 @@ Requirements:
 ```bash
 git clone https://github.com/VikingMew/symphony
 cd symphony
-mise trust
-mise install
 export DATABASE_URL=postgresql://symphony:password@127.0.0.1:5432/symphony
-mise exec -- mix setup
+scripts/setup.sh
 mise exec -- mix symphony.migrate
 mise exec -- mix build
 mise exec -- ./bin/symphony --port 4000
@@ -336,6 +334,11 @@ provides the operator and settings surfaces, and Ecto persists runtime state in 
 
 ## Development
 
+For repository verification, only mise is required initially. Run `scripts/setup.sh`, then
+`scripts/quality.sh`; ordinary tests need neither PostgreSQL nor service credentials.
+Run an individual test with `mise exec -- mix test path/to/test.exs:line` or
+`mise exec -- mix test --only tag`.
+
 ```bash
 mise exec -- mix test
 mise exec -- mix test --cover
@@ -351,9 +354,11 @@ mise exec -- mix symphony.postgres_smoke
 ```
 
 Make is reserved for build and image targets. Run the complete local quality gate with
-`scripts/quality.sh`; it covers `scripts/check.sh` (agent-facing conformance, format, lint,
+`scripts/quality.sh`; JSON summaries and complete per-gate logs are retained under
+`_build/quality/<run>/` (paths and millisecond durations are printed). See
+[repository verification](docs/repository-verification-design.md). It covers `scripts/check.sh` (agent-facing conformance, format, lint,
 compile), `scripts/unit.sh` (85% coverage-bearing unit suite), and `scripts/dialyzer.sh` (static
-analysis). CI runs the same three component gates plus PR description lint; publication uses only
+analysis). CI invokes the same aggregate entry and preserves its artifacts on success or failure, plus PR description lint; publication uses only
 the fast check gate. `scripts/e2e.sh` remains a credentialed manual live integration suite and is
 not currently connected to CI.
 

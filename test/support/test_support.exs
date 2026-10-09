@@ -331,7 +331,7 @@ defmodule SymphonyElixir.TestSupport do
       Keyword.merge(
         [
           tracker_kind: "linear",
-          tracker_endpoint: "https://api.linear.app/graphql",
+          tracker_endpoint: if(System.get_env("SYMPHONY_RUN_LIVE_E2E") == "1", do: "https://api.linear.app/graphql", else: "http://127.0.0.1:1/graphql"),
           tracker_api_token: nil,
           tracker_project_slug: "project",
           tracker_assignee: nil,

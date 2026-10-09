@@ -1,5 +1,6 @@
 defmodule SymphonyElixir.CoreTest do
   use SymphonyElixir.TestSupport
+  import SymphonyElixir.TestSupport.RetryTimerAssertions
   alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.RunAdmission
 
@@ -959,8 +960,6 @@ defmodule SymphonyElixir.CoreTest do
         end
       end)
 
-      Process.sleep(50)
-
       assert {:ok, workspace} =
                SymphonyElixir.PathSafety.canonicalize(Path.join(test_root, issue_identifier))
 
@@ -991,9 +990,10 @@ defmodule SymphonyElixir.CoreTest do
         |> Map.put(:listening_mode, :listening_all)
       end)
 
-      send(pid, {:tick, initial_state.tick_token})
-      Process.sleep(100)
+      monitor = Process.monitor(agent_pid)
+      send(pid, :run_poll_cycle)
       state = :sys.get_state(pid)
+      assert_receive {:DOWN, ^monitor, :process, ^agent_pid, _reason}
 
       assert Map.has_key?(state.running, issue_id) == false
       assert MapSet.member?(state.claimed, issue_id) == false
@@ -1170,16 +1170,20 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    scheduled_from_ms = System.monotonic_time(:millisecond)
-    send(pid, {:DOWN, ref, :process, self(), :normal})
-    Process.sleep(50)
-    state = :sys.get_state(pid)
+    trace_retry_timers(pid)
+
+    {state, log} =
+      with_log(fn ->
+        send(pid, {:DOWN, ref, :process, self(), :normal})
+        :sys.get_state(pid)
+      end)
 
     assert Map.has_key?(state.running, issue_id) == false
     assert MapSet.member?(state.completed, issue_id)
     assert %{attempt: 1, due_at_ms: due_at_ms} = state.retry_attempts[issue_id]
     assert is_integer(due_at_ms)
-    assert_due_after(due_at_ms, scheduled_from_ms, 500, 2_000)
+    assert log =~ "in 1000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 1_000)
   end
 
   defp stop_registered_orchestrator do
@@ -1227,10 +1231,13 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    scheduled_from_ms = System.monotonic_time(:millisecond)
-    send(pid, {:DOWN, ref, :process, self(), :boom})
-    Process.sleep(50)
-    state = :sys.get_state(pid)
+    trace_retry_timers(pid)
+
+    {state, log} =
+      with_log(fn ->
+        send(pid, {:DOWN, ref, :process, self(), :boom})
+        :sys.get_state(pid)
+      end)
 
     assert %{
              attempt: 3,
@@ -1241,7 +1248,9 @@ defmodule SymphonyElixir.CoreTest do
            } =
              state.retry_attempts[issue_id]
 
-    assert_due_after(due_at_ms, scheduled_from_ms, 39_500, 40_500)
+    assert is_integer(due_at_ms)
+    assert log =~ "in 40000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 40_000)
   end
 
   test "first abnormal worker exit waits before retrying" do
@@ -1274,10 +1283,13 @@ defmodule SymphonyElixir.CoreTest do
       |> Map.put(:retry_attempts, %{})
     end)
 
-    scheduled_from_ms = System.monotonic_time(:millisecond)
-    send(pid, {:DOWN, ref, :process, self(), :boom})
-    Process.sleep(50)
-    state = :sys.get_state(pid)
+    trace_retry_timers(pid)
+
+    {state, log} =
+      with_log(fn ->
+        send(pid, {:DOWN, ref, :process, self(), :boom})
+        :sys.get_state(pid)
+      end)
 
     assert %{
              attempt: 1,
@@ -1288,7 +1300,9 @@ defmodule SymphonyElixir.CoreTest do
            } =
              state.retry_attempts[issue_id]
 
-    assert_due_after(due_at_ms, scheduled_from_ms, 9_000, 10_500)
+    assert is_integer(due_at_ms)
+    assert log =~ "in 10000ms"
+    assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 10_000)
   end
 
   test "stale retry timer messages do not consume newer retry entries" do
@@ -1321,7 +1335,6 @@ defmodule SymphonyElixir.CoreTest do
     end)
 
     send(pid, {:retry_issue, issue_id, stale_retry_token})
-    Process.sleep(50)
 
     assert %{
              attempt: 2,
@@ -1400,13 +1413,6 @@ defmodule SymphonyElixir.CoreTest do
       ssh_hosts: ["worker-a", "worker-b"],
       max_concurrent_agents_per_host: max_per_host
     }
-  end
-
-  defp assert_due_after(due_at_ms, reference_ms, min_delay_ms, max_delay_ms) do
-    delay_ms = due_at_ms - reference_ms
-
-    assert delay_ms >= min_delay_ms
-    assert delay_ms <= max_delay_ms
   end
 
   defp centralized_admission do
