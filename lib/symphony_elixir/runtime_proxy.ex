@@ -12,10 +12,16 @@ defmodule SymphonyElixir.RuntimeProxy do
     |> Enum.flat_map(&proxy_env_entry/1)
   end
 
-  @spec port_env() :: [{charlist(), charlist()}]
+  @spec port_env() :: [{charlist(), charlist() | false}]
   def port_env do
-    Enum.map(proxy_env(), fn {name, value} ->
-      {String.to_charlist(name), String.to_charlist(value)}
+    Enum.map(@proxy_env_names, fn name ->
+      value =
+        case non_empty_env_value(name) do
+          nil -> false
+          value -> String.to_charlist(value)
+        end
+
+      {String.to_charlist(name), value}
     end)
   end
 

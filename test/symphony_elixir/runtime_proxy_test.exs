@@ -24,6 +24,7 @@ defmodule SymphonyElixir.RuntimeProxyTest do
 
     assert {"HTTP_PROXY", "http://proxy.example.test:8080"} in RuntimeProxy.proxy_env()
     assert {~c"HTTP_PROXY", ~c"http://proxy.example.test:8080"} in RuntimeProxy.port_env()
+    assert {~c"http_proxy", false} in RuntimeProxy.port_env()
 
     exports = RuntimeProxy.remote_exports()
     assert "export HTTP_PROXY='http://proxy.example.test:8080'" in exports
