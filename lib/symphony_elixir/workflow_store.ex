@@ -298,13 +298,16 @@ defmodule SymphonyElixir.WorkflowStore do
   defp compose_workflows(instance_workflow, projects, workflow_records) do
     projects_by_id = Map.new(projects, &{Map.fetch!(&1, :id), &1})
 
-    result =
-      Enum.reduce_while(workflow_records, {:ok, %{}}, fn entry, acc ->
-        compose_workflow(entry, acc, instance_workflow, projects_by_id)
-      end)
+    result = Enum.reduce_while(workflow_records, {:ok, %{}}, &compose_workflow(&1, &2, instance_workflow))
 
     case result do
       {:ok, workflows} ->
+        workflows =
+          Map.new(workflows, fn {project_id, workflow} ->
+            project_slug = projects_by_id |> Map.fetch!(project_id) |> Map.fetch!(:slug)
+            {project_id, Map.put(workflow, :project_slug, project_slug)}
+          end)
+
         {:ok, workflows, default_project_id(workflows, projects), authority_drift(projects, workflow_records)}
 
       error ->
@@ -339,15 +342,10 @@ defmodule SymphonyElixir.WorkflowStore do
     end)
   end
 
-  defp compose_workflow({project_id, workflow}, {:ok, loaded}, instance_workflow, projects_by_id) do
+  defp compose_workflow({project_id, workflow}, {:ok, loaded}, instance_workflow) do
     case persistence().workflow_to_loaded(instance_workflow, workflow) do
-      {:ok, composed} ->
-        project_slug = projects_by_id |> Map.fetch!(project_id) |> Map.fetch!(:slug)
-        composed = Map.put(composed, :project_slug, project_slug)
-        {:cont, {:ok, Map.put(loaded, project_id, composed)}}
-
-      {:error, reason} ->
-        {:halt, {:error, {:compose_workflow, project_id, reason}}}
+      {:ok, composed} -> {:cont, {:ok, Map.put(loaded, project_id, composed)}}
+      {:error, reason} -> {:halt, {:error, {:compose_workflow, project_id, reason}}}
     end
   end
 
