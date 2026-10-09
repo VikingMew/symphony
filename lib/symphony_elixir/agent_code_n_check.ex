@@ -3,6 +3,8 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   Checks deterministic Agent-facing code navigation rules and their shrinking baseline.
   """
 
+  alias SymphonyElixir.AgentCodeNCheck.BaselineLocations
+
   @baseline_path "config/agent_code_navigation_baseline.yml"
   @source_patterns ["lib/**/*.ex", "test/**/*.ex", "test/**/*.exs"]
   @directory_roots ~w(.github config docs lib scripts test)
@@ -325,7 +327,7 @@ defmodule SymphonyElixir.AgentCodeNCheck do
 
   defp validate_baseline(root, relative_path, findings, base_baseline_option) do
     current = read_baseline(Path.join(root, relative_path))
-    base = base_baseline(root, relative_path, base_baseline_option)
+    base = base_baseline(root, relative_path, base_baseline_option, findings)
 
     baseline_remaining =
       case current do
@@ -392,9 +394,7 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   end
 
   defp baseline_ratchet_errors({:ok, rows}, {:ok, base_rows}, _findings) do
-    base_by_identity = Map.new(base_rows, &{ratchet_identity(&1), &1})
-
-    Enum.flat_map(rows -- base_rows, &ratchet_row_errors(&1, base_by_identity))
+    Enum.map(rows -- base_rows, &"baseline.added: #{&1}")
   end
 
   defp baseline_ratchet_errors(:missing, {:ok, _base_rows}, []), do: []
@@ -402,38 +402,18 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   defp baseline_ratchet_errors(_current, {:error, error}, _findings), do: [error]
   defp baseline_ratchet_errors(_current, _base, _findings), do: []
 
-  defp ratchet_row_errors(row, base_by_identity) do
-    case Map.fetch(base_by_identity, ratchet_identity(row)) do
-      {:ok, base_row} ->
-        if finding_magnitude(row) <= finding_magnitude(base_row),
-          do: [],
-          else: ["baseline.expanded: #{row}"]
+  defp base_baseline(_root, _path, option, _findings) when option == :missing, do: :missing
+  defp base_baseline(_root, _path, rows, _findings) when is_list(rows), do: {:ok, rows}
 
-      :error ->
-        ["baseline.added: #{row}"]
-    end
-  end
-
-  defp ratchet_identity(row) do
-    row
-    |> String.split("|")
-    |> Enum.take(3)
-    |> Enum.join("|")
-  end
-
-  defp finding_magnitude(row) do
-    ~r/(?:@|:)\d+(?=,|;|\||$)/
-    |> Regex.scan(row)
-    |> length()
-  end
-
-  defp base_baseline(_root, _path, option) when option == :missing, do: :missing
-  defp base_baseline(_root, _path, rows) when is_list(rows), do: {:ok, rows}
-
-  defp base_baseline(root, path, :from_git) do
+  defp base_baseline(root, path, :from_git, findings) do
     case System.cmd("git", ["merge-base", "HEAD", "origin/main"], cd: root, stderr_to_stdout: true) do
       {merge_base, 0} ->
-        read_base_baseline(root, path, String.trim(merge_base))
+        revision = String.trim(merge_base)
+
+        case read_base_baseline(root, path, revision) do
+          {:ok, rows} -> BaselineLocations.relocate_baseline(root, revision, rows, findings)
+          result -> result
+        end
 
       {output, status} ->
         {:error, "baseline.merge_base: git exited #{status}: #{String.trim(output)}"}

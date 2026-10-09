@@ -121,8 +121,11 @@ human 输出只有一行 `navigation baseline remaining: <整数>` 水位，JSON
 
 [`config/agent_code_navigation_baseline.yml`](../config/agent_code_navigation_baseline.yml)只保存当前
 仍存在的精确 identity，不含 owner、reason、日期或通配符。merge base 尚无文件时，首次集合
-必须等于当前扫描集合；其后每个当前 finding 的规则、声明类别和规范化名字必须在 merge-base
-集合中存在，且 identity 所含声明位置数不得增加。代码移动可以刷新当前精确位置；基线外 finding、
-聚合 finding 新增位置、基线新增和陈旧记录均失败，修复 finding 必须同次删除记录。水位是剩余
-记录数且只减不增；归零时删除基线文件和 checker 的读取/比较分支，只保留直接硬门禁。此生命
-周期没有日期、自动放行、兼容分支或 warning/hard 双模式。
+必须等于当前扫描集合；其后当前集合必须是经 Git 位置映射后的 merge-base 集合的子集。
+位置映射调整同一路径中未被 diff 改写的声明行；跨文件职责移动只有在规范化声明头（含函数
+arity）的当前多重集不超过 merge-base 多重集时才映射。插入或删除前文引起的行号移动不增加
+水位。当前 YAML 仍须写出扫描所得的精确新位置，不能省略位置或按名称归并。声明头被改写、
+无法取得 Git diff 均不能按纯位置移动放行。基线外 finding、聚合 finding
+新增位置、基线新增和陈旧记录均失败，修复 finding 必须同次删除记录。水位是剩余记录数且只减
+不增；归零时删除基线文件和 checker 的读取/比较分支，只保留直接硬门禁。此生命周期没有日期、
+自动放行、兼容分支或 warning/hard 双模式。

@@ -435,8 +435,9 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           assert :success =
                    AgentRunner.run(issue, nil,
                      workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
-                     implementation_branch_checkout: fn ^workspace, "feature/sym-1", _opts ->
-                       {:ok, "checked out"}
+                     implementation_branch_preparer: fn ^workspace, "main", "feature/sym-1", _opts ->
+                       send(test_pid, {:handoff_order, :source_sync})
+                       {:ok, %{base_sha: "base-sha", prepared_head: "prepared-sha", task_sha: "task-sha"}}
                      end,
                      pull_request_ensurer: pull_request_ensurer,
                      dynamic_tool_opts: [graphql: graphql, pull_request_proof_secret: "test-proof"],
@@ -446,6 +447,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
                      run_id: "run-handoff"
                    )
 
+          assert_receive {:handoff_order, :source_sync}
           assert_receive {:handoff_order, :pr}
           assert_receive {:handoff_order, :attachment}
           assert_receive {:handoff_order, :comment}

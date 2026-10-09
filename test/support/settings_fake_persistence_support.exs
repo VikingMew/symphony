@@ -41,25 +41,6 @@ defmodule SymphonyElixir.TestSupport.SettingsFakePersistenceSupport do
     defdelegate delete_project(id), to: SymphonyElixir.TestSupport.FakePersistence
   end
 
-  defmodule BusyOperatorOrchestrator do
-    use GenServer
-
-    def start_link(opts) do
-      name = Keyword.fetch!(opts, :name)
-      GenServer.start_link(__MODULE__, opts, name: name)
-    end
-
-    @impl true
-    defdelegate init(opts),
-      to: SymphonyElixir.TestSupport.SettingsFakePersistenceSupport,
-      as: :busy_init
-
-    @impl true
-    defdelegate handle_call(message, from, snapshot),
-      to: SymphonyElixir.TestSupport.SettingsFakePersistenceSupport,
-      as: :busy_handle_call
-  end
-
   def fake_graphql(_query, variables, opts) do
     fake = Application.get_env(:symphony_elixir, :linear_discovery_fake, %{})
 

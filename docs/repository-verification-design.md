@@ -155,9 +155,9 @@ fixture 保留同一入口；最终 repository verification 文件单独复核�
   通过主动触发 flush 控制时间；claim 的过期时间与注入时钟精确相等。
 - 没有新增 skip/exemption；覆盖率配置、六项总纲阈值、豁免表、observability 基线与 main
   相同。原有两个手动验证 skip 保留，指定的 multi-project 测试无 diff。
-- 本次验证工作完成时 N 基线为 559 条。后续 locality 职责拆分将当前水位降低为 412 条；N owner
-  以规则、声明类别和规范化名字比较 merge-base identity，并继续阻断新 identity、聚合位置增加、
-  陈旧记录和缺失历史。
+- 本次验证工作完成时 N 基线为 559 条。后续 locality 职责拆分将当前水位降低为 411 条；N owner
+  以精确 finding 行和 Git 位置映射比较 merge-base，其中跨文件移动还要求含 arity 的规范化声明头
+  多重集不扩张，并继续阻断新 identity、聚合位置增加、陈旧记录和缺失历史。
 
 N 与验证相关定向测试共 129 tests、0 failures。新增辅助代码不改动原有意图注释；新增出站
 守卫注释仅说明 V-08 安全边界。完整门禁最终证据见下文。

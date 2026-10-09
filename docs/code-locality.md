@@ -53,74 +53,72 @@ The gate also runs through `scripts/check.sh` via `mix lint`.
 | Rule | Initial verdict and evidence | Remediation | Final verdict and evidence |
 | --- | --- | --- | --- |
 | L-01 | Not compliant. The baseline command found 12 handwritten files over 1,000 lines; `lib/symphony_elixir/orchestrator.ex` was 4,239 and `priv/static/dashboard.css` was 1,397. | Split runtime/test responsibilities and CSS; add the tracked-file gate with no handwritten grandfather entry. | Compliant. The baseline command and `mix locality.check` report no oversized handwritten file. |
-| L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 57-entry dateless baseline with all five required fields and a nearby index marker; two starting entries were removed after their clauses fell below the limit. |
+| L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 56-entry dateless baseline with all five required fields and a nearby index marker; three starting entries were removed after their clauses fell below the limit. |
 | L-03 | Compliant baseline: `mix credo --strict --format json` reported zero issues with Credo 1.7.16 default depth 2. | Pin `max_nesting: 2`, add an AST-focused test, and extract four newly surfaced nested control paths. | Compliant. Credo and `mix locality.check` report no nesting issue and no nesting suppression was added; responsibility fragments suppress only the `LongQuoteBlocks` advisory at their compile-time `quote` boundary. |
-| L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 54 rows below. | Compliant. 54 of 536 code files (10.1%) pass the no-navigation concept review; split section samples were re-reviewed after the main merge. |
+| L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 52 rows below. | Compliant. 52 of 515 code files (10.1%) pass the no-navigation concept review; split section samples were re-reviewed after the main merge. |
 | L-05 | Partially compliant. No AST gate or explicit pipeline ruling existed. | Check receiver-call AST, distinguish field access, document pipelines, and inspect module-boundary matches. | Compliant. The final AST scan has zero implicit three-call chain; focused tests cover a failing chain and allowed pipeline. |
 | L-06 | Partially compliant. Policy literals had no single disposition record. | Review the literal inventory by category and retain runtime policy in `SymphonyElixir.Config` or named attributes. | Compliant. The classification below has no unexplained literal or new runtime config source. |
 | L-07 | Not compliant. The generated/data inventory was absent and `.gitattributes` named a snapshot directory with no current tracked files. | Add the canonical manifest/header check, classify data, retain main's future snapshot marker, and delete unrelated `.DS_Store` metadata. | Compliant. Generated inventory is empty, all data entries exist, the snapshot marker has no current tracked match, and focused tests cover headers, data, and stale entries. |
-| L-08 | Not compliant because oversized files remained and long clauses had no nearby index. | Complete L-01 and add the index marker to every registered clause file. | Compliant. No long handwritten file remains; all 57 remaining temporary L-02 entries are indexed below and beside the code. |
+| L-08 | Not compliant because oversized files remained and long clauses had no nearby index. | Complete L-01 and add the index marker to every registered clause file. | Compliant. No long handwritten file remains; all 56 remaining temporary L-02 entries are indexed below and beside the code. |
 
 Final totals: **compliant 8; non-compliant 0; not applicable 0; total 8**.
 
 ## L-04 deterministic sample
 
-Sort the canonical 536-file code set. Let `n = 536`, `s = max(20, ceil(n / 10)) = 54`, and select
-zero-based index `floor(i * n / s)` for every `i` from 0 through 53. Each row answers whether one
+Sort the canonical 515-file code set. Let `n = 515`, `s = max(20, ceil(n / 10)) = 52`, and select
+zero-based index `floor(i * n / s)` for every `i` from 0 through 51. Each row answers whether one
 concept can be understood in the file without navigating elsewhere.
 
 | File | Verdict and rationale |
 | --- | --- |
 | `.codex/skills/land/land_watch.py` | Pass — one repository automation command boundary. |
-| `.github/workflows/pr-description-lint.yml` | Pass — one CI workflow and its repository check sequence. |
-| `config/agent_code_navigation_baseline.yml` | Pass — one canonical configuration or baseline inventory. |
-| `lib/mix/tasks/agent_code_n.check.ex` | Pass — one named Mix command boundary. |
-| `lib/mix/tasks/symphony.postgres_smoke.ex` | Pass — one named Mix command boundary. |
-| `lib/symphony_elixir/analytics.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/codex/app_server/sections/tail_11.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir/codex/dynamic_tool.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/codex/message_humanizer/methods.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/codex/startup.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/config/schema.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/event_presenter.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/linear/health.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/merge_conflict_reconciler.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
+| `.github/workflows/publish-image.yml` | Pass — one CI workflow and its repository check sequence. |
+| `config/agent_code_thresholds.yml` | Pass — one canonical configuration or threshold inventory. |
+| `lib/mix/tasks/agent_code_x.check.ex` | Pass — one named Mix command boundary. |
+| `lib/mix/tasks/symphony/postgres_smoke_assertions.ex` | Pass — focused assertions for the PostgreSQL smoke boundary. |
+| `lib/symphony_elixir/auth.ex` | Pass — one authentication boundary. |
+| `lib/symphony_elixir/codex/app_server/sections/tail_3.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
+| `lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
+| `lib/symphony_elixir/codex/protocol.ex` | Pass — one Codex protocol boundary. |
+| `lib/symphony_elixir/config/codex_command.ex` | Pass — one configuration projection for Codex commands. |
+| `lib/symphony_elixir/config/workflow_scopes.ex` | Pass — one workflow-scope configuration concern. |
+| `lib/symphony_elixir/linear/diagnostics.ex` | Pass — one Linear diagnostics boundary. |
+| `lib/symphony_elixir/locality.ex` | Pass — one repository-locality checker. |
 | `lib/symphony_elixir/orchestrator/dispatch_policy.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
 | `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
 | `lib/symphony_elixir/persistence/run_record.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
 | `lib/symphony_elixir/pr_review.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
 | `lib/symphony_elixir/release/legacy_workflow_command.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
 | `lib/symphony_elixir/sqlite_importer.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir/worker/executor.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
+| `lib/symphony_elixir/worker/claim_commit.ex` | Pass — one worker claim-commit boundary. |
+| `lib/symphony_elixir/worker/heartbeat_history.ex` | Pass — one worker heartbeat-history concern. |
 | `lib/symphony_elixir/workflow_form.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir_web/controllers/control_api_controller.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir_web/linear_status_signal.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir_web/live/admin_live/settings/projects.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir_web/presenter.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `mix.exs` | Pass — one project build, dependency, and task-alias boundary. |
-| `priv/repo/migrations/20260828010000_add_worker_execution_summaries.exs` | Pass — one monotonic schema or data transition. |
-| `priv/repo/migrations/20260926000000_scope_blocking_decisions_to_state_and_run.exs` | Pass — one monotonic schema or data transition. |
-| `scripts/docs_drift_pr_linkage.sh` | Pass — one repository check or operator command entrypoint. |
-| `test/mix/tasks/agent_code_x_check_task_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/support/fake_persistence_sections/fake_persistence_1.exs` | Pass — one shared test fixture or support responsibility. |
-| `test/support/locality_sections/assignment_manager_3.exs` | Pass — one coherent scenario group composed by its small test wrapper. |
-| `test/support/test_support.exs` | Pass — one shared test fixture or support responsibility. |
-| `test/symphony_elixir/app_server_startup_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/codex/app_server_startup_policy_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/codex/rate_limit_gate_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/config/project_commands_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/coverage_ignore_governance_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/environment_failure_circuit_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/legacy_workflow_runtime_integration_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/live_e2e_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/observability_history_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/orchestrator_multi_project_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/persistence/project_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/redaction_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/sqlite_importer_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/worker/assignment_manager_test.exs` | Pass — focused tests for the contract named by the path. |
+| `lib/symphony_elixir/workspace_cleanup_policy.ex` | Pass — one workspace-cleanup policy boundary. |
+| `lib/symphony_elixir_web/controllers/observability_api_controller.ex` | Pass — one observability API boundary. |
+| `lib/symphony_elixir_web/live/admin_live/events.ex` | Pass — one admin event-view concern. |
+| `lib/symphony_elixir_web/live/admin_live/settings_shell.ex` | Pass — one settings-shell presentation concern. |
+| `lib/symphony_elixir_web/rate_limit_status.ex` | Pass — one rate-limit status projection. |
+| `priv/repo/migrations/20260517000000_add_project_source_strategy_fields.exs` | Pass — one monotonic schema or data transition. |
+| `priv/repo/migrations/20260905000000_move_capacity_to_deployment.exs` | Pass — one monotonic schema or data transition. |
+| `priv/static/dashboard/components.css` | Pass — one dashboard component-style boundary. |
+| `scripts/prepare_navigation_git_history.sh` | Pass — one repository-check preparation command. |
+| `test/mix/tasks/pr_body_check_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/support/live_e2e_docker/live_worker_entrypoint.sh` | Pass — one opt-in live-E2E worker entrypoint. |
+| `test/support/locality_sections/extensions_1.exs` | Pass — one coherent scenario group composed by its small test wrapper. |
+| `test/symphony_elixir/agent_code_check_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/application_startup_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/codex/dynamic_tool_policy_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/codex/refinement_quality_gate_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/config/schema_domain_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/default_test_boundary_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/github_pull_request_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/linear_workflow_state_validator_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/number_format_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/orchestrator/session_history_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/persistence/legacy_workflow_reconciliation_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/prompt_builder_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/shell_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/worker/assignment_manager_event_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/worker/paths_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/workflow_settings_package_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/workspace_and_config_test.exs` | Pass — focused tests for the contract named by the path. |
@@ -143,7 +141,7 @@ named attribute/config accessor. No unexplained policy literal remains.
 ## Temporary clause splits
 
 The manifest is authoritative and the table below is its review projection. The baseline started at
-59 and now contains 57 exact, dateless entries after two clauses fell below the limit. It has no date
+59 and now contains 56 exact, dateless entries after three clauses fell below the limit. It has no date
 or expiry semantics. `mix locality.check` rejects changed
 paths, identifiers, measurements, missing fields, missing nearby markers, and every unregistered
 overlong clause. The baseline may only decrease; when it reaches zero, a separate change removes the
@@ -172,8 +170,7 @@ mechanism.
 | `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 889 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 782 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 853 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/worker/executor.ex` | `execute/3@20` | 72 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@93` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@102` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 573 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `__using__/1@6` | 564 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `prepare_worktree_source/4@272` | 66 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
@@ -193,7 +190,7 @@ mechanism.
 | `test/support/fake_persistence_sections/fake_persistence_1.exs` | `__using__/1@6` | 621 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/fake_persistence_sections/fake_persistence_2.exs` | `__using__/1@6` | 660 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/agent_runner_1.exs` | `__using__/1@11` | 614 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/agent_runner_2.exs` | `__using__/1@11` | 469 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/agent_runner_2.exs` | `__using__/1@11` | 471 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/assignment_manager_1.exs` | `__using__/1@16` | 722 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/assignment_manager_2.exs` | `__using__/1@18` | 768 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/assignment_manager_3.exs` | `__using__/1@20` | 507 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |

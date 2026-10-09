@@ -24,6 +24,7 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
     File.write!(path, "\n\n" <> File.read!(path))
     refresh_location_fixture(root)
     report = AgentCodeNCheck.check(root: root)
+    assert report["errors"] == []
     assert report["status"] == "pass"
     assert report["errors"] == []
     assert report["navigation_baseline_remaining"] == 1
@@ -37,16 +38,26 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
     refresh_location_fixture(root)
     report = AgentCodeNCheck.check(root: root)
     assert report["status"] == "fail"
-    assert report["errors"] == ["baseline.expanded: N-01|function|shared|lib/alpha.ex:3,lib/beta.ex:2,lib/gamma.ex:2"]
+    assert report["errors"] == ["baseline.added: N-01|function|shared|lib/alpha.ex:3,lib/beta.ex:2,lib/gamma.ex:2"]
   end
 
-  test "rewritten declaration lines retain the same bounded identity", %{root: root} do
+  test "unchanged declaration heads can move across files", %{root: root} do
+    File.write!(Path.join(root, "lib/alpha.ex"), "defmodule Demo.Alpha do\nend\n")
+    File.write!(Path.join(root, "lib/gamma.ex"), "defmodule Demo.Gamma do\n  def shared, do: :ok\nend\n")
+    refresh_location_fixture(root)
+    report = AgentCodeNCheck.check(root: root)
+    assert report["errors"] == []
+    assert report["status"] == "pass"
+    assert report["findings"] == ["N-01|function|shared|lib/beta.ex:2,lib/gamma.ex:2"]
+  end
+
+  test "rewritten declaration lines cannot be relabeled as pure moves", %{root: root} do
     path = Path.join(root, "lib/alpha.ex")
     File.write!(path, String.replace(File.read!(path), "def shared,", "def shared(_value),"))
     refresh_location_fixture(root)
     report = AgentCodeNCheck.check(root: root)
-    assert report["status"] == "pass"
-    assert report["errors"] == []
+    assert report["status"] == "fail"
+    assert report["errors"] == ["baseline.added: N-01|function|shared|lib/alpha.ex:2,lib/beta.ex:2"]
   end
 
   test "deleted declarations must remove their stale baseline row", %{root: root} do
@@ -70,10 +81,15 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
     location_git!(root, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Add preamble"])
     File.write!(path, String.trim_leading(File.read!(path), "\n"))
 
-    assert BaselineLocations.relocate_baseline(root, "HEAD", [
-             "N-05|file-module-mismatch|lib/alpha.ex|expected:Other|actual:Demo.Alpha@3",
-             "N-01|function|shared|lib/alpha.ex:4,lib/beta.ex:2"
-           ]) ==
+    assert BaselineLocations.relocate_baseline(
+             root,
+             "HEAD",
+             [
+               "N-05|file-module-mismatch|lib/alpha.ex|expected:Other|actual:Demo.Alpha@3",
+               "N-01|function|shared|lib/alpha.ex:4,lib/beta.ex:2"
+             ],
+             nil
+           ) ==
              {:ok,
               [
                 "N-01|function|shared|lib/alpha.ex:2,lib/beta.ex:2",
@@ -82,7 +98,7 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
   end
 
   test "a Git diff failure cannot authorize baseline rows", %{root: root} do
-    assert {:error, message} = BaselineLocations.relocate_baseline(root, "missing-revision", [])
+    assert {:error, message} = BaselineLocations.relocate_baseline(root, "missing-revision", [], nil)
     assert String.starts_with?(message, "baseline.location_diff: git exited 128:")
   end
 

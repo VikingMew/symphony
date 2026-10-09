@@ -7,8 +7,18 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Config.RuntimeResolver
   alias SymphonyElixir.GitHub.PullRequest
   alias SymphonyElixir.Linear.{Client, Issue}
-  alias SymphonyElixir.{StateName, WorkerResult}
-  alias SymphonyElixir.Worker.{Command, Config, LinearToolAuditRecorder, Paths, Payload, Validation}
+
+  alias SymphonyElixir.Worker.{
+    Command,
+    Config,
+    Executor.DeliveryEvidence,
+    LinearToolAuditRecorder,
+    Paths,
+    Payload,
+    Validation
+  }
+
+  alias SymphonyElixir.WorkerResult
 
   @linear_endpoint "https://api.linear.app/graphql"
   @codex_shutdown_grace_ms 5_000
@@ -47,48 +57,47 @@ defmodule SymphonyElixir.Worker.Executor do
       Validation.write!(Path.join(log_dir, "validation.json"), summary)
       Map.merge(summary, %{status: :completed, phase: :handoff, handoff: handoff})
     else
-      :cancelled ->
-        cancelled_result()
-
-      {:validation_cancelled, summary} ->
-        Map.merge(summary, Map.merge(cancelled_result(), %{phase: :validation}))
-
-      {:validation_failed, summary} ->
-        Map.merge(summary, %{status: :failed, phase: :validation})
-
-      {:blocked, reason, detail} ->
-        %{status: :blocked, reason: reason, detail: detail}
-
-      {:blocked, reason, detail, validation} ->
-        %{status: :blocked, reason: reason, detail: detail, validation: validation}
-
-      {:error, :source_preparation_timeout, evidence} ->
-        %{
-          status: :failed,
-          reason: :source_preparation_timeout,
-          detail: evidence.output,
-          failure_evidence: evidence
-        }
-
-      {:error, reason, detail} ->
-        execution_failure(reason, detail)
-
-      {:error, reason} ->
-        execution_failure(reason, nil)
-
-      %{status: :failed, reason: reason, detail: detail} ->
-        %{status: :failed, reason: reason, detail: detail}
-
-      %{status: :cancelled} = result ->
-        Map.put(cancelled_result(), :detail, result.detail)
-
-      %{status: status} = result ->
-        %{status: :failed, reason: status, detail: result.detail}
-
-      status when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable] ->
-        %{status: :failed, reason: status}
+      result -> execution_result(result)
     end
   end
+
+  defp execution_result(:cancelled), do: cancelled_result()
+
+  defp execution_result({:validation_cancelled, summary}),
+    do: Map.merge(summary, Map.merge(cancelled_result(), %{phase: :validation}))
+
+  defp execution_result({:validation_failed, summary}),
+    do: Map.merge(summary, %{status: :failed, phase: :validation})
+
+  defp execution_result({:blocked, reason, detail}),
+    do: %{status: :blocked, reason: reason, detail: detail}
+
+  defp execution_result({:blocked, reason, detail, validation}),
+    do: %{status: :blocked, reason: reason, detail: detail, validation: validation}
+
+  defp execution_result({:error, :source_preparation_timeout, evidence}) do
+    %{
+      status: :failed,
+      reason: :source_preparation_timeout,
+      detail: evidence.output,
+      failure_evidence: evidence
+    }
+  end
+
+  defp execution_result({:error, reason, detail}), do: execution_failure(reason, detail)
+  defp execution_result({:error, reason}), do: execution_failure(reason, nil)
+
+  defp execution_result(%{status: :failed, reason: reason, detail: detail}),
+    do: %{status: :failed, reason: reason, detail: detail}
+
+  defp execution_result(%{status: :cancelled} = result),
+    do: Map.put(cancelled_result(), :detail, result.detail)
+
+  defp execution_result(%{status: status} = result),
+    do: %{status: :failed, reason: status, detail: result.detail}
+
+  defp execution_result(status) when status in [:failed, :timed_out, :cancelled, :toolchain_unavailable],
+    do: %{status: :failed, reason: status}
 
   defp run_codex(config, claim, payload, workspace, progress) do
     codex = payload.codex
@@ -241,9 +250,7 @@ defmodule SymphonyElixir.Worker.Executor do
   defp codex_failure_reason(:execution_capability_unavailable), do: :execution_capability_unavailable
   defp codex_failure_reason(_reason), do: :failed
 
-  defp completion_evidence("implementation", events), do: completed_delivery_evidence(events)
-  defp completion_evidence("refinement", events), do: refinement_completion_evidence(events)
-  defp completion_evidence(_profile, _events), do: nil
+  defp completion_evidence(profile, events), do: DeliveryEvidence.completion(profile, events)
 
   defp forward_codex_progress(%{event: :session_started, session_id: session_id} = message, progress) do
     progress.("codex_session_started", %{session_id: session_id, codex: message})
@@ -328,28 +335,10 @@ defmodule SymphonyElixir.Worker.Executor do
 
     case lookup do
       %{status: :passed} ->
-        complete_source_progress(progress, "git_branch_lookup", "Remote task branch found")
-
-        with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed),
-             :ok <-
-               source_command(
-                 "checkout_failed",
-                 "git_checkout",
-                 "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
-                 timeout,
-                 workspace,
-                 progress,
-                 :task_branch_checkout_failed
-               ),
-             {:ok, task_sha} <-
-               resolve_commit("HEAD", timeout, workspace, progress, :task_head_resolution_failed),
-             :ok <-
-               sync_task_branch(
-                 {branch, default_branch, base_sha, task_sha},
-                 {depth, timeout, workspace, progress}
-               ) do
-          {:ok, task_sha}
-        end
+        prepare_existing_task_branch(
+          {branch, default_branch, base_sha},
+          {depth, timeout, workspace, progress}
+        )
 
       %{status: :failed, exit_code: 2} ->
         complete_source_progress(progress, "git_branch_lookup", "Remote task branch not found")
@@ -375,6 +364,30 @@ defmodule SymphonyElixir.Worker.Executor do
       result ->
         failed_source_progress(progress, "git_branch_lookup", result.detail)
         {:error, {:source_preparation_failed, :task_branch_lookup_failed, result}}
+    end
+  end
+
+  defp prepare_existing_task_branch({branch, default_branch, base_sha}, {depth, timeout, workspace, progress}) do
+    complete_source_progress(progress, "git_branch_lookup", "Remote task branch found")
+
+    with :ok <- fetch_branch(branch, depth, timeout, workspace, progress, :task_branch_fetch_failed),
+         :ok <-
+           source_command(
+             "checkout_failed",
+             "git_checkout",
+             "git checkout -b #{shell(branch)} #{shell("refs/remotes/origin/#{branch}")}",
+             timeout,
+             workspace,
+             progress,
+             :task_branch_checkout_failed
+           ),
+         {:ok, task_sha} <- resolve_commit("HEAD", timeout, workspace, progress, :task_head_resolution_failed),
+         :ok <-
+           sync_task_branch(
+             {branch, default_branch, base_sha, task_sha},
+             {depth, timeout, workspace, progress}
+           ) do
+      {:ok, task_sha}
     end
   end
 
@@ -493,7 +506,7 @@ defmodule SymphonyElixir.Worker.Executor do
     patch_path = identifier <> ".patch"
 
     cond do
-      host_push_directive?(description) and File.regular?(Path.join(workspace, patch_path)) ->
+      DeliveryEvidence.host_push_directive?(description) and File.regular?(Path.join(workspace, patch_path)) ->
         evidence = %{"marker" => "需宿主 push", "patch_path" => patch_path}
         {:ok, {:blocked, {:handoff_failed, {:host_push_required, evidence}}, evidence}}
 
@@ -540,85 +553,13 @@ defmodule SymphonyElixir.Worker.Executor do
     end
   end
 
-  defp host_push_directive?(description) do
-    description
-    |> String.split("\n")
-    |> Stream.map(&String.trim/1)
-    |> Enum.find(&(&1 != ""))
-    |> Kernel.==("交付路径:宿主 push")
-  end
-
   @doc false
   @spec completed_delivery_evidence([map()]) :: {:complete | :incomplete, map()}
-  def completed_delivery_evidence(events) do
-    pull_request =
-      Enum.find(events, &match?(%{tool: "create_pull_request", status: "success"}, &1))
-
-    linear_update =
-      Enum.find(events, &match?(%{tool: "linear_task_update", status: "success"}, &1))
-
-    missing =
-      [pull_request_evidence_missing(pull_request), linear_update_evidence_missing(linear_update)]
-      |> Enum.reject(&is_nil/1)
-
-    case missing do
-      [] ->
-        %{result: %{"url" => url} = result} = pull_request
-
-        evidence =
-          result
-          |> Map.take(["head", "head_oid"])
-          |> Map.new(fn
-            {"head", branch} -> {"branch", branch}
-            {"head_oid", commit} -> {"commit", commit}
-          end)
-          |> Map.merge(%{"pr_url" => url, "linear_state" => "Ready to Merge"})
-
-        {:complete, evidence}
-
-      missing ->
-        {:incomplete, %{"missing" => missing}}
-    end
-  end
-
-  defp pull_request_evidence_missing(nil), do: "create_pull_request"
-  defp pull_request_evidence_missing(%{result: %{"url" => _url}}), do: nil
-  defp pull_request_evidence_missing(%{}), do: "create_pull_request.result.url"
-
-  defp linear_update_evidence_missing(nil), do: "linear_task_update"
-
-  defp linear_update_evidence_missing(%{arguments: %{"target_state" => state}}) do
-    if StateName.normalize(state) == StateName.normalize("Ready to Merge"),
-      do: nil,
-      else: "linear_task_update.arguments.target_state"
-  end
-
-  defp linear_update_evidence_missing(%{}), do: "linear_task_update.arguments.target_state"
+  def completed_delivery_evidence(events), do: DeliveryEvidence.completed(events)
 
   @doc false
   @spec refinement_completion_evidence([map()]) :: {:complete | :incomplete, map()}
-  def refinement_completion_evidence(events) do
-    update =
-      Enum.find(events, fn
-        %{
-          tool: "linear_task_update",
-          status: "success",
-          arguments: %{"target_state" => state}
-        } ->
-          StateName.normalize(state) == StateName.normalize("Needs Refinement Review")
-
-        _event ->
-          false
-      end)
-
-    case update do
-      nil ->
-        {:incomplete, %{"missing" => ["linear_task_update(target_state: Needs Refinement Review)"]}}
-
-      _update ->
-        {:complete, %{"linear_state" => "Needs Refinement Review"}}
-    end
-  end
+  def refinement_completion_evidence(events), do: DeliveryEvidence.refinement(events)
 
   defp handoff(config, claim, %{codex: %{profile: "implementation"}} = payload, %{handoff: handoff} = codex)
        when is_map(handoff) do

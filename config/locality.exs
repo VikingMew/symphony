@@ -155,15 +155,8 @@
       owner: "Symphony maintainers",
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/worker/executor.ex",
-      lines: 72,
-      identifier: "execute/3@20"
-    },
-    %{
-      owner: "Symphony maintainers",
-      split: "Extract named helpers or view components at the existing control-flow boundaries.",
-      path: "lib/symphony_elixir/worker/executor.ex",
       lines: 71,
-      identifier: "run_codex/5@93"
+      identifier: "run_codex/5@102"
     },
     %{
       owner: "Symphony maintainers",
@@ -302,7 +295,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/agent_runner_2.exs",
-      lines: 469,
+      lines: 471,
       identifier: "__using__/1@11"
     },
     %{

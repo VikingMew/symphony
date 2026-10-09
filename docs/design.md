@@ -200,6 +200,8 @@ lib/symphony_elixir/
 | `SymphonyElixir.SQLiteImporter` | `sqlite_importer.ex` | Imports one stopped legacy backup into an empty PostgreSQL schema. |
 | `SymphonyElixir.SSH` | `ssh.ex` | SSH worker support. |
 | `SymphonyElixir.SpecsCheck` | `specs_check.ex` | Internal spec consistency checks. |
+| `SymphonyElixir.Worker.Executor` | `worker/executor.ex` | Lease-owned source preparation, Codex execution, validation, and handoff pipeline. |
+| `SymphonyElixir.Worker.Executor.DeliveryEvidence` | `worker/executor/delivery_evidence.ex` | Projects successful restricted-tool audits into completion evidence. |
 
 ## 6. Tracker and Linear Integration
 

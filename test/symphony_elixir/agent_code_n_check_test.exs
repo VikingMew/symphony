@@ -195,7 +195,7 @@ defmodule SymphonyElixir.AgentCodeNCheckTest do
     assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.added: "))
   end
 
-  test "baseline identities may relocate without increasing their declaration count", %{root: root} do
+  test "supplied baseline rows remain exact without Git relocation", %{root: root} do
     write_source(root, "lib/alpha.ex", "defmodule Example.Alpha do\n  def shared, do: :a\nend\n")
     write_source(root, "lib/beta.ex", "defmodule Example.Beta do\n  def shared, do: :b\nend\n")
     base = findings(root)
@@ -203,7 +203,8 @@ defmodule SymphonyElixir.AgentCodeNCheckTest do
     write_source(root, "lib/alpha.ex", "\ndefmodule Example.Alpha do\n  def shared, do: :a\nend\n")
     write_baseline(root, findings(root))
 
-    assert AgentCodeNCheck.check(root: root, base_baseline: base)["status"] == "pass"
+    report = AgentCodeNCheck.check(root: root, base_baseline: base)
+    assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.added: "))
   end
 
   test "baseline identities reject expanded declaration counts", %{root: root} do
@@ -215,7 +216,7 @@ defmodule SymphonyElixir.AgentCodeNCheckTest do
     write_baseline(root, findings(root))
 
     report = AgentCodeNCheck.check(root: root, base_baseline: base)
-    assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.expanded: "))
+    assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.added: "))
   end
 
   test "stale entries and invalid schemas fail", %{root: root} do

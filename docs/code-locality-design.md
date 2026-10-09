@@ -51,7 +51,7 @@ with exact `(path, identifier, lines)` identities, split cuts, and owners in the
 
 The quality gate blocks every oversized file, long clause, excessive nesting, implicit three-call
 chain, stale exclusion, and malformed generated header that is not covered by the current exact
-baseline. The dateless inventory started with 59 clause records and now contains 57 after two
+baseline. The dateless inventory started with 59 clause records and now contains 56 after three
 clauses fell below the limit while merging current main; new code has no exemption path. The count
 can only decrease. Each run emits one deterministic waterline with the remaining record count,
 largest scoped file, and largest Elixir clause. When the remaining count reaches zero, a separate
@@ -61,6 +61,10 @@ invalidates that match immediately.
 Responsibility fragments compile their existing clauses into the owning module through `quote`.
 Each fragment suppresses only Credo's `LongQuoteBlocks` advisory at that boundary; strict Credo and
 the nesting-depth check still inspect the quoted clauses.
+
+The main-sync remediation keeps `Worker.Executor` within the file limit by assigning delivery
+completion evidence projection to `Worker.Executor.DeliveryEvidence`. The executor retains the
+public delegates and pipeline ownership, and the extracted module adds no new baseline entry.
 
 This owner changes repository organization and quality enforcement only. Product behavior, public
 interfaces, runtime configuration authority, persistence, Linear behavior, and deployment remain

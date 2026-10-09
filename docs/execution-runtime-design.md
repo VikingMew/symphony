@@ -15,6 +15,10 @@ Linear access, workflow/profile selection, prompt construction, dispatch, and th
 in-memory assignment. The worker owns checkout, hooks, one Codex app-server turn, required gates,
 PR handoff, bounded evidence, and cleanup.
 
+`Worker.Executor` owns that pipeline and keeps its existing public evidence functions;
+`Worker.Executor.DeliveryEvidence` owns the pure projection from successful restricted-tool audits
+to implementation or refinement completion evidence.
+
 In the current containerized worker deployment, the worker container is the execution isolation
 boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the
 checked-in import package therefore carries `thread_sandbox: "danger-full-access"` and
