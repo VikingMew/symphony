@@ -22,6 +22,14 @@ is observed. An issue that leaves the poll candidate set can therefore retain it
 snapshot state. That value is historical evidence and does not claim to be the current Linear
 state.
 
+The same existing snapshot records dispatch evidence without another column: installation
+`dispatch_scope`, normalized Linear `team.key`, nullable `project.slugId`, the selected Symphony
+Project id/slug, and `context_source` (`linear_project` or `fallback`). The run's existing
+`project_id` association records the execution context, and `task.accepted.payload.dispatch_context`
+copies the same evidence. Issue Detail reads the snapshot and Run Detail reads the accepted event,
+so an operator can trace scope and context from either page. Rejected candidates are logged and
+diagnosed with a typed reason but do not create an issue run merely to persist the rejection.
+
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.
 Neither path rewrites the poll snapshot or maintains another tracker-state mirror.

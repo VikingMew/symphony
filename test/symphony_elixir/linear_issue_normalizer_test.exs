@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.LinearIssueNormalizerTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.Linear.IssueNormalizer
+  alias SymphonyElixir.Linear.{Issue, IssueNormalizer}
 
   test "normalizes labels blockers dates priority and assignee routing" do
     raw_issue = %{
@@ -51,6 +51,21 @@ defmodule SymphonyElixir.LinearIssueNormalizerTest do
     assert IssueNormalizer.build_assignee_filter(" ") == {:ok, nil}
     assert IssueNormalizer.build_assignee_filter("me") == {:viewer, "me"}
     assert IssueNormalizer.normalize_issue(%{"assignee" => nil}).assigned_to_worker
+  end
+
+  test "retains Linear team key and nullable project slug" do
+    base = %{
+      "id" => "issue-1",
+      "identifier" => "KRN-1",
+      "state" => %{"name" => "Ready"},
+      "team" => %{"key" => "KRN"}
+    }
+
+    assert %Issue{team_key: "KRN", project_slug: "koroni"} =
+             IssueNormalizer.normalize_issue(Map.put(base, "project", %{"slugId" => "koroni"}))
+
+    assert %Issue{team_key: "KRN", project_slug: nil} =
+             IssueNormalizer.normalize_issue(Map.put(base, "project", nil))
   end
 
   test "ignores malformed issue payloads" do

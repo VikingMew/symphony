@@ -3,7 +3,8 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
   Read-only Linear diagnostics probe execution and result normalization.
   """
 
-  alias SymphonyElixir.Linear.{Issue, WorkflowStateValidator}
+  alias SymphonyElixir.Linear.{CandidateQuery, DispatchScope, Issue, WorkflowStateValidator}
+  alias SymphonyElixir.WorkflowStore
 
   @viewer_query """
   query SymphonyLinearDiagnosticsViewer {
@@ -65,7 +66,7 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
     teams_probe = teams_probe(client)
     project_probe = project_probe(client, tracker.project_slug)
     states_probe = states_probe(project_probe, settings)
-    {candidate_probe, issues} = candidate_probe(client)
+    {candidate_probe, issues} = probe_scoped_candidates(client, settings)
 
     %{
       probes: %{
@@ -185,13 +186,23 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
     probe(:skipped, "Workflow states", "Skipped because project slug did not resolve.")
   end
 
-  @spec candidate_probe(module()) :: {probe(), [map()]}
-  def candidate_probe(client) do
+  @spec probe_candidates(module()) :: {probe(), [map()]}
+  def probe_candidates(client) do
+    do_candidate_probe(client, nil)
+  end
+
+  @spec probe_scoped_candidates(module(), map()) :: {probe(), [map()]}
+  def probe_scoped_candidates(client, settings) when is_map(settings) do
+    do_candidate_probe(client, settings)
+  end
+
+  defp do_candidate_probe(client, settings) do
     case client.fetch_candidate_issues() do
       {:ok, issues} ->
-        normalized_issues = Enum.map(issues, &normalize_issue/1)
+        normalized_issues = normalize_candidate_issues(issues, settings)
         count = length(normalized_issues)
-        {probe(:ok, "Candidate issues", candidate_detail(count), %{issue_count: count}), normalized_issues}
+        data = %{issue_count: count} |> Map.merge(candidate_scope_data(settings))
+        {probe(:ok, "Candidate issues", candidate_detail(count), data), normalized_issues}
 
       {:error, reason} ->
         {probe(:error, "Candidate issues", "Candidate issue fetch failed: #{format_reason(reason)}"), []}
@@ -215,6 +226,11 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
       identifier: display_value(issue.identifier),
       title: display_value(issue.title),
       state: display_value(issue.state),
+      team_key: display_value(issue.team_key),
+      project_slug: display_value(issue.project_slug),
+      symphony_project: display_value(issue.symphony_project_slug),
+      context_source: display_value(issue.context_source),
+      context_error: "n/a",
       assignee: if(blank?(issue.assignee_id), do: "unassigned", else: "assigned"),
       labels: issue.labels || [],
       blockers: issue.blocked_by || [],
@@ -232,6 +248,11 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
       identifier: "n/a",
       title: "n/a",
       state: "n/a",
+      team_key: "n/a",
+      project_slug: "n/a",
+      symphony_project: "n/a",
+      context_source: "n/a",
+      context_error: "n/a",
       assignee: "n/a",
       labels: [],
       blockers: [],
@@ -259,10 +280,50 @@ defmodule SymphonyElixir.Linear.Diagnostics.Probes do
   end
 
   defp candidate_detail(0) do
-    "Fetched 0 candidate issue(s). This means Linear API access worked, but no issues matched the configured project, active states, assignee, and blocker filters."
+    "Fetched 0 candidate issue(s). This means Linear API access worked, but no issues matched the dispatch scope, active states, assignee, and blocker filters."
   end
 
   defp candidate_detail(count), do: "Fetched #{count} candidate issue(s)."
+
+  defp normalize_candidate_issues(issues, nil), do: Enum.map(issues, &normalize_issue/1)
+
+  defp normalize_candidate_issues(issues, settings) do
+    workflows = WorkflowStore.list_enabled()
+
+    Enum.map(issues, fn issue ->
+      case DispatchScope.resolve_context(issue, workflows, settings.dispatch_scope) do
+        {:ok, _workflow, resolved_issue} ->
+          normalize_issue(resolved_issue)
+
+        {:error, reason, rejected_issue} ->
+          rejected_issue
+          |> normalize_issue()
+          |> Map.put(:context_error, inspect(reason))
+      end
+    end)
+  end
+
+  defp candidate_scope_data(nil), do: %{}
+
+  defp candidate_scope_data(settings) do
+    scope = DispatchScope.stringify_scope(settings.dispatch_scope)
+
+    %{
+      query_filter: %{
+        team_key: scope["linear_team_key"],
+        project_slug: scope["linear_project_slug"],
+        active_states: DispatchScope.active_states(WorkflowStore.list_enabled()),
+        filter_shape: probe_filter_shape(settings.dispatch_scope)
+      }
+    }
+  end
+
+  defp probe_filter_shape(scope) do
+    case CandidateQuery.scope_filter_shape(scope) do
+      {:error, reason} -> inspect(reason)
+      shape -> shape
+    end
+  end
 
   defp normalize_team_summary(team) when is_map(team) do
     %{

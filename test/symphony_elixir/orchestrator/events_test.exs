@@ -7,7 +7,16 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
   alias SymphonyElixir.RunFailure
 
   test "issue attrs include the persisted issue snapshot" do
-    issue = issue(labels: ["bug"])
+    issue =
+      issue(
+        labels: ["bug"],
+        team_key: "KRN",
+        project_slug: "koroni",
+        dispatch_scope: %{linear_team_key: "KRN", linear_project_slug: nil, fallback_project_slug: "project-a"},
+        context_source: "linear_project",
+        symphony_project_id: "project-1",
+        symphony_project_slug: "project-a"
+      )
 
     assert Events.issue_attrs(issue) == %{
              tracker_issue_id: "issue-1",
@@ -23,7 +32,17 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
                "priority" => 1,
                "state" => "Ready",
                "url" => "https://linear.example/MT-1",
-               "labels" => ["bug"]
+               "labels" => ["bug"],
+               "linear_team_key" => "KRN",
+               "linear_project_slug" => "koroni",
+               "dispatch_scope" => %{
+                 "linear_team_key" => "KRN",
+                 "linear_project_slug" => nil,
+                 "fallback_project_slug" => "project-a"
+               },
+               "context_source" => "linear_project",
+               "symphony_project_id" => "project-1",
+               "symphony_project_slug" => "project-a"
              }
            }
   end

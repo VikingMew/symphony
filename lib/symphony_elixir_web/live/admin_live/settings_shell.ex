@@ -36,7 +36,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
     </aside>
 
     <.linear_discovery_panel
-      :if={@settings_tab == :projects}
+      :if={@settings_tab in [:projects, :runtime]}
       status={@linear_discovery_status}
       discovery={@linear_discovery}
       message={@linear_discovery_message}
@@ -76,7 +76,7 @@ defmodule SymphonyElixirWeb.AdminLive.SettingsShell do
       <div class="section-header">
         <div>
           <h2 class="section-title">Linear Configuration Discovery</h2>
-          <p class="workflow-help-copy">Fetch read-only Linear projects, teams, and workflow states while filling project settings.</p>
+          <p class="workflow-help-copy">Fetch read-only Linear projects, teams, and workflow states while filling project or dispatch settings.</p>
         </div>
         <button type="button" class="subtle-button" phx-click="fetch_linear_discovery" phx-disable-with="Fetching...">
           <%= if @status == :fetched, do: "Refresh Linear configuration", else: "Fetch Linear configuration" %>

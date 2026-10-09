@@ -122,6 +122,35 @@ defmodule SymphonyElixirWeb.Live.SettingsImportFakePersistenceTest do
            end)
   end
 
+  test "settings import rejects a Linear project scope without a team before persistence" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+
+    assert {:ok, {:workflow, config}} =
+             Workflow.parse_settings_yaml(WorkflowFixtures.settings_workflow_yaml())
+
+    yaml =
+      config
+      |> Map.put("dispatch_scope", %{"linear_project_slug" => "koroni"})
+      |> WorkflowFixtures.workflow_package_yaml()
+
+    {:ok, view, _html} = live(build_conn(), "/settings/import")
+
+    rejected_html =
+      view
+      |> form("form[phx-submit='stage_settings_import']", import: %{"yaml" => yaml})
+      |> render_submit()
+
+    assert rejected_html =~ "Package import failed"
+    assert rejected_html =~ "linear_project_requires_team"
+
+    refute Enum.any?(FakePersistence.calls(), fn
+             {:put_instance_workflow, _config, _prompt} -> true
+             {:import_package, _project, _raw, _source} -> true
+             _other -> false
+           end)
+  end
+
   test "legacy Codex command import stages conversion details and applies selector values" do
     assert Process.whereis(SymphonyElixir.Repo) == nil
     start_test_endpoint()

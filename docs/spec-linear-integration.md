@@ -5,7 +5,7 @@ domain: [spec, linear-integration]
 status: current
 language: en
 owner: SymphonyElixir.Linear.Client
-updated: 2026-09-19
+updated: 2026-10-07
 ---
 
 # Issue Tracker Integration Specification
@@ -17,7 +17,7 @@ updated: 2026-09-19
 An implementation MUST support these tracker adapter operations:
 
 1. `fetch_candidate_issues()`
-   - Return issues in configured active states for a configured project.
+   - Return issues in the installation dispatch scope and the union of enabled-project active states.
 
 2. `fetch_issues_by_states(state_names)`
    - Used for startup terminal cleanup.
@@ -32,8 +32,24 @@ Linear-specific requirements for `tracker.kind == "linear"`:
 - `tracker.kind == "linear"`
 - GraphQL endpoint (default `https://api.linear.app/graphql`)
 - Auth token sent in `Authorization` header
-- `tracker.project_slug` maps to Linear project `slugId`
-- Candidate issue query filters project using `project: { slugId: { eq: $projectSlug } }`
+- Each enabled Symphony Project's required `tracker.project_slug` maps execution context to Linear
+  `project.slugId`; it does not define the installation candidate filter.
+- Candidate query states are the exact union of enabled workflows' `tracker.active_states`.
+- Candidate filters MUST use exactly one of these shapes:
+
+| `dispatch_scope` | Required filter |
+| --- | --- |
+| team `KRN`, project null | `team.key.eq = KRN` plus state; omit the project predicate |
+| team `KRN`, project `koroni` | `team.key.eq = KRN`, `project.slugId.eq = koroni`, plus state |
+| team null, project null | state only; omit team and project predicates |
+
+- The query MUST select `team { key }` and nullable `project { slugId }`. The exact external
+  `team.key.eq` relation-filter shape is an offline boundary-contract assumption.
+- After query normalization, a project-associated candidate resolves to the unique enabled
+  Symphony Project with matching `tracker.project_slug`. A null-project candidate resolves only to
+  the enabled internal project named by `dispatch_scope.fallback_project_slug`.
+- Admission MUST check the resolved workflow's own `tracker.active_states`; union membership alone
+  never authorizes dispatch.
 - Issue-state refresh query uses GraphQL issue IDs with variable type `[ID!]`
 - Pagination REQUIRED for candidate issues
 - Page size default: `50`
@@ -57,6 +73,8 @@ Additional normalization details:
 - `blocked_by` -> derived from inverse relations where relation type is `blocks`
 - `priority` -> integer only (non-integers become null)
 - `created_at` and `updated_at` -> parse ISO-8601 timestamps
+- `team_key` -> `team.key`
+- `project_slug` -> `project.slugId`, preserving null
 
 ### 11.4 Error Handling Contract
 
@@ -70,10 +88,14 @@ RECOMMENDED error categories:
 - `linear_graphql_errors`
 - `linear_unknown_payload`
 - `linear_missing_end_cursor` (pagination integrity error)
+- typed context rejection such as `missing_fallback_project`, `missing_linear_project_context`,
+  `issue_team_out_of_scope`, or `issue_project_out_of_scope`
 
 Orchestrator behavior on tracker errors:
 
 - Candidate fetch failure: log and skip dispatch for this tick.
+- A successful empty fetch emits `fetch_empty`; a context/admission failure emits
+  `admission_rejected` and creates no run.
 - Running-state refresh failure: log and keep active workers running.
 - Startup terminal cleanup failure: log warning and continue startup.
 

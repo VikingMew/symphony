@@ -296,10 +296,18 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp compose_workflows(instance_workflow, projects, workflow_records) do
+    projects_by_id = Map.new(projects, &{Map.fetch!(&1, :id), &1})
+
     result = Enum.reduce_while(workflow_records, {:ok, %{}}, &compose_workflow(&1, &2, instance_workflow))
 
     case result do
       {:ok, workflows} ->
+        workflows =
+          Map.new(workflows, fn {project_id, workflow} ->
+            project_slug = projects_by_id |> Map.fetch!(project_id) |> Map.fetch!(:slug)
+            {project_id, Map.put(workflow, :project_slug, project_slug)}
+          end)
+
         {:ok, workflows, default_project_id(workflows, projects), authority_drift(projects, workflow_records)}
 
       error ->

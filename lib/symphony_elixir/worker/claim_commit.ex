@@ -138,7 +138,10 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
               run_id: run.id,
               issue_identifier: issue.identifier,
               event_type: "task.accepted",
-              payload: %{"correlation" => assignment.correlation}
+              payload: %{
+                "correlation" => assignment.correlation,
+                "dispatch_context" => Events.event_dispatch_context(issue)
+              }
             })
 
           {:error, reason} ->

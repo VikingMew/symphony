@@ -69,6 +69,40 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
+  defmodule DispatchScopeConfig do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+
+    embedded_schema do
+      field(:linear_team_key, :string)
+      field(:linear_project_slug, :string)
+      field(:fallback_project_slug, :string)
+    end
+
+    @spec dispatch_scope_changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def dispatch_scope_changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:linear_team_key, :linear_project_slug, :fallback_project_slug], empty_values: [])
+      |> normalize_optional(:linear_team_key)
+      |> normalize_optional(:linear_project_slug)
+      |> normalize_optional(:fallback_project_slug)
+    end
+
+    defp normalize_optional(changeset, field) do
+      case get_field(changeset, field) do
+        value when is_binary(value) ->
+          trimmed = String.trim(value)
+          put_change(changeset, field, if(trimmed == "", do: nil, else: trimmed))
+
+        _value ->
+          changeset
+      end
+    end
+  end
+
   defmodule Polling do
     @moduledoc false
     use Ecto.Schema
@@ -532,6 +566,7 @@ defmodule SymphonyElixir.Config.Schema do
 
   embedded_schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:dispatch_scope, DispatchScopeConfig, on_replace: :update, defaults_to_struct: true)
     embeds_one(:polling, Polling, on_replace: :update, defaults_to_struct: true)
     embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
     embeds_one(:project, Project, on_replace: :update, defaults_to_struct: true)
@@ -713,6 +748,7 @@ defmodule SymphonyElixir.Config.Schema do
     %__MODULE__{}
     |> cast(attrs, [:workflow, :profiles])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
+    |> cast_embed(:dispatch_scope, with: &DispatchScopeConfig.dispatch_scope_changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
     |> cast_embed(:project, with: &Project.changeset/2)

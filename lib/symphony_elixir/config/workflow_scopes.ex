@@ -4,8 +4,9 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
   """
 
   alias SymphonyElixir.Config.{ProjectAuthority, Schema}
+  alias SymphonyElixir.Linear.DispatchScope
 
-  @instance_sections ~w(polling workspace hooks agent codex observability analytics server worker profiles)
+  @instance_sections ~w(dispatch_scope polling workspace hooks agent codex observability analytics server worker profiles)
   @project_sections ~w(tracker project)
   @instance_value_keys ~w(config prompt_body)
   @project_fields %{
@@ -17,6 +18,7 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
     "project" => ~w(repository_url default_branch checkout_depth source_strategy worktree_fetch worktree_cleanup required_gates setup_commands cleanup_commands)
   }
   @instance_modules %{
+    "dispatch_scope" => Schema.DispatchScopeConfig,
     "polling" => Schema.Polling,
     "workspace" => Schema.Workspace,
     "hooks" => Schema.Hooks,
@@ -156,7 +158,9 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
       end)
       |> Map.put("profiles", :dynamic)
 
-    validate_section_fields(config, :instance, allowed_fields)
+    with :ok <- validate_section_fields(config, :instance, allowed_fields) do
+      DispatchScope.validate_combination(Map.get(config, "dispatch_scope", %{}))
+    end
   end
 
   defp validate_section_fields(config, scope, allowed_fields) do

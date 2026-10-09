@@ -20,6 +20,9 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
 
     assigns =
       assigns
+      |> assign(:linear_team_options, linear_team_options(assigns, workflow_form))
+      |> assign(:linear_project_options, linear_project_options(assigns, workflow_form))
+      |> assign(:fallback_project_options, fallback_project_options(assigns, workflow_form))
       |> assign(:codex_model_options, [{"Use Codex default", ""} | ModelCatalog.model_options()])
       |> assign(:codex_approval_policy_options, Schema.codex_approval_policies())
       |> assign(:legacy_instance_drift, legacy_drift)
@@ -112,6 +115,31 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
           </div>
           <button class="subtle-button" type="submit" phx-disable-with="Saving...">Save runtime settings</button>
         </div>
+
+        <section class="workflow-form-section">
+          <h3>Linear Dispatch Scope</h3>
+          <p class="workflow-help-copy">The Linear team and optional Linear project select candidates. The fallback selects an enabled Symphony Project only for candidates without a Linear project.</p>
+          <div class="workflow-profile-field-grid">
+            <label class="settings-field">
+              <span class="metric-label">Linear team (大项目)</span>
+              <select id="dispatch-linear-team-key" name="workflow[dispatch_linear_team_key]">
+                <option :for={{label, value} <- @linear_team_options} value={value} selected={@workflow_form["dispatch_linear_team_key"] == value}><%= label %></option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="metric-label">Linear project (下面的项目)</span>
+              <select id="dispatch-linear-project-slug" name="workflow[dispatch_linear_project_slug]">
+                <option :for={{label, value} <- @linear_project_options} value={value} selected={@workflow_form["dispatch_linear_project_slug"] == value}><%= label %></option>
+              </select>
+            </label>
+            <label class="settings-field">
+              <span class="metric-label">Fallback Symphony Project</span>
+              <select id="dispatch-fallback-project-slug" name="workflow[dispatch_fallback_project_slug]">
+                <option :for={{label, value} <- @fallback_project_options} value={value} selected={@workflow_form["dispatch_fallback_project_slug"] == value}><%= label %></option>
+              </select>
+            </label>
+          </div>
+        </section>
 
         <section class="workflow-form-section">
           <h3>Workspace</h3>
@@ -243,5 +271,53 @@ defmodule SymphonyElixirWeb.AdminLive.Settings.Runtime do
   defp selected_drift_source(drift, project) do
     slug = ProjectSettings.value(project, :slug)
     if Enum.any?(drift.projects, &(&1.slug == slug)), do: slug
+  end
+
+  defp linear_team_options(assigns, form) do
+    discovered =
+      case Map.get(assigns, :linear_discovery) do
+        {:ok, %{teams: teams}} -> Enum.map(teams, &{&1.name <> " (" <> &1.key <> ")", &1.key})
+        _not_loaded -> []
+      end
+
+    with_current_option([{"All Linear teams", ""} | discovered], form["dispatch_linear_team_key"])
+  end
+
+  defp linear_project_options(assigns, form) do
+    selected_team = form["dispatch_linear_team_key"]
+
+    discovered =
+      case Map.get(assigns, :linear_discovery) do
+        {:ok, %{projects: projects}} ->
+          projects
+          |> Enum.filter(fn project ->
+            selected_team in [nil, ""] or Enum.any?(project.teams, &(&1.key == selected_team))
+          end)
+          |> Enum.map(&{&1.name <> " (" <> &1.slug <> ")", &1.slug})
+
+        _not_loaded ->
+          []
+      end
+
+    with_current_option([{"All projects in scope", ""} | discovered], form["dispatch_linear_project_slug"])
+  end
+
+  defp fallback_project_options(assigns, form) do
+    projects =
+      assigns
+      |> Map.get(:projects, [])
+      |> Enum.filter(&(ProjectSettings.value(&1, :enabled) == true))
+      |> Enum.map(fn project ->
+        {ProjectSettings.value(project, :name), ProjectSettings.value(project, :slug)}
+      end)
+
+    with_current_option([{"No fallback", ""} | projects], form["dispatch_fallback_project_slug"])
+  end
+
+  defp with_current_option(options, current) when current in [nil, ""], do: Enum.uniq_by(options, &elem(&1, 1))
+
+  defp with_current_option(options, current) do
+    [{current, current} | options]
+    |> Enum.uniq_by(&elem(&1, 1))
   end
 end

@@ -206,6 +206,10 @@ Projects 页面每个项目的 authority diagnostics 会展示 effective、legac
 `workflow.yml` 里最少需要确认这些字段：
 
 ```yaml
+dispatch_scope:
+  linear_team_key: "KRN"          # 留空表示所有 Linear teams
+  linear_project_slug: null        # 留空表示不按 Linear project 收窄
+  fallback_project_slug: "my-app" # Linear project 为空时使用的 enabled Symphony Project
 tracker:
   kind: linear
   project_slug: "你的 Linear project slug"
@@ -249,6 +253,12 @@ workflow:
       exposed_tools: ["linear_task_read", "linear_task_update"]
       raw_graphql: false
 ```
+
+`dispatch_scope` 属于 Instance，在 Settings / Runtime 编辑。“大项目”只表示 Linear team，
+“下面的项目”只表示可空的 Linear project filter，“Fallback Symphony Project”只表示无 Linear
+project 候选的执行上下文。合法范围是 team/project 都空、team 有值且 project 空、或 team/project
+同时有值且 discovery 证明归属正确。每个 enabled Symphony Project 的 `tracker.project_slug` 仍由
+Project Settings 的 `linear_project_slug` 生成且必填；它是执行上下文映射，不是监听 filter。
 
 `profiles.yml` 里配置共享 base prompt 和 agent profile：
 
@@ -647,11 +657,14 @@ mise exec -- ./bin/symphony \
 检查：
 
 - `LINEAR_API_KEY` 是否设置
-- active workflow 里的 `tracker.project_slug` 是否正确
+- Settings / Runtime 的 Linear team/project dispatch scope 是否正确；project 留空会包含
+  `project = null` 的票
+- active workflow 里的 `tracker.project_slug` 是否能映射有 project 的候选；无 project 候选是否配置
+  enabled fallback Symphony Project
 - issue 状态是否在 `tracker.active_states` 中
 - Linear token 是否有权限读取对应 project
 
 如果不确定 Linear project slug 或 workflow state 名称，先打开 Settings，点击
 `Fetch Linear configuration` 获取只读 Linear discovery 结果；Projects tab 会展示结果，方便复制
-候选值。保存 Settings 后，再打开 `/diagnostics/linear` 查看 token、project slug、
-workflow source、configured states 和候选 issue 查询结果。
+候选值。保存 Settings 后，再打开 `/diagnostics/linear` 查看 token、dispatch team/project、filter shape、
+workflow source、configured states、候选数与每个候选的 Linear/Symphony context 或 typed rejection。

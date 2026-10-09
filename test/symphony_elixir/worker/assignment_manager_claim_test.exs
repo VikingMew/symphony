@@ -11,28 +11,34 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
 
     def start_link(_opts),
       do:
-        Agent.start_link(
-          fn ->
-            %{
-              issue: %Issue{
-                id: "claim-issue",
-                identifier: "SYM-CLAIM",
-                title: "Claim",
-                description: "Work",
-                priority: 1,
-                state: "Ready",
-                blocked_by: [],
-                labels: [],
-                assigned_to_worker: true
-              },
-              updates: 0,
-              mode: :normal
-            }
-          end,
-          name: __MODULE__
+        (
+          {:ok, workflow} = Workflow.load_example_package()
+
+          Agent.start_link(
+            fn ->
+              %{
+                issue: %Issue{
+                  id: "claim-issue",
+                  identifier: "SYM-CLAIM",
+                  title: "Claim",
+                  description: "Work",
+                  priority: 1,
+                  state: "Ready",
+                  project_slug: get_in(workflow.config, ["tracker", "project_slug"]),
+                  blocked_by: [],
+                  labels: [],
+                  assigned_to_worker: true
+                },
+                updates: 0,
+                mode: :normal
+              }
+            end,
+            name: __MODULE__
+          )
         )
 
     def set_mode(mode), do: Agent.update(__MODULE__, &%{&1 | mode: mode})
+    def put_issue(issue), do: Agent.update(__MODULE__, &%{&1 | issue: issue})
     def updates, do: Agent.get(__MODULE__, & &1.updates)
     def fetch_candidate_issues, do: {:ok, [Agent.get(__MODULE__, & &1.issue)]}
     def fetch_issue_states_by_ids(_ids), do: fetch_candidate_issues()
@@ -50,8 +56,22 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
 
   defmodule Workflows do
     def list_enabled do
+      case Application.get_env(:symphony_elixir, :claim_test_workflows) do
+        workflows when is_list(workflows) -> workflows
+        nil -> default_workflow()
+      end
+    end
+
+    defp default_workflow do
       {:ok, loaded} = Workflow.load_example_package()
-      [Map.put(loaded, :project_id, "fake-project-id")]
+
+      config =
+        case Application.get_env(:symphony_elixir, :claim_test_fallback_project_slug) do
+          nil -> loaded.config
+          slug -> Map.put(loaded.config, "dispatch_scope", %{"fallback_project_slug" => slug})
+        end
+
+      [%{loaded | config: config} |> Map.put(:project_id, "fake-project-id") |> Map.put(:project_slug, "fallback-project")]
     end
   end
 
@@ -106,6 +126,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
       Application.delete_env(:symphony_elixir, :claim_test_lost_run_reply)
       Application.delete_env(:symphony_elixir, :claim_test_lost_event_reply)
       Application.delete_env(:symphony_elixir, :claim_test_history_hook)
+      Application.delete_env(:symphony_elixir, :claim_test_fallback_project_slug)
+      Application.delete_env(:symphony_elixir, :claim_test_workflows)
 
       if previous do
         Application.put_env(:symphony_elixir, :execution_mode, previous)
@@ -259,6 +281,62 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert log =~ "phase=prepare"
     assert log =~ "phase=commit"
     assert log =~ "worker_session_id=#{context.session.id}"
+  end
+
+  test "null-project candidates without a fallback are typed rejections with no run", context do
+    candidate = Tracker |> Agent.get(& &1.issue) |> Map.put(:project_slug, nil)
+    Tracker.put_issue(candidate)
+
+    log = capture_log(fn -> assert {:ok, {:empty, 5}} = claim(context) end)
+
+    assert log =~ "event=admission_rejected"
+    assert log =~ "issue_id=#{candidate.id}"
+    assert log =~ "issue_identifier=#{candidate.identifier}"
+    assert log =~ "context_source=nil"
+    assert log =~ "reason=:missing_fallback_project"
+    assert FakePersistence.list_runs_for_issue(candidate.identifier) == []
+  end
+
+  test "null-project candidates claim through the explicit fallback Symphony Project", context do
+    Application.put_env(:symphony_elixir, :claim_test_fallback_project_slug, "fallback-project")
+    candidate = Tracker |> Agent.get(& &1.issue) |> Map.put(:project_slug, nil)
+    Tracker.put_issue(candidate)
+
+    assert {:ok, assignment} = claim(context)
+    assert assignment.project_id == "fake-project-id"
+    persisted = FakePersistence.get_issue_by_identifier(candidate.identifier)
+    assert persisted.snapshot["linear_project_slug"] == nil
+    assert persisted.snapshot["symphony_project_slug"] == "fallback-project"
+    assert persisted.snapshot["context_source"] == "fallback"
+  end
+
+  test "the query-state union cannot widen the resolved project's active-state admission", context do
+    {:ok, loaded} = Workflow.load_example_package()
+
+    workflows = [
+      loaded |> Map.put(:project_id, "project-a") |> Map.put(:project_slug, "a") |> put_in([:config, "tracker", "project_slug"], "linear-a"),
+      loaded |> Map.put(:project_id, "project-b") |> Map.put(:project_slug, "b") |> put_in([:config, "tracker"], %{"project_slug" => "linear-b", "active_states" => ["Todo"]})
+    ]
+
+    Application.put_env(:symphony_elixir, :claim_test_workflows, workflows)
+    candidate = Tracker |> Agent.get(& &1.issue) |> Map.merge(%{project_slug: "linear-b", state: "Ready"})
+    Tracker.put_issue(candidate)
+    assert {:ok, {:empty, 5}} = claim(context)
+    assert FakePersistence.list_runs_for_issue(candidate.identifier) == []
+
+    Tracker.put_issue(%{candidate | state: "Todo"})
+    assert {:ok, assignment} = claim(context)
+    assert assignment.project_id == "project-b"
+  end
+
+  test "accepted claims persist the same project context in snapshot and event", context do
+    assert {:ok, assignment} = claim(context)
+    persisted = FakePersistence.get_issue_by_identifier("SYM-CLAIM")
+    assert persisted.snapshot["symphony_project_slug"] == "fallback-project"
+    assert persisted.snapshot["context_source"] == "linear_project"
+    assert [%{payload: payload}] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.accepted")
+    assert payload["dispatch_context"]["symphony_project_id"] == "fake-project-id"
+    assert payload["dispatch_context"]["context_source"] == "linear_project"
   end
 
   defp claim(context) do

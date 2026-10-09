@@ -31,6 +31,19 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
           </tbody>
         </table>
 
+        <%= if context = find_event_dispatch_context(@run_detail.events) do %>
+          <h2 class="section-title">Dispatch Context</h2>
+          <table class="data-table dispatch-context-table">
+            <tbody>
+              <tr><th>Linear team</th><td><%= context["linear_team_key"] || "n/a" %></td></tr>
+              <tr><th>Linear project</th><td><%= context["linear_project_slug"] || "n/a" %></td></tr>
+              <tr><th>Symphony Project</th><td><%= context["symphony_project_slug"] || "n/a" %></td></tr>
+              <tr><th>Context source</th><td><%= context["context_source"] || "n/a" %></td></tr>
+              <tr><th>Dispatch scope</th><td class="mono"><%= inspect(context["dispatch_scope"]) %></td></tr>
+            </tbody>
+          </table>
+        <% end %>
+
         <%= if summary = Map.get(@run_detail.run, :execution_summary) do %>
           <h2 class="section-title">Worker Execution Evidence</h2>
           <table class="data-table">
@@ -199,6 +212,12 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
       "" -> "n/a"
       refs -> refs
     end
+  end
+
+  defp find_event_dispatch_context(events) when is_list(events) do
+    Enum.find_value(events, fn event ->
+      Map.get(event.payload, "dispatch_context")
+    end)
   end
 
   defp persistence, do: PersistenceProvider.module()

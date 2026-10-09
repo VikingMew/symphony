@@ -25,7 +25,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   }
 
   alias SymphonyElixir.AgentRunner.Policy
-  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Linear.{DispatchScope, Issue}
   alias SymphonyElixir.Orchestrator.DispatchPolicy
   alias SymphonyElixir.Worker.{ClaimCommit, ClaimStage, EventWriter, HeartbeatHistory}
 
@@ -698,22 +698,44 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
 
   defp claim_from_workflows(state, worker, session, listening_mode, max_concurrent_agents) do
     empty = {:ok, nil, admission_evidence(:no_eligible_candidate, listening_mode)}
+    workflows = ClaimStage.measure(state.claim_context, :workflows, fn -> state.workflows.list_enabled() end)
+    claim_with_workflows(workflows, empty, state, worker, session, listening_mode, max_concurrent_agents)
+  end
 
-    ClaimStage.measure(state.claim_context, :workflows, fn -> state.workflows.list_enabled() end)
-    |> distinct_slug_workflows()
-    |> Enum.reduce_while(empty, fn workflow, {:ok, nil, evidence} ->
-      result =
-        Config.with_workflow_context(workflow, fn ->
-          dispatch_settings = Orchestrator.dispatch_policy_settings(listening_mode, max_concurrent_agents)
-          claim_from_workflow(state, worker, session, workflow, dispatch_settings)
-        end)
+  defp claim_with_workflows([], empty, _state, _worker, _session, _mode, _capacity), do: empty
 
-      case result do
-        {:ok, nil, next_evidence} -> {:cont, {:ok, nil, merge_empty_evidence(evidence, next_evidence)}}
-        {:ok, %{} = assignment} -> {:halt, {:ok, assignment}}
-        {:error, _reason} = error -> {:halt, error}
-      end
+  defp claim_with_workflows(
+         [query_workflow | _rest] = workflows,
+         _empty,
+         state,
+         worker,
+         session,
+         listening_mode,
+         max_concurrent_agents
+       ) do
+    Config.with_workflow_context(query_workflow, fn ->
+      claim_from_query_workflow(state, worker, session, workflows, listening_mode, max_concurrent_agents)
     end)
+  end
+
+  defp claim_from_query_workflow(state, worker, session, workflows, listening_mode, max_concurrent_agents) do
+    with {:ok, candidates} <-
+           ClaimStage.measure(state.claim_context, :candidate_fetch, fn ->
+             state.tracker.fetch_candidate_issues()
+           end),
+         {:ok, workflow, candidate, dispatch_settings} <-
+           select_scoped_candidate(candidates, workflows, state, listening_mode, max_concurrent_agents) do
+      Config.with_workflow_context(workflow, fn ->
+        claim_scoped_candidate(state, worker, session, workflow, candidate, workflows, dispatch_settings)
+      end)
+    else
+      {:skip, reason, evidence} ->
+        log_admission_skip(reason, worker.id, session.id, evidence)
+        {:ok, nil, evidence}
+
+      {:error, _reason} = error ->
+        error
+    end
   end
 
   defp empty_poll_seconds(1), do: @initial_poll_seconds
@@ -729,17 +751,17 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp tracker_backoff_error?({:claim_prepare_failed, _stage, _reason}), do: true
   defp tracker_backoff_error?(_reason), do: false
 
-  defp claim_from_workflow(state, worker, session, workflow, dispatch_settings) do
-    with {:ok, candidates} <-
-           ClaimStage.measure(state.claim_context, :candidate_fetch, fn ->
-             state.tracker.fetch_candidate_issues()
-           end),
-         {:ok, %Issue{} = candidate} <-
-           ClaimStage.measure(state.claim_context, :candidate_history, fn ->
-             select_candidate(candidates, state.persistence, state.orchestrator, dispatch_settings)
-           end),
-         {:ok, %Issue{} = issue} <-
-           revalidate(candidate, state, dispatch_settings),
+  defp claim_scoped_candidate(
+         state,
+         worker,
+         session,
+         workflow,
+         candidate,
+         workflows,
+         dispatch_settings
+       ) do
+    with {:ok, %Issue{} = issue} <-
+           revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings),
          {:ok, assignment} <- prepare_assignment(state, worker, session, workflow, issue) do
       {:ok, assignment}
     else
@@ -752,28 +774,112 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
     end
   end
 
-  defp select_candidate(candidates, persistence, orchestrator, dispatch_settings) do
-    listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
+  defp select_scoped_candidate(
+         candidates,
+         workflows,
+         state,
+         listening_mode,
+         max_concurrent_agents
+       ) do
+    scope = workflows |> hd() |> then(&Config.with_workflow_context(&1, fn -> Config.settings!().dispatch_scope end))
+    empty = {:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate, listening_mode)}
 
     candidates
     |> DispatchPolicy.sort_issues_for_dispatch()
-    |> Enum.reduce_while(
-      {:skip, :no_eligible_candidate, admission_evidence(:no_eligible_candidate, listening_mode)},
-      fn issue, skip ->
-        case candidate_admission(
-               issue,
-               persistence,
-               orchestrator,
-               dispatch_settings,
-               "candidate_selection"
-             ) do
-          :ok -> {:halt, {:ok, issue}}
-          {:skip, :blocking_decision, _evidence} = blocking -> {:cont, merge_candidate_skip(skip, blocking)}
-          {:skip, :listening_mode, _evidence} = filtered -> {:cont, merge_candidate_skip(skip, filtered)}
-          {:skip, _reason, _evidence} -> {:cont, skip}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end
+    |> Enum.reduce_while(empty, fn issue, skip ->
+      select_scoped_issue(
+        DispatchScope.resolve_context(issue, workflows, scope),
+        skip,
+        state,
+        listening_mode,
+        max_concurrent_agents
+      )
+    end)
+  end
+
+  defp select_scoped_issue(
+         {:ok, workflow, issue},
+         skip,
+         state,
+         listening_mode,
+         max_concurrent_agents
+       ) do
+    result =
+      Config.with_workflow_context(workflow, fn ->
+        admit_scoped_candidate(workflow, issue, state, listening_mode, max_concurrent_agents)
+      end)
+
+    continue_scoped_selection(result, skip)
+  end
+
+  defp select_scoped_issue({:error, reason, issue}, skip, _state, _mode, _capacity) do
+    log_claim_context_rejection(issue, reason)
+    {:cont, skip}
+  end
+
+  defp admit_scoped_candidate(workflow, issue, state, listening_mode, max_concurrent_agents) do
+    dispatch_settings = Orchestrator.dispatch_policy_settings(listening_mode, max_concurrent_agents)
+
+    case ClaimStage.measure(state.claim_context, :candidate_history, fn ->
+           candidate_admission(
+             issue,
+             state.persistence,
+             state.orchestrator,
+             dispatch_settings,
+             "candidate_selection"
+           )
+         end) do
+      :ok -> {:ok, workflow, issue, dispatch_settings}
+      other -> other
+    end
+  end
+
+  defp continue_scoped_selection({:ok, _workflow, _issue, _settings} = selected, _skip),
+    do: {:halt, selected}
+
+  defp continue_scoped_selection({:skip, _reason, _evidence} = rejected, skip),
+    do: {:cont, merge_candidate_skip(skip, rejected)}
+
+  defp continue_scoped_selection({:error, reason}, _skip), do: {:halt, {:error, reason}}
+
+  defp revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings) do
+    with {:ok, %Issue{} = issue} <-
+           revalidate(candidate, state, dispatch_settings),
+         scope <- Config.settings!().dispatch_scope,
+         {:ok, resolved_workflow, resolved_issue} <-
+           DispatchScope.resolve_context(issue, workflows, scope),
+         true <- resolved_workflow.project_id == workflow.project_id do
+      {:ok, resolved_issue}
+    else
+      {:error, reason, rejected_issue} ->
+        log_claim_context_rejection(rejected_issue, reason)
+        {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
+
+      false ->
+        reason = :issue_project_out_of_scope
+        log_claim_context_rejection(candidate, reason)
+        {:skip, reason, admission_evidence(reason, DispatchPolicy.listening_mode(dispatch_settings))}
+
+      other ->
+        other
+    end
+  end
+
+  defp log_claim_context_rejection(issue, reason) do
+    scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
+
+    Logger.warning(
+      "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
+        "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+      event: "linear.admission_rejected",
+      operation: "resolve_claim_candidate_context",
+      location: "SymphonyElixir.Worker.AssignmentManager.resolve_scoped_candidate/4",
+      offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+      expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+      error_code: "admission_rejected",
+      retryable: false,
+      issue_id: issue.id,
+      issue_identifier: issue.identifier
     )
   end
 
@@ -1312,13 +1418,8 @@ defmodule SymphonyElixir.Worker.AssignmentManager do
   defp merge_candidate_skip(_current, {:skip, :blocking_decision, evidence}), do: {:skip, :blocking_decision, evidence}
   defp merge_candidate_skip({:skip, :blocking_decision, _evidence} = current, _next), do: current
   defp merge_candidate_skip(_current, {:skip, :listening_mode, evidence}), do: {:skip, :listening_mode, evidence}
-
-  defp merge_empty_evidence(%{reason: :blocking_decision} = evidence, _next_evidence), do: evidence
-  defp merge_empty_evidence(_evidence, %{reason: :blocking_decision} = next_evidence), do: next_evidence
-  defp merge_empty_evidence(%{reason: :listening_mode} = evidence, _next_evidence), do: evidence
-  defp merge_empty_evidence(_evidence, %{reason: :listening_mode} = next_evidence), do: next_evidence
-  defp merge_empty_evidence(_evidence, %{reason: :active_run} = next_evidence), do: next_evidence
-  defp merge_empty_evidence(evidence, _next_evidence), do: evidence
+  defp merge_candidate_skip({:skip, :listening_mode, _evidence} = current, _next), do: current
+  defp merge_candidate_skip(_current, next), do: next
 
   defp log_admission_skip(:blocking_decision, worker_id, session_id, evidence) do
     blocking_reason = get_in(evidence, [:blocking_decision, "reason"])

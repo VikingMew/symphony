@@ -128,7 +128,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     end)
   end
 
-  test "poll cycle fetches candidates for every enabled project" do
+  test "poll cycle performs one installation-level candidate fetch for every enabled project" do
     raw = sample_workflow_markdown()
     {:ok, project_a} = FakePersistence.default_project()
 
@@ -163,8 +163,9 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert %{listening?: true} = GenServer.call(pid, :start_listening)
     send(pid, :run_poll_cycle)
 
-    assert_receive {:candidate_fetch, "project"}, 2_000
-    assert_receive {:candidate_fetch, "linear-b"}, 2_000
+    assert_receive {:candidate_fetch, query_context}, 2_000
+    assert query_context in ["project", "linear-b"]
+    refute_receive {:candidate_fetch, _other_context}, 200
   end
 
   test "poll cycle shares one candidate fetch across workflows with the same Linear slug" do
@@ -319,8 +320,9 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     send(pid, :run_poll_cycle)
 
-    assert_receive {:candidate_fetch, "linear-a"}, 2_000
-    assert_receive {:candidate_fetch, "linear-b"}, 2_000
+    assert_receive {:candidate_fetch, query_context}, 2_000
+    assert query_context in ["linear-a", "linear-b"]
+    refute_receive {:candidate_fetch, _other_context}, 200
   end
 
   test "repeated snapshots do not evaluate a project-scoped rate-limit gate" do

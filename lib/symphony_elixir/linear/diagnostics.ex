@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
   """
 
   alias SymphonyElixir.Config.Schema
-  alias SymphonyElixir.Linear.{Client, Diagnostics.Probes, Health}
+  alias SymphonyElixir.Linear.{CandidateQuery, Client, Diagnostics.Probes, Health}
   alias SymphonyElixir.{PersistenceProvider, WorkflowStore}
   require Logger
 
@@ -68,7 +68,7 @@ defmodule SymphonyElixir.Linear.Diagnostics do
 
   defp run_with_settings(settings, client, runtime_source) do
     tracker = settings.tracker
-    config = tracker_config(tracker)
+    config = tracker_config(settings)
 
     cond do
       tracker.kind != "linear" ->
@@ -124,6 +124,10 @@ defmodule SymphonyElixir.Linear.Diagnostics do
         tracker_kind: @linear_tracker_kind,
         endpoint: @linear_endpoint,
         project_slug: "n/a",
+        dispatch_team_key: "n/a",
+        dispatch_project_slug: "n/a",
+        fallback_project_slug: "n/a",
+        dispatch_filter_shape: "n/a",
         assignee: "n/a",
         token_configured: token.configured,
         token: token,
@@ -251,19 +255,32 @@ defmodule SymphonyElixir.Linear.Diagnostics do
     }
   end
 
-  defp tracker_config(tracker) do
+  defp tracker_config(settings) do
+    tracker = settings.tracker
+    scope = settings.dispatch_scope
     token = token_diagnostics(tracker.api_key)
 
     %{
       tracker_kind: display_value(tracker.kind),
       endpoint: display_value(tracker.endpoint),
       project_slug: display_value(tracker.project_slug),
+      dispatch_team_key: display_value(scope.linear_team_key),
+      dispatch_project_slug: display_value(scope.linear_project_slug),
+      fallback_project_slug: display_value(scope.fallback_project_slug),
+      dispatch_filter_shape: diagnostic_filter_shape(scope),
       assignee: display_value(tracker.assignee),
       token_configured: token.configured,
       token: token,
       active_states: tracker.active_states || [],
       terminal_states: tracker.terminal_states || []
     }
+  end
+
+  defp diagnostic_filter_shape(scope) do
+    case CandidateQuery.scope_filter_shape(scope) do
+      {:error, reason} -> inspect(reason)
+      shape -> shape
+    end
   end
 
   defp token_diagnostics(token) do
@@ -306,6 +323,10 @@ defmodule SymphonyElixir.Linear.Diagnostics do
         :tracker_kind,
         :endpoint,
         :project_slug,
+        :dispatch_team_key,
+        :dispatch_project_slug,
+        :fallback_project_slug,
+        :dispatch_filter_shape,
         :assignee,
         :token_configured,
         :token,

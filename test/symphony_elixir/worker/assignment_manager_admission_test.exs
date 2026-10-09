@@ -196,6 +196,8 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
   end
 
   defp issue do
+    workflow = Application.fetch_env!(:symphony_elixir, :assignment_admission_workflow)
+
     %Issue{
       id: "issue-atomic",
       identifier: "SYM-ATOMIC",
@@ -203,6 +205,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
       description: "Work",
       priority: 1,
       state: "Ready",
+      project_slug: get_in(workflow.config, ["tracker", "project_slug"]),
       branch_name: "sym-atomic",
       blocked_by: [],
       labels: [],

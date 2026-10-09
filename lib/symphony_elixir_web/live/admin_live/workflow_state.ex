@@ -11,6 +11,8 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     WorkspacePreflight
   }
 
+  alias SymphonyElixir.Linear.{Discovery, DispatchScope}
+
   alias SymphonyElixirWeb.Admin.{ProjectSettings, SettingsCheck}
   alias SymphonyElixirWeb.AdminLive.Settings.Components
 
@@ -36,6 +38,7 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     section = Components.tab(socket.assigns.live_action)
 
     with {:ok, instance} <- WorkflowForm.to_instance_scope(draft),
+         :ok <- validate_dispatch_scope(draft, socket),
          :ok <- WorkspacePreflight.check(:settings_save, root: Map.fetch!(draft, "workspace_root")),
          :changed <- instance_change_status(instance, socket),
          {:ok, _instance} <- persist_instance(instance) do
@@ -184,6 +187,40 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
     current
     |> deep_merge(params)
     |> Map.put("_base_config", base_config)
+  end
+
+  defp validate_dispatch_scope(draft, socket) do
+    scope = %{
+      linear_team_key: Map.get(draft, "dispatch_linear_team_key"),
+      linear_project_slug: Map.get(draft, "dispatch_linear_project_slug"),
+      fallback_project_slug: Map.get(draft, "dispatch_fallback_project_slug")
+    }
+
+    if dispatch_scope_changed?(scope, draft) do
+      with {:ok, discovery} <- dispatch_discovery(scope, socket) do
+        DispatchScope.validate_dispatch_settings(scope, discovery, socket.assigns.projects)
+      end
+    else
+      :ok
+    end
+  end
+
+  defp dispatch_scope_changed?(scope, draft) do
+    persisted_scope = get_in(draft, ["_base_config", "dispatch_scope"]) || %{}
+    DispatchScope.normalize_dispatch_scope(scope) != DispatchScope.normalize_dispatch_scope(persisted_scope)
+  end
+
+  defp dispatch_discovery(scope, socket) do
+    normalized = DispatchScope.normalize_dispatch_scope(scope)
+
+    if is_nil(normalized.linear_team_key) and is_nil(normalized.linear_project_slug) do
+      {:ok, %{teams: [], projects: []}}
+    else
+      case Map.get(socket.assigns, :linear_discovery) do
+        {:ok, discovery} -> {:ok, discovery}
+        _not_loaded -> Discovery.fetch()
+      end
+    end
   end
 
   defp deep_merge(left, right) when is_map(left) and is_map(right) do

@@ -266,12 +266,38 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     FakePersistence.put_runs([run])
 
     FakePersistence.put_issues([
-      %{identifier: "MT-1", snapshot: %{"state" => "In Progress"}, title: "Issue detail"}
+      %{
+        identifier: "MT-1",
+        snapshot: %{
+          "state" => "In Progress",
+          "linear_team_key" => "KRN",
+          "linear_project_slug" => "koroni",
+          "symphony_project_slug" => "fake",
+          "context_source" => "linear_project",
+          "dispatch_scope" => %{"linear_team_key" => "KRN", "linear_project_slug" => nil}
+        },
+        title: "Issue detail"
+      }
     ])
 
     FakePersistence.put_workflow(workflow)
 
     FakePersistence.put_events([
+      %{
+        run_id: "run-1",
+        issue_identifier: "MT-1",
+        event_type: "task.accepted",
+        payload: %{
+          "dispatch_context" => %{
+            "linear_team_key" => "KRN",
+            "linear_project_slug" => "koroni",
+            "symphony_project_slug" => "fake",
+            "context_source" => "linear_project",
+            "dispatch_scope" => %{"linear_team_key" => "KRN", "linear_project_slug" => nil}
+          }
+        },
+        occurred_at: now
+      },
       %{
         run_id: "run-1",
         issue_identifier: "MT-1",
@@ -293,6 +319,10 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
 
     {:ok, _view, run_html} = live(build_conn(), "/runs/run-1")
     assert run_html =~ "Run Detail"
+    assert run_html =~ "Dispatch Context"
+    assert run_html =~ "KRN"
+    assert run_html =~ "koroni"
+    assert run_html =~ "linear_project"
     assert run_html =~ "MT-1"
     assert run_html =~ "Agent Summary"
     assert run_html =~ "Final message"
@@ -308,6 +338,10 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
 
     {:ok, _view, issue_html} = live(build_conn(), "/issues/MT-1")
     assert issue_html =~ "Issue Detail"
+    assert issue_html =~ "Dispatch Context"
+    assert issue_html =~ "KRN"
+    assert issue_html =~ "koroni"
+    assert issue_html =~ "linear_project"
     assert issue_html =~ "Issue detail"
     assert issue_html =~ "In Progress"
     assert issue_html =~ "run-1"

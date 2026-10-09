@@ -271,6 +271,7 @@ defmodule SymphonyElixir.LinearDiagnosticsTest do
     diagnostics = Diagnostics.run()
 
     assert diagnostics.runtime_source.type == "setup_required"
+    assert diagnostics.config.dispatch_filter_shape == "n/a"
     assert diagnostics.probes.api.status == :error
     assert diagnostics.probes.api.title == "Setup required"
     assert diagnostics.probes.api.detail =~ "Open Settings / Workflow"

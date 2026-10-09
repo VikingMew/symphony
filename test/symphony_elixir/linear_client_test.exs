@@ -2,7 +2,7 @@ defmodule SymphonyElixir.LinearClientTest do
   use SymphonyElixir.TestSupport
 
   alias SymphonyElixir.Config.ProjectAuthority
-  alias SymphonyElixir.Linear.{Client, IssueNormalizer, Pagination}
+  alias SymphonyElixir.Linear.{CandidateQuery, Client, IssueNormalizer, Pagination}
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.{Tracker, Workflow, WorkflowStore}
 
@@ -89,6 +89,75 @@ defmodule SymphonyElixir.LinearClientTest do
     assert issue.assigned_to_worker
   end
 
+  test "candidate query contract uses the exact three dispatch scope filter shapes" do
+    fixtures = [
+      raw_candidate("krn-koroni", "KRN", "koroni"),
+      raw_candidate("krn-null", "KRN", nil),
+      raw_candidate("other-project", "OTHER", "other")
+    ]
+
+    cases = [
+      {%{linear_team_key: "KRN", linear_project_slug: nil, fallback_project_slug: nil}, [:teamKey], ["krn-koroni", "krn-null"], "team_state"},
+      {%{linear_team_key: "KRN", linear_project_slug: "koroni", fallback_project_slug: nil}, [:teamKey, :projectSlug], ["krn-koroni"], "team_project_state"},
+      {%{linear_team_key: nil, linear_project_slug: nil, fallback_project_slug: nil}, [], ["krn-koroni", "krn-null", "other-project"], "state"}
+    ]
+
+    Enum.each(cases, fn {scope, scope_keys, expected_ids, expected_shape} ->
+      graphql = fn query, variables ->
+        assert variables.stateNames == ["Ready"]
+        assert Enum.sort(Map.keys(Map.take(variables, [:teamKey, :projectSlug]))) == Enum.sort(scope_keys)
+        assert query =~ "team: {key: {eq: $teamKey}}" == :teamKey in scope_keys
+        assert query =~ "project: {slugId: {eq: $projectSlug}}" == :projectSlug in scope_keys
+        assert query =~ "team { key }"
+        assert query =~ "project { slugId }"
+
+        selected =
+          Enum.filter(fixtures, fn issue ->
+            (is_nil(variables[:teamKey]) or get_in(issue, ["team", "key"]) == variables.teamKey) and
+              (is_nil(variables[:projectSlug]) or
+                 get_in(issue, ["project", "slugId"]) == variables.projectSlug)
+          end)
+
+        {:ok, candidate_page(selected)}
+      end
+
+      assert {:ok, issues} = Client.fetch_candidate_issues_with(scope, ["Ready"], graphql)
+      assert Enum.map(issues, & &1.id) == expected_ids
+      assert CandidateQuery.scope_filter_shape(scope) == expected_shape
+    end)
+  end
+
+  test "candidate fetch logs query filter and a successful empty result separately" do
+    scope = %{linear_team_key: "KRN", linear_project_slug: nil, fallback_project_slug: nil}
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, []} =
+                 Client.fetch_candidate_issues_with(scope, ["Ready"], fn _query, _variables ->
+                   {:ok, candidate_page([])}
+                 end)
+      end)
+
+    assert log =~ "event=query_filter"
+    assert log =~ "team_key=\"KRN\""
+    assert log =~ "filter_shape=team_state"
+    assert log =~ "event=fetch_empty"
+    assert log =~ "page_count=1 candidate_count=0"
+  end
+
+  test "candidate query rejects a project filter without a team as a typed error" do
+    scope = %{linear_team_key: nil, linear_project_slug: "koroni", fallback_project_slug: nil}
+
+    assert CandidateQuery.scope_filter_shape(scope) == {:error, :linear_project_requires_team}
+
+    assert CandidateQuery.build(scope, ["Ready"], first: 50, relation_first: 50) ==
+             {:error, :linear_project_requires_team}
+
+    assert Client.fetch_candidate_issues_with(scope, ["Ready"], fn _query, _variables ->
+             flunk("invalid scope must be rejected before GraphQL")
+           end) == {:error, :linear_project_requires_team}
+  end
+
   test "linear client marks explicitly unassigned issues as not routed to worker" do
     raw_issue = %{
       "id" => "issue-99",
@@ -104,6 +173,30 @@ defmodule SymphonyElixir.LinearClientTest do
     issue = IssueNormalizer.normalize_issue(raw_issue, assignee_filter)
 
     assert issue.assigned_to_worker == false
+  end
+
+  defp raw_candidate(id, team_key, project_slug) do
+    %{
+      "id" => id,
+      "identifier" => String.upcase(id),
+      "title" => id,
+      "state" => %{"name" => "Ready"},
+      "team" => %{"key" => team_key},
+      "project" => if(is_nil(project_slug), do: nil, else: %{"slugId" => project_slug}),
+      "labels" => %{"nodes" => []},
+      "inverseRelations" => %{"nodes" => []}
+    }
+  end
+
+  defp candidate_page(nodes) do
+    %{
+      "data" => %{
+        "issues" => %{
+          "nodes" => nodes,
+          "pageInfo" => %{"hasNextPage" => false, "endCursor" => nil}
+        }
+      }
+    }
   end
 
   test "linear client pagination merge helper preserves issue ordering" do
