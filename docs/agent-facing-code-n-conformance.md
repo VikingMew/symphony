@@ -5,7 +5,7 @@ domain: [governance, code-quality, agents]
 status: current
 language: en
 owner: SymphonyElixir.AgentCodeNCheck
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Agent-Facing Code N Conformance Record
@@ -33,7 +33,7 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
 Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
-current baseline waterline is 559 exact findings; the N group is not fully compliant while that
+current baseline waterline is 557 exact findings; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
@@ -81,7 +81,8 @@ are available; failure to provide that Git history is a hard gate failure.
 The location mapper compares the merge-base source with the current working tree, maps only
 untouched declaration lines in the same path, and retains exact location sets. Rewritten or removed
 declaration lines do not authorize a replacement row. Git diff failures remain hard failures.
-The repository-verification rebase retains all 559 findings with only coordinate changes; it adds
-no exemption or relaxed threshold. `baseline_locations_test.exs` covers line movement, new aggregate
+The current baseline retains 557 findings. SYM-168 updates 13 exact location sets after adding
+profile-specific validation code and tests; it adds no finding, exemption, or relaxed threshold.
+`baseline_locations_test.exs` covers line movement, new aggregate
 locations, rewritten declarations, stale deletion, and missing history. Existing comments remain
 unchanged; the new mapper has no explanatory inline comments to reconcile.

@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.Orchestrator.EventsTest do
   use ExUnit.Case, async: true
 
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.Events
   alias SymphonyElixir.RunAdmission
@@ -94,6 +95,43 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert recursively_has_key?(payload, "workflow_version_id") == false
   end
 
+  test "assignment gates follow the resolved workflow profile" do
+    configured_gates = workflow_context().config["project"]["required_gates"]
+
+    for gates <- [configured_gates, []] do
+      {implementation, refinement, project_gates} =
+        Config.with_workflow_context(workflow_context_with_gates(gates), fn ->
+          implementation_profile = Config.workflow_profile_for_state("In Progress")
+          refinement_profile = Config.workflow_profile_for_state("Refining")
+
+          implementation =
+            Events.worker_assignment_payload(
+              issue(state: "In Progress"),
+              %{id: "run-implementation", project_id: "project-1"},
+              admission(),
+              "Prompt",
+              implementation_profile
+            )
+
+          refinement =
+            Events.worker_assignment_payload(
+              issue(state: "Refining"),
+              %{id: "run-refinement", project_id: "project-1"},
+              admission(),
+              "Prompt",
+              refinement_profile
+            )
+
+          {implementation, refinement, Config.settings!().project.required_gates}
+        end)
+
+      assert implementation.payload["workflow_profile"] == "implementation"
+      assert implementation.payload["required_gates"] == project_gates
+      assert refinement.payload["workflow_profile"] == "refinement"
+      assert refinement.payload["required_gates"] == []
+    end
+  end
+
   test "event attrs cover run and workspace events" do
     issue = issue()
     run = %{id: "run-1"}
@@ -148,11 +186,7 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
           "default_branch" => "main",
           "source_strategy" => "clone",
           "checkout_depth" => 1,
-          "required_gates" => [
-            %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
-            %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
-            %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
-          ]
+          "required_gates" => default_required_gates()
         },
         "workspace" => %{"initialize_timeout_ms" => 60_000},
         "codex" => %{
@@ -162,6 +196,18 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
       },
       prompt_template: "Prompt"
     }
+  end
+
+  defp workflow_context_with_gates(required_gates) do
+    put_in(workflow_context().config["project"]["required_gates"], required_gates)
+  end
+
+  defp default_required_gates do
+    [
+      %{"name" => "check", "command" => "scripts/check.sh", "timeout_ms" => 300_000},
+      %{"name" => "unit", "command" => "scripts/unit.sh", "timeout_ms" => 1_800_000},
+      %{"name" => "dialyzer", "command" => "scripts/dialyzer.sh", "timeout_ms" => 1_800_000}
+    ]
   end
 
   defp admission do

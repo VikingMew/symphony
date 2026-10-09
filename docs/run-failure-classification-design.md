@@ -4,7 +4,7 @@ genre: design
 domain: [runs, persistence, observability, reliability]
 status: current
 language: en
-updated: 2026-10-08
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -60,6 +60,16 @@ Worker terminal classification is derived once from the validated summary. The s
 the run row, terminal event, retry metadata, `BlockingDecision.reason`, and the environment failure
 circuit key. The wire summary remains execution evidence and is not a second classification source.
 Explicit blocked outcomes remain accepted without interpreting their opaque reason or detail.
+
+For worker ingestion, `AssignmentManager` supplies the active assignment payload's authoritative
+`workflow_profile` to `RunFailure.from_worker_assignment_summary/3`; no profile is read from the terminal
+summary. The existing summary classification order runs first. If and only if its result is
+`validation_failed`, the refinement profile converts that terminal to completed, while the
+implementation profile preserves the failure. Therefore `handoff_failed`, including
+`missing_refinement_completion`, and source, Codex, lease, cancellation, blocked, and runtime causes
+keep their narrower existing classifications even when validation evidence is also non-passing.
+The terminal task event and `runs.execution_summary` still retain the original validated
+`validation_status` and gates; a completed refinement run writes null failure fields.
 
 Validated worker source failures use top-level phase `source_preparation`. Timeout summaries use
 reason `source_preparation_timeout`; non-timeout summaries use `source_preparation_failed`. Both use

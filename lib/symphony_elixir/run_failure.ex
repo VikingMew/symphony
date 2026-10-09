@@ -213,6 +213,17 @@ defmodule SymphonyElixir.RunFailure do
     classify({:protocol_gate_failed, summary_evidence(summary) |> Map.put("detail", "terminal failed event carried non-failure reason")})
   end
 
+  @spec from_worker_assignment_summary(String.t(), map(), String.t()) :: :completed | t()
+  def from_worker_assignment_summary(event_type, summary, "implementation"),
+    do: from_worker_summary(event_type, summary)
+
+  def from_worker_assignment_summary(event_type, summary, "refinement") do
+    case from_worker_summary(event_type, summary) do
+      %__MODULE__{classification: "validation_failed"} -> :completed
+      terminal -> terminal
+    end
+  end
+
   @spec reason(t()) :: String.t()
   def reason(%__MODULE__{classification: classification}), do: classification
 

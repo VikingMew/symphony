@@ -136,7 +136,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
       end
     end)
 
-    %{manager: manager, worker: registration.worker, session: registration.session, now: now}
+    %{manager: manager, worker: registration.worker, session: registration.session, now: now, circuit: circuit}
   end
 
   test "preparation deadline cannot kill a commit or consume its lease", context do
@@ -339,8 +339,99 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert payload["dispatch_context"]["context_source"] == "linear_project"
   end
 
+  test "active assignment profile controls validation failure without discarding evidence", context do
+    manager =
+      start_supervised!(%{
+        id: :profile_terminal_manager,
+        start:
+          {AssignmentManager, :start_link,
+           [
+             [
+               name: nil,
+               tracker: Tracker,
+               persistence: FakePersistence,
+               workflows: Workflows,
+               failure_circuit: context.circuit,
+               orchestrator: self(),
+               now: fn -> context.now end,
+               reconcile_interval_ms: :timer.hours(1)
+             ]
+           ]}
+      })
+
+    :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+    context = %{context | manager: manager}
+    terminal_summary = validation_failure_summary()
+    issue = Tracker |> Agent.get(& &1.issue) |> Map.put(:state, "Todo")
+    Tracker.put_issue(issue)
+    assert {:ok, refinement} = claim(context)
+
+    assert {:ok, refinement_event} = record_validation_failure(context, refinement, terminal_summary)
+    refinement_run = FakePersistence.get_run(refinement.run_id)
+    assert refinement_run.status == "completed"
+    assert refinement_run.failure_reason == nil
+    assert refinement_run.failure_evidence == nil
+    assert refinement_run.execution_summary == terminal_summary
+    assert refinement_event.payload["summary"] == terminal_summary
+    assert refinement_event.payload["failure_reason"] == nil
+
+    assert [%{payload: %{"failure_reason" => nil, "failure_evidence" => nil}}] =
+             FakePersistence.list_events(run_id: refinement.run_id, event_type: "run.completed")
+
+    implementation_issue = %{issue | id: "implementation-issue", identifier: "SYM-IMPLEMENTATION", state: "Ready"}
+    Tracker.put_issue(implementation_issue)
+    assert {:ok, implementation} = claim(context)
+
+    assert {:ok, implementation_event} = record_validation_failure(context, implementation, terminal_summary)
+    implementation_run = FakePersistence.get_run(implementation.run_id)
+    assert implementation_run.status == "failed"
+    assert implementation_run.failure_reason == "validation_failed"
+    assert implementation_run.execution_summary == terminal_summary
+    assert implementation_event.payload["summary"] == terminal_summary
+    assert implementation_event.payload["failure_reason"] == "validation_failed"
+
+    assert [%{payload: implementation_run_event}] =
+             FakePersistence.list_events(run_id: implementation.run_id, event_type: "run.failed")
+
+    assert implementation_run_event["failure_reason"] == "validation_failed"
+    assert implementation_run_event["failure_evidence"] == implementation_run.failure_evidence
+  end
+
   defp claim(context) do
     AssignmentManager.claim_with_policy(context.worker.id, context.session.id, %{"available_slots" => 1}, :listening_all, 1, context.manager)
+  end
+
+  defp record_validation_failure(context, assignment, summary) do
+    AssignmentManager.record_event(
+      context.worker.id,
+      context.session.id,
+      assignment.id,
+      "task.failed",
+      %{"correlation" => assignment.correlation, "summary" => summary},
+      context.manager
+    )
+  end
+
+  defp validation_failure_summary do
+    %{
+      "phase" => "validation",
+      "outcome" => "failed",
+      "reason" => "non_zero",
+      "occurred_at" => "2026-09-06T10:00:00Z",
+      "source_revision" => "abc123",
+      "runtime" => %{"image_tag" => "worker:test", "worker_source_revision" => "abc123"},
+      "validation_status" => "failed",
+      "gates" => [
+        %{
+          "name" => "unit",
+          "status" => "failed",
+          "exit_code" => 1,
+          "duration_ms" => 10,
+          "timeout_ms" => 1_800_000,
+          "failure_detail" => "assertion failed"
+        }
+      ]
+    }
   end
 
   defp retry_commit(manager) do

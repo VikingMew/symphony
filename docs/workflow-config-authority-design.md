@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-10-08
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -65,6 +65,11 @@ design_status: landed
   issue implementation branch 来自 live issue，operator 为 `nil`。HTTP worker 不得读取 worker-local
   config/path 反填 Panel workflow、decision、payload 或历史。`retry_backoff_ms` 只投影
   `agent.max_retry_backoff_ms`。
+- project slice 的 `required_gates` 是代码门禁列表的唯一配置权威，但是否适用于一次 assignment
+  由同一次 `Config.workflow_profile_for_state/1` 解析结果决定。Panel 派单边界对 `implementation`
+  原样投影当前项目列表，对 `refinement` 固定投影 `[]`；项目列表为空时两档均为 `[]`。不得新增
+  第二个 profile 判据、per-profile gate 配置或 worker 自报 profile。active assignment payload 中的
+  `workflow_profile` 同时是终态分类的权威，terminal summary 不携带也不覆盖该值。
 - `workflow.states`、`allowed_transitions`、`human_review_states` 与 `tool_policy` 只来自
   `Schema.default_workflow_policy/0`；`tracker.api_key` 只按环境 secret contract 在运行时解析。
 - project persistence/export 遇到 instance key、base prompt、profiles、workflow policy、tracker secret

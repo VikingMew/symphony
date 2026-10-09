@@ -132,6 +132,25 @@ defmodule SymphonyElixir.RunFailureTest do
     assert RunFailure.from_worker_summary("task.failed", worker_summary("blocked", "worker_error")).classification == "runtime_failure"
   end
 
+  test "profile classification suppresses only refinement validation failures" do
+    validation = worker_summary("failed", "non_zero") |> Map.put("validation_status", "failed")
+
+    assert :completed == RunFailure.from_worker_assignment_summary("task.failed", validation, "refinement")
+
+    assert RunFailure.from_worker_assignment_summary("task.failed", validation, "implementation").classification ==
+             "validation_failed"
+
+    handoff = worker_summary("blocked", "handoff_failed") |> Map.put("validation_status", "failed")
+
+    assert RunFailure.from_worker_assignment_summary("task.failed", handoff, "refinement").classification ==
+             "contract_violation"
+
+    codex = worker_summary("failed", "codex_turn_failed")
+
+    assert RunFailure.from_worker_assignment_summary("task.failed", codex, "refinement").classification ==
+             "codex_turn_failed"
+  end
+
   test "has no catch-all for untagged causes" do
     untyped = {:untyped, "opaque"}
     historical = "unknown"

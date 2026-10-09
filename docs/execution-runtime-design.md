@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-08
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -64,7 +64,9 @@ claim derives source preparation from the workflow decision passed to
 containing `repository`, `default_branch`, `implementation_branch`, `source_strategy`, and
 `checkout_depth`; the former `repository` object is absent. `limits.initialize_timeout_ms` carries
 the same decision's initialization budget. The remaining issue, rendered profile prompt, hooks,
-Codex settings, ordered required gates, and allowed handoff updates keep their existing sources.
+Codex settings, and allowed handoff updates keep their existing sources. The Panel projects the
+project's ordered required gates through that same resolved profile: implementation assignments
+carry the exact project list, while refinement assignments carry `[]`.
 
 `SymphonyElixir.RunAdmission` resolves that workflow decision once, after candidate revalidation
 and worker/session selection and before issue, run, assignment, workspace, or executor writes. The
@@ -167,6 +169,16 @@ review-state update keeps the ordinary completion path. This refinement conditio
 implementation `completed_delivery_evidence/1`, PR proof, handoff capture, gate ordering, or the
 `Ready to Merge` writeback.
 
+At terminal ingestion, `AssignmentManager` reads `workflow_profile` only from the active assignment
+payload and passes it to `RunFailure`; the worker summary does not declare or override the profile.
+A refinement `task.failed` whose classification is solely `validation_failed` completes the run
+without failure fields. This covers legacy or already in-flight refinement assignments that still
+report failed or timed-out gates. More specific source, Codex, handoff, lease, cancellation, and
+runtime classifications retain their existing priority. In particular, a missing successful
+refinement review-state update remains `handoff_failed / missing_refinement_completion` even when
+the same terminal summary contains failed gate evidence. Implementation validation failure remains
+`validation_failed`.
+
 Source preparation uses the assignment's single initialization budget for clone, fetch, remote
 branch lookup, targeted deepen, merge-base, merge, checkout, and DAG verification. It captures the
 configured default ref once as `base_sha`; a missing task branch starts there, while an existing
@@ -240,6 +252,11 @@ a missing implementation handoff fails before validation with reason `handoff_fa
 structured missing-final-handoff blockers run validation first, remain `blocked` when a gate fails,
 and preserve the actual result in the terminal summary. Failure detail is serialized from structured
 executor terms and never uses Elixir `inspect/1` syntax.
+
+The accepted terminal task event and `runs.execution_summary` retain the original legal
+`validation_status` and ordered `gates` even when the active refinement profile prevents that
+validation evidence from becoming a run failure. New refinement assignments normally report
+`passed` with `[]`; implementation evidence and failure semantics are unchanged.
 
 The worker normalizes every non-passing gate detail once while building the terminal summary. It
 first replaces each Unix or Windows absolute path recognized by the Panel's existing
