@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-10-03
+updated: 2026-10-09
 ---
 
 # Orchestration Specification
@@ -382,6 +382,13 @@ Backoff formula:
 The orchestrator accepts an explicit `blocked` outcome without inspecting its reason or detail.
 Those opaque values and the run/session/references are persisted through `BlockingDecision`; the
 orchestrator has no blocked-reason or protocol-method whitelist.
+
+The worker uses that blocked path for complete unrelated source histories. Its terminal phase is
+`source_preparation`, reason is `source_topology_invalid`, and evidence operation is
+`merge_base_exhausted` with both refs, captured SHAs, checkout depth, and the non-shallow fact. The
+validated summary maps to the existing persisted `source_preparation_timeout` classification, but
+the explicit blocked outcome persists the decision immediately without incrementing the failure
+count or scheduling an automatic retry. Other source-preparation failures remain `failed`.
 
 The worker executor emits an explicit `blocked` / `handoff_failed` outcome after validation when an
 implementation has no final handoff and either: the payload description's first non-empty line is
