@@ -184,6 +184,17 @@ and Panel source for the 4096-byte source/output producer budget. `Worker.Comman
 value including the marker never exceeds 4096 bytes. This worker summary contract does not create a
 second timeout source or change the independent run-failure persistence vocabulary.
 
+Every command launched through `Worker.Command` applies the canonical `RuntimeProxy` port
+environment. This covers source preparation, project setup, required gates, and handoff. Each
+supported upper- or lower-case proxy variable is passed with its trimmed non-blank value; a missing
+or whitespace-only value is explicitly removed from the child environment, while non-blank
+`NO_PROXY` values remain intact. Compose leaves optional worker `HTTP_PROXY` and `HTTPS_PROXY`
+values empty when their deployment settings are absent. Without removal, a child inherited those
+empty entries, and the locked `elixir_make 0.9.0` downloader parsed the empty proxy to a URI with a
+nil host before calling `String.to_charlist/1`. The downloader runs only on a precompiled artifact
+cache miss, which made the dependency-build failure depend on cache contents. Normalizing at the
+command boundary makes both cache states use the same proxy contract.
+
 A non-timeout preparation error is normalized at the executor boundary to
 `reason: source_preparation_failed`, top-level `phase: source_preparation`, and bounded evidence
 using only `clone_failed`, `fetch_failed`, or `checkout_failed`. Fetch/deepen use `fetch_failed`;

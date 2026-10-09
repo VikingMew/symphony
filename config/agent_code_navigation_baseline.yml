@@ -18,7 +18,7 @@
 - "N-01|function|blank_string?|lib/symphony_elixir/codex/dynamic_tool/issue_create.ex:181,lib/symphony_elixir/state_name.ex:11,lib/symphony_elixir/state_name.ex:12,lib/symphony_elixir/state_name.ex:13"
 - "N-01|function|blocking_decision|lib/symphony_elixir/codex/rate_limit_gate.ex:71,test/symphony_elixir/worker/assignment_manager_blocking_decision_test.exs:273,test/symphony_elixir/worker/assignment_manager_test.exs:1923"
 - "N-01|function|bootstrap_default_placeholder?|lib/symphony_elixir/persistence/workflow_store.ex:380,lib/symphony_elixir/workflow_store.ex:356"
-- "N-01|function|bounded|lib/symphony_elixir/redaction.ex:41,lib/symphony_elixir/worker/command.ex:102"
+- "N-01|function|bounded|lib/symphony_elixir/redaction.ex:41,lib/symphony_elixir/worker/command.ex:103"
 - "N-01|function|build_assignee_filter|lib/symphony_elixir/linear/client.ex:507,lib/symphony_elixir/linear/issue_normalizer.ex:37"
 - "N-01|function|cancel_current_task|lib/symphony_elixir/orchestrator.ex:2711,lib/symphony_elixir/orchestrator.ex:2714,lib/symphony_elixir/orchestrator.ex:2718,lib/symphony_elixir/orchestrator.ex:2723"
 - "N-01|function|cancel_current|lib/symphony_elixir/worker/assignment_manager.ex:161,lib/symphony_elixir/worker/assignment_manager.ex:164,lib/symphony_elixir/worker/assignment_manager.ex:168,lib/symphony_elixir/worker/assignment_manager.ex:173"
