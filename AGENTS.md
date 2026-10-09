@@ -19,7 +19,7 @@ With `DATABASE_URL` set, run `mix symphony.migrate`, then `mix phx.server`.
 
 ### Test
 
-Run `scripts/check.sh && scripts/unit.sh && scripts/dialyzer.sh`.
+Run `scripts/quality.sh`.
 
 ### Navigation
 
