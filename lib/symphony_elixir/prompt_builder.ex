@@ -18,10 +18,11 @@ defmodule SymphonyElixir.PromptBuilder do
 
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
-    assigns = prompt_assigns(issue, opts)
+    workflow = Config.current_workflow()
+    assigns = prompt_assigns(issue, opts, workflow)
 
     template =
-      Config.current_workflow()
+      workflow
       |> prompt_template!()
       |> parse_template!()
 
@@ -34,10 +35,11 @@ defmodule SymphonyElixir.PromptBuilder do
     append_container_validation_policy(prompt, Keyword.get(opts, :profile))
   end
 
-  defp prompt_assigns(issue, opts) do
+  defp prompt_assigns(issue, opts, workflow) do
     %{
       "attempt" => Keyword.get(opts, :attempt),
       "issue" => issue |> Map.from_struct() |> to_solid_map(),
+      "project" => %{"default_branch" => configured_default_branch(workflow)},
       "workflow" => %{
         "profile" => Keyword.get(opts, :profile),
         "profile_name" => get_in(Keyword.get(opts, :profile_policy, %{}), ["name"]),
@@ -46,6 +48,9 @@ defmodule SymphonyElixir.PromptBuilder do
       }
     }
   end
+
+  defp configured_default_branch({:ok, %{config: %{"project" => %{"default_branch" => branch}}}}), do: branch
+  defp configured_default_branch({:ok, %{setup_required: true}}), do: nil
 
   defp apply_profile_prompt(prompt, opts, assigns) do
     if is_nil(Keyword.get(opts, :profile)) do
@@ -112,7 +117,7 @@ defmodule SymphonyElixir.PromptBuilder do
     """
     Workflow profile: implementation
 
-    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Review the owning-design declaration against the actual diff before delivery. Changes to behavior under `lib/` or to runtime configuration semantics require the owning L3 design and its documentation-alignment row to be updated in the same change. If the diff disagrees with the ticket classification, correct the Linear description or work record and documentation scope before delivery. A missing owner must be disclosed in the PR body and registered as a new L3 owner or merged into an existing owner in the same PR; it is not an exemption. Implement, validate, commit, and push the exact Linear `branchName`. Then call `create_pull_request` with a title and body conforming to `docs/pull-request-body.md`; Symphony executes the exact repository/base/head lookup and gh-first/REST-fallback creation without exposing GitHub credentials. Use the returned PR URL and completion proof in the final references and call the `handoff` dynamic tool with the final comment, result, and references. Accepted `handoff` submission does not update Linear immediately: the worker requires the captured payload, runs required gates, and only then writes `Ready to Merge` through the restricted backend. If human changes return the issue to In Progress, update the same branch and existing PR, validate, and submit `handoff` again.
+    First read the task and recent activity with `linear_task_read`; comments may contain rejection feedback or scope changes. Review the owning-design declaration against the actual diff before delivery. Changes to behavior under `lib/` or to runtime configuration semantics require the owning L3 design and its documentation-alignment row to be updated in the same change. If the diff disagrees with the ticket classification, correct the Linear description or work record and documentation scope before delivery. A missing owner must be disclosed in the PR body and registered as a new L3 owner or merged into an existing owner in the same PR; it is not an exemption. Follow this order: sync the configured default branch with the pull skill, implement, validate, then commit and push the exact Linear `branchName`. Then call `create_pull_request` with a title and body conforming to `docs/pull-request-body.md`; Symphony executes the exact repository/base/head lookup and gh-first/REST-fallback creation without exposing GitHub credentials. Use the returned PR URL and completion proof in the final references and call the `handoff` dynamic tool with the final comment, result, and references. Accepted `handoff` submission does not update Linear immediately: the worker requires the captured payload, runs required gates, and only then writes `Ready to Merge` through the restricted backend. If human changes return the issue to In Progress, update the same branch and existing PR, validate, and submit `handoff` again.
     """
     |> String.trim()
   end
@@ -130,10 +135,12 @@ defmodule SymphonyElixir.PromptBuilder do
 
   defp append_branch_contract(prompt, "implementation", assigns) do
     branch_name = get_in(assigns, ["issue", "branch_name"])
+    default_branch = get_in(assigns, ["project", "default_branch"])
 
-    if is_binary(branch_name) and String.trim(branch_name) != "" do
+    if is_binary(branch_name) and String.trim(branch_name) != "" and is_binary(default_branch) and
+         String.trim(default_branch) != "" do
       prompt <>
-        "\n\nRequired branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before completion. Do not create or switch to a different task branch. After pushing, call `create_pull_request` with a body conforming to `docs/pull-request-body.md`, then include its URL and completion proof in the final `handoff` call."
+        "\n\nConfigured default branch: `#{default_branch}`. Before editing, use the pull skill to merge `origin/#{default_branch}` into the exact Linear branch. Then implement, validate, commit, and push. Required branch: `#{branch_name}`. Use this Linear `branchName` for all implementation work and push this branch before completion. Do not create or switch to a different task branch. After pushing, call `create_pull_request` with a body conforming to `docs/pull-request-body.md`, then include its URL and completion proof in the final `handoff` call."
     else
       prompt
     end

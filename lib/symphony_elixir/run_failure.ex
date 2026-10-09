@@ -116,9 +116,7 @@ defmodule SymphonyElixir.RunFailure do
   @spec from_worker_summary(String.t(), map()) :: :completed | t()
   def from_worker_summary("task.completed", _summary), do: :completed
 
-  def from_worker_summary("task.cancelled", summary) do
-    classify({:cancelled, summary_evidence(summary)})
-  end
+  def from_worker_summary("task.cancelled", summary), do: classify({:cancelled, summary_evidence(summary)})
 
   def from_worker_summary("task.failed", %{"outcome" => "succeeded"}), do: :completed
 
@@ -129,11 +127,13 @@ defmodule SymphonyElixir.RunFailure do
   def from_worker_summary(
         "task.failed",
         %{
-          "reason" => "source_preparation_timeout",
+          "phase" => "source_preparation",
+          "reason" => reason,
           "failure_evidence" => %{"phase" => phase} = evidence
         }
       )
-      when phase in ["clone_failed", "fetch_failed", "checkout_failed"] do
+      when reason in ["source_preparation_timeout", "source_preparation_failed"] and
+             phase in ["clone_failed", "fetch_failed", "checkout_failed"] do
     new("source_preparation_timeout", evidence)
   end
 

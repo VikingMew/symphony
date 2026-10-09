@@ -160,13 +160,28 @@ implementation `completed_delivery_evidence/1`, PR proof, handoff capture, gate 
 `Ready to Merge` writeback.
 
 Source preparation uses the assignment's single initialization budget for clone, fetch, remote
-branch lookup, and checkout. A command timeout becomes executor reason
+branch lookup, targeted deepen, merge-base, merge, checkout, and DAG verification. It captures the
+configured default ref once as `base_sha`; a missing task branch starts there, while an existing
+branch retains its pre-sync `task_sha`. If shallow tips hide their common ancestor, the worker
+deepens only the explicit default/task refspecs by `checkout_depth`, stopping as soon as merge-base
+is visible and failing on no progress, complete unrelated history, or fetch failure. It merges the
+immutable `base_sha` and verifies both captured SHAs as HEAD ancestors plus exact remote-default
+merge-base before hooks or Codex.
+
+A command timeout becomes executor reason
 `source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command
 evidence, actual duration, and bounded recent output. `WorkerResult.limits/0` is the single worker
 and Panel source for the 4096-byte source/output producer budget. `Worker.Command` and
 `Worker.Validation.write!/2` reserve the truncation marker inside that budget, so the final UTF-8
 value including the marker never exceeds 4096 bytes. This worker summary contract does not create a
 second timeout source or change the independent run-failure persistence vocabulary.
+
+A non-timeout preparation error is normalized at the executor boundary to
+`reason: source_preparation_failed`, top-level `phase: source_preparation`, and bounded evidence
+using only `clone_failed`, `fetch_failed`, or `checkout_failed`. Fetch/deepen use `fetch_failed`;
+branch lookup, merge-base exhaustion, merge, checkout, and DAG verification use `checkout_failed`.
+The terminal validator accepts this exact shape, and persistence maps it to the existing
+`source_preparation_timeout` classification.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
 comment/result/references in the Codex turn and reports `linear_updated: false`. Except for the two

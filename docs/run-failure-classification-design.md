@@ -28,7 +28,7 @@ compressed raw startup output so output cannot push them outside the bounded det
 | Classification | Meaning |
 | --- | --- |
 | `environment_unavailable` | The admission or execution environment cannot provide required filesystem or runtime access. |
-| `source_preparation_timeout` | Clone, fetch, or checkout timed out. |
+| `source_preparation_timeout` | Source preparation failed or timed out during clone, fetch, checkout, merge-base, merge, or DAG verification. |
 | `external_dependency_timeout` | A required external dependency operation timed out. |
 | `budget_exhausted` | A stall, read timeout, or failure retry budget ended the run. |
 | `contract_violation` | Required handoff or validated protocol evidence was missing or invalid. |
@@ -60,6 +60,13 @@ Worker terminal classification is derived once from the validated summary. The s
 the run row, terminal event, retry metadata, `BlockingDecision.reason`, and the environment failure
 circuit key. The wire summary remains execution evidence and is not a second classification source.
 Explicit blocked outcomes remain accepted without interpreting their opaque reason or detail.
+
+Validated worker source failures use top-level phase `source_preparation`. Timeout summaries use
+reason `source_preparation_timeout`; non-timeout summaries use `source_preparation_failed`. Both use
+only `clone_failed`, `fetch_failed`, or `checkout_failed` evidence phases, and both map through
+explicit `RunFailure.from_worker_summary/2` clauses to the existing persisted
+`source_preparation_timeout` classification. The operation-level distinction remains in bounded
+evidence; no new persisted classification or top-level phase is introduced.
 
 Worker terminal delivery retains the validated payload across Panel 503 responses and beyond the
 former attempt limit. When delivery later succeeds, the original failure classification and its

@@ -55,12 +55,22 @@ repository、default branch、implementation branch、checkout depth 与 initial
 随后 default branch 和已存在的远端 task branch 都通过带明确 branch refspec 的
 `git fetch --progress --no-tags --depth <depth>` 定向刷新；不存在远端 task branch 时，从刚解析的
 default-branch commit 创建本地 branch。clone、两类 fetch、远端 branch lookup 与 checkout 使用同一个
-initialize timeout，不保留 worker-local 300/120 秒预算或 full-clone fallback。定向 task-branch fetch
-不能解除 shallow repository 状态。
+initialize timeout，不保留 worker-local 300/120 秒预算或 full-clone fallback。已存在 branch 保留其
+pre-sync `task_sha`。若 `base_sha` 与 `task_sha` 的 common ancestor 位于 shallow boundary 之外，executor
+对 default/task 两个显式 refspec 执行 `--deepen <checkout_depth>` 并逐轮重试 merge-base；ancestor 一旦
+可见立即停止。每轮用可见 commit 数判断进展；无进展、repository 已非 shallow 仍无共同祖先、或 remote
+无法提供历史时返回 typed failure。不得使用 `--unshallow`、reclone、full-clone fallback 或
+`--allow-unrelated-histories`。
+
+共同祖先可见后，若 task 已包含 `base_sha` 则保持 HEAD 不变，否则 merge 精确的 immutable
+`base_sha`。最后验证原 `task_sha` 和 `base_sha` 都是 HEAD 祖先，且
+`merge-base refs/remotes/origin/<default-branch> HEAD == base_sha`，再进入 hooks/Codex。
 
 任一上述命令超时时，executor 返回 `source_preparation_timeout`。命令阶段只写入
 `failure_evidence.phase`，值为 `clone_failed`、`fetch_failed` 或 `checkout_failed`；证据同时保留
 `command_status: timed_out`、实际 `duration_ms` 和 bounded recent output。
+非超时准备失败使用同一 evidence phase 闭集及 `command_status: failed`，并保留 bounded operation/detail；
+顶层固定为 `source_preparation` / `source_preparation_failed`。
 
 ## 推荐默认值
 

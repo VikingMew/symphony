@@ -284,7 +284,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert detail =~ "waiting for remote source"
   end
 
-  test "preserves an existing remote task branch while refreshing the default branch" do
+  test "deepens and merges the captured default tip into an existing remote task branch" do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
 
@@ -294,12 +294,12 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     base_sha = commit_and_push!(fixture.author, "trunk", "new-base.txt", "advance default")
 
     workspace = Path.join(fixture.root, "lease")
-    assert {:ok, source} = Executor.prepare(payload(fixture.remote_url), workspace, no_progress())
+    progress = source_progress_to(self())
+    assert {:ok, source} = Executor.prepare(payload(fixture.remote_url), workspace, progress)
     assert source.base_sha == base_sha
-    assert source.prepared_head == task_sha
-    assert source.task_branch == "feature/sym-74"
-    assert git!(workspace, ["rev-parse", "refs/remotes/origin/trunk"]) == base_sha
+    assert_synced_source(source, workspace, task_sha, base_sha)
     assert File.regular?(Path.join(workspace, ".git/shallow"))
+    assert_receive {:source_progress, "source_preparation", %{operation: "git_deepen", status: "started"}}
   end
 
   test "rebuilds a stale lease workspace before fetching source" do
@@ -361,8 +361,8 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     result = Executor.execute(config, claim)
     assert result.status == :failed
 
-    assert {:source_preparation_failed, :clone_failed, %{status: :failed}} =
-             result.reason
+    assert result.reason == :source_preparation_failed
+    assert_source_failure(result.failure_evidence)
 
     assert File.exists?(marker) == false
   end
@@ -655,4 +655,98 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
 
   defp restore_env(key, nil), do: System.delete_env(key)
   defp restore_env(key, value), do: System.put_env(key, value)
+
+  defp source_progress_to(owner), do: fn phase, event -> send(owner, {:source_progress, phase, event}) end
+
+  defp assert_synced_source(source, workspace, task_sha, base_sha) do
+    assert source.task_sha == task_sha
+    assert source.prepared_head != task_sha
+    assert source.task_branch == "feature/sym-74"
+    assert git!(workspace, ["rev-parse", "refs/remotes/origin/trunk"]) == base_sha
+    assert git!(workspace, ["merge-base", "--is-ancestor", task_sha, "HEAD"]) == ""
+    assert git!(workspace, ["merge-base", "--is-ancestor", base_sha, "HEAD"]) == ""
+    assert git!(workspace, ["merge-base", "refs/remotes/origin/trunk", "HEAD"]) == base_sha
+  end
+
+  defp assert_source_failure(evidence) do
+    assert evidence.phase == "clone_failed"
+    assert evidence.operation == "clone"
+  end
+
+  test "keeps an existing task head unchanged when it already contains the captured base" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    base_sha = commit_and_push!(fixture.author, "trunk", "base.txt", "advance default")
+    git!(fixture.author, ["checkout", "-b", "feature/sym-74"])
+    task_sha = commit_and_push!(fixture.author, "feature/sym-74", "task.txt", "task after base")
+    owner = self()
+    progress = fn phase, event -> send(owner, {:source_progress, phase, event}) end
+
+    assert {:ok, source} =
+             Executor.prepare(payload(fixture.remote_url), Path.join(fixture.root, "lease"), progress)
+
+    assert source.base_sha == base_sha
+    assert source.task_sha == task_sha
+    assert source.prepared_head == task_sha
+    refute_receive {:source_progress, "source_preparation", %{operation: "git_merge", status: "started"}}
+  end
+
+  test "returns a checkout preparation failure when histories have no common ancestor" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    git!(fixture.author, ["checkout", "--orphan", "feature/sym-74"])
+    git!(fixture.author, ["rm", "-rf", "."])
+    task_sha = commit_and_push!(fixture.author, "feature/sym-74", "orphan.txt", "orphan task")
+    git!(fixture.author, ["checkout", "trunk"])
+    _base_sha = commit_and_push!(fixture.author, "trunk", "base.txt", "advance default")
+
+    assert {:error, {:source_preparation_failed, failure, %{status: :failed, detail: detail}}} =
+             Executor.prepare(payload(fixture.remote_url), Path.join(fixture.root, "lease"), no_progress())
+
+    assert failure in [:merge_base_exhausted, :merge_base_no_progress]
+    assert detail =~ "common ancestor" or detail =~ "no additional commits"
+    assert task_sha != fixture.main_sha
+  end
+
+  test "returns a typed checkout preparation failure on merge conflict" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    git!(fixture.author, ["checkout", "-b", "feature/sym-74"])
+    _task_sha = commit_and_push!(fixture.author, "feature/sym-74", "README.md", "task edit")
+    git!(fixture.author, ["checkout", "trunk"])
+    _base_sha = commit_and_push!(fixture.author, "trunk", "README.md", "default edit")
+
+    assert {:error, {:source_preparation_failed, :task_branch_merge_failed, failed}} =
+             Executor.prepare(payload(fixture.remote_url), Path.join(fixture.root, "lease"), no_progress())
+
+    assert failed.status == :failed
+    assert failed.detail =~ "CONFLICT"
+  end
+
+  test "classifies a targeted deepen fetch failure as fetch evidence" do
+    fixture = git_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    git!(fixture.author, ["checkout", "-b", "feature/sym-74"])
+    _task_sha = commit_and_push!(fixture.author, "feature/sym-74", "task.txt", "task commit")
+    git!(fixture.author, ["checkout", "trunk"])
+    _base_sha = commit_and_push!(fixture.author, "trunk", "base.txt", "advance default")
+    workspace = Path.join(fixture.root, "lease")
+
+    progress = fn
+      "source_preparation", %{operation: "git_merge_base", status: "completed"} ->
+        git!(workspace, ["remote", "set-url", "origin", "file://#{Path.join(fixture.root, "missing.git")}"])
+
+      _phase, _event ->
+        :ok
+    end
+
+    assert {:error, {:source_preparation_failed, :history_deepen_failed, failed}} =
+             Executor.prepare(payload(fixture.remote_url), workspace, progress)
+
+    assert failed.status == :failed
+  end
 end
