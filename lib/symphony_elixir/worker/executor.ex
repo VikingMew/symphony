@@ -69,6 +69,10 @@ defmodule SymphonyElixir.Worker.Executor do
   defp execution_result({:validation_failed, summary}),
     do: Map.merge(summary, %{status: :failed, phase: :validation})
 
+  defp execution_result({:blocked, :source_topology_invalid, evidence}) do
+    %{status: :blocked, reason: :source_topology_invalid, detail: evidence.detail, failure_evidence: evidence}
+  end
+
   defp execution_result({:blocked, reason, detail}),
     do: %{status: :blocked, reason: reason, detail: detail}
 
@@ -276,7 +280,7 @@ defmodule SymphonyElixir.Worker.Executor do
 
   @doc false
   @spec prepare(Payload.t(), Path.t(), (String.t(), map() -> term())) ::
-          {:ok, map()} | {:error, term()} | {:error, term(), map()} | :cancelled | map()
+          {:ok, map()} | {:blocked, atom(), map()} | {:error, term()} | {:error, term(), map()} | :cancelled | map()
   def prepare(payload, workspace, progress) do
     timeout = payload.initialize_timeout_seconds
     depth = payload.checkout_depth
@@ -793,7 +797,6 @@ defmodule SymphonyElixir.Worker.Executor do
 
   defp deepen_history(branch, default_branch, base_sha, task_sha, depth, timeout, workspace, progress) do
     with {:ok, true} <- shallow_repository?(timeout, workspace, progress),
-         {:ok, before_count} <- history_count(timeout, workspace, progress),
          :ok <-
            source_command(
              "fetch_failed",
@@ -803,26 +806,40 @@ defmodule SymphonyElixir.Worker.Executor do
              workspace,
              progress,
              :history_deepen_failed
-           ),
-         {:ok, after_count} <- history_count(timeout, workspace, progress) do
-      if after_count > before_count do
-        ensure_common_ancestor(
-          branch,
-          default_branch,
-          base_sha,
-          task_sha,
-          depth,
-          timeout,
-          workspace,
-          progress
-        )
-      else
-        preparation_error(:merge_base_no_progress, "targeted deepen exposed no additional commits")
-      end
+           ) do
+      ensure_common_ancestor(
+        branch,
+        default_branch,
+        base_sha,
+        task_sha,
+        depth,
+        timeout,
+        workspace,
+        progress
+      )
     else
-      {:ok, false} -> preparation_error(:merge_base_exhausted, "repository has no common ancestor")
-      other -> other
+      {:ok, false} ->
+        source_topology_invalid(branch, default_branch, base_sha, task_sha, depth)
+
+      other ->
+        other
     end
+  end
+
+  defp source_topology_invalid(branch, default_branch, base_sha, task_sha, depth) do
+    {:blocked, :source_topology_invalid,
+     %{
+       phase: "checkout_failed",
+       command_status: "failed",
+       operation: "merge_base_exhausted",
+       default_ref: "refs/remotes/origin/#{default_branch}",
+       task_ref: "refs/remotes/origin/#{branch}",
+       base_sha: base_sha,
+       task_sha: task_sha,
+       checkout_depth: depth,
+       repository_shallow: false,
+       detail: "complete histories have no common ancestor"
+     }}
   end
 
   defp deepen_command(branch, default_branch, depth) do
@@ -886,25 +903,6 @@ defmodule SymphonyElixir.Worker.Executor do
              progress
            ) do
       {:ok, String.trim(output) == "true"}
-    end
-  end
-
-  defp history_count(timeout, workspace, progress) do
-    with {:ok, output} <-
-           source_query(
-             "git_history_count",
-             "git rev-list --count --all",
-             "checkout_failed",
-             :history_count_failed,
-             timeout,
-             workspace,
-             progress
-           ),
-         {count, ""} <- output |> String.trim() |> Integer.parse() do
-      {:ok, count}
-    else
-      :error -> preparation_error(:history_count_failed, "git history count was not an integer")
-      other -> other
     end
   end
 
