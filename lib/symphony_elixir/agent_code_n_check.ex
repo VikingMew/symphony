@@ -3,8 +3,6 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   Checks deterministic Agent-facing code navigation rules and their shrinking baseline.
   """
 
-  alias SymphonyElixir.AgentCodeNCheck.BaselineLocations
-
   @baseline_path "config/agent_code_navigation_baseline.yml"
   @source_patterns ["lib/**/*.ex", "test/**/*.ex", "test/**/*.exs"]
   @directory_roots ~w(.github config docs lib scripts test)
@@ -435,12 +433,7 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   defp base_baseline(root, path, :from_git) do
     case System.cmd("git", ["merge-base", "HEAD", "origin/main"], cd: root, stderr_to_stdout: true) do
       {merge_base, 0} ->
-        revision = String.trim(merge_base)
-
-        case read_base_baseline(root, path, revision) do
-          {:ok, rows} -> BaselineLocations.relocate_baseline(root, revision, rows)
-          result -> result
-        end
+        read_base_baseline(root, path, String.trim(merge_base))
 
       {output, status} ->
         {:error, "baseline.merge_base: git exited #{status}: #{String.trim(output)}"}

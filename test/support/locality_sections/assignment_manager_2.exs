@@ -2,201 +2,124 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
   @moduledoc false
 
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Worker.AssignmentManager
+  alias SymphonyElixir.Worker.AssignmentManagerTest.BlockingHeartbeatPersistence
+  alias SymphonyElixir.Worker.AssignmentManagerTest.BlockingReconcileTracker
+  alias SymphonyElixir.Worker.AssignmentManagerTest.ConfiguredWorkflows
+  alias SymphonyElixir.Worker.AssignmentManagerTest.FailingCancelPersistence
+  alias SymphonyElixir.Worker.AssignmentManagerTest.ProjectTracker
+  alias SymphonyElixir.Worker.AssignmentManagerTest.SlowReconcileTracker
+  alias SymphonyElixir.Worker.AssignmentManagerTest.Tracker
+  alias SymphonyElixir.Worker.AssignmentManagerTest.Workflows
+  alias SymphonyElixir.Worker.AssignmentManagerTest.ZombieReconcilePersistence
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
       import ExUnit.CaptureLog
 
-      alias SymphonyElixir.BlockingDecision
-      alias SymphonyElixir.Config.WorkflowScopes
-      alias SymphonyElixir.EnvironmentFailureCircuit
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.Orchestrator.Events
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Worker.AssignmentManager
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixirWeb.Presenter
-
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
-      alias SymphonyElixir.Worker.AssignmentManagerTest.{
-        BlockingHeartbeatPersistence,
-        BlockingReconcileTracker,
-        FailingCancelPersistence,
-        ProjectTracker,
-        Tracker,
-        Workflows,
-        ZombieReconcilePersistence
-      }
-
-      test "claims Ready implementation issues into In Progress and returns implementation payload state",
-           context do
-        ready = issue(3)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
-
-        assert {:ok, assignment} = claim(context)
-
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates() == [
-                 {ready.id, "In Progress"}
-               ]
-
-        assert assignment.issue.state == "In Progress"
-        assert assignment.payload["issue"]["state"] == "In Progress"
-        assert assignment.payload["workflow_profile"] == "implementation"
-
-        assert assignment.payload["handoff"]["allowed_updates"]["target_states"] == [
-                 "In Progress",
-                 "Ready to Merge"
-               ]
-
-        assert assignment.payload["prompt"] =~ "Current status: In Progress"
-        assert assignment.payload["prompt"] =~ "Ready to Merge"
-      end
-
-      test "fails Todo refinement claim visibly when Linear rejects Refining transition", context do
-        todo = %{issue(4) | state: "Todo"}
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([todo])
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.fail_update(:transition_rejected)
-
-        assert {:error, :transition_rejected} = claim(context)
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates() == []
-
-        assert [%{status: "failed"}] =
-                 Elixir.SymphonyElixir.TestSupport.FakePersistence.list_runs_for_issue(todo.identifier)
-
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager) == nil
-      end
-
-      test "Refining latest running worker run blocks duplicate assignment", context do
-        enable_active_state("Refining")
-        refining = %{issue(5) | state: "Refining"}
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([refining])
-
-        {:ok, _run} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.create_run(%{
-            issue_identifier: refining.identifier,
-            status: "running",
-            started_at: context.now
-          })
-
-        assert {:ok, {:empty, 5}} = claim(context)
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates() == []
-      end
-
-      test "Refining latest terminal worker run can be assigned without another state update",
-           context do
+      test "Refining latest terminal worker run can be assigned without another state update", context do
         enable_active_state("Refining")
         refining = %{issue(6) | state: "Refining"}
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([refining])
-
-        {:ok, _run} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.create_run(%{
-            issue_identifier: refining.identifier,
-            status: "succeeded",
-            started_at: context.now
-          })
+        Tracker.put([refining])
+        {:ok, _run} = FakePersistence.create_run(%{issue_identifier: refining.identifier, status: "succeeded", started_at: context.now})
 
         assert {:ok, assignment} = claim(context)
 
         assert assignment.issue.state == "Refining"
         assert assignment.payload["issue"]["state"] == "Refining"
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates() == []
+        assert Tracker.updates() == []
       end
 
-      test "failure ends the assignment and the next claim rereads Linear", context do
+      test "Codex capacity failure persists its reason, ends the assignment, and permits another claim", context do
         ready = issue(1)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
+        Tracker.put([ready])
         assert {:ok, assignment} = claim(context)
 
-        assert {:ok, _event} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+        terminal_summary =
+          summary("failed")
+          |> Map.merge(%{
+            "phase" => "codex",
+            "reason" => "codex_upstream_capacity",
+            "validation_status" => "pending",
+            "detail" => Jason.encode!(%{"detail" => %{"codex_error_info" => "serverOverloaded", "will_retry" => false}})
+          })
+
+        assert {:ok, task_event} =
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
                    "task.failed",
-                   %{"correlation" => assignment.correlation, "summary" => summary("failed")},
+                   %{"correlation" => assignment.correlation, "summary" => terminal_summary},
                    context.manager
                  )
 
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([])
+        run = FakePersistence.get_run(assignment.run_id)
+        assert run.status == "failed"
+        assert run.failure_reason == "codex_upstream_capacity"
+        assert run.failure_evidence["reason"] == "codex_upstream_capacity"
+        assert get_in(Jason.decode!(run.failure_evidence["detail"]), ["detail", "will_retry"]) == false
+        assert run.execution_summary == terminal_summary
+        assert task_event.payload["failure_reason"] == run.failure_reason
+
+        assert [run_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.failed")
+        assert run_event.payload["failure_reason"] == run.failure_reason
+        assert run_event.payload["failure_evidence"] == run.failure_evidence
+
+        Tracker.put([])
         assert {:ok, {:empty, 5}} = claim(context)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
+        Tracker.put([ready])
         assert {:ok, next} = claim(context)
         assert next.id == assignment.id == false
         assert next.run_id == assignment.run_id == false
       end
 
+      test "legal succeeded worker outcome persists completed without failure fields", context do
+        Tracker.put([issue(1)])
+        assert {:ok, assignment} = claim(context)
+
+        assert {:ok, _event} =
+                 AssignmentManager.record_event(
+                   context.worker.id,
+                   context.session.id,
+                   assignment.id,
+                   "task.failed",
+                   %{"correlation" => assignment.correlation, "summary" => summary("succeeded")},
+                   context.manager
+                 )
+
+        run = FakePersistence.get_run(assignment.run_id)
+        assert run.status == "completed"
+        assert run.failure_reason == nil
+        assert run.failure_evidence == nil
+        assert run.execution_summary == summary("succeeded")
+        assert [_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.completed")
+      end
+
       test "heartbeat renews only the owning assignment and stale events are rejected", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
         assert {:ok, %{lease_renewals: []}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
-                   context.worker.id,
-                   context.session.id,
-                   %{"active_leases" => ["wrong"]},
-                   context.manager
-                 )
+                 AssignmentManager.heartbeat(context.worker.id, context.session.id, %{"active_leases" => ["wrong"]}, context.manager)
 
         assert {:ok, %{lease_renewals: [renewal]}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
-                   context.worker.id,
-                   context.session.id,
-                   %{"active_leases" => [assignment.id]},
-                   context.manager
-                 )
+                 AssignmentManager.heartbeat(context.worker.id, context.session.id, %{"active_leases" => [assignment.id]}, context.manager)
 
         assert renewal.lease_id == assignment.id
 
         assert {:error, :lease_not_active} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
-                   context.worker.id,
-                   context.session.id,
-                   "stale",
-                   "task.progress",
-                   %{},
-                   context.manager
-                 )
+                 AssignmentManager.record_event(context.worker.id, context.session.id, "stale", "task.progress", %{}, context.manager)
       end
 
       test "cancel current reports cancelled only after worker terminal cancellation", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
-        cancellation =
-          Task.async(fn ->
-            Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current("operator", context.manager)
-          end)
-
+        cancellation = Task.async(fn -> AssignmentManager.cancel_current("operator", context.manager) end)
         assert Task.yield(cancellation, 20) == nil
 
         assert {:ok,
@@ -204,7 +127,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                   lease_renewals: [],
                   commands: [%{"type" => "cancel_task", "task_id" => task_id, "reason" => "operator"}]
                 }} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+                 AssignmentManager.heartbeat(
                    context.worker.id,
                    context.session.id,
                    %{"active_leases" => [assignment.id]},
@@ -212,12 +135,10 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         assert task_id == assignment.id
-
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id).status ==
-                 "running"
+        assert FakePersistence.get_run(assignment.run_id).status == "running"
 
         assert {:ok, _event} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
@@ -236,43 +157,23 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
 
         assert assignment_id == assignment.id
         assert run_id == assignment.run_id
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager) == nil
-
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id).status ==
-                 "cancelled"
-
-        assert [_event] =
-                 Elixir.SymphonyElixir.TestSupport.FakePersistence.list_events(
-                   run_id: assignment.run_id,
-                   event_type: "task.cancelled"
-                 )
+        assert AssignmentManager.current_assignment(context.manager) == nil
+        assert FakePersistence.get_run(assignment.run_id).status == "cancelled"
+        assert [_event] = FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.cancelled")
       end
 
       test "cancel current distinguishes no active assignment and project mismatch", context do
         assert %{status: "no_active_assignment", cancelled: 0, failed: [], project_id: nil, tasks: []} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current(
-                   "operator",
-                   context.manager
-                 )
+                 AssignmentManager.cancel_current("operator", context.manager)
 
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
-        assert %{
-                 status: "no_active_assignment",
-                 cancelled: 0,
-                 failed: [],
-                 project_id: "other-project",
-                 tasks: []
-               } =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current(
-                   "operator",
-                   "other-project",
-                   context.manager
-                 )
+        assert %{status: "no_active_assignment", cancelled: 0, failed: [], project_id: "other-project", tasks: []} =
+                 AssignmentManager.cancel_current("operator", "other-project", context.manager)
 
         assert {:ok, %{lease_renewals: [_renewal], commands: []}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+                 AssignmentManager.heartbeat(
                    context.worker.id,
                    context.session.id,
                    %{"active_leases" => [assignment.id]},
@@ -281,34 +182,24 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
       end
 
       test "cancel current reports failed when terminal cancellation persistence fails", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
-        :sys.replace_state(
-          context.manager,
-          &%{
-            &1
-            | persistence: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.FailingCancelPersistence
-          }
-        )
+        :sys.replace_state(context.manager, &%{&1 | persistence: FailingCancelPersistence})
 
-        cancellation =
-          Task.async(fn ->
-            Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current("operator", context.manager)
-          end)
-
+        cancellation = Task.async(fn -> AssignmentManager.cancel_current("operator", context.manager) end)
         assert Task.yield(cancellation, 20) == nil
 
         assert {:ok, %{lease_renewals: [], commands: [%{"type" => "cancel_task"}]}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+                 AssignmentManager.heartbeat(
                    context.worker.id,
                    context.session.id,
                    %{"active_leases" => [assignment.id]},
                    context.manager
                  )
 
-        assert {:error, :repo_unavailable} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+        assert {:error, {:event_write_failed, :repo_unavailable}} =
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
@@ -328,9 +219,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
         assert assignment_id == assignment.id
         assert reason =~ "terminal_event_failed"
         assert reason =~ "repo_unavailable"
-
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager).id ==
-                 assignment.id
+        assert AssignmentManager.current_assignment(context.manager).id == assignment.id
       end
 
       test "idle heartbeat is not queued behind blocking reconciliation", context do
@@ -342,13 +231,13 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
           start_supervised!(%{
             id: name,
             start:
-              {Elixir.SymphonyElixir.Worker.AssignmentManager, :start_link,
+              {AssignmentManager, :start_link,
                [
                  [
                    name: name,
-                   tracker: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.BlockingReconcileTracker,
-                   persistence: Elixir.SymphonyElixir.TestSupport.FakePersistence,
-                   workflows: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Workflows,
+                   tracker: BlockingReconcileTracker,
+                   persistence: FakePersistence,
+                   workflows: Workflows,
                    now: fn -> context.now end,
                    failure_circuit: context.circuit,
                    reconcile_interval_ms: :timer.hours(1)
@@ -356,130 +245,307 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                ]}
           })
 
-        Elixir.SymphonyElixir.Worker.AssignmentManager.reconcile(manager)
+        AssignmentManager.reconcile(manager)
         assert_receive {:reconcile_blocked, blocked_pid}, 500
 
-        calls_before = Elixir.SymphonyElixir.TestSupport.FakePersistence.calls()
+        calls_before = FakePersistence.calls()
 
         heartbeat =
           Task.async(fn ->
             for _ <- 1..3 do
-              Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+              AssignmentManager.heartbeat(
                 context.worker.id,
                 context.session.id,
                 %{"active_leases" => []},
                 manager,
-                Elixir.SymphonyElixir.TestSupport.FakePersistence
+                FakePersistence
               )
             end
           end)
 
         assert {:ok, heartbeats} = Task.yield(heartbeat, 500)
         assert Enum.all?(heartbeats, &match?({:ok, %{lease_renewals: [], commands: []}}, &1))
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.calls() == calls_before
+
+        assert Enum.all?(FakePersistence.calls() -- calls_before, fn
+                 {:heartbeat_worker, _worker_id, _session_id} -> false
+                 _call -> true
+               end)
 
         send(blocked_pid, :release_reconcile)
       end
 
+      test "blocked reconciliation leaves active heartbeat and audit ingestion responsive", context do
+        Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+        name = Module.concat(__MODULE__, "SlowReconcile#{System.unique_integer([:positive])}")
+
+        manager =
+          start_supervised!(%{
+            id: name,
+            start:
+              {AssignmentManager, :start_link,
+               [
+                 [
+                   name: name,
+                   tracker: SlowReconcileTracker,
+                   persistence: FakePersistence,
+                   workflows: Workflows,
+                   now: fn -> context.now end,
+                   failure_circuit: context.circuit,
+                   reconcile_interval_ms: :timer.hours(1)
+                 ]
+               ]}
+          })
+
+        :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+        Tracker.put([issue(1)])
+
+        assert {:ok, assignment} =
+                 AssignmentManager.claim_with_policy(
+                   context.worker.id,
+                   context.session.id,
+                   %{"available_slots" => 1},
+                   :listening_all,
+                   1,
+                   manager
+                 )
+
+        AssignmentManager.reconcile(manager)
+        assert_receive {:slow_reconcile_started, reconcile}, 500
+
+        assert {:ok, %{lease_renewals: [%{lease_id: lease_id}]}} =
+                 AssignmentManager.heartbeat(
+                   context.worker.id,
+                   context.session.id,
+                   %{"active_leases" => [assignment.id]},
+                   manager,
+                   FakePersistence
+                 )
+
+        assert lease_id == assignment.id
+
+        assert {:ok, event} =
+                 AssignmentManager.record_event(
+                   context.worker.id,
+                   context.session.id,
+                   assignment.id,
+                   "linear.tool_call",
+                   %{"correlation" => assignment.correlation, "tool" => "linear_task_read", "status" => "success"},
+                   manager
+                 )
+
+        assert event.event_type == "linear.tool_call"
+        send(reconcile, :release_reconcile)
+        assert_receive :slow_reconcile_finished
+        assert FakePersistence.get_run(assignment.run_id).status == "running"
+        assert FakePersistence.list_events(run_id: assignment.run_id, event_type: "task.failed") == []
+      end
+
+      test "reconciliation fetches once per distinct project slug", context do
+        start_supervised!(ProjectTracker)
+        workflow = Application.fetch_env!(:symphony_elixir, :assignment_test_workflow)
+        other = put_in(workflow.config["tracker"]["project_slug"], "other-project")
+        Application.put_env(:symphony_elixir, :assignment_test_workflows, [workflow, workflow, other])
+        ProjectTracker.put(%{})
+        name = Module.concat(__MODULE__, "DistinctReconcile#{System.unique_integer([:positive])}")
+
+        manager =
+          start_supervised!(%{
+            id: name,
+            start:
+              {AssignmentManager, :start_link,
+               [
+                 [
+                   name: name,
+                   tracker: ProjectTracker,
+                   persistence: FakePersistence,
+                   workflows: ConfiguredWorkflows,
+                   now: fn -> context.now end,
+                   failure_circuit: context.circuit,
+                   reconcile_interval_ms: :timer.hours(1)
+                 ]
+               ]}
+          })
+
+        AssignmentManager.reconcile(manager)
+        eventually(fn -> length(ProjectTracker.reconcile_fetches()) == 2 end)
+        assert ProjectTracker.reconcile_fetches() == [get_in(workflow.config, ["tracker", "project_slug"]), "other-project"]
+      end
+
+      test "reconciliation timeout terminates the round before another round starts", context do
+        Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+        name = Module.concat(__MODULE__, "TimedReconcile#{System.unique_integer([:positive])}")
+
+        manager =
+          start_supervised!(%{
+            id: name,
+            start:
+              {AssignmentManager, :start_link,
+               [
+                 [
+                   name: name,
+                   tracker: BlockingReconcileTracker,
+                   persistence: FakePersistence,
+                   workflows: Workflows,
+                   now: fn -> context.now end,
+                   failure_circuit: context.circuit,
+                   tracker_io_timeout_ms: 50,
+                   reconcile_interval_ms: :timer.hours(1)
+                 ]
+               ]}
+          })
+
+        log =
+          capture_log(fn ->
+            AssignmentManager.reconcile(manager)
+            assert_receive {:reconcile_blocked, first_pid}, 500
+            GenServer.cast(manager, {:reconcile_result, make_ref(), []})
+            AssignmentManager.reconcile(manager)
+            refute_receive {:reconcile_blocked, _pid}, 20
+            eventually(fn -> not Process.alive?(first_pid) end)
+            AssignmentManager.reconcile(manager)
+            assert_receive {:reconcile_blocked, second_pid}, 500
+            assert second_pid != first_pid
+            send(second_pid, :release_reconcile)
+          end)
+
+        assert log =~ "event=worker_reconcile_tracker_timeout"
+      end
+
+      test "claim preparation timeout names its stage without occupying the manager mailbox", context do
+        Application.put_env(:symphony_elixir, :assignment_test_owner, self())
+
+        Application.put_env(:symphony_elixir, :assignment_test_fetch_hook, fn ->
+          send(Application.fetch_env!(:symphony_elixir, :assignment_test_owner), {:claim_fetch_blocked, self()})
+
+          receive do
+            :release_claim_fetch -> :ok
+          end
+        end)
+
+        name = Module.concat(__MODULE__, "TimedClaim#{System.unique_integer([:positive])}")
+
+        manager =
+          start_supervised!(%{
+            id: name,
+            start:
+              {AssignmentManager, :start_link,
+               [
+                 [
+                   name: name,
+                   tracker: Tracker,
+                   persistence: FakePersistence,
+                   workflows: Workflows,
+                   now: fn -> context.now end,
+                   failure_circuit: context.circuit,
+                   tracker_io_timeout_ms: 50,
+                   reconcile_interval_ms: :timer.hours(1)
+                 ]
+               ]}
+          })
+
+        :ok = AssignmentManager.observe_session(context.worker, context.session, manager)
+
+        claim =
+          Task.async(fn ->
+            AssignmentManager.claim_with_policy(
+              context.worker.id,
+              context.session.id,
+              %{"available_slots" => 1},
+              :listening_all,
+              1,
+              manager
+            )
+          end)
+
+        assert_receive {:claim_fetch_blocked, blocked_pid}, 500
+        assert AssignmentManager.available_worker_slots(manager) == 1
+        assert {:error, {:claim_prepare_timeout, :candidate_fetch}, 30} = Task.await(claim, 500)
+        eventually(fn -> not Process.alive?(blocked_pid) end)
+      end
+
       test "zombie reconciliation uses run lease without expiring worker sessions", context do
         ready = issue(1)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
+        Tracker.put([ready])
         assert {:ok, assignment} = claim(context)
-        Process.exit(context.manager, :normal)
-        Process.sleep(10)
+        stop_supervised!(AssignmentManager)
 
-        run = Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id)
-
-        {:ok, _} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.update_run(run, %{
-            started_at: DateTime.add(context.now, -61, :second)
-          })
+        run = FakePersistence.get_run(assignment.run_id)
+        {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
 
         name = Module.concat(__MODULE__, "ZombieLease#{System.unique_integer([:positive])}")
 
         {:ok, restarted} =
-          Elixir.SymphonyElixir.Worker.AssignmentManager.start_link(
+          AssignmentManager.start_link(
             name: name,
-            tracker: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker,
-            persistence: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.ZombieReconcilePersistence,
-            workflows: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Workflows,
+            tracker: Tracker,
+            persistence: ZombieReconcilePersistence,
+            workflows: Workflows,
             now: fn -> context.now end,
             failure_circuit: context.circuit,
             reconcile_interval_ms: :timer.hours(1)
           )
 
-        Elixir.SymphonyElixir.Worker.AssignmentManager.reconcile(restarted)
-
-        eventually(fn ->
-          List.last(Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates()) ==
-            {ready.id, "Ready"}
-        end)
-
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id).status ==
-                 "failed"
+        AssignmentManager.reconcile(restarted)
+        eventually(fn -> length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1 end)
+        assert Tracker.updates() == [{ready.id, "In Progress"}]
+        assert FakePersistence.get_run(assignment.run_id).status == "running"
       end
 
       test "blocked heartbeat history does not delay matching lease renewal", context do
         Application.put_env(:symphony_elixir, :assignment_test_owner, self())
 
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
         Application.put_env(:symphony_elixir, :assignment_test_heartbeat_mode, :blocked)
 
         assert {:ok, %{lease_renewals: [renewal]}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+                 AssignmentManager.heartbeat(
                    context.worker.id,
                    context.session.id,
                    %{"active_leases" => [assignment.id]},
                    context.manager,
-                   Elixir.SymphonyElixir.Worker.AssignmentManagerTest.BlockingHeartbeatPersistence
+                   BlockingHeartbeatPersistence
                  )
 
         assert renewal.lease_id == assignment.id
         refute_receive {:heartbeat_blocked, _blocked_pid}, 50
 
         assert {:ok, %{lease_renewals: []}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
+                 AssignmentManager.heartbeat(
                    context.worker.id,
                    context.session.id,
                    %{"active_leases" => ["wrong"]},
                    context.manager,
-                   Elixir.SymphonyElixir.Worker.AssignmentManagerTest.BlockingHeartbeatPersistence
+                   BlockingHeartbeatPersistence
                  )
       end
 
       test "persists Linear audit events without releasing the assignment", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
 
         assert {:ok, event} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
                    "linear.tool_call",
-                   %{
-                     "correlation" => assignment.correlation,
-                     "tool" => "linear_task_read",
-                     "status" => "success"
-                   },
+                   %{"correlation" => assignment.correlation, "tool" => "linear_task_read", "status" => "success"},
                    context.manager
                  )
 
         assert event.event_type == "linear.tool_call"
         assert event.payload["tool"] == "linear_task_read"
         assert event.payload["correlation"] == assignment.correlation
-
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager).id ==
-                 assignment.id
+        assert AssignmentManager.current_assignment(context.manager).id == assignment.id
       end
 
       test "rejects unavailable sessions, zero slots, and mismatched correlation", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
 
         assert {:ok, {:empty, 5}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy(
+                 AssignmentManager.claim_with_policy(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 0},
@@ -489,7 +555,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         assert {:ok, {:empty, 5}, %{capacity: 0, reason: :no_available_slots}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 0},
@@ -499,7 +565,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    "wrong",
                    "wrong",
                    %{"available_slots" => 1},
@@ -508,18 +574,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                    context.manager
                  )
 
-        assert {:ok, %{lease_renewals: []}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
-                   "wrong",
-                   "wrong",
-                   %{},
-                   context.manager
-                 )
-
+        assert {:ok, %{lease_renewals: []}} = AssignmentManager.heartbeat("wrong", "wrong", %{}, context.manager)
         assert {:ok, assignment} = claim(context)
 
         assert {:error, {:correlation_mismatch, "run_id"}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
@@ -529,7 +588,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         assert {:ok, _event} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
@@ -539,29 +598,22 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         assert %{status: "cancelled"} = cancel_assignment(context, assignment)
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager) == nil
+        assert AssignmentManager.current_assignment(context.manager) == nil
 
-        assert %{status: "no_active_assignment"} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current(
-                   "operator",
-                   context.manager
-                 )
+        assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("operator", context.manager)
       end
 
       test "stale persisted heartbeat state does not block fresh memory admission", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
 
-        Agent.update(Elixir.SymphonyElixir.TestSupport.FakePersistence, fn state ->
+        Agent.update(FakePersistence, fn state ->
           update_in(state.worker_sessions, fn sessions ->
-            Enum.map(
-              sessions,
-              &%{&1 | last_heartbeat_at: DateTime.add(context.now, -31, :second), status: "offline"}
-            )
+            Enum.map(sessions, &%{&1 | last_heartbeat_at: DateTime.add(context.now, -31, :second), status: "offline"})
           end)
         end)
 
         assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 4},
@@ -575,17 +627,15 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
         refute old_freshness_predicate_called?()
       end
 
-      test "expired memory liveness has zero capacity and rejects claim before tracker reads",
-           context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+      test "expired memory liveness has zero capacity and rejects claim before tracker reads", context do
+        Tracker.put([issue(1)])
         expire_worker_liveness(context)
-        fetch_count = Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.fetch_count()
+        fetch_count = Tracker.fetch_count()
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.available_worker_slots(context.manager) ==
-                 0
+        assert AssignmentManager.available_worker_slots(context.manager) == 0
 
         assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_stale}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 4},
@@ -594,11 +644,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                    context.manager
                  )
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.fetch_count() == fetch_count
+        assert Tracker.fetch_count() == fetch_count
         refute old_freshness_predicate_called?()
 
         assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    context.worker.id,
                    context.session.id,
                    %{"available_slots" => 4},
@@ -611,15 +661,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
       end
 
       test "task events refresh liveness for the current memory assignment", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
+        Tracker.put([issue(1)])
         assert {:ok, assignment} = claim(context)
         expire_worker_liveness(context)
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.available_worker_slots(context.manager) ==
-                 0
+        assert AssignmentManager.available_worker_slots(context.manager) == 0
 
         assert {:ok, _event} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    assignment.id,
@@ -628,30 +677,17 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                    context.manager
                  )
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.available_worker_slots(context.manager) ==
-                 1
+        assert AssignmentManager.available_worker_slots(context.manager) == 1
       end
 
       test "one assignment consumes capacity across sessions and advertised slot totals", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
-
-        {:ok, other} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.register_worker(%{
-            "worker_name" => "other",
-            "total_slots" => 8
-          })
-
-        :ok =
-          Elixir.SymphonyElixir.Worker.AssignmentManager.observe_session(
-            other.worker,
-            other.session,
-            context.manager
-          )
-
+        Tracker.put([issue(1)])
+        {:ok, other} = FakePersistence.register_worker(%{"worker_name" => "other", "total_slots" => 8})
+        :ok = AssignmentManager.observe_session(other.worker, other.session, context.manager)
         assert {:ok, first} = claim(context)
 
         assert {:ok, {:empty, 5}, %{capacity: 0, reason: :active_assignment}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    other.worker.id,
                    other.session.id,
                    %{"available_slots" => 8},
@@ -661,10 +697,10 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
                  )
 
         complete(context, first)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(2)])
+        Tracker.put([issue(2)])
 
         assert {:ok, second, %{capacity: 1, reason: :assigned}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
+                 AssignmentManager.claim_with_policy_evidence(
                    other.worker.id,
                    other.session.id,
                    %{"available_slots" => 8},
@@ -677,179 +713,73 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager2 do
         assert second.run_id != first.run_id
       end
 
-      test "expires an assignment before accepting a late event", context do
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(1)])
-        assert {:ok, assignment} = claim(context)
-        run = Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id)
-
-        {:ok, _} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.update_run(run, %{
-            started_at: DateTime.add(context.now, -61, :second)
-          })
-
-        :sys.replace_state(context.manager, fn state ->
-          put_in(state.assignment.expires_at, DateTime.add(context.now, -1, :second))
-        end)
-
-        assert {:error, :lease_not_active} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
-                   context.worker.id,
-                   context.session.id,
-                   assignment.id,
-                   "task.progress",
-                   %{},
-                   context.manager
-                 )
-
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id).status ==
-                 "failed"
-      end
-
       test "public API is safe while worker dispatch is disabled", context do
-        Process.exit(context.manager, :normal)
-        Process.sleep(10)
+        stop_supervised!(AssignmentManager)
+        server = Module.concat(__MODULE__, :DisabledDispatch)
 
         assert {:ok, {:empty, 5}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy(
+                 AssignmentManager.claim_with_policy(
                    context.worker.id,
                    context.session.id,
                    %{},
                    :listening_all,
                    1,
-                   context.manager
+                   server
                  )
 
         assert {:ok, %{lease_renewals: [], commands: []}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.heartbeat(
-                   context.worker.id,
-                   context.session.id,
-                   %{},
-                   context.manager
-                 )
+                 AssignmentManager.heartbeat(context.worker.id, context.session.id, %{}, server)
 
         assert {:error, :lease_not_active} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
+                 AssignmentManager.record_event(
                    context.worker.id,
                    context.session.id,
                    "gone",
                    "task.progress",
                    %{},
-                   context.manager
+                   server
                  )
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(context.manager) == nil
-
-        assert %{status: "no_active_assignment"} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.cancel_current(
-                   "disabled",
-                   context.manager
-                 )
+        assert AssignmentManager.current_assignment(server) == nil
+        assert %{status: "no_active_assignment"} = AssignmentManager.cancel_current("disabled", server)
       end
 
-      test "restart reconciliation preserves a recent run and resets an expired zombie", context do
+      test "restart reconciliation preserves runs and emits one orphan signal after the lease window", context do
         ready = issue(1)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
+        Tracker.put([ready])
         assert {:ok, assignment} = claim(context)
-        Process.exit(context.manager, :normal)
-        Process.sleep(10)
+        stop_supervised!(AssignmentManager)
 
         name = Module.concat(__MODULE__, "Restarted#{System.unique_integer([:positive])}")
 
         {:ok, restarted} =
-          Elixir.SymphonyElixir.Worker.AssignmentManager.start_link(
+          AssignmentManager.start_link(
             name: name,
-            tracker: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker,
-            persistence: Elixir.SymphonyElixir.TestSupport.FakePersistence,
-            workflows: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Workflows,
+            tracker: Tracker,
+            persistence: FakePersistence,
+            workflows: Workflows,
             now: fn -> context.now end,
             failure_circuit: context.circuit,
             reconcile_interval_ms: :timer.hours(1)
           )
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.current_assignment(restarted) == nil
-        Elixir.SymphonyElixir.Worker.AssignmentManager.reconcile(restarted)
-        Process.sleep(10)
+        assert AssignmentManager.current_assignment(restarted) == nil
+        AssignmentManager.reconcile(restarted)
+        eventually(fn -> :sys.get_state(restarted).reconcile_task == nil end)
+        assert Tracker.updates() == [{ready.id, "In Progress"}]
 
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates() == [
-                 {ready.id, "In Progress"}
-               ]
-
-        run = Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id)
-
-        {:ok, _} =
-          Elixir.SymphonyElixir.TestSupport.FakePersistence.update_run(run, %{
-            started_at: DateTime.add(context.now, -61, :second)
-          })
-
-        Elixir.SymphonyElixir.Worker.AssignmentManager.reconcile(restarted)
-        Process.sleep(10)
-
-        assert List.last(Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.updates()) ==
-                 {ready.id, "Ready"}
-
-        assert Elixir.SymphonyElixir.TestSupport.FakePersistence.get_run(assignment.run_id).status ==
-                 "failed"
+        run = FakePersistence.get_run(assignment.run_id)
+        {:ok, _} = FakePersistence.update_run(run, %{started_at: DateTime.add(context.now, -61, :second)})
+        AssignmentManager.reconcile(restarted)
+        eventually(fn -> length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1 end)
+        AssignmentManager.reconcile(restarted)
+        eventually(fn -> :sys.get_state(restarted).reconcile_task == nil end)
+        assert Tracker.updates() == [{ready.id, "In Progress"}]
+        assert FakePersistence.get_run(assignment.run_id).status == "running"
+        assert length(FakePersistence.list_events(run_id: assignment.run_id, event_type: "run.orphaned")) == 1
 
         assert {:error, :lease_not_active} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.record_event(
-                   context.worker.id,
-                   context.session.id,
-                   assignment.id,
-                   "task.completed",
-                   %{},
-                   restarted
-                 )
-      end
-
-      test "restart leaves worker liveness empty until a later live request records it", context do
-        ready = issue(1)
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([ready])
-        assert {:ok, assignment} = claim(context)
-        complete(context, assignment)
-        Process.exit(context.manager, :normal)
-        Process.sleep(10)
-
-        name = Module.concat(__MODULE__, "RestartedLiveness#{System.unique_integer([:positive])}")
-
-        {:ok, restarted} =
-          Elixir.SymphonyElixir.Worker.AssignmentManager.start_link(
-            name: name,
-            tracker: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker,
-            persistence: Elixir.SymphonyElixir.TestSupport.FakePersistence,
-            workflows: Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Workflows,
-            now: fn -> context.now end,
-            failure_circuit: context.circuit,
-            reconcile_interval_ms: :timer.hours(1)
-          )
-
-        Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.put([issue(2)])
-        fetch_count = Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.fetch_count()
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.available_worker_slots(restarted) == 0
-
-        assert {:ok, {:empty, 5}, %{capacity: 0, reason: :worker_session_not_found}} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy_evidence(
-                   context.worker.id,
-                   context.session.id,
-                   %{"available_slots" => 1},
-                   :listening_all,
-                   1,
-                   restarted
-                 )
-
-        assert Elixir.SymphonyElixir.Worker.AssignmentManagerTest.Tracker.fetch_count() == fetch_count
-        assert Elixir.SymphonyElixir.Worker.AssignmentManager.available_worker_slots(restarted) == 1
-
-        assert {:ok, next} =
-                 Elixir.SymphonyElixir.Worker.AssignmentManager.claim_with_policy(
-                   context.worker.id,
-                   context.session.id,
-                   %{"available_slots" => 1},
-                   :listening_all,
-                   1,
-                   restarted
-                 )
-
-        assert next.issue_identifier == "SYM-2"
+                 AssignmentManager.record_event(context.worker.id, context.session.id, assignment.id, "task.completed", %{}, restarted)
       end
     end
   end

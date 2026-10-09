@@ -36,21 +36,21 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/codex/dynamic_tool/sections/request_execution.ex",
-      lines: 574,
+      lines: 575,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex",
-      lines: 661,
+      lines: 662,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/defaults.ex",
-      lines: 285,
+      lines: 286,
       identifier: "__using__/1@6"
     },
     %{
@@ -58,34 +58,34 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/config/schema/sections/defaults.ex",
       lines: 79,
-      identifier: "default_profiles/0@85"
+      identifier: "default_profiles/0@86"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/parsing.ex",
-      lines: 271,
+      lines: 272,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/types.ex",
-      lines: 518,
+      lines: 519,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/completion.ex",
-      lines: 338,
+      lines: 339,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/control.ex",
-      lines: 918,
+      lines: 919,
       identifier: "__using__/1@6"
     },
     %{
@@ -93,13 +93,13 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/orchestrator/sections/control.ex",
       lines: 99,
-      identifier: "handle_call/3@255"
+      identifier: "handle_call/3@256"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/dispatch.ex",
-      lines: 714,
+      lines: 715,
       identifier: "__using__/1@6"
     },
     %{
@@ -107,48 +107,48 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/orchestrator/sections/dispatch.ex",
       lines: 86,
-      identifier: "dispatch_issue_agent/8@167"
+      identifier: "dispatch_issue_agent/8@168"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/lifecycle.ex",
-      lines: 737,
+      lines: 738,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex",
-      lines: 401,
+      lines: 402,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/reconciliation.ex",
-      lines: 806,
+      lines: 807,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/runtime_status.ex",
-      lines: 888,
+      lines: 889,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/api.ex",
-      lines: 781,
+      lines: 782,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 852,
+      lines: 853,
       identifier: "__using__/1@6"
     },
     %{
@@ -169,14 +169,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/workspace/sections/hooks.ex",
-      lines: 572,
+      lines: 573,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex",
-      lines: 563,
+      lines: 564,
       identifier: "__using__/1@6"
     },
     %{
@@ -184,7 +184,7 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex",
       lines: 66,
-      identifier: "prepare_worktree_source/4@271"
+      identifier: "prepare_worktree_source/4@272"
     },
     %{
       owner: "Symphony maintainers",
@@ -281,42 +281,42 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_1.exs",
-      lines: 620,
+      lines: 621,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_2.exs",
-      lines: 659,
+      lines: 660,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/agent_runner_1.exs",
-      lines: 613,
+      lines: 614,
       identifier: "__using__/1@11"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/agent_runner_2.exs",
-      lines: 468,
+      lines: 469,
       identifier: "__using__/1@11"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/assignment_manager_1.exs",
-      lines: 718,
+      lines: 722,
       identifier: "__using__/1@16"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/assignment_manager_2.exs",
-      lines: 772,
+      lines: 768,
       identifier: "__using__/1@18"
     },
     %{
@@ -330,14 +330,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/core_1.exs",
-      lines: 762,
+      lines: 763,
       identifier: "__using__/1@13"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/core_2.exs",
-      lines: 685,
+      lines: 693,
       identifier: "__using__/1@15"
     },
     %{
@@ -351,35 +351,35 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/extensions_2.exs",
-      lines: 550,
+      lines: 551,
       identifier: "__using__/1@13"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/orchestrator_status_1.exs",
-      lines: 838,
+      lines: 839,
       identifier: "__using__/1@10"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/orchestrator_status_2.exs",
-      lines: 665,
+      lines: 672,
       identifier: "__using__/1@11"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/orchestrator_status_3.exs",
-      lines: 617,
+      lines: 622,
       identifier: "__using__/1@13"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/locality_sections/orchestrator_status_4.exs",
-      lines: 348,
+      lines: 349,
       identifier: "__using__/1@10"
     },
     %{

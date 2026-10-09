@@ -45,6 +45,7 @@ defmodule SymphonyElixirWeb.Live.SettingsFakePersistenceTest do
     :ok = WorkflowStore.force_reload()
 
     on_exit(fn ->
+      FakePersistence.reset!()
       restore_app_env(:persistence_module, previous_persistence)
       Application.put_env(:symphony_elixir, SymphonyElixirWeb.Endpoint, previous_endpoint)
       restore_app_env(:worker_api, previous_worker_api)

@@ -4,7 +4,7 @@ genre: design
 domain: [backend, quality, testing]
 status: current
 language: en
-updated: 2026-09-24
+updated: 2026-10-08
 design_status: landed
 ---
 
@@ -32,8 +32,7 @@ same response body.
 Large test modules use the same compile-time composition technique with scenario groups loaded by
 `test/test_helper.exs`. Shared fixtures remain shared, while every physical test section stays below
 the repository limit. Temporary long section macros and pre-existing long clauses are explicit debt
-with exact measurements and dated cuts in the L4 contract; the checker rejects incomplete, stale,
-expired, or more-than-30-days-out records.
+with exact `(path, identifier, lines)` identities, split cuts, and owners in the L4 contract.
 
 ## Decisions
 
@@ -50,10 +49,18 @@ expired, or more-than-30-days-out records.
 
 ## Consequences
 
-The quality gate blocks new oversized files, unregistered long clauses, excessive nesting, implicit
-three-call chains, stale exclusions, and malformed generated headers. A temporary clause record is
-visible debt rather than a permanent grandfather list. Removing a record requires reducing the
-measured clause to the limit; changing its line count or identifier invalidates it immediately.
+The quality gate blocks every oversized file, long clause, excessive nesting, implicit three-call
+chain, stale exclusion, and malformed generated header that is not covered by the current exact
+baseline. The dateless inventory started with 59 clause records and now contains 57 after two
+clauses fell below the limit while merging current main; new code has no exemption path. The count
+can only decrease. Each run emits one deterministic waterline with the remaining record count,
+largest scoped file, and largest Elixir clause. When the remaining count reaches zero, a separate
+change removes the baseline mechanism. Changing an entry's path, identifier, or measured line count
+invalidates that match immediately.
+
+Responsibility fragments compile their existing clauses into the owning module through `quote`.
+Each fragment suppresses only Credo's `LongQuoteBlocks` advisory at that boundary; strict Credo and
+the nesting-depth check still inspect the quoted clauses.
 
 This owner changes repository organization and quality enforcement only. Product behavior, public
 interfaces, runtime configuration authority, persistence, Linear behavior, and deployment remain

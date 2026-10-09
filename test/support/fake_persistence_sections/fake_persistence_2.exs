@@ -4,8 +4,99 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
-      alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+      alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectAuthority, WorkflowScopes}
+      alias SymphonyElixir.Persistence.Project
+
+      def list_events(opts \\ []) do
+        ensure_started()
+
+        Agent.get(@name, fn state ->
+          state.events
+          |> filter_eq(:issue_identifier, Keyword.get(opts, :issue_identifier))
+          |> filter_eq(:run_id, Keyword.get(opts, :run_id))
+          |> filter_eq(:event_type, Keyword.get(opts, :event_type))
+          |> filter_eq(:project_id, Keyword.get(opts, :project_id))
+          |> sort_events(Keyword.get(opts, :order))
+          |> Enum.take(Keyword.get(opts, :limit, length(state.events)))
+        end)
+      end
+
+      def list_analytics_events do
+        ensure_started()
+        Agent.get(@name, & &1.events)
+      end
+
+      def get_event(id), do: Agent.get(@name, fn state -> Enum.find(state.events, &(&1.id == id)) end)
+
+      def worker_event_transaction(fun), do: fun.()
+
+      def record_event(attrs) when is_map(attrs) do
+        ensure_started()
+
+        event =
+          attrs
+          |> Map.put_new(:id, "event-#{System.unique_integer([:positive])}")
+          |> Map.put_new(:occurred_at, DateTime.utc_now())
+
+        Agent.update(@name, fn state ->
+          state
+          |> record_call({:record_event, event})
+          |> update_in([:events], &[event | &1])
+        end)
+
+        {:ok, event}
+      end
+
+      def list_workers(_opts \\ []) do
+        ensure_started()
+        Agent.get(@name, & &1.workers)
+      end
+
+      def list_worker_sessions(_opts \\ []) do
+        ensure_started()
+        Agent.get(@name, & &1.worker_sessions)
+      end
+
+      def available_worker_slots(opts \\ []) do
+        ensure_started()
+
+        Agent.get_and_update(@name, fn state ->
+          capacity =
+            state.worker_sessions
+            |> Enum.filter(&(Map.get(&1, :status) == "online"))
+            |> Enum.sum_by(&Map.fetch!(&1, :total_slots))
+
+          {capacity, record_call(state, {:available_worker_slots, opts})}
+        end)
+      end
+
+      def active_worker_session(worker_id, session_id) do
+        ensure_started()
+
+        Agent.get(@name, fn state ->
+          worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
+          session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
+          if worker && session && session.worker_id == worker_id && session.status == "online", do: {:ok, worker, session}, else: {:error, :worker_session_not_found}
+        end)
+      end
+
+      def worker_session_identity(worker_id, session_id) do
+        ensure_started()
+
+        Agent.get_and_update(@name, fn state ->
+          worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
+          session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
+
+          result =
+            if worker && session && session.worker_id == worker_id,
+              do: {:ok, worker, session},
+              else: {:error, :worker_session_not_found}
+
+          {result, record_call(state, {:worker_session_identity, worker_id, session_id})}
+        end)
+      end
 
       def fresh_worker_session(worker_id, session_id, opts \\ []) do
         now = Keyword.get(opts, :now, DateTime.utc_now())
@@ -33,11 +124,9 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
       end
 
       defp fresh_session_result(worker, session, cutoff) do
-        if DateTime.compare(session.last_heartbeat_at, cutoff) in [:eq, :gt] do
-          {:ok, worker, session}
-        else
-          {:error, :worker_session_stale}
-        end
+        if DateTime.compare(session.last_heartbeat_at, cutoff) in [:eq, :gt],
+          do: {:ok, worker, session},
+          else: {:error, :worker_session_stale}
       end
 
       def heartbeat_worker(worker_id, session_id) do
@@ -49,9 +138,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end
       end
 
-      def expire_stale_worker_sessions(_opts \\ []) do
-        0
-      end
+      def expire_stale_worker_sessions(_opts \\ []), do: 0
 
       def export_workflow(workflow) do
         loaded = %{
@@ -59,22 +146,18 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
           prompt: Map.get(workflow, :prompt_body, "")
         }
 
-        with {:ok, project_config} <-
-               Elixir.SymphonyElixir.Config.WorkflowScopes.project_from_loaded(loaded) do
+        with {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
           {:ok, SymphonyElixir.Workflow.to_markdown(project_config, "")}
         end
       end
 
       def export_package(instance, workflow) do
-        project_config =
-          apply_project_runtime_settings(
-            Map.fetch!(workflow, :yaml_config),
-            project_for_workflow(workflow)
-          )
+        project = project_for_workflow(workflow)
+        project_config = ProjectAuthority.strip(Map.fetch!(workflow, :yaml_config))
 
-        with {:ok, loaded} <-
-               Elixir.SymphonyElixir.Config.WorkflowScopes.combined(instance, project_config) do
-          {:ok, SymphonyElixir.Workflow.to_markdown(loaded.config, loaded.prompt)}
+        with {:ok, loaded} <- WorkflowScopes.combined(instance, project_config) do
+          portable = ProjectAuthority.inject(loaded.config, project)
+          {:ok, SymphonyElixir.Workflow.to_markdown(portable, loaded.prompt)}
         end
       end
 
@@ -102,11 +185,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
       end
 
       defp replace_run(existing, id, updated) do
-        if Map.get(existing, :id) == id do
-          updated
-        else
-          existing
-        end
+        if Map.get(existing, :id) == id, do: updated, else: existing
       end
 
       defp sort_runs(runs) do
@@ -119,13 +198,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end)
       end
 
-      defp apply_run_cursor(runs, nil) do
-        runs
-      end
-
-      defp apply_run_cursor(runs, "") do
-        runs
-      end
+      defp apply_run_cursor(runs, nil), do: runs
+      defp apply_run_cursor(runs, ""), do: runs
 
       defp apply_run_cursor(runs, cursor) when is_binary(cursor) do
         case decode_fake_run_cursor(cursor) do
@@ -143,13 +217,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end
       end
 
-      defp fake_run_cursor(_run, false) do
-        nil
-      end
-
-      defp fake_run_cursor(nil, _has_more) do
-        nil
-      end
+      defp fake_run_cursor(_run, false), do: nil
+      defp fake_run_cursor(nil, _has_more), do: nil
 
       defp fake_run_cursor(run, true) do
         encoded =
@@ -172,33 +241,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end
       end
 
-      defp run_inserted_at(%{inserted_at: %DateTime{} = inserted_at}) do
-        inserted_at
-      end
+      defp run_inserted_at(%{inserted_at: %DateTime{} = inserted_at}), do: inserted_at
+      defp run_inserted_at(%{started_at: %DateTime{} = started_at}), do: started_at
+      defp run_inserted_at(_run), do: ~U[1970-01-01 00:00:00Z]
 
-      defp run_inserted_at(%{started_at: %DateTime{} = started_at}) do
-        started_at
-      end
-
-      defp run_inserted_at(_run) do
-        ~U[1970-01-01 00:00:00Z]
-      end
-
-      def finish_run(run_id, status, failure_reason \\ nil, opts \\ []) do
-        case get_run(run_id) do
-          nil ->
-            {:error, :not_found}
-
-          run ->
-            update_run(
-              run,
-              SymphonyElixir.RunLifecycle.terminal_attrs(
-                status,
-                failure_reason,
-                Keyword.get(opts, :finished_at, DateTime.utc_now())
-              )
-            )
-        end
+      def finish_run(run_id, status, terminal, opts \\ []) do
+        SymphonyElixir.RunLifecycle.finish_run(__MODULE__, run_id, status, terminal, opts)
       end
 
       def list_runs_for_issue(identifier, _opts \\ []) do
@@ -216,9 +264,18 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
 
       def workflow_to_loaded(instance, record) do
         project = project_for_workflow(record)
-        project_config = apply_project_runtime_settings(Map.fetch!(record, :yaml_config), project)
+        config = Map.fetch!(record, :yaml_config)
 
-        Elixir.SymphonyElixir.Config.WorkflowScopes.compose(instance, project_config, record.project_id)
+        project_config =
+          case project do
+            nil ->
+              ProjectAuthority.strip(config)
+
+            project ->
+              ProjectAuthority.inject(ProjectAuthority.strip(config), project)
+          end
+
+        WorkflowScopes.compose(instance, project_config, record.project_id)
       end
 
       defp project_for_workflow(workflow) do
@@ -247,9 +304,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
       end
 
       defp select_current_project_workflow(project_workflows) do
-        case Enum.find(project_workflows, fn {project, _workflow} ->
-               configured_default_project?(project)
-             end) do
+        case Enum.find(project_workflows, fn {project, _workflow} -> configured_default_project?(project) end) do
           {_project, workflow} ->
             workflow
 
@@ -262,9 +317,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end
       end
 
-      defp configured_default_project?(project) do
-        Map.get(project, :slug) == "default"
-      end
+      defp configured_default_project?(project), do: Map.get(project, :slug) == "default"
 
       defp runtime_project?(project) do
         Map.get(project, :enabled, true) == true and bootstrap_default_placeholder?(project) == false
@@ -274,90 +327,22 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         Map.get(project, :slug) == "default" and text_blank?(Map.get(project, :repository_url))
       end
 
-      defp text_blank?(value) when is_binary(value) do
-        String.trim(value) == ""
-      end
+      defp text_blank?(value) when is_binary(value), do: String.trim(value) == ""
+      defp text_blank?(nil), do: true
+      defp text_blank?(_value), do: false
 
-      defp text_blank?(nil) do
-        true
-      end
-
-      defp text_blank?(_value) do
-        false
-      end
-
-      defp apply_project_runtime_settings(config, nil) do
-        config
-      end
-
-      defp apply_project_runtime_settings(config, project) do
-        config
-        |> put_in_path(["tracker", "project_slug"], Map.get(project, :linear_project_slug))
-        |> update_project_config(project)
-      end
-
-      defp update_project_config(config, project) do
-        existing = Map.get(config, "project", %{})
-
-        project_config =
-          existing
-          |> put_project_value("repository_url", Map.get(project, :repository_url))
-          |> put_project_value("default_branch", Map.get(project, :default_branch) || "main")
-          |> put_project_value("checkout_depth", Map.get(project, :checkout_depth) || 1)
-          |> put_project_value("source_strategy", Map.get(project, :source_strategy) || "clone")
-          |> put_project_value("worktree_fetch", Map.get(project, :worktree_fetch) != false)
-          |> put_project_value("worktree_cleanup", Map.get(project, :worktree_cleanup) != false)
-
-        Map.put(config, "project", project_config)
-      end
-
-      defp put_project_value(config, key, value) when is_binary(value) do
-        value = String.trim(value)
-
-        if value == "" do
-          Map.delete(config, key)
-        else
-          Map.put(config, key, value)
+      defp validate_project_authority(project, config) do
+        case ProjectAuthority.conflicts(project, config) do
+          [] -> :ok
+          conflicts -> {:error, {:project_authority_conflict, conflicts}}
         end
       end
 
-      defp put_project_value(config, key, nil) do
-        Map.delete(config, key)
-      end
+      def worker_heartbeat_interval_seconds, do: 10
 
-      defp put_project_value(config, key, value) do
-        Map.put(config, key, value)
-      end
+      def worker_lease_duration_seconds, do: 60
 
-      defp put_in_path(config, path, value) do
-        case is_nil(value) or (is_binary(value) and String.trim(value) == "") do
-          true -> delete_in_path(config, path)
-          false -> put_in(config, Enum.map(path, &Access.key(&1, %{})), value)
-        end
-      end
-
-      defp delete_in_path(config, [key]) do
-        Map.delete(config, key)
-      end
-
-      defp delete_in_path(config, [key | rest]) do
-        case Map.get(config, key) do
-          nested when is_map(nested) -> Map.put(config, key, delete_in_path(nested, rest))
-          _ -> config
-        end
-      end
-
-      def worker_heartbeat_interval_seconds do
-        10
-      end
-
-      def worker_lease_duration_seconds do
-        60
-      end
-
-      def worker_protocol_version do
-        "worker-api-v1"
-      end
+      def worker_protocol_version, do: "worker-api-v1"
 
       def valid_worker_registration_token?(token) do
         :symphony_elixir
@@ -454,6 +439,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
           legacy_instance_workflow_candidates: nil,
           next_legacy_reconciliation_error: nil,
           next_import_workflow_error: nil,
+          next_runtime_publication_error: nil,
+          runtime_publication_count: 0,
           users: %{}
         }
       end
@@ -466,10 +453,26 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
       end
 
       defp maybe_publish_runtime do
-        if Process.whereis(SymphonyElixir.WorkflowStore) do
-          SymphonyElixir.WorkflowStore.force_reload()
-        else
-          :ok
+        failure =
+          Agent.get_and_update(@name, fn state ->
+            next_state =
+              state
+              |> Map.update!(:runtime_publication_count, &(&1 + 1))
+              |> Map.put(:next_runtime_publication_error, nil)
+
+            {state.next_runtime_publication_error, next_state}
+          end)
+
+        case failure do
+          nil ->
+            if Process.whereis(SymphonyElixir.WorkflowStore) do
+              SymphonyElixir.WorkflowStore.force_reload()
+            else
+              :ok
+            end
+
+          reason ->
+            {:error, reason}
         end
       end
 
@@ -483,7 +486,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
       end
 
       defp reconcile_legacy_state(state, project_slug) do
-        case Elixir.SymphonyElixir.Config.LegacyWorkflowConvergence.select_candidate(
+        case LegacyWorkflowConvergence.select_candidate(
                state.legacy_instance_workflow_candidates,
                project_slug
              ) do
@@ -500,25 +503,19 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end
       end
 
-      defp put_workflow_record(workflows, nil) do
-        workflows
-      end
+      defp put_workflow_record(workflows, nil), do: workflows
 
       defp put_workflow_record(workflows, workflow) do
         [workflow | reject_by_project_id(workflows, Map.get(workflow, :project_id))]
       end
 
-      defp reject_by_id(records, id) do
-        Enum.reject(records, &(Map.get(&1, :id) == id))
-      end
+      defp reject_by_id(records, id), do: Enum.reject(records, &(Map.get(&1, :id) == id))
 
       defp reject_by_project_id(records, project_id) do
         Enum.reject(records, &(Map.get(&1, :project_id) == project_id))
       end
 
-      defp record_call(state, call) do
-        update_in(state.calls, &[call | &1])
-      end
+      defp record_call(state, call), do: update_in(state.calls, &[call | &1])
 
       defp replace_project(projects, id, updated) do
         Enum.map(projects, fn
@@ -551,29 +548,16 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))
       end
 
-      defp filter_eq(values, _key, nil) do
-        values
-      end
-
-      defp filter_eq(values, _key, "") do
-        values
-      end
+      defp filter_eq(values, _key, nil), do: values
+      defp filter_eq(values, _key, ""), do: values
 
       defp filter_eq(values, key, expected) do
         Enum.filter(values, &(Map.get(&1, key) == expected))
       end
 
-      defp sort_events(events, :asc) do
-        Enum.sort_by(events, &event_time_sort_key/1)
-      end
-
-      defp sort_events(events, "asc") do
-        Enum.sort_by(events, &event_time_sort_key/1)
-      end
-
-      defp sort_events(events, _order) do
-        events
-      end
+      defp sort_events(events, :asc), do: Enum.sort_by(events, &event_time_sort_key/1)
+      defp sort_events(events, "asc"), do: Enum.sort_by(events, &event_time_sort_key/1)
+      defp sort_events(events, _order), do: events
 
       defp event_time_sort_key(event) do
         case Map.get(event, :occurred_at) do
@@ -589,6 +573,45 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         end)
       end
 
+      defp admission_issue(issues, attrs) do
+        existing =
+          Enum.find(issues, fn issue ->
+            Map.get(issue, :project_id) == Map.fetch!(attrs, :project_id) and
+              Map.get(issue, :identifier) == Map.fetch!(attrs, :identifier)
+          end)
+
+        Map.merge(existing || %{id: "fake-issue-#{System.unique_integer([:positive])}"}, attrs)
+      end
+
+      defp replaceable_orphan?(%{started_at: %DateTime{} = started_at}, %DateTime{} = cutoff, opts) do
+        Keyword.get(opts, :manual_rerun?, false) and DateTime.compare(started_at, cutoff) == :lt
+      end
+
+      defp replaceable_orphan?(_run, _cutoff, _opts), do: false
+
+      defp replace_fake_orphan(runs, events, nil, _issue, _now), do: {runs, events, nil}
+
+      defp replace_fake_orphan(runs, events, active_run, issue, now) do
+        failure =
+          SymphonyElixir.RunFailure.classify({:assignment_expired, %{reason: "operator_manual_rerun", phase: "admission", prior_run_id: active_run.id}})
+
+        terminal = SymphonyElixir.RunLifecycle.terminal_attrs("failed", failure, now)
+        replaced = Map.merge(active_run, terminal)
+        runs = Enum.map(runs, fn run -> if run.id == active_run.id, do: replaced, else: run end)
+
+        event = %{
+          id: "event-#{System.unique_integer([:positive])}",
+          project_id: issue.project_id,
+          run_id: replaced.id,
+          issue_identifier: issue.identifier,
+          event_type: "run.failed",
+          payload: %{"failure_reason" => terminal.failure_reason, "failure_evidence" => terminal.failure_evidence},
+          occurred_at: now
+        }
+
+        {runs, [event | events], replaced}
+      end
+
       @fixture_keys %{
         "id" => :id,
         "kind" => :kind,
@@ -602,32 +625,29 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         "execution_mode" => :execution_mode,
         "attempt" => :attempt,
         "failure_reason" => :failure_reason,
+        "failure_evidence" => :failure_evidence,
+        "execution_summary" => :execution_summary,
         "started_at" => :started_at,
         "finished_at" => :finished_at,
         "inserted_at" => :inserted_at,
         "updated_at" => :updated_at
       }
 
-      defp fixture_key(key) do
-        Map.fetch!(@fixture_keys, key)
-      end
+      defp fixture_key(key), do: Map.fetch!(@fixture_keys, key)
 
       defp reject_project_hook_fields(attrs) do
         hook_fields = [
-          after_create_hook: "after_create_hook",
-          before_run_hook: "before_run_hook",
-          after_run_hook: "after_run_hook",
-          before_remove_hook: "before_remove_hook"
+          {:after_create_hook, "after_create_hook"},
+          {:before_run_hook, "before_run_hook"},
+          {:after_run_hook, "after_run_hook"},
+          {:before_remove_hook, "before_remove_hook"}
         ]
 
         instance_fields =
           attrs
           |> Map.keys()
           |> Enum.map(&to_string/1)
-          |> Enum.filter(
-            &(&1 in (Elixir.SymphonyElixir.Config.WorkflowScopes.instance_sections() ++
-                       ["prompt_body", "workflow"]))
-          )
+          |> Enum.filter(&(&1 in (WorkflowScopes.instance_sections() ++ ["prompt_body", "workflow"])))
 
         hook_fields =
           hook_fields
@@ -639,11 +659,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
 
         invalid = Enum.sort(Enum.uniq(instance_fields ++ hook_fields))
 
-        if invalid == [] do
-          :ok
-        else
-          {:error, {:out_of_scope_project_fields, invalid}}
-        end
+        if invalid == [], do: :ok, else: {:error, {:out_of_scope_project_fields, invalid}}
       end
     end
   end

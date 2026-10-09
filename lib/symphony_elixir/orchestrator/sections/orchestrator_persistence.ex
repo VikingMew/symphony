@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       require Logger
 
@@ -18,12 +19,14 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         Nap.Results,
         Payload,
         PersistenceProvider,
+        RunAdmission,
+        RunFailure,
         RunLifecycle,
         StatusDashboard,
         Tracker,
         WorkflowStore,
         Workspace,
-        WorkspaceDiskGuard
+        WorkspacePreflight
       }
 
       alias SymphonyElixir.Config.Schema
@@ -32,10 +35,22 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Orchestrator.InputBlocker
       alias SymphonyElixir.Orchestrator.RetryPolicy
+      alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
       alias SymphonyElixir.Orchestrator.SessionHistory
       alias SymphonyElixir.Worker.AssignmentManager
+      alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
 
-      alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
+      defp running_seconds(%DateTime{} = started_at, %DateTime{} = now) do
+        max(0, DateTime.diff(now, started_at, :second))
+      end
+
+      defp running_seconds(_started_at, _now), do: 0
+
+      defp running_entry_state(%{issue: %{state: state}}), do: state
+      defp running_entry_state(metadata), do: Map.get(metadata, :state, "running")
+
+      defp running_entry_kind(%RunningIssue{kind: kind}), do: Atom.to_string(kind)
+      defp running_entry_kind(%RunningOperator{kind: kind}), do: Atom.to_string(kind)
 
       defp persist_polled_issues(issues) do
         if persistence_enabled?() do
@@ -61,23 +76,12 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         end
       end
 
-      defp persist_polled_issue(_issue, _project_id) do
-        :ok
-      end
+      defp persist_polled_issue(_issue, _project_id), do: :ok
 
+      # The workflow context is set by Config.with_workflow_context/2 while the
+      # orchestrator iterates enabled projects.
       defp current_workflow_context do
         Config.current_workflow()
-      end
-
-      defp current_workflow_record(%{project_id: project_id}) when is_binary(project_id) do
-        case Enum.find(persistence().list_projects(), &(&1.id == project_id)) do
-          nil -> nil
-          project -> persistence().current_workflow(project)
-        end
-      end
-
-      defp current_workflow_record(_workflow) do
-        persistence().current_workflow()
       end
 
       defp persist_run_started_event(issue, run, worker_host) do
@@ -94,9 +98,9 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         end
       end
 
-      defp persist_run_started(%Issue{} = issue, attempt, worker_host) do
+      defp persist_run_started(%Issue{} = issue, attempt, worker_host, admission) do
         if persistence_enabled?() do
-          run_started_persist(issue, attempt, worker_host)
+          run_started_persist(issue, attempt, worker_host, admission)
         else
           {:ok, nil}
         end
@@ -107,17 +111,16 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           {:error, {:start_run, {:exception, error}}}
       end
 
-      defp run_started_persist(issue, attempt, worker_host) do
+      defp run_started_persist(issue, attempt, worker_host, admission) do
         case current_workflow_context() do
           {:ok, workflow} ->
             project_id = Map.get(workflow, :project_id)
             context = persistence_context(issue)
 
             with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
-                 workflow_record = current_workflow_record(workflow),
                  run_attrs =
                    issue
-                   |> Events.run_attrs(workflow_record, "centralized", attempt)
+                   |> Events.run_attrs(admission, attempt)
                    |> Map.put(:issue_id, issue_record.id)
                    |> Map.put_new(:project_id, project_id),
                  {:ok, run} <- persist_create_run(context, run_attrs) do
@@ -145,9 +148,9 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         persistence().create_run(run_attrs)
       end
 
-      defp persist_operator_run_started(task) do
+      defp persist_operator_run_started(task, admission) do
         if persistence_enabled?() do
-          operator_run_started_persist(task)
+          operator_run_started_persist(task, admission)
         else
           {:ok, nil}
         end
@@ -158,13 +161,12 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           {:error, {:start_operator_run, {:exception, error}}}
       end
 
-      defp operator_run_started_persist(task) do
+      defp operator_run_started_persist(task, admission) do
         case current_workflow_context() do
-          {:ok, workflow} ->
-            workflow_record = current_workflow_record(workflow)
+          {:ok, _workflow} ->
             context = %{issue_id: nil, issue_identifier: nil, run_id: task.run_id, session_id: nil}
 
-            with {:ok, run} <- persist_create_operator_run(context, task, workflow_record) do
+            with {:ok, run} <- persist_create_operator_run(context, task, admission) do
               persist_operator_started_event(task, run)
             end
 
@@ -173,33 +175,33 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         end
       end
 
-      defp persist_create_operator_run(context, task, workflow_record) do
+      defp persist_create_operator_run(context, task, admission) do
         required_persistence_write(:create_operator_run, context, fn ->
-          create_operator_run!(task, workflow_record)
+          create_operator_run!(task, admission)
         end)
       end
 
-      defp create_operator_run!(task, _workflow_record) do
+      defp create_operator_run!(task, admission) do
         persistence().create_run(%{
           kind: to_string(task.kind),
           profile: to_string(task.kind),
           label: operator_task_label(task.kind),
           project_id: task.project_id,
           status: "running",
-          execution_mode: "centralized",
+          execution_mode: admission.execution_mode,
           attempt: 0,
           started_at: task.started_at
         })
       end
 
-      defp persist_run_finished(running_entry, status, failure_reason) when is_map(running_entry) do
+      defp persist_run_finished(running_entry, status, terminal) when is_map(running_entry) do
         if persistence_enabled?() do
           run_id = Map.get(running_entry, :run_id)
           context = persistence_context(running_entry)
 
-          case RunLifecycle.finish_run(persistence(), run_id, status, failure_reason) do
+          case RunLifecycle.finish_run(persistence(), run_id, status, terminal) do
             {:ok, _run} ->
-              persist_event(Events.run_finished_event(running_entry, status, failure_reason))
+              persist_event(Events.run_finished_event(running_entry, status, terminal))
 
             :noop ->
               :ok
@@ -217,11 +219,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp persist_workspace_update(running_entry) when is_map(running_entry) do
-        if persistence_enabled?() do
-          record_workspace_update(running_entry)
-        else
-          :ok
-        end
+        if persistence_enabled?(), do: record_workspace_update(running_entry), else: :ok
       end
 
       defp record_workspace_update(running_entry) do
@@ -252,6 +250,33 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           Map.get(running_entry, :run_id)
         )
       end
+
+      defp persist_linear_request_failure(workflow, operation, reason) do
+        payload =
+          reason
+          |> linear_request_failure_payload()
+          |> Map.merge(%{
+            "operation" => operation,
+            "project_slug" => get_in(workflow.config, ["tracker", "project_slug"])
+          })
+
+        record_event(%{
+          project_id: workflow.project_id,
+          event_type: "linear.request_failed",
+          issue_identifier: nil,
+          run_id: nil,
+          payload: payload
+        })
+      end
+
+      defp linear_request_failure_payload({:linear_api_status, status, _body}) when is_integer(status),
+        do: %{"status" => status, "reason" => "http_status"}
+
+      defp linear_request_failure_payload({:linear_api_request, reason}),
+        do: %{"reason" => "transport:#{reason}"}
+
+      defp linear_request_failure_payload(reason),
+        do: %{"reason" => inspect(reason, limit: 20, printable_limit: 500)}
 
       defp persist_event(event_type, issue_identifier, payload, run_id \\ nil) do
         persist_event(Events.event_attrs(event_type, issue_identifier, payload, run_id))
@@ -337,7 +362,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp log_persistence_failure(operation, action, context, reason) do
-        Logger.error("Orchestrator persistence failed operation=#{operation} action=#{action} #{persistence_log_context(context)} reason=#{inspect(reason, limit: 20, printable_limit: 1000)}")
+        Logger.error("Orchestrator persistence failed operation=#{operation} action=#{action} #{persistence_log_context(context)} reason=#{inspect(reason, limit: 20, printable_limit: 1_000)}")
       end
 
       defp persistence_log_context(context) do
@@ -363,28 +388,17 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         issue = Map.get(running_entry, :issue)
 
         %{
-          issue_id:
-            Map.get(running_entry, :issue_id) ||
-              if is_map(issue) do
-                Map.get(issue, :id)
-              end,
+          issue_id: Map.get(running_entry, :issue_id) || if(is_map(issue), do: Map.get(issue, :id)),
           issue_identifier: Map.get(running_entry, :identifier),
           session_id: Map.get(running_entry, :session_id),
           run_id: Map.get(running_entry, :run_id)
         }
       end
 
-      defp log_field(nil) do
-        "n/a"
-      end
+      defp log_field(nil), do: "n/a"
+      defp log_field(value), do: inspect(value, limit: 5, printable_limit: 200)
 
-      defp log_field(value) do
-        inspect(value, limit: 5, printable_limit: 200)
-      end
-
-      defp persistence do
-        PersistenceProvider.module()
-      end
+      defp persistence, do: PersistenceProvider.module()
 
       defp persistence_enabled? do
         Process.whereis(__MODULE__) == self()

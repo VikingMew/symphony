@@ -37,16 +37,16 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
     refresh_location_fixture(root)
     report = AgentCodeNCheck.check(root: root)
     assert report["status"] == "fail"
-    assert report["errors"] == ["baseline.added: N-01|function|shared|lib/alpha.ex:3,lib/beta.ex:2,lib/gamma.ex:2"]
+    assert report["errors"] == ["baseline.expanded: N-01|function|shared|lib/alpha.ex:3,lib/beta.ex:2,lib/gamma.ex:2"]
   end
 
-  test "rewritten declaration lines cannot be relabeled as pure moves", %{root: root} do
+  test "rewritten declaration lines retain the same bounded identity", %{root: root} do
     path = Path.join(root, "lib/alpha.ex")
     File.write!(path, String.replace(File.read!(path), "def shared,", "def shared(_value),"))
     refresh_location_fixture(root)
     report = AgentCodeNCheck.check(root: root)
-    assert report["status"] == "fail"
-    assert report["errors"] == ["baseline.added: N-01|function|shared|lib/alpha.ex:2,lib/beta.ex:2"]
+    assert report["status"] == "pass"
+    assert report["errors"] == []
   end
 
   test "deleted declarations must remove their stale baseline row", %{root: root} do

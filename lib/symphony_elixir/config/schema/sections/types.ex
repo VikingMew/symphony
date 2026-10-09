@@ -4,21 +4,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
-      alias SymphonyElixir.Config.Schema.{
-        Agent,
-        Analytics,
-        Codex,
-        Hooks,
-        Observability,
-        Polling,
-        Project,
-        Server,
-        StringOrMap,
-        Tracker,
-        Worker,
-        Workspace
-      }
+      @moduledoc false
 
       use Ecto.Schema
 
@@ -38,46 +26,25 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         @behaviour Ecto.Type
 
         @spec type() :: :map
-        def type do
-          :map
-        end
+        def type, do: :map
 
         @spec embed_as(term()) :: :self
-        def embed_as(_format) do
-          :self
-        end
+        def embed_as(_format), do: :self
 
         @spec equal?(term(), term()) :: boolean()
-        def equal?(left, right) do
-          left == right
-        end
+        def equal?(left, right), do: left == right
 
         @spec cast(term()) :: {:ok, String.t() | map()} | :error
-        def cast(value) when is_binary(value) or is_map(value) do
-          {:ok, value}
-        end
-
-        def cast(_value) do
-          :error
-        end
+        def cast(value) when is_binary(value) or is_map(value), do: {:ok, value}
+        def cast(_value), do: :error
 
         @spec load(term()) :: {:ok, String.t() | map()} | :error
-        def load(value) when is_binary(value) or is_map(value) do
-          {:ok, value}
-        end
-
-        def load(_value) do
-          :error
-        end
+        def load(value) when is_binary(value) or is_map(value), do: {:ok, value}
+        def load(_value), do: :error
 
         @spec dump(term()) :: {:ok, String.t() | map()} | :error
-        def dump(value) when is_binary(value) or is_map(value) do
-          {:ok, value}
-        end
-
-        def dump(_value) do
-          :error
-        end
+        def dump(value) when is_binary(value) or is_map(value), do: {:ok, value}
+        def dump(_value), do: :error
       end
 
       defmodule Tracker do
@@ -163,11 +130,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
 
         defp validate_optional_non_blank(changeset, field) do
           validate_change(changeset, field, fn ^field, value ->
-            if is_binary(value) and String.trim(value) == "" do
-              [{field, "must not be blank"}]
-            else
-              []
-            end
+            if is_binary(value) and String.trim(value) == "",
+              do: [{field, "must not be blank"}],
+              else: []
           end)
         end
       end
@@ -219,11 +184,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
 
         defp validate_optional_non_blank(changeset, field) do
           validate_change(changeset, field, fn ^field, value ->
-            if is_binary(value) and String.trim(value) == "" do
-              [{field, "must not be blank"}]
-            else
-              []
-            end
+            if is_binary(value) and String.trim(value) == "",
+              do: [{field, "must not be blank"}],
+              else: []
           end)
         end
 
@@ -234,16 +197,10 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         end
 
         defp command_error(field, command) when is_binary(command) do
-          if String.trim(command) == "" do
-            [{field, "commands must not be blank"}]
-          else
-            []
-          end
+          if String.trim(command) == "", do: [{field, "commands must not be blank"}], else: []
         end
 
-        defp command_error(field, _command) do
-          [{field, "commands must be strings"}]
-        end
+        defp command_error(field, _command), do: [{field, "commands must be strings"}]
 
         defp validate_required_gates(changeset) do
           validate_change(changeset, :required_gates, &required_gate_errors/2)
@@ -253,11 +210,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
           gates
           |> Enum.with_index()
           |> Enum.flat_map(fn {gate, index} ->
-            if valid_required_gate?(gate) do
-              []
-            else
-              [required_gates: "gate #{index} requires name, command, and positive timeout_ms"]
-            end
+            if valid_required_gate?(gate),
+              do: [],
+              else: [required_gates: "gate #{index} requires name, command, and positive timeout_ms"]
           end)
         end
 
@@ -269,17 +224,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
             positive_integer?(gate["timeout_ms"])
         end
 
-        defp valid_required_gate?(_gate) do
-          false
-        end
-
-        defp present_string?(value) do
-          is_binary(value) and String.trim(value) != ""
-        end
-
-        defp positive_integer?(value) do
-          is_integer(value) and value > 0
-        end
+        defp valid_required_gate?(_gate), do: false
+        defp present_string?(value), do: is_binary(value) and String.trim(value) != ""
+        defp positive_integer?(value), do: is_integer(value) and value > 0
       end
 
       defmodule Worker do
@@ -318,7 +265,11 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
           schema
           |> cast(
             attrs,
-            [:max_turns, :max_retry_backoff_ms, :max_failure_retries],
+            [
+              :max_turns,
+              :max_retry_backoff_ms,
+              :max_failure_retries
+            ],
             empty_values: []
           )
           |> validate_number(:max_turns, greater_than: 0)
@@ -344,8 +295,8 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
           field(:thread_sandbox, :string, default: "workspace-write")
           field(:turn_sandbox_policy, :map)
           field(:turn_timeout_ms, :integer, default: 3_600_000)
-          field(:read_timeout_ms, :integer, default: 5000)
-          field(:stall_timeout_ms, :integer, default: 300_000)
+          field(:read_timeout_ms, :integer, default: 5_000)
+          field(:stall_timeout_ms, :integer, default: 600_000)
           field(:rate_limit_gate_enabled, :boolean, default: true)
           field(:rate_limit_gate_5h_threshold_percent, :float, default: 5.0)
           field(:rate_limit_gate_7d_threshold_percent, :float, default: 3.0)
@@ -426,16 +377,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
           case get_field(changeset, field) do
             value when is_binary(value) ->
               value = String.trim(value)
-
-              put_change(
-                changeset,
-                field,
-                if value == "" do
-                  nil
-                else
-                  value
-                end
-              )
+              put_change(changeset, field, if(value == "", do: nil, else: value))
 
             _value ->
               changeset
@@ -451,42 +393,26 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
           |> validate_reasoning_effort(model, effort)
         end
 
-        defp validate_model(changeset, nil) do
-          changeset
-        end
+        defp validate_model(changeset, nil), do: changeset
 
         defp validate_model(changeset, model) do
-          if ModelCatalog.model?(model) do
-            changeset
-          else
-            add_error(changeset, :model, "must be one of: #{Enum.join(ModelCatalog.model_ids(), ", ")}")
-          end
+          if ModelCatalog.model?(model),
+            do: changeset,
+            else: add_error(changeset, :model, "must be one of: #{Enum.join(ModelCatalog.model_ids(), ", ")}")
         end
 
-        defp validate_reasoning_effort(changeset, _model, nil) do
-          changeset
-        end
+        defp validate_reasoning_effort(changeset, _model, nil), do: changeset
 
         defp validate_reasoning_effort(changeset, nil, effort) do
-          if ModelCatalog.reasoning_effort?(effort) do
-            changeset
-          else
-            add_error(
-              changeset,
-              :reasoning_effort,
-              "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}"
-            )
-          end
+          if ModelCatalog.reasoning_effort?(effort),
+            do: changeset,
+            else: add_error(changeset, :reasoning_effort, "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}")
         end
 
         defp validate_reasoning_effort(changeset, model, effort) do
           cond do
             not ModelCatalog.reasoning_effort?(effort) ->
-              add_error(
-                changeset,
-                :reasoning_effort,
-                "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}"
-              )
+              add_error(changeset, :reasoning_effort, "must be one of: #{Enum.join(ModelCatalog.reasoning_efforts(), ", ")}")
 
             ModelCatalog.model?(model) and not ModelCatalog.supports_reasoning_effort?(model, effort) ->
               add_error(
@@ -507,16 +433,10 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         end
 
         defp command_error(field, command) when is_binary(command) do
-          if String.trim(command) == "" do
-            [{field, "commands must not be blank"}]
-          else
-            []
-          end
+          if String.trim(command) == "", do: [{field, "commands must not be blank"}], else: []
         end
 
-        defp command_error(field, _command) do
-          [{field, "commands must be strings"}]
-        end
+        defp command_error(field, _command), do: [{field, "commands must be strings"}]
       end
 
       defmodule Hooks do
@@ -549,7 +469,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         @primary_key false
         embedded_schema do
           field(:dashboard_enabled, :boolean, default: true)
-          field(:refresh_ms, :integer, default: 1000)
+          field(:refresh_ms, :integer, default: 1_000)
           field(:render_interval_ms, :integer, default: 16)
         end
 

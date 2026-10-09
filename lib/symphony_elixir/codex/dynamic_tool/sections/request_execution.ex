@@ -4,7 +4,12 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
+      @moduledoc """
+      Executes client-side tool calls requested by Codex app-server turns.
+      """
+
       alias SymphonyElixir.Codex.DynamicTool.{IssueCreate, Policy}
       alias SymphonyElixir.Codex.LinearToolAudit
       alias SymphonyElixir.Codex.RefinementDescriptionMeasurement
@@ -16,15 +21,93 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
       alias SymphonyElixir.PRReview
       alias SymphonyElixir.StateName
 
-      @task_read_query "query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {\n  issue(id: $id) {\n    id\n    identifier\n    title\n    description\n    url\n    branchName\n    priority\n    state {\n      name\n    }\n    labels {\n      nodes {\n        name\n      }\n    }\n    comments(first: $commentFirst) {\n      nodes {\n        id\n        body\n        createdAt\n        updatedAt\n        user {\n          name\n        }\n      }\n    }\n  }\n}\n"
+      @task_read_query """
+      query SymphonyLinearTaskRead($id: String!, $commentFirst: Int!) {
+        issue(id: $id) {
+          id
+          identifier
+          title
+          description
+          url
+          branchName
+          priority
+          state {
+            name
+          }
+          labels {
+            nodes {
+              name
+            }
+          }
+          comments(first: $commentFirst) {
+            nodes {
+              id
+              body
+              createdAt
+              updatedAt
+              user {
+                name
+              }
+            }
+          }
+        }
+      }
+      """
 
-      @issue_team_states_query "query SymphonyLinearIssueTeamStates($id: String!) {\n  issue(id: $id) {\n    team {\n      states(first: 100) {\n        nodes {\n          id\n          name\n        }\n      }\n    }\n  }\n}\n"
+      @issue_team_states_query """
+      query SymphonyLinearIssueTeamStates($id: String!) {
+        issue(id: $id) {
+          team {
+            states(first: 100) {
+              nodes {
+                id
+                name
+              }
+            }
+          }
+        }
+      }
+      """
 
-      @issue_update_mutation "mutation SymphonyLinearTaskIssueUpdate($id: String!, $input: IssueUpdateInput!) {\n  issueUpdate(id: $id, input: $input) {\n    success\n    issue {\n      id\n      identifier\n      state {\n        name\n      }\n      updatedAt\n    }\n  }\n}\n"
+      @issue_update_mutation """
+      mutation SymphonyLinearTaskIssueUpdate($id: String!, $input: IssueUpdateInput!) {
+        issueUpdate(id: $id, input: $input) {
+          success
+          issue {
+            id
+            identifier
+            state {
+              name
+            }
+            updatedAt
+          }
+        }
+      }
+      """
 
-      @comment_create_mutation "mutation SymphonyLinearTaskCommentCreate($issueId: String!, $body: String!) {\n  commentCreate(input: {issueId: $issueId, body: $body}) {\n    success\n    comment {\n      id\n      createdAt\n    }\n  }\n}\n"
+      @comment_create_mutation """
+      mutation SymphonyLinearTaskCommentCreate($issueId: String!, $body: String!) {
+        commentCreate(input: {issueId: $issueId, body: $body}) {
+          success
+          comment {
+            id
+            createdAt
+          }
+        }
+      }
+      """
 
-      @attachment_create_mutation "mutation SymphonyLinearTaskAttachmentCreate($input: AttachmentCreateInput!) {\n  attachmentCreate(input: $input) {\n    success\n    attachment {\n      id\n      title\n    }\n  }\n}\n"
+      @attachment_create_mutation """
+      mutation SymphonyLinearTaskAttachmentCreate($input: AttachmentCreateInput!) {
+        attachmentCreate(input: $input) {
+          success
+          attachment {
+            id
+            title
+          }
+        }
+      }
+      """
 
       @read_tool "linear_task_read"
       @update_tool "linear_task_update"
@@ -170,9 +253,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
             end)
 
           @handoff_tool ->
-            execute_with_audit(@handoff_tool, arguments, opts, fn ->
-              execute_handoff(arguments, opts)
-            end)
+            execute_with_audit(@handoff_tool, arguments, opts, fn -> execute_handoff(arguments, opts) end)
 
           @review_context_tool ->
             execute_review_context(arguments, opts)
@@ -261,13 +342,8 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
         ]
       end
 
-      def tool_specs("implementation") do
-        tool_specs()
-      end
-
-      def tool_specs(_profile) do
-        tool_specs()
-      end
+      def tool_specs("implementation"), do: tool_specs()
+      def tool_specs(_profile), do: tool_specs()
 
       defp execute_review_context(arguments, opts) do
         with "review" <- Keyword.get(opts, :profile),
@@ -287,13 +363,8 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
              :ok <- submitter.(result) do
           success_response(%{"accepted" => true})
         else
-          false ->
-            failure_response(%{
-              "error" => %{"message" => "Reviewed head SHA does not match the immutable job head."}
-            })
-
-          _ ->
-            failure_response(%{"error" => %{"message" => "Invalid review conclusion."}})
+          false -> failure_response(%{"error" => %{"message" => "Reviewed head SHA does not match the immutable job head."}})
+          _ -> failure_response(%{"error" => %{"message" => "Invalid review conclusion."}})
         end
       end
 
@@ -302,21 +373,10 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
         PRReview.normalize(Map.put(arguments, "outcome", review_outcome(outcome)))
       end
 
-      defp normalize_review_result(_arguments) do
-        {:error, :invalid_review_result}
-      end
-
-      defp review_outcome("approve") do
-        :approve
-      end
-
-      defp review_outcome("findings") do
-        :findings
-      end
-
-      defp review_outcome(other) do
-        other
-      end
+      defp normalize_review_result(_arguments), do: {:error, :invalid_review_result}
+      defp review_outcome("approve"), do: :approve
+      defp review_outcome("findings"), do: :findings
+      defp review_outcome(other), do: other
 
       defp handoff_tool_spec do
         %{
@@ -352,11 +412,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
           {:error, reason} ->
             observe_task_update(
               {:error, reason},
-              if is_map(arguments) do
-                arguments
-              else
-                %{}
-              end,
+              if(is_map(arguments), do: arguments, else: %{}),
               opts
             )
 
@@ -401,11 +457,9 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
       end
 
       defp validate_handoff_profile(opts) do
-        if Keyword.get(opts, :profile) == "implementation" do
-          :ok
-        else
-          {:error, {:handoff_not_allowed, Keyword.get(opts, :profile)}}
-        end
+        if Keyword.get(opts, :profile) == "implementation",
+          do: :ok,
+          else: {:error, {:handoff_not_allowed, Keyword.get(opts, :profile)}}
       end
 
       defp normalize_handoff_arguments(arguments) when is_map(arguments) do
@@ -416,30 +470,16 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
              {:ok, commit} <- required_handoff_text(references, "commit", "references.commit"),
              {:ok, _url} <- required_handoff_text(references, "pr_url", "references.pr_url"),
              {:ok, _proof} <- required_handoff_text(references, "pr_proof", "references.pr_proof") do
-          {:ok,
-           %{
-             "comment" => comment,
-             "result" => result,
-             "references" => Map.merge(references, %{"branch" => branch, "commit" => commit})
-           }}
+          {:ok, %{"comment" => comment, "result" => result, "references" => Map.merge(references, %{"branch" => branch, "commit" => commit})}}
         end
       end
 
-      defp normalize_handoff_arguments(_) do
-        {:error, {:invalid_handoff_field, "handoff"}}
-      end
+      defp normalize_handoff_arguments(_), do: {:error, {:invalid_handoff_field, "handoff"}}
 
       defp required_handoff_text(map, key, path \\ nil) do
         case Map.get(map, key) do
-          value when is_binary(value) ->
-            if String.trim(value) == "" do
-              {:error, {:invalid_handoff_field, path || key}}
-            else
-              {:ok, String.trim(value)}
-            end
-
-          _ ->
-            {:error, {:invalid_handoff_field, path || key}}
+          value when is_binary(value) -> if String.trim(value) == "", do: {:error, {:invalid_handoff_field, path || key}}, else: {:ok, String.trim(value)}
+          _ -> {:error, {:invalid_handoff_field, path || key}}
         end
       end
 
@@ -475,18 +515,14 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
         end
       end
 
-      defp normalize_pull_request_arguments(_arguments) do
-        {:error, :invalid_pull_request_payload}
-      end
+      defp normalize_pull_request_arguments(_arguments), do: {:error, :invalid_pull_request_payload}
 
       defp required_pull_request_text(arguments, field) do
         case Map.get(arguments, field) do
           value when is_binary(value) ->
-            if String.trim(value) == "" do
-              {:error, {:invalid_pull_request_field, field}}
-            else
-              {:ok, value}
-            end
+            if String.trim(value) == "",
+              do: {:error, {:invalid_pull_request_field, field}},
+              else: {:ok, value}
 
           _ ->
             {:error, {:invalid_pull_request_field, field}}
@@ -501,11 +537,7 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
       end
 
       defp put_pull_request_proof(pull_request, opts) do
-        Map.put(
-          pull_request,
-          :completion_proof,
-          pull_request_proof(Map.fetch!(pull_request, :url), opts)
-        )
+        Map.put(pull_request, :completion_proof, pull_request_proof(Map.fetch!(pull_request, :url), opts))
       end
 
       defp observe_pull_request(result, opts) do
@@ -515,9 +547,8 @@ defmodule SymphonyElixir.Codex.DynamicTool.Sections.RequestExecution do
         end
       end
 
-      defp normalize_read_arguments(nil) do
-        {:ok, %{"include_activity" => true, "activity_limit" => 50}}
-      end
+      defp normalize_read_arguments(nil),
+        do: {:ok, %{"include_activity" => true, "activity_limit" => 50}}
 
       defp normalize_read_arguments(arguments) when is_map(arguments) do
         include_activity =

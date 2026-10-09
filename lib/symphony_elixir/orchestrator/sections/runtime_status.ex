@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       require Logger
 
@@ -18,12 +19,14 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         Nap.Results,
         Payload,
         PersistenceProvider,
+        RunAdmission,
+        RunFailure,
         RunLifecycle,
         StatusDashboard,
         Tracker,
         WorkflowStore,
         Workspace,
-        WorkspaceDiskGuard
+        WorkspacePreflight
       }
 
       alias SymphonyElixir.Config.Schema
@@ -32,10 +35,101 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
       alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Orchestrator.InputBlocker
       alias SymphonyElixir.Orchestrator.RetryPolicy
+      alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
       alias SymphonyElixir.Orchestrator.SessionHistory
       alias SymphonyElixir.Worker.AssignmentManager
+      alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
 
-      alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
+      defp finish_operator_task(%State{} = state, running_entry, status, failure_reason)
+           when status in [:completed, :failed] do
+        case operator_kind_from_running_entry(running_entry) do
+          nil ->
+            state
+
+          kind ->
+            now = DateTime.utc_now()
+
+            task =
+              state
+              |> operator_task(kind)
+              |> Map.merge(%{
+                status: status,
+                run_id: Map.get(running_entry, :run_id),
+                finished_at: now,
+                failure_reason: failure_reason,
+                summary: operator_task_summary(status, failure_reason, Map.get(running_entry, :run_id))
+              })
+
+            put_operator_task(state, kind, task)
+        end
+      end
+
+      defp operator_task_summary(:completed, _failure_reason, run_id),
+        do: operator_task_results(run_id)
+
+      defp operator_task_summary(:failed, failure_reason, run_id) do
+        run_id
+        |> operator_task_results()
+        |> Map.update!(:failed, &max(&1, 1))
+        |> Map.put(:error, failure_reason)
+      end
+
+      defp operator_task_results(run_id) when is_binary(run_id) do
+        case PersistenceProvider.read(fn ->
+               persistence().list_events(
+                 run_id: run_id,
+                 event_type: "linear.tool_call",
+                 order: :asc,
+                 limit: 10_000
+               )
+             end) do
+          events when is_list(events) ->
+            Results.aggregate(events)
+
+          {:error, reason} ->
+            Results.aggregate([])
+            |> Map.merge(%{unavailable: true, error: inspect(reason)})
+        end
+      end
+
+      defp operator_task_results(_run_id), do: Results.aggregate([])
+
+      defp resolve_operator_project(nil), do: resolve_unambiguous_operator_project()
+      defp resolve_operator_project(""), do: resolve_unambiguous_operator_project()
+
+      defp resolve_operator_project(project_id) when is_binary(project_id) do
+        case enabled_operator_projects() do
+          {:ok, projects} ->
+            case Enum.find(projects, &(Map.get(&1, :id) == project_id)) do
+              nil -> {:error, :unknown_project}
+              project -> {:ok, project}
+            end
+
+          {:error, reason} ->
+            {:error, {:project_lookup_failed, reason}}
+        end
+      end
+
+      defp resolve_unambiguous_operator_project do
+        case enabled_operator_projects() do
+          {:ok, [project]} -> {:ok, project}
+          {:ok, _projects} -> {:error, :project_required}
+          {:error, reason} -> {:error, {:project_lookup_failed, reason}}
+        end
+      end
+
+      defp enabled_operator_projects do
+        case PersistenceProvider.read(fn -> persistence().list_projects() end) do
+          projects when is_list(projects) ->
+            {:ok, Enum.filter(projects, &(Map.get(&1, :enabled, true) == true))}
+
+          {:error, reason} ->
+            {:error, reason}
+
+          other ->
+            {:error, {:invalid_list_projects_result, other}}
+        end
+      end
 
       defp load_operator_workflow(project) do
         case persistence().current_workflow(project) do
@@ -70,34 +164,24 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         }
       end
 
-      defp operator_project_failure_reason(:project_required, _project_id) do
-        "project required"
-      end
+      defp operator_project_failure_reason(:project_required, _project_id), do: "project required"
 
-      defp operator_project_failure_reason(:unknown_project, project_id) do
-        "unknown project: #{project_id}"
-      end
+      defp operator_project_failure_reason(:unknown_project, project_id),
+        do: "unknown project: #{project_id}"
 
-      defp operator_project_failure_reason(:no_workflow, project_id) do
-        "no workflow for project: #{project_id}"
-      end
+      defp operator_project_failure_reason(:no_workflow, project_id),
+        do: "no workflow for project: #{project_id}"
 
-      defp operator_project_failure_reason({:project_lookup_failed, reason}, _project_id) do
-        "project lookup failed: #{inspect(reason, limit: 20, printable_limit: 1000)}"
-      end
+      defp operator_project_failure_reason({:project_lookup_failed, reason}, _project_id),
+        do: "project lookup failed: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
-      defp operator_project_failure_reason({:workflow_lookup_failed, reason}, project_id) do
-        "workflow lookup failed for project #{project_id}: #{inspect(reason, limit: 20, printable_limit: 1000)}"
-      end
+      defp operator_project_failure_reason({:workflow_lookup_failed, reason}, project_id),
+        do: "workflow lookup failed for project #{project_id}: #{inspect(reason, limit: 20, printable_limit: 1_000)}"
 
       defp operator_kind_from_running_entry(%RunningOperator{kind: kind})
-           when kind in [:nap, :day_dreaming] do
-        kind
-      end
+           when kind in [:nap, :day_dreaming], do: kind
 
-      defp operator_kind_from_running_entry(_running_entry) do
-        nil
-      end
+      defp operator_kind_from_running_entry(_running_entry), do: nil
 
       defp clear_operator_tasks(%State{} = state, status) do
         tasks =
@@ -116,21 +200,16 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         %{state | operator_tasks: tasks}
       end
 
-      defp runtime_busy?(%State{} = state) do
-        Enum.any?(state.running, fn {_id, entry} -> runtime_entry_active?(entry) end)
-      end
+      defp runtime_busy?(%State{} = state),
+        do: Enum.any?(state.running, fn {_id, entry} -> runtime_entry_active?(entry) end)
 
-      defp runtime_entry_active?(%RunningIssue{}) do
-        true
-      end
+      defp runtime_entry_active?(%RunningIssue{}), do: true
 
       defp runtime_entry_active?(%RunningOperator{pid: pid, session_id: session_id}) do
         (is_pid(pid) and Process.alive?(pid)) or is_binary(session_id)
       end
 
-      defp runtime_entry_active?(_entry) do
-        false
-      end
+      defp runtime_entry_active?(_entry), do: false
 
       defp issue_running_ids(running) when is_map(running) do
         running
@@ -160,7 +239,17 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
               running_entry.run_id
             )
 
-            persist_run_finished(failed_entry, "failed", reason)
+            failure =
+              RunFailure.classify(
+                {:worker_process_termination,
+                 %{
+                   reason: reason,
+                   phase: "reconciliation",
+                   run_kind: running_entry_kind(running_entry)
+                 }}
+              )
+
+            persist_run_finished(failed_entry, "failed", failure)
 
             state_acc
             |> Map.update!(:running, &Map.delete(&1, run_id))
@@ -171,13 +260,10 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         end)
       end
 
-      defp stale_operator_running_entry?(%RunningOperator{} = running_entry) do
-        !runtime_entry_active?(running_entry)
-      end
+      defp stale_operator_running_entry?(%RunningOperator{} = running_entry),
+        do: !runtime_entry_active?(running_entry)
 
-      defp stale_operator_running_entry?(_running_entry) do
-        false
-      end
+      defp stale_operator_running_entry?(_running_entry), do: false
 
       defp operator_task(%State{} = state, kind) do
         Map.get(state.operator_tasks || %{}, kind, %{
@@ -194,9 +280,8 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         })
       end
 
-      defp put_operator_task(%State{} = state, kind, task) do
-        %{state | operator_tasks: Map.put(state.operator_tasks || %{}, kind, task)}
-      end
+      defp put_operator_task(%State{} = state, kind, task),
+        do: %{state | operator_tasks: Map.put(state.operator_tasks || %{}, kind, task)}
 
       defp operator_task_reply(task, request_status) do
         task
@@ -226,13 +311,8 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         }
       end
 
-      defp iso8601_or_nil(%DateTime{} = value) do
-        DateTime.to_iso8601(value)
-      end
-
-      defp iso8601_or_nil(_value) do
-        nil
-      end
+      defp iso8601_or_nil(%DateTime{} = value), do: DateTime.to_iso8601(value)
+      defp iso8601_or_nil(_value), do: nil
 
       defp cancel_retry_timers(%State{retry_attempts: retry_attempts} = state) do
         Enum.each(retry_attempts, fn
@@ -250,7 +330,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         {state, results} =
           Enum.reduce(running, {state, []}, fn {issue_id, running_entry}, {state_acc, results_acc} ->
             result = rollback_running_entry(issue_id, running_entry)
-            state_acc = terminate_running_issue(state_acc, issue_id, false)
+            state_acc = terminate_running_issue(state_acc, issue_id, false, true, "force_stop")
             {state_acc, [result | results_acc]}
           end)
 
@@ -263,9 +343,8 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         %{run_id: running_entry.run_id, kind: kind, status: "stopped", reason: "operator_task"}
       end
 
-      defp rollback_running_entry(issue_id, %RunningIssue{} = running_entry) do
-        rollback_issue_running_entry(issue_id, running_entry)
-      end
+      defp rollback_running_entry(issue_id, %RunningIssue{} = running_entry),
+        do: rollback_issue_running_entry(issue_id, running_entry)
 
       defp rollback_issue_running_entry(issue_id, running_entry) do
         transitions = Map.get(running_entry, :linear_state_transitions, [])
@@ -340,10 +419,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         AssignmentManager.cancel_current("force_stop_all")
       end
 
-      defp handle_worker_task_started(
-             %State{} = state,
-             %{issue: %Issue{id: issue_id} = issue} = assignment
-           ) do
+      defp handle_worker_task_started(%State{} = state, %{issue: %Issue{id: issue_id} = issue} = assignment) do
         worker_host = worker_host_from_assignment(assignment)
         attempt = worker_assignment_attempt(assignment)
 
@@ -371,6 +447,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
           retry_attempt: attempt,
           failure_count: Map.get(state.failure_counts, issue_id, 0),
           started_at: worker_assignment_started_at(assignment),
+          admission: Map.fetch!(assignment, :admission),
           session_history: initial_session_history(issue, attempt, worker_host),
           session_history_total_count: 1
         }
@@ -387,11 +464,8 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         case worker_codex_update(payload) do
           {:ok, update} ->
             case Map.get(state.running, issue_id) do
-              %RunningIssue{} = running_entry ->
-                handle_codex_worker_update(state, issue_id, running_entry, update)
-
-              _missing ->
-                state
+              %RunningIssue{} = running_entry -> handle_codex_worker_update(state, issue_id, running_entry, update)
+              _missing -> state
             end
 
           :ignore ->
@@ -423,10 +497,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
       end
 
       defp worker_session_started_update(payload) do
-        if Payload.get_any(payload, ["phase", :phase]) in [
-             "codex_session_started",
-             :codex_session_started
-           ] do
+        if Payload.get_any(payload, ["phase", :phase]) in ["codex_session_started", :codex_session_started] do
           message = %{
             event: :session_started,
             session_id: Payload.get_any(payload, ["session_id", :session_id])
@@ -459,61 +530,21 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         }
       end
 
-      defp normalize_worker_codex_event(event) when is_atom(event) do
-        event
-      end
+      defp normalize_worker_codex_event(event) when is_atom(event), do: event
+      defp normalize_worker_codex_event("approval_required"), do: :approval_required
+      defp normalize_worker_codex_event("malformed"), do: :malformed
+      defp normalize_worker_codex_event("notification"), do: :notification
+      defp normalize_worker_codex_event("other_message"), do: :other_message
+      defp normalize_worker_codex_event("session_started"), do: :session_started
+      defp normalize_worker_codex_event("startup_failed"), do: :startup_failed
+      defp normalize_worker_codex_event("turn_cancelled"), do: :turn_cancelled
+      defp normalize_worker_codex_event("turn_completed"), do: :turn_completed
+      defp normalize_worker_codex_event("turn_ended_with_error"), do: :turn_ended_with_error
+      defp normalize_worker_codex_event("turn_failed"), do: :turn_failed
+      defp normalize_worker_codex_event("turn_input_required"), do: :turn_input_required
+      defp normalize_worker_codex_event(event), do: event
 
-      defp normalize_worker_codex_event("approval_required") do
-        :approval_required
-      end
-
-      defp normalize_worker_codex_event("malformed") do
-        :malformed
-      end
-
-      defp normalize_worker_codex_event("notification") do
-        :notification
-      end
-
-      defp normalize_worker_codex_event("other_message") do
-        :other_message
-      end
-
-      defp normalize_worker_codex_event("session_started") do
-        :session_started
-      end
-
-      defp normalize_worker_codex_event("startup_failed") do
-        :startup_failed
-      end
-
-      defp normalize_worker_codex_event("turn_cancelled") do
-        :turn_cancelled
-      end
-
-      defp normalize_worker_codex_event("turn_completed") do
-        :turn_completed
-      end
-
-      defp normalize_worker_codex_event("turn_ended_with_error") do
-        :turn_ended_with_error
-      end
-
-      defp normalize_worker_codex_event("turn_failed") do
-        :turn_failed
-      end
-
-      defp normalize_worker_codex_event("turn_input_required") do
-        :turn_input_required
-      end
-
-      defp normalize_worker_codex_event(event) do
-        event
-      end
-
-      defp normalize_worker_timestamp(%DateTime{} = timestamp, _progress_payload) do
-        timestamp
-      end
+      defp normalize_worker_timestamp(%DateTime{} = timestamp, _progress_payload), do: timestamp
 
       defp normalize_worker_timestamp(timestamp, _progress_payload) when is_binary(timestamp) do
         case DateTime.from_iso8601(timestamp) do
@@ -585,9 +616,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         :ok
       end
 
-      defp next_poll_in_ms(nil, _now_ms) do
-        nil
-      end
+      defp next_poll_in_ms(nil, _now_ms), do: nil
 
       defp next_poll_in_ms(next_poll_due_at_ms, now_ms) when is_integer(next_poll_due_at_ms) do
         max(0, next_poll_due_at_ms - now_ms)
@@ -614,9 +643,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         %{state | codex_totals: codex_totals}
       end
 
-      defp record_session_completion_totals(state, _running_entry) do
-        state
-      end
+      defp record_session_completion_totals(state, _running_entry), do: state
 
       defp snapshot_codex_totals(%State{} = state, %DateTime{} = now) do
         active_seconds =
@@ -653,21 +680,13 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         end
       end
 
-      defp listening?(%State{listening_mode: :not_listening}) do
-        false
-      end
+      defp listening?(%State{listening_mode: :not_listening}), do: false
+      defp listening?(%State{}), do: true
 
-      defp listening?(%State{}) do
-        true
-      end
+      defp listening_mode_string(%State{listening_mode: mode}) when is_atom(mode),
+        do: Atom.to_string(mode)
 
-      defp listening_mode_string(%State{listening_mode: mode}) when is_atom(mode) do
-        Atom.to_string(mode)
-      end
-
-      defp listening_mode_atom(%State{listening_mode: mode}) do
-        mode
-      end
+      defp listening_mode_atom(%State{listening_mode: mode}), do: mode
 
       defp runtime_config do
         case WorkflowStore.list_enabled() do
@@ -795,9 +814,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         "Codex session start paused by #{Map.get(details, :window)} rate-limit headroom: remaining=#{Map.get(details, :remaining_percent)} threshold=#{Map.get(details, :threshold_percent)} resume_after=#{Map.get(details, :resume_after) || "n/a"}"
       end
 
-      defp config_error_payload(nil) do
-        nil
-      end
+      defp config_error_payload(nil), do: nil
 
       defp config_error_payload(reason) do
         %{
@@ -807,17 +824,9 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         }
       end
 
-      defp database_read_error?(:repo_unavailable) do
-        true
-      end
-
-      defp database_read_error?({:query_failed, _reason}) do
-        true
-      end
-
-      defp database_read_error?(_reason) do
-        false
-      end
+      defp database_read_error?(:repo_unavailable), do: true
+      defp database_read_error?({:query_failed, _reason}), do: true
+      defp database_read_error?(_reason), do: false
 
       defp dispatch_slots_available?(%Issue{} = issue, %State{} = state) do
         DispatchPolicy.dispatch_slots_available?(issue, state, dispatch_policy_settings(state))
@@ -831,9 +840,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
         %{state | codex_totals: apply_token_delta(codex_totals, token_delta)}
       end
 
-      defp apply_codex_token_delta(state, _token_delta) do
-        state
-      end
+      defp apply_codex_token_delta(state, _token_delta), do: state
 
       defp apply_codex_rate_limits(%State{} = state, update, project_id) when is_map(update) do
         case Update.rate_limits(update) do
@@ -882,30 +889,6 @@ defmodule SymphonyElixir.Orchestrator.Sections.RuntimeStatus do
           total_tokens: max(0, total_tokens),
           seconds_running: max(0, seconds_running)
         }
-      end
-
-      defp running_seconds(%DateTime{} = started_at, %DateTime{} = now) do
-        max(0, DateTime.diff(now, started_at, :second))
-      end
-
-      defp running_seconds(_started_at, _now) do
-        0
-      end
-
-      defp running_entry_state(%{issue: %{state: state}}) do
-        state
-      end
-
-      defp running_entry_state(metadata) do
-        Map.get(metadata, :state, "running")
-      end
-
-      defp running_entry_kind(%RunningIssue{kind: kind}) do
-        Atom.to_string(kind)
-      end
-
-      defp running_entry_kind(%RunningOperator{kind: kind}) do
-        Atom.to_string(kind)
       end
     end
   end

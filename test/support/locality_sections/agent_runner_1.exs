@@ -2,38 +2,15 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
   @moduledoc false
 
+  alias SymphonyElixir.AgentRunner
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Workflow
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
       use SymphonyElixir.TestSupport
 
       test "normalizes explicit terminal outcomes without inspecting blocker reason" do
@@ -43,30 +20,26 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           references: %{remote: "origin"}
         }
 
-        assert Elixir.SymphonyElixir.AgentRunner.normalize_outcome(:ok) == :success
+        assert AgentRunner.normalize_outcome(:ok) == :success
+        assert AgentRunner.normalize_outcome({:blocked, blocked}) == {:blocked, blocked}
+        assert AgentRunner.normalize_outcome({:error, :boom}) == {:failed, :boom}
 
-        assert Elixir.SymphonyElixir.AgentRunner.normalize_outcome({:blocked, blocked}) ==
-                 {:blocked, blocked}
-
-        assert Elixir.SymphonyElixir.AgentRunner.normalize_outcome({:error, :boom}) == {:failed, :boom}
-
-        assert Elixir.SymphonyElixir.AgentRunner.normalize_outcome(%{reason: "looks blocked"}) ==
+        assert AgentRunner.normalize_outcome(%{reason: "looks blocked"}) ==
                  {:failed, {:invalid_agent_outcome, %{reason: "looks blocked"}}}
       end
 
       test "builds canonical operator task identities" do
-        assert Elixir.SymphonyElixir.AgentRunner.operator_task_identity(:nap, "operator-123") == %{
+        assert AgentRunner.operator_task_identity(:nap, "operator-123") == %{
                  identifier: "NAP-operator-123",
                  label: "Nap",
                  description: "Audit project context and create focused backlog issues without modifying the repository."
                }
 
-        assert Elixir.SymphonyElixir.AgentRunner.operator_task_identity(:day_dreaming, "operator-123") ==
-                 %{
-                   identifier: "DAY-DREAMING-operator-123",
-                   label: "Day dreaming",
-                   description: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
-                 }
+        assert AgentRunner.operator_task_identity(:day_dreaming, "operator-123") == %{
+                 identifier: "DAY-DREAMING-operator-123",
+                 label: "Day dreaming",
+                 description: "Explore project direction and create focused product discovery backlog issues without modifying the repository."
+               }
       end
 
       test "operator runner carries the selected project into workspace preparation" do
@@ -78,19 +51,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
         end
 
         assert {:error, :stop_after_workspace_assertion} =
-                 Elixir.SymphonyElixir.AgentRunner.run_operator(:nap, "operator-project", nil,
+                 AgentRunner.run_operator(:nap, "operator-project", nil,
                    project_id: "project-123",
                    workspace_creator: workspace_creator
                  )
 
-        assert_receive {:operator_workspace_requested, issue, nil, workspace_opts}
-        assert %Elixir.SymphonyElixir.Linear.Issue{} = issue
-
+        assert_receive {:operator_workspace_requested, %Issue{} = issue, nil, workspace_opts}
         assert issue.id == "operator-project"
-
-        assert issue.identifier ==
-                 Elixir.SymphonyElixir.AgentRunner.operator_task_identity(:nap, "operator-project").identifier
-
+        assert issue.identifier == AgentRunner.operator_task_identity(:nap, "operator-project").identifier
         assert Keyword.fetch!(workspace_opts, :project_id) == "project-123"
       end
 
@@ -115,20 +83,40 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           System.cmd("git", ["-C", template_repo, "add", "README.md"])
           System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-1\"}}}'\n      ;;\n    4)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      exit 0\n      ;;\n    *)\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            case "$count" in
+              1)
+                printf '%s\\n' '{\"id\":1,\"result\":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-1\"}}}'
+                ;;
+              4)
+                printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-1\"}}}'
+                printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
+                exit 0
+                ;;
+              *)
+                ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
             codex_command: "#{codex_binary} app-server"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             identifier: "S-99",
             title: "Smoke test",
             description: "Run and keep workspace",
@@ -138,7 +126,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           }
 
           before = MapSet.new(File.ls!(workspace_root))
-          assert :success = Elixir.SymphonyElixir.AgentRunner.run(issue)
+          assert :success = AgentRunner.run(issue)
           entries_after = MapSet.new(File.ls!(workspace_root))
 
           created =
@@ -160,14 +148,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
       test "agent runner forwards timestamped codex updates to recipient" do
         previous_persistence = Application.get_env(:symphony_elixir, :persistence_module)
-
-        Application.put_env(
-          :symphony_elixir,
-          :persistence_module,
-          Elixir.SymphonyElixir.TestSupport.FakePersistence
-        )
-
-        Elixir.SymphonyElixir.TestSupport.FakePersistence.reset!()
+        Application.put_env(:symphony_elixir, :persistence_module, FakePersistence)
+        FakePersistence.reset!()
 
         on_exit(fn ->
           if is_nil(previous_persistence) do
@@ -198,18 +180,40 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.write!(
             codex_binary,
-            "#!/bin/sh\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-live\"}}}'\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'\n      ;;\n    4)\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      ;;\n    *)\n      ;;\n  esac\ndone\n"
+            """
+            #!/bin/sh
+            count=0
+            while IFS= read -r line; do
+              count=$((count + 1))
+              case "$count" in
+                1)
+                  printf '%s\\n' '{\"id\":1,\"result\":{}}'
+                  ;;
+                2)
+                  printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-live\"}}}'
+                  ;;
+                3)
+                  printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-live\"}}}'
+                  ;;
+                4)
+                  printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
+                  ;;
+                *)
+                  ;;
+              esac
+            done
+            """
           )
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
             codex_command: "#{codex_binary} app-server"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-live-updates",
             identifier: "MT-99",
             title: "Smoke test",
@@ -222,7 +226,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           test_pid = self()
 
           assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(
+                   AgentRunner.run(
                      issue,
                      test_pid,
                      issue_state_fetcher: fn [_issue_id] -> {:ok, [%{issue | state: "Done"}]} end
@@ -239,10 +243,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           assert session_id == "thread-live-turn-live"
 
           phase_pairs =
-            Elixir.SymphonyElixir.TestSupport.FakePersistence.list_events(event_type: "run.phase")
-            |> Enum.map(fn event ->
-              {get_in(event, [:payload, :phase]), get_in(event, [:payload, :status])}
-            end)
+            FakePersistence.list_events(event_type: "run.phase")
+            |> Enum.map(fn event -> {get_in(event, [:payload, :phase]), get_in(event, [:payload, :status])} end)
 
           assert {"workspace_preparing", "started"} in phase_pairs
           assert {"workspace_preparing", "completed"} in phase_pairs
@@ -269,12 +271,34 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.mkdir_p!(test_root)
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition.trace}\"\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'LINE%s:%s\\n' \"$count\" \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready\"}}}'\n      ;;\n    4)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-ready\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      exit 0\n      ;;\n    *)\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition.trace}"
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+            case "$count" in
+              1)
+                printf '%s\\n' '{\"id\":1,\"result\":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready\"}}}'
+                ;;
+              4)
+                printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-ready\"}}}'
+                printf '%s\\n' '{\"method\":\"turn/completed\",\"params\":{\"turn\":{\"status\":\"completed\"}}}'
+                exit 0
+                ;;
+              *)
+                ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
           previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
 
@@ -284,14 +308,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "printf ready > README.md",
             codex_command: "#{codex_binary} app-server",
             prompt: "Current status: {{ issue.state }}"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-ready-transition",
             identifier: "MT-READY",
             title: "Start implementation",
@@ -313,11 +337,9 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           end
 
           assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil,
+                   AgentRunner.run(issue, nil,
                      implementation_start_transitioner: transitioner,
-                     issue_state_fetcher: fn ["issue-ready-transition"] ->
-                       {:ok, [%{issue | state: "Done"}]}
-                     end
+                     issue_state_fetcher: fn ["issue-ready-transition"] -> {:ok, [%{issue | state: "Done"}]} end
                    )
 
           assert_receive {:implementation_started, "In Progress"}
@@ -342,17 +364,21 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.mkdir_p!(test_root)
 
-          File.write!(codex_binary, "#!/bin/sh\nprintf '%s\\n' 'codex startup failed' >&2\nexit 127\n")
+          File.write!(codex_binary, """
+          #!/bin/sh
+          printf '%s\\n' 'codex startup failed' >&2
+          exit 127
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "printf ready > README.md",
             codex_command: "#{codex_binary} app-server"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-ready-startup-failure",
             identifier: "MT-READY-FAIL",
             title: "Startup failure",
@@ -363,11 +389,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           }
 
           transitioner = fn _transition_issue, _target_state ->
+            # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
             flunk("Ready issue should not transition when Codex startup fails")
           end
 
           assert {:failed, {:codex_startup_failed, _details}} =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
+                   AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
         after
           File.rm_rf(test_root)
         end
@@ -387,23 +414,37 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.mkdir_p!(workspace)
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-transition.trace}\"\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'LINE%s:%s\\n' \"$count\" \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1) printf '%s\\n' '{\"id\":1,\"result\":{}}' ;;\n    3) printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-refinement\"}}}' ;;\n    4)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-refinement\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      exit 0\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-transition.trace}"
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+            case "$count" in
+              1) printf '%s\\n' '{"id":1,"result":{}}' ;;
+              3) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-refinement"}}}' ;;
+              4)
+                printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-refinement"}}}'
+                printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                exit 0
+                ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
           previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
           on_exit(fn -> restore_env("SYMP_TEST_CODEX_TRACE", previous_trace) end)
           System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: test_root,
             codex_command: "#{codex_binary} app-server",
             prompt: "Current status: {{ issue.state }}"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-refinement-transition",
             identifier: "MT-REFINE",
             title: "Start refinement",
@@ -425,18 +466,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
             fetch_count = Process.get(:refinement_fetch_count, 0) + 1
             Process.put(:refinement_fetch_count, fetch_count)
 
-            state =
-              if fetch_count == 1 do
-                "Refining"
-              else
-                "Needs Refinement Review"
-              end
-
+            state = if fetch_count == 1, do: "Refining", else: "Needs Refinement Review"
             {:ok, [%{issue | state: state}]}
           end
 
           assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil,
+                   AgentRunner.run(issue, nil,
                      workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
                      refinement_start_transitioner: transitioner,
                      issue_state_fetcher: state_fetcher
@@ -464,23 +499,32 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.mkdir_p!(workspace)
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-rejected.trace}\"\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'LINE%s:%s\\n' \"$count\" \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1) printf '%s\\n' '{\"id\":1,\"result\":{}}' ;;\n    3) printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-refinement-rejected\"}}}' ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-refinement-rejected.trace}"
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+            case "$count" in
+              1) printf '%s\\n' '{"id":1,"result":{}}' ;;
+              3) printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-refinement-rejected"}}}' ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
           previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
           on_exit(fn -> restore_env("SYMP_TEST_CODEX_TRACE", previous_trace) end)
           System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: test_root,
             codex_command: "#{codex_binary} app-server",
             prompt: "Current status: {{ issue.state }}"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-refinement-rejected",
             identifier: "MT-REFINE-REJECTED",
             title: "Reject refinement kickoff",
@@ -490,11 +534,9 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           }
 
           assert {:failed, {:refinement_start_transition_failed, :linear_rejected}} =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil,
+                   AgentRunner.run(issue, nil,
                      workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
-                     refinement_start_transitioner: fn ^issue, "Refining" ->
-                       {:error, :linear_rejected}
-                     end
+                     refinement_start_transitioner: fn ^issue, "Refining" -> {:error, :linear_rejected} end
                    )
 
           trace = File.read!(trace_file)
@@ -518,12 +560,29 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           File.mkdir_p!(test_root)
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition-failure.trace}\"\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'LINE%s:%s\\n' \"$count\" \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready-fail\"}}}'\n      ;;\n    *)\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEX_TRACE:-/tmp/symphony-ready-transition-failure.trace}"
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'LINE%s:%s\\n' "$count" "$line" >> "$trace_file"
+            case "$count" in
+              1)
+                printf '%s\\n' '{\"id\":1,\"result\":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-ready-fail\"}}}'
+                ;;
+              *)
+                ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
           previous_trace = System.get_env("SYMP_TEST_CODEX_TRACE")
 
@@ -533,14 +592,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
 
           System.put_env("SYMP_TEST_CODEX_TRACE", trace_file)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "printf ready > README.md",
             codex_command: "#{codex_binary} app-server",
             prompt: "Current status: {{ issue.state }}"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-ready-transition-failure",
             identifier: "MT-READY-TRANSITION-FAIL",
             title: "Transition failure",
@@ -553,7 +612,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner1 do
           transitioner = fn _transition_issue, "In Progress" -> {:error, :linear_state_not_found} end
 
           assert {:failed, {:implementation_start_transition_failed, :linear_state_not_found}} =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
+                   AgentRunner.run(issue, nil, implementation_start_transitioner: transitioner)
 
           trace = File.read!(trace_file)
           assert trace =~ "thread/start"

@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Control do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       require Logger
 

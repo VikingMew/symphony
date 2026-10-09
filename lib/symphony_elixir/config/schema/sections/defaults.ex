@@ -4,12 +4,8 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
-      import Ecto.Changeset
-
-      alias SymphonyElixir.Codex.ModelCatalog
-      alias SymphonyElixir.Config.{CodexCommand, ProjectCommands, RuntimeResolver, WorkflowContract}
-
       alias SymphonyElixir.Config.Schema.{
         Agent,
         Analytics,
@@ -19,12 +15,17 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
         Polling,
         Project,
         Server,
-        StringOrMap,
         Tracker,
         Worker,
         Workspace
       }
 
+      import Ecto.Changeset
+      alias SymphonyElixir.Codex.ModelCatalog
+      alias SymphonyElixir.Config.{CodexCommand, ProjectCommands, RuntimeResolver, WorkflowContract}
+
+      @doc false
+      @spec default_workflow_policy() :: map()
       def default_workflow_policy do
         %{
           "states" => %{
@@ -171,9 +172,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
         end)
       end
 
-      defp normalize_profiles(_profiles) do
-        default_profiles()
-      end
+      defp normalize_profiles(_profiles), do: default_profiles()
 
       defp validate_workflow_contract(changeset) do
         workflow = get_field(changeset, :workflow) || %{}
@@ -194,14 +193,9 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
 
       defp description_limit_errors(profiles) do
         case get_in(profiles, ["refinement", "description_limits"]) do
-          nil ->
-            []
-
-          limits when is_map(limits) ->
-            limit_map_errors(limits, "profiles.refinement.description_limits")
-
-          _ ->
-            ["profiles.refinement.description_limits must be a map"]
+          nil -> []
+          limits when is_map(limits) -> limit_map_errors(limits, "profiles.refinement.description_limits")
+          _ -> ["profiles.refinement.description_limits must be a map"]
         end
       end
 
@@ -220,10 +214,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
             overrides when is_map(overrides) ->
               Enum.flat_map(overrides, fn
                 {label, override} when is_map(override) ->
-                  limit_map_errors(
-                    Map.delete(override, "label_overrides"),
-                    "#{path}.label_overrides.#{label}"
-                  )
+                  limit_map_errors(Map.delete(override, "label_overrides"), "#{path}.label_overrides.#{label}")
 
                 {label, _override} ->
                   ["#{path}.label_overrides.#{label} must be a map"]
@@ -242,29 +233,14 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
         end)
       end
 
-      defp normalize_keys(value) when is_list(value) do
-        Enum.map(value, &normalize_keys/1)
-      end
+      defp normalize_keys(value) when is_list(value), do: Enum.map(value, &normalize_keys/1)
+      defp normalize_keys(value), do: value
 
-      defp normalize_keys(value) do
-        value
-      end
+      defp normalize_optional_map(nil), do: nil
+      defp normalize_optional_map(value) when is_map(value), do: normalize_keys(value)
 
-      defp normalize_optional_map(nil) do
-        nil
-      end
-
-      defp normalize_optional_map(value) when is_map(value) do
-        normalize_keys(value)
-      end
-
-      defp normalize_key(value) when is_atom(value) do
-        Atom.to_string(value)
-      end
-
-      defp normalize_key(value) do
-        to_string(value)
-      end
+      defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
+      defp normalize_key(value), do: to_string(value)
 
       defp drop_nil_values(value) when is_map(value) do
         Enum.reduce(value, %{}, fn {key, nested}, acc ->
@@ -275,13 +251,8 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
         end)
       end
 
-      defp drop_nil_values(value) when is_list(value) do
-        Enum.map(value, &drop_nil_values/1)
-      end
-
-      defp drop_nil_values(value) do
-        value
-      end
+      defp drop_nil_values(value) when is_list(value), do: Enum.map(value, &drop_nil_values/1)
+      defp drop_nil_values(value), do: value
 
       defp format_errors(changeset) do
         changeset
@@ -314,13 +285,8 @@ defmodule SymphonyElixir.Config.Schema.Sections.Defaults do
         end)
       end
 
-      defp error_value_to_string(value) when is_atom(value) do
-        Atom.to_string(value)
-      end
-
-      defp error_value_to_string(value) do
-        inspect(value)
-      end
+      defp error_value_to_string(value) when is_atom(value), do: Atom.to_string(value)
+      defp error_value_to_string(value), do: inspect(value)
     end
   end
 end

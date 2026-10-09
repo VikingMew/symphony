@@ -2,38 +2,15 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
   @moduledoc false
 
+  alias SymphonyElixir.AgentRunner
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Workflow
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
       test "agent runner surfaces ssh startup failures instead of silently hopping hosts" do
         test_root =
           Path.join(
@@ -57,19 +34,34 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           System.put_env("SYMP_TEST_SSH_TRACE", trace_file)
           System.put_env("PATH", test_root <> ":" <> (previous_path || ""))
 
-          File.write!(
-            fake_ssh,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}\"\nprintf 'ARGV:%s\\n' \"$*\" >> \"$trace_file\"\n\ncase \"$*\" in\n  *worker-a*\"__SYMPHONY_WORKSPACE__\"*)\n    printf '%s\\n' 'worker-a prepare failed' >&2\n    exit 75\n    ;;\n  *worker-b*\"__SYMPHONY_WORKSPACE__\"*)\n    printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '/remote/home/.symphony-remote-workspaces/MT-SSH-FAILOVER'\n    exit 0\n    ;;\n  *)\n    exit 0\n    ;;\nesac\n"
-          )
+          File.write!(fake_ssh, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_SSH_TRACE:-/tmp/symphony-fake-ssh.trace}"
+          printf 'ARGV:%s\\n' "$*" >> "$trace_file"
 
-          File.chmod!(fake_ssh, 493)
+          case "$*" in
+            *worker-a*"__SYMPHONY_WORKSPACE__"*)
+              printf '%s\\n' 'worker-a prepare failed' >&2
+              exit 75
+              ;;
+            *worker-b*"__SYMPHONY_WORKSPACE__"*)
+              printf '%s\\t%s\\t%s\\n' '__SYMPHONY_WORKSPACE__' '1' '/remote/home/.symphony-remote-workspaces/MT-SSH-FAILOVER'
+              exit 0
+              ;;
+            *)
+              exit 0
+              ;;
+          esac
+          """)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          File.chmod!(fake_ssh, 0o755)
+
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: "~/.symphony-remote-workspaces",
             worker_ssh_hosts: ["worker-a", "worker-b"]
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-ssh-failover",
             identifier: "MT-SSH-FAILOVER",
             title: "Do not fail over within a single worker run",
@@ -78,7 +70,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           }
 
           assert {:failed, {:workspace_prepare_failed, "worker-a", 75, "worker-a prepare failed\n"}} =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil, worker_host: "worker-a")
+                   AgentRunner.run(issue, nil, worker_host: "worker-a")
 
           trace = File.read!(trace_file)
           assert trace =~ "worker-a bash -lc"
@@ -108,17 +100,43 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           System.cmd("git", ["-C", template_repo, "add", "README.md"])
           System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}\"\nrun_id=\"$(date +%s%N)-$$\"\nprintf 'RUN:%s\\n' \"$run_id\" >> \"$trace_file\"\ncount=0\n\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'JSON:%s\\n' \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-cont\"}}}'\n      ;;\n    4)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-cont-1\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      ;;\n    5)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-cont-2\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+          run_id="$(date +%s%N)-$$"
+          printf 'RUN:%s\\n' "$run_id" >> "$trace_file"
+          count=0
 
-          File.chmod!(codex_binary, 493)
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'JSON:%s\\n' "$line" >> "$trace_file"
+            case "$count" in
+              1)
+                printf '%s\\n' '{"id":1,"result":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-cont"}}}'
+                ;;
+              4)
+                printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-1"}}}'
+                printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                ;;
+              5)
+                printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-cont-2"}}}'
+                printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                ;;
+            esac
+          done
+          """)
+
+          File.chmod!(codex_binary, 0o755)
           System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
 
           on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
             codex_command: "#{codex_binary} app-server",
@@ -141,7 +159,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
 
             {:ok,
              [
-               %Elixir.SymphonyElixir.Linear.Issue{
+               %Issue{
                  id: "issue-continue",
                  identifier: "MT-247",
                  title: "Continue until done",
@@ -151,7 +169,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
              ]}
           end
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-continue",
             identifier: "MT-247",
             title: "Continue until done",
@@ -161,9 +179,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
             labels: []
           }
 
-          assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
-
+          assert :success = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
           assert_receive {:issue_state_fetch, 1}
           assert_receive {:issue_state_fetch, 2}
 
@@ -214,17 +230,42 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           System.cmd("git", ["-C", template_repo, "add", "README.md"])
           System.cmd("git", ["-C", template_repo, "commit", "-m", "initial"])
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ntrace_file=\"${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}\"\nprintf 'RUN\\n' >> \"$trace_file\"\ncount=0\n\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  printf 'JSON:%s\\n' \"$line\" >> \"$trace_file\"\n  case \"$count\" in\n    1)\n      printf '%s\\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-max\"}}}'\n      ;;\n    4)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-max-1\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      ;;\n    5)\n      printf '%s\\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-max-2\"}}}'\n      printf '%s\\n' '{\"method\":\"turn/completed\"}'\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex.trace}"
+          printf 'RUN\\n' >> "$trace_file"
+          count=0
 
-          File.chmod!(codex_binary, 493)
+          while IFS= read -r line; do
+            count=$((count + 1))
+            printf 'JSON:%s\\n' "$line" >> "$trace_file"
+            case "$count" in
+              1)
+                printf '%s\\n' '{"id":1,"result":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-max"}}}'
+                ;;
+              4)
+                printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-1"}}}'
+                printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                ;;
+              5)
+                printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-max-2"}}}'
+                printf '%s\\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                ;;
+            esac
+          done
+          """)
+
+          File.chmod!(codex_binary, 0o755)
           System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
 
           on_exit(fn -> System.delete_env("SYMP_TEST_CODEx_TRACE") end)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             hook_after_create: "cp #{Path.join(template_repo, "README.md")} README.md",
             codex_command: "#{codex_binary} app-server",
@@ -234,7 +275,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           state_fetcher = fn [_issue_id] ->
             {:ok,
              [
-               %Elixir.SymphonyElixir.Linear.Issue{
+               %Issue{
                  id: "issue-max-turns",
                  identifier: "MT-248",
                  title: "Stop at max turns",
@@ -244,7 +285,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
              ]}
           end
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-max-turns",
             identifier: "MT-248",
             title: "Stop at max turns",
@@ -255,9 +296,10 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           }
 
           assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil,
+                   AgentRunner.run(issue, nil,
                      issue_state_fetcher: state_fetcher,
                      pull_request_ensurer: fn _issue, _project, _opts ->
+                       # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
                        flunk("max-turn exhaustion must not create a pull request")
                      end
                    )
@@ -285,20 +327,44 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
 
           File.mkdir_p!(workspace)
 
-          File.write!(
-            codex_binary,
-            "#!/bin/sh\ncount=0\nwhile IFS= read -r line; do\n  count=$((count + 1))\n  case \"$count\" in\n    1)\n      printf '%s\n' '{\"id\":1,\"result\":{}}'\n      ;;\n    2)\n      ;;\n    3)\n      printf '%s\n' '{\"id\":2,\"result\":{\"thread\":{\"id\":\"thread-handoff\"}}}'\n      ;;\n    4)\n      printf '%s\n' '{\"id\":3,\"result\":{\"turn\":{\"id\":\"turn-handoff\"}}}'\n      printf '%s\n' '{\"id\":103,\"method\":\"item/tool/call\",\"params\":{\"tool\":\"create_pull_request\",\"callId\":\"call-pr\",\"threadId\":\"thread-handoff\",\"turnId\":\"turn-handoff\",\"arguments\":{\"title\":\"SYM-1: Ship PR handoff\",\"body\":\"#### Summary\\n\\n- handoff\\n\\n#### Test Plan\\n\\n- [x] green\\n\\nFixes SYM-1\"}}}'\n      ;;\n    5)\n      printf '%s\n' '{\"id\":104,\"method\":\"item/tool/call\",\"params\":{\"tool\":\"linear_task_update\",\"callId\":\"call-handoff\",\"threadId\":\"thread-handoff\",\"turnId\":\"turn-handoff\",\"arguments\":{\"target_state\":\"Ready to Merge\",\"comment\":\"Completed: handoff; Validation: green; Deviations: None; Blockers: None\",\"result\":{\"completed\":\"handoff\",\"validation\":\"green\",\"deviations\":\"None\",\"blockers\":\"\"},\"references\":{\"branch\":\"feature/sym-1\",\"pr_url\":\"https://github.com/acme/app/pull/12\",\"pr_proof\":\"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U\"}}}}'\n      ;;\n    6)\n      printf '%s\n' '{\"method\":\"turn/completed\"}'\n      exit 0\n      ;;\n  esac\ndone\n"
-          )
+          File.write!(codex_binary, """
+          #!/bin/sh
+          count=0
+          while IFS= read -r line; do
+            count=$((count + 1))
+            case "$count" in
+              1)
+                printf '%s\n' '{"id":1,"result":{}}'
+                ;;
+              2)
+                ;;
+              3)
+                printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-handoff"}}}'
+                ;;
+              4)
+                printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-handoff"}}}'
+                printf '%s\n' '{"id":103,"method":"item/tool/call","params":{"tool":"create_pull_request","callId":"call-pr","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"title":"SYM-1: Ship PR handoff","body":"#### Summary\\n\\n- handoff\\n\\n#### Test Plan\\n\\n- [x] green\\n\\nFixes SYM-1"}}}'
+                ;;
+              5)
+                printf '%s\n' '{"id":104,"method":"item/tool/call","params":{"tool":"linear_task_update","callId":"call-handoff","threadId":"thread-handoff","turnId":"turn-handoff","arguments":{"target_state":"Ready to Merge","comment":"Completed: handoff; Validation: green; Deviations: None; Blockers: None","result":{"completed":"handoff","validation":"green","deviations":"None","blockers":""},"references":{"branch":"feature/sym-1","pr_url":"https://github.com/acme/app/pull/12","pr_proof":"mbVD7FCl1tUnIpKyIE21xrXoJLPxt9GYsaU1d6gbm6U"}}}}'
+                ;;
+              6)
+                printf '%s\n' '{"method":"turn/completed","params":{"turn":{"status":"completed"}}}'
+                exit 0
+                ;;
+            esac
+          done
+          """)
 
-          File.chmod!(codex_binary, 493)
+          File.chmod!(codex_binary, 0o755)
 
-          write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+          write_workflow_file!(Workflow.workflow_file_path(),
             workspace_root: workspace_root,
             project_repository_url: "https://github.com/acme/app",
             codex_command: "#{codex_binary} app-server"
           )
 
-          issue = %Elixir.SymphonyElixir.Linear.Issue{
+          issue = %Issue{
             id: "issue-handoff",
             identifier: "SYM-1",
             title: "Ship PR handoff",
@@ -350,7 +416,9 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
                      "issue" => %{
                        "team" => %{
                          "states" => %{
-                           "nodes" => [%{"id" => "state-ready-to-merge", "name" => "Ready to Merge"}]
+                           "nodes" => [
+                             %{"id" => "state-ready-to-merge", "name" => "Ready to Merge"}
+                           ]
                          }
                        }
                      }
@@ -365,7 +433,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           end
 
           assert :success =
-                   Elixir.SymphonyElixir.AgentRunner.run(issue, nil,
+                   AgentRunner.run(issue, nil,
                      workspace_creator: fn ^issue, nil, _opts -> {:ok, workspace} end,
                      implementation_branch_checkout: fn ^workspace, "feature/sym-1", _opts ->
                        {:ok, "checked out"}
@@ -385,10 +453,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           assert_receive {:handoff_order, :state_update}
 
           events =
-            Elixir.SymphonyElixir.TestSupport.FakePersistence.list_events(
-              issue_identifier: "SYM-1",
-              event_type: "run.phase"
-            )
+            FakePersistence.list_events(issue_identifier: "SYM-1", event_type: "run.phase")
             |> Enum.filter(&(&1.payload.phase == "implementation_handoff"))
 
           assert Enum.map(events, & &1.payload.status) == ["completed", "started"]
@@ -396,20 +461,16 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AgentRunner2 do
           assert Enum.all?(events, &(&1.payload.session_id == "thread-handoff-turn-handoff"))
           assert List.first(events).payload.url == "https://github.com/acme/app/pull/12"
 
-          audits =
-            Elixir.SymphonyElixir.TestSupport.FakePersistence.list_events(
-              issue_identifier: "SYM-1",
-              event_type: "linear.tool_call"
-            )
-
-          assert Enum.map(audits, & &1.payload.tool) |> Enum.sort() == [
-                   "create_pull_request",
-                   "linear_task_update"
-                 ]
+          audits = FakePersistence.list_events(issue_identifier: "SYM-1", event_type: "linear.tool_call")
+          assert Enum.map(audits, & &1.payload.tool) |> Enum.sort() == ["create_pull_request", "linear_task_update"]
 
           audit = Enum.find(audits, &(&1.payload.tool == "linear_task_update"))
           assert audit.run_id == "run-handoff"
           assert audit.payload.status == "success"
+          assert audit.payload.tool_call_id == "call-handoff"
+
+          pull_request_audit = Enum.find(audits, &(&1.payload.tool == "create_pull_request"))
+          assert pull_request_audit.payload.tool_call_id == "call-pr"
         after
           File.rm_rf(test_root)
         end

@@ -4,16 +4,22 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
+      @moduledoc """
+      Creates isolated per-issue workspaces for parallel Codex agents.
+      """
+
       require Logger
       alias SymphonyElixir.{Config, PathSafety, PersistenceEventWriter, WorkspaceCleanupPolicy}
       alias SymphonyElixir.Workspace.{HookRunner, Remote, SourcePreparation}
 
-      @hook_recent_output_bytes 4096
-      @hook_event_output_bytes 2048
+      @hook_recent_output_bytes 4_096
+      @hook_event_output_bytes 2_048
       @hook_command_preview_bytes 512
 
       @type worker_host :: String.t() | nil
+      @type cleanup_authority :: {:panel_local} | {:centralized_ssh, String.t()}
 
       @spec create_for_issue(map() | String.t() | nil, worker_host(), keyword()) ::
               {:ok, Path.t()} | {:error, term()}
@@ -34,8 +40,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
           with {:ok, workspace} <- workspace_path_for_issue(safe_id, worker_host),
                :ok <- validate_workspace_path(workspace, worker_host),
                {:ok, workspace, created?} <- ensure_workspace(workspace, worker_host),
-               :ok <-
-                 maybe_run_after_create_commands(workspace, issue_context, created?, worker_host, opts) do
+               :ok <- maybe_run_after_create_commands(workspace, issue_context, created?, worker_host, opts) do
             emit_system_progress(opts, issue_context, %{
               phase: "workspace_preparing",
               operation: "workspace_prepare",
@@ -50,7 +55,6 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         rescue
           error in [ArgumentError, ErlangError, File.Error] ->
             Logger.error("Workspace creation failed #{issue_log_context(issue_context)} worker_host=#{worker_host_for_log(worker_host)} error=#{Exception.message(error)}")
-
             {:error, error}
         end
       end
@@ -60,11 +64,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
       end
 
       defp ensure_workspace(workspace, worker_host) when is_binary(worker_host) do
-        with :ok <-
-               WorkspaceCleanupPolicy.validate_remote_delete(
-                 workspace,
-                 Config.settings!().workspace.root
-               ) do
+        with :ok <- WorkspaceCleanupPolicy.validate_remote_delete(workspace, Config.settings!().workspace.root) do
           do_ensure_remote_workspace(workspace, worker_host)
         end
       end
@@ -82,9 +82,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
       end
 
       @spec remove(Path.t()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
-      def remove(workspace) do
-        remove(workspace, nil)
-      end
+      def remove(workspace), do: remove(workspace, nil)
 
       @spec remove(Path.t(), worker_host()) :: {:ok, [String.t()]} | {:error, term(), String.t()}
       def remove(workspace, nil) do
@@ -116,13 +114,8 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         end
       end
 
-      @spec remove_issue_workspaces(term()) :: :ok
-      def remove_issue_workspaces(identifier) do
-        remove_issue_workspaces(identifier, nil)
-      end
-
-      @spec remove_issue_workspaces(term(), worker_host()) :: :ok
-      def remove_issue_workspaces(identifier, worker_host)
+      @spec remove_issue_workspaces(String.t(), cleanup_authority()) :: :ok
+      def remove_issue_workspaces(identifier, {:centralized_ssh, worker_host})
           when is_binary(identifier) and is_binary(worker_host) do
         safe_id = SourcePreparation.safe_identifier(identifier)
 
@@ -134,31 +127,20 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         :ok
       end
 
-      def remove_issue_workspaces(identifier, nil) when is_binary(identifier) do
+      def remove_issue_workspaces(identifier, {:panel_local}) when is_binary(identifier) do
         safe_id = SourcePreparation.safe_identifier(identifier)
 
-        case Config.settings!().worker.ssh_hosts do
-          [] ->
-            case workspace_path_for_issue(safe_id, nil) do
-              {:ok, workspace} -> remove(workspace, nil)
-              {:error, _reason} -> :ok
-            end
-
-          worker_hosts ->
-            Enum.each(worker_hosts, &remove_issue_workspaces(identifier, &1))
+        case workspace_path_for_issue(safe_id, nil) do
+          {:ok, workspace} -> remove(workspace, nil)
+          {:error, _reason} -> :ok
         end
 
         :ok
       end
 
-      def remove_issue_workspaces(_identifier, _worker_host) do
-        :ok
-      end
-
       @spec run_before_run_hook(Path.t(), map() | String.t() | nil, worker_host(), keyword()) ::
               :ok | {:error, term()}
-      def run_before_run_hook(workspace, issue_or_identifier, worker_host \\ nil, opts \\ [])
-          when is_binary(workspace) do
+      def run_before_run_hook(workspace, issue_or_identifier, worker_host \\ nil, opts \\ []) when is_binary(workspace) do
         issue_context = issue_context(issue_or_identifier)
         hooks = Config.settings!().hooks
 
@@ -172,8 +154,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
       end
 
       @spec run_after_run_hook(Path.t(), map() | String.t() | nil, worker_host(), keyword()) :: :ok
-      def run_after_run_hook(workspace, issue_or_identifier, worker_host \\ nil, opts \\ [])
-          when is_binary(workspace) do
+      def run_after_run_hook(workspace, issue_or_identifier, worker_host \\ nil, opts \\ []) when is_binary(workspace) do
         issue_context = issue_context(issue_or_identifier)
         hooks = Config.settings!().hooks
 
@@ -191,8 +172,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         SourcePreparation.workspace_path_for_issue(safe_id, nil, Config.settings!())
       end
 
-      defp workspace_path_for_issue(safe_id, worker_host)
-           when is_binary(safe_id) and is_binary(worker_host) do
+      defp workspace_path_for_issue(safe_id, worker_host) when is_binary(safe_id) and is_binary(worker_host) do
         SourcePreparation.workspace_path_for_issue(safe_id, worker_host, Config.settings!())
       end
 
@@ -215,15 +195,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         hooks = Config.settings!().hooks
 
         with :ok <- run_project_bootstrap(workspace, issue_context, worker_host, opts) do
-          run_optional_hook(
-            hooks.after_create,
-            workspace,
-            issue_context,
-            "after_create",
-            worker_host,
-            nil,
-            opts
-          )
+          run_optional_hook(hooks.after_create, workspace, issue_context, "after_create", worker_host, nil, opts)
         end
       end
 
@@ -257,8 +229,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         end
       end
 
-      defp run_project_bootstrap(workspace, issue_context, worker_host, opts)
-           when is_binary(worker_host) do
+      defp run_project_bootstrap(workspace, issue_context, worker_host, opts) when is_binary(worker_host) do
         settings = Config.settings!()
 
         case settings.project.source_strategy do
@@ -289,15 +260,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         end
       end
 
-      defp run_optional_hook(
-             command,
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             timeout_ms,
-             opts
-           ) do
+      defp run_optional_hook(command, workspace, issue_context, hook_name, worker_host, timeout_ms, opts) do
         command
         |> blank?()
         |> case do
@@ -314,18 +277,8 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         branch = SourcePreparation.worktree_branch(issue_context.issue_identifier)
 
         Logger.info("Preparing project worktree #{issue_log_context(issue_context)} base=#{base_path} workspace=#{workspace}")
-
         log_phase("workspace_bootstrap", :started, issue_context, workspace, nil)
-
-        persist_phase_event(
-          "workspace_bootstrap",
-          :started,
-          issue_context,
-          workspace,
-          nil,
-          started_at,
-          %{source_strategy: "worktree"}
-        )
+        persist_phase_event("workspace_bootstrap", :started, issue_context, workspace, nil, started_at, %{source_strategy: "worktree"})
 
         emit_system_progress(opts, issue_context, %{
           phase: "workspace_bootstrap",
@@ -339,34 +292,17 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         result =
           with :ok <- ensure_worktree_base_repo(project, base_path, timeout_ms, opts, issue_context),
                :ok <- maybe_fetch_worktree_base(project, base_path, timeout_ms, opts, issue_context),
-               :ok <-
-                 cleanup_stale_worktree(base_path, workspace, project, timeout_ms, opts, issue_context) do
-            add_worktree(
-              base_path,
-              workspace,
-              branch,
-              project.default_branch,
-              timeout_ms,
-              opts,
-              issue_context
-            )
+               :ok <- cleanup_stale_worktree(base_path, workspace, project, timeout_ms, opts, issue_context) do
+            add_worktree(base_path, workspace, branch, project.default_branch, timeout_ms, opts, issue_context)
           end
 
         case result do
           :ok ->
-            persist_phase_event(
-              "workspace_bootstrap",
-              :completed,
-              issue_context,
-              workspace,
-              nil,
-              started_at,
-              %{
-                source_strategy: "worktree",
-                base_path: base_path,
-                branch: branch
-              }
-            )
+            persist_phase_event("workspace_bootstrap", :completed, issue_context, workspace, nil, started_at, %{
+              source_strategy: "worktree",
+              base_path: base_path,
+              branch: branch
+            })
 
             emit_system_progress(opts, issue_context, %{
               phase: "workspace_bootstrap",
@@ -381,19 +317,11 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
             :ok
 
           {:error, reason} ->
-            persist_phase_event(
-              "workspace_bootstrap",
-              :failed,
-              issue_context,
-              workspace,
-              nil,
-              started_at,
-              %{
-                source_strategy: "worktree",
-                base_path: base_path,
-                reason: inspect(reason)
-              }
-            )
+            persist_phase_event("workspace_bootstrap", :failed, issue_context, workspace, nil, started_at, %{
+              source_strategy: "worktree",
+              base_path: base_path,
+              reason: inspect(reason)
+            })
 
             emit_system_progress(opts, issue_context, %{
               phase: "workspace_bootstrap",
@@ -417,10 +345,9 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
             {:error, :missing_project_repository_url}
 
           File.exists?(base_path) and empty_directory_tree?(base_path) ->
-            with :ok <-
-                   validate_cleanup_delete(base_path, [
-                     SourcePreparation.repository_base_root(Config.settings!())
-                   ]) do
+            repository_root = SourcePreparation.repository_base_root(Config.settings!())
+
+            with :ok <- validate_cleanup_delete(base_path, [repository_root]) do
               File.rm_rf!(base_path)
               clone_worktree_base(project, base_path, timeout_ms, opts, issue_context)
             end
@@ -450,29 +377,10 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
           |> maybe_append_git_arg("--branch", project.default_branch)
           |> Kernel.++([project.repository_url, base_path])
 
-        run_git(
-          parent,
-          args,
-          timeout_ms,
-          progress_callback(
-            opts,
-            issue_context,
-            "workspace_bootstrap",
-            "git_clone",
-            "Cloning base repository"
-          )
-        )
+        run_git(parent, args, timeout_ms, progress_callback(opts, issue_context, "workspace_bootstrap", "git_clone", "Cloning base repository"))
       end
 
-      defp maybe_fetch_worktree_base(
-             %{worktree_fetch: false},
-             _base_path,
-             _timeout_ms,
-             _opts,
-             _issue_context
-           ) do
-        :ok
-      end
+      defp maybe_fetch_worktree_base(%{worktree_fetch: false}, _base_path, _timeout_ms, _opts, _issue_context), do: :ok
 
       defp maybe_fetch_worktree_base(project, base_path, timeout_ms, opts, issue_context) do
         branch = project.default_branch || "main"
@@ -492,19 +400,12 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
                  base_path,
                  ["fetch", "origin", branch, "--prune"],
                  timeout_ms,
-                 progress_callback(
-                   opts,
-                   issue_context,
-                   "workspace_bootstrap",
-                   "git_fetch",
-                   "Fetching base repository"
-                 )
+                 progress_callback(opts, issue_context, "workspace_bootstrap", "git_fetch", "Fetching base repository")
                ),
              :ok <- update_worktree_base_branch(base_path, branch, timeout_ms, opts, issue_context) do
           :ok
         else
-          {:error, reason} ->
-            {:error, {:worktree_source_sync_failed, project.repository_url, branch, reason}}
+          {:error, reason} -> {:error, {:worktree_source_sync_failed, project.repository_url, branch, reason}}
         end
       end
 
@@ -518,18 +419,8 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
           branch: branch
         })
 
-        with :ok <-
-               run_git(
-                 base_path,
-                 ["rev-parse", "--verify", "refs/remotes/origin/#{branch}"],
-                 timeout_ms
-               ),
-             :ok <-
-               run_git(
-                 base_path,
-                 ["update-ref", "refs/heads/#{branch}", "refs/remotes/origin/#{branch}"],
-                 timeout_ms
-               ) do
+        with :ok <- run_git(base_path, ["rev-parse", "--verify", "refs/remotes/origin/#{branch}"], timeout_ms),
+             :ok <- run_git(base_path, ["update-ref", "refs/heads/#{branch}", "refs/remotes/origin/#{branch}"], timeout_ms) do
           emit_system_progress(opts, issue_context, %{
             phase: "workspace_bootstrap",
             operation: "git_update_base_branch",
@@ -543,29 +434,11 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         end
       end
 
-      defp cleanup_stale_worktree(
-             base_path,
-             workspace,
-             %{worktree_cleanup: false},
-             timeout_ms,
-             opts,
-             issue_context
-           ) do
+      defp cleanup_stale_worktree(base_path, workspace, %{worktree_cleanup: false}, timeout_ms, opts, issue_context) do
         if File.exists?(workspace) do
           {:error, {:worktree_exists, workspace}}
         else
-          run_git(
-            base_path,
-            ["worktree", "prune"],
-            timeout_ms,
-            progress_callback(
-              opts,
-              issue_context,
-              "workspace_bootstrap",
-              "worktree_prune",
-              "Pruning stale worktrees"
-            )
-          )
+          run_git(base_path, ["worktree", "prune"], timeout_ms, progress_callback(opts, issue_context, "workspace_bootstrap", "worktree_prune", "Pruning stale worktrees"))
         end
       end
 
@@ -593,13 +466,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
               base_path,
               ["worktree", "prune"],
               timeout_ms,
-              progress_callback(
-                opts,
-                issue_context,
-                "workspace_bootstrap",
-                "worktree_prune",
-                "Pruning stale worktrees"
-              )
+              progress_callback(opts, issue_context, "workspace_bootstrap", "worktree_prune", "Pruning stale worktrees")
             )
 
           File.rm_rf!(workspace)
@@ -624,13 +491,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
           base_path,
           ["worktree", "add", "-B", branch, workspace, ref],
           timeout_ms,
-          progress_callback(
-            opts,
-            issue_context,
-            "workspace_bootstrap",
-            "worktree_add",
-            "Creating project worktree"
-          )
+          progress_callback(opts, issue_context, "workspace_bootstrap", "worktree_add", "Creating project worktree")
         )
       end
 
@@ -641,9 +502,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         end
       end
 
-      defp worktree_base_ref(_base_path, _branch, _timeout_ms) do
-        "HEAD"
-      end
+      defp worktree_base_ref(_base_path, _branch, _timeout_ms), do: "HEAD"
 
       defp git_repo?(path) do
         File.dir?(path) and run_git(path, ["rev-parse", "--git-dir"]) == :ok
@@ -668,9 +527,7 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
         _error -> false
       end
 
-      defp repository_cache_path(settings) do
-        SourcePreparation.repository_cache_path(settings)
-      end
+      defp repository_cache_path(settings), do: SourcePreparation.repository_cache_path(settings)
 
       defp maybe_remove_project_worktree(workspace) do
         settings = Config.settings!()
@@ -695,37 +552,18 @@ defmodule SymphonyElixir.Workspace.Sections.WorkspaceLifecycle do
 
       defp validate_cleanup_delete(path, roots, opts \\ []) do
         protected_paths = Keyword.get(opts, :protected_paths, [])
-
-        WorkspaceCleanupPolicy.validate_local_delete(path,
-          roots: roots,
-          protected_paths: protected_paths
-        )
+        WorkspaceCleanupPolicy.validate_local_delete(path, roots: roots, protected_paths: protected_paths)
       end
 
       defp run_git(cwd, args) do
         executable = System.find_executable("git") || "git"
 
-        case System.cmd(executable, args,
-               cd: cwd,
-               stderr_to_stdout: true,
-               env: [{"GIT_TERMINAL_PROMPT", "0"}]
-             ) do
-          {_output, 0} ->
-            :ok
-
-          {output, status} ->
-            {:error, {:git_command_failed, args, status, sanitize_hook_output_for_log(output)}}
+        case System.cmd(executable, args, cd: cwd, stderr_to_stdout: true, env: [{"GIT_TERMINAL_PROMPT", "0"}]) do
+          {_output, 0} -> :ok
+          {output, status} -> {:error, {:git_command_failed, args, status, sanitize_hook_output_for_log(output)}}
         end
       rescue
         error -> {:error, error}
-      end
-
-      defp run_git(cwd, args, nil) do
-        run_git(cwd, args)
-      end
-
-      defp run_git(cwd, args, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
-        run_git(cwd, args, timeout_ms, fn _chunk, _recent_output -> :ok end)
       end
     end
   end

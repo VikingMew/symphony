@@ -2,159 +2,21 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
   @moduledoc false
 
+  alias SymphonyElixir.Linear.Issue
+  alias SymphonyElixir.Orchestrator
+  alias SymphonyElixir.TestSupport.FakePersistence
+  alias SymphonyElixir.Workflow
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
-      alias SymphonyElixir.Codex.MessageHumanizer
-
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
-      alias SymphonyElixir.OrchestratorStatusTest.RollbackLinearClient
-
-      test "orchestrator snapshot tracks codex token-count cumulative usage payloads" do
-        issue_id = "issue-token-count-snapshot"
-
-        issue = %Elixir.SymphonyElixir.Linear.Issue{
-          id: issue_id,
-          identifier: "MT-220",
-          title: "Token count snapshot test",
-          description: "Validate token-count style payloads",
-          state: "In Progress",
-          url: "https://example.org/issues/MT-220"
-        }
-
-        orchestrator_name = Module.concat(__MODULE__, :TokenCountOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
-
-        on_exit(fn ->
-          if Process.alive?(pid) do
-            Process.exit(pid, :normal)
-          end
-        end)
-
-        initial_state = :sys.get_state(pid)
-        process_ref = make_ref()
-        started_at = DateTime.utc_now()
-
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
-          pid: self(),
-          ref: process_ref,
-          identifier: issue.identifier,
-          issue: issue,
-          session_id: nil,
-          last_codex_message: nil,
-          last_codex_timestamp: nil,
-          last_codex_event: nil,
-          codex_input_tokens: 0,
-          codex_output_tokens: 0,
-          codex_total_tokens: 0,
-          codex_last_reported_input_tokens: 0,
-          codex_last_reported_output_tokens: 0,
-          codex_last_reported_total_tokens: 0,
-          started_at: started_at
-        }
-
-        :sys.replace_state(pid, fn _ ->
-          initial_state
-          |> Map.put(:running, %{issue_id => running_entry})
-          |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
-        end)
-
-        now = DateTime.utc_now()
-
-        send(
-          pid,
-          {:codex_worker_update, issue_id,
-           %{
-             event: :notification,
-             payload: %{
-               "method" => "codex/event/token_count",
-               "params" => %{
-                 "msg" => %{
-                   "type" => "token_count",
-                   "info" => %{
-                     "total_token_usage" => %{
-                       "input_tokens" => "2",
-                       "output_tokens" => 2,
-                       "total_tokens" => 4
-                     }
-                   }
-                 }
-               }
-             },
-             timestamp: now
-           }}
-        )
-
-        send(
-          pid,
-          {:codex_worker_update, issue_id,
-           %{
-             event: :notification,
-             payload: %{
-               "method" => "codex/event/token_count",
-               "params" => %{
-                 "msg" => %{
-                   "type" => "token_count",
-                   "info" => %{
-                     "total_token_usage" => %{
-                       "prompt_tokens" => 10,
-                       "completion_tokens" => 5,
-                       "total_tokens" => 15
-                     }
-                   }
-                 }
-               }
-             },
-             timestamp: DateTime.utc_now()
-           }}
-        )
-
-        snapshot = GenServer.call(pid, :snapshot)
-        assert %{running: [snapshot_entry]} = snapshot
-        assert snapshot_entry.codex_input_tokens == 10
-        assert snapshot_entry.codex_output_tokens == 5
-        assert snapshot_entry.codex_total_tokens == 15
-
-        send(pid, {:DOWN, process_ref, :process, self(), :normal})
-        completed_state = :sys.get_state(pid)
-
-        assert completed_state.codex_totals.input_tokens == 10
-        assert completed_state.codex_totals.output_tokens == 5
-        assert completed_state.codex_totals.total_tokens == 15
-      end
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
+      import SymphonyElixir.TestSupport.RetryTimerAssertions
 
       test "orchestrator snapshot tracks codex rate-limit payloads" do
         issue_id = "issue-rate-limit-snapshot"
 
-        issue = %Elixir.SymphonyElixir.Linear.Issue{
+        issue = %Issue{
           id: issue_id,
           identifier: "MT-221",
           title: "Rate limit snapshot test",
@@ -164,7 +26,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         }
 
         orchestrator_name = Module.concat(__MODULE__, :RateLimitOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -176,7 +38,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         process_ref = make_ref()
         started_at = DateTime.utc_now()
 
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
+        running_entry = %Orchestrator.RunningIssue{
           pid: self(),
           ref: process_ref,
           project_id: "fake-project-id",
@@ -236,7 +98,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       test "orchestrator token accounting prefers total_token_usage over last_token_usage in token_count payloads" do
         issue_id = "issue-token-precedence"
 
-        issue = %Elixir.SymphonyElixir.Linear.Issue{
+        issue = %Issue{
           id: issue_id,
           identifier: "MT-222",
           title: "Token precedence",
@@ -246,7 +108,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         }
 
         orchestrator_name = Module.concat(__MODULE__, :TokenPrecedenceOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -258,7 +120,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         process_ref = make_ref()
         started_at = DateTime.utc_now()
 
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
+        running_entry = %Orchestrator.RunningIssue{
           pid: self(),
           ref: process_ref,
           identifier: issue.identifier,
@@ -324,7 +186,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       test "orchestrator token accounting accumulates monotonic thread token usage totals" do
         issue_id = "issue-thread-token-usage"
 
-        issue = %Elixir.SymphonyElixir.Linear.Issue{
+        issue = %Issue{
           id: issue_id,
           identifier: "MT-223",
           title: "Thread token usage",
@@ -334,7 +196,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         }
 
         orchestrator_name = Module.concat(__MODULE__, :ThreadTokenUsageOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -346,7 +208,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         process_ref = make_ref()
         started_at = DateTime.utc_now()
 
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
+        running_entry = %Orchestrator.RunningIssue{
           pid: self(),
           ref: process_ref,
           identifier: issue.identifier,
@@ -398,7 +260,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       test "orchestrator token accounting ignores last_token_usage without cumulative totals" do
         issue_id = "issue-last-token-ignored"
 
-        issue = %Elixir.SymphonyElixir.Linear.Issue{
+        issue = %Issue{
           id: issue_id,
           identifier: "MT-224",
           title: "Last token ignored",
@@ -408,7 +270,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         }
 
         orchestrator_name = Module.concat(__MODULE__, :LastTokenIgnoredOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -420,7 +282,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         process_ref = make_ref()
         started_at = DateTime.utc_now()
 
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
+        running_entry = %Orchestrator.RunningIssue{
           pid: self(),
           ref: process_ref,
           identifier: issue.identifier,
@@ -480,7 +342,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
 
       test "orchestrator snapshot includes retry backoff entries" do
         orchestrator_name = Module.concat(__MODULE__, :RetryOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -491,7 +353,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         retry_entry = %{
           attempt: 2,
           timer_ref: nil,
-          due_at_ms: System.monotonic_time(:millisecond) + 5000,
+          due_at_ms: System.monotonic_time(:millisecond) + 5_000,
           identifier: "MT-500",
           error: "agent exited: :boom"
         }
@@ -517,12 +379,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       end
 
       test "orchestrator snapshot includes poll countdown and checking status" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           project_repository_url: "git@example.com:org/repo.git"
         )
 
         orchestrator_name = Module.concat(__MODULE__, :PollingSnapshotOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -538,7 +400,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
             | poll_interval_ms: 30_000,
               tick_timer_ref: nil,
               tick_token: make_ref(),
-              next_poll_due_at_ms: now_ms + 4000,
+              next_poll_due_at_ms: now_ms + 4_000,
               poll_check_in_progress: false
           }
         end)
@@ -555,7 +417,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
 
         assert is_integer(due_in_ms)
         assert due_in_ms >= 0
-        assert due_in_ms <= 4000
+        assert due_in_ms <= 4_000
 
         :sys.replace_state(pid, fn state ->
           %{state | poll_check_in_progress: true, next_poll_due_at_ms: nil}
@@ -566,14 +428,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       end
 
       test "orchestrator starts with listening disabled" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           tracker_api_token: nil,
-          poll_interval_ms: 5000,
+          poll_interval_ms: 5_000,
           project_repository_url: "git@example.com:org/repo.git"
         )
 
         orchestrator_name = Module.concat(__MODULE__, :ImmediateStartupOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -586,67 +448,51 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
                    listening?: false,
                    checking?: false,
                    next_poll_in_ms: next_poll_in_ms,
-                   poll_interval_ms: 5000
+                   poll_interval_ms: 5_000
                  }
                } = GenServer.call(pid, :snapshot)
 
         assert is_integer(next_poll_in_ms)
         assert next_poll_in_ms >= 0
-        assert next_poll_in_ms <= 5000
+        assert next_poll_in_ms <= 5_000
 
-        assert %{listening?: true} =
-                 Elixir.SymphonyElixir.Orchestrator.start_listening(orchestrator_name)
-
+        assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
         assert %{polling: %{listening?: true}} = GenServer.call(pid, :snapshot)
       end
 
       test "public snapshot, refresh, and listening controls preserve the live state type" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           project_repository_url: "git@example.com:org/repo.git"
         )
 
         orchestrator_name = Module.concat(__MODULE__, :PublicControlStateOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
-          if Process.alive?(pid) do
-            Process.exit(pid, :normal)
-          end
+          if Process.alive?(pid), do: Process.exit(pid, :normal)
         end)
 
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
-
-        assert %{polling: %{listening?: false}} =
-                 Elixir.SymphonyElixir.Orchestrator.snapshot(orchestrator_name, 1000)
-
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
-
-        assert %{listening?: true} =
-                 Elixir.SymphonyElixir.Orchestrator.start_listening(orchestrator_name)
-
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
-
-        assert %{listening?: true} =
-                 Elixir.SymphonyElixir.Orchestrator.start_refine_only_listening(orchestrator_name)
-
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
-        assert %{queued: _} = Elixir.SymphonyElixir.Orchestrator.request_refresh(orchestrator_name)
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
-
-        assert %{listening?: false} =
-                 Elixir.SymphonyElixir.Orchestrator.stop_listening(orchestrator_name)
-
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(pid)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
+        assert %{polling: %{listening?: false}} = Orchestrator.snapshot(orchestrator_name, 1_000)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
+        assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
+        assert %{listening?: true} = Orchestrator.start_refine_only_listening(orchestrator_name)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
+        assert %{queued: _} = Orchestrator.request_refresh(orchestrator_name)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
+        assert %{listening?: false} = Orchestrator.stop_listening(orchestrator_name)
+        assert %Orchestrator.State{} = :sys.get_state(pid)
       end
 
       test "orchestrator poll cycle resets next refresh countdown after a check" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           tracker_api_token: nil,
           poll_interval_ms: 50
         )
 
         orchestrator_name = Module.concat(__MODULE__, :PollCycleOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -689,9 +535,9 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
       end
 
       test "orchestrator restarts stalled workers with retry backoff" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           tracker_api_token: nil,
-          codex_stall_timeout_ms: 1000,
+          codex_stall_timeout_ms: 1_000,
           project_repository_url: "git@example.com:org/repo.git"
         )
 
@@ -699,7 +545,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
 
         issue_id = "issue-stall"
         orchestrator_name = Module.concat(__MODULE__, :StallOrchestrator)
-        {:ok, pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
 
         on_exit(fn ->
           if Process.alive?(pid) do
@@ -717,19 +563,16 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
         stale_activity_at = DateTime.add(DateTime.utc_now(), -5, :second)
         initial_state = :sys.get_state(pid)
 
-        running_entry = %Elixir.SymphonyElixir.Orchestrator.RunningIssue{
+        running_entry = %Orchestrator.RunningIssue{
           pid: worker_pid,
           ref: make_ref(),
           identifier: "MT-STALL",
-          issue: %Elixir.SymphonyElixir.Linear.Issue{
-            id: issue_id,
-            identifier: "MT-STALL",
-            state: "In Progress"
-          },
+          issue: %Issue{id: issue_id, identifier: "MT-STALL", state: "In Progress"},
           session_id: "thread-stall-turn-stall",
           last_codex_message: nil,
           last_codex_timestamp: stale_activity_at,
           last_codex_event: :notification,
+          admission: %{workspace_authority: {:panel_local}},
           started_at: stale_activity_at
         }
 
@@ -740,9 +583,16 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
           |> Map.put(:listening_mode, :listening_all)
         end)
 
-        send(pid, {:tick, initial_state.tick_token})
-        Process.sleep(100)
-        state = :sys.get_state(pid)
+        trace_retry_timers(pid)
+
+        {state, log} =
+          with_log(fn ->
+            monitor = Process.monitor(worker_pid)
+            send(pid, :run_poll_cycle)
+            assert_receive {:DOWN, ^monitor, :process, ^worker_pid, _reason}
+            eventually(fn -> not Map.has_key?(:sys.get_state(pid).running, issue_id) end)
+            :sys.get_state(pid)
+          end)
 
         assert Process.alive?(worker_pid) == false
         assert Map.has_key?(state.running, issue_id) == false
@@ -751,13 +601,82 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus2 do
                  attempt: 1,
                  due_at_ms: due_at_ms,
                  identifier: "MT-STALL",
-                 error: "stalled for " <> _
+                 error: "budget_exhausted",
+                 failure_evidence: %{"elapsed_ms" => elapsed_ms, "timeout_ms" => 1_000}
                } = state.retry_attempts[issue_id]
 
+        assert elapsed_ms > 1_000
         assert is_integer(due_at_ms)
-        remaining_ms = due_at_ms - System.monotonic_time(:millisecond)
-        assert remaining_ms >= 9500
-        assert remaining_ms <= 10_500
+        assert log =~ "in 10000ms (attempt 1)"
+        assert_retry_delay(pid, issue_id, state.retry_attempts[issue_id], 10_000)
+      end
+
+      test "orchestrator blocks input-required agent results without scheduling retry" do
+        issue_id = "issue-input-blocked"
+        orchestrator_name = Module.concat(__MODULE__, :InputBlockedOrchestrator)
+        {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+        on_exit(fn ->
+          if Process.alive?(pid) do
+            Process.exit(pid, :normal)
+          end
+        end)
+
+        ref = make_ref()
+        initial_state = :sys.get_state(pid)
+
+        FakePersistence.put_issues([
+          %{
+            identifier: "MT-BLOCK",
+            tracker_issue_id: issue_id,
+            state: "In Progress",
+            blocking_decision: nil,
+            no_progress_streak: 0
+          }
+        ])
+
+        worker_pid = spawn(fn -> Process.sleep(:infinity) end)
+
+        running_entry = %Orchestrator.RunningIssue{
+          pid: worker_pid,
+          ref: ref,
+          run_id: "run-input-blocked",
+          identifier: "MT-BLOCK",
+          issue: %Issue{id: issue_id, identifier: "MT-BLOCK", state: "In Progress"},
+          session_id: "thread-block",
+          last_codex_message: nil,
+          last_codex_timestamp: nil,
+          last_codex_event: nil,
+          started_at: DateTime.utc_now(),
+          session_history: [],
+          session_history_total_count: 0,
+          agent_result:
+            {:blocked,
+             %{
+               reason: "blocked_on_push_auth",
+               detail: %{"action" => "refresh GitHub credentials"},
+               references: %{"remote" => "origin"}
+             }}
+        }
+
+        :sys.replace_state(pid, fn _ ->
+          initial_state
+          |> Map.put(:running, %{issue_id => running_entry})
+          |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+        end)
+
+        send(pid, {:DOWN, ref, :process, self(), :normal})
+        state = :sys.get_state(pid)
+
+        assert Map.has_key?(state.running, issue_id) == false
+        assert MapSet.member?(state.claimed, issue_id)
+        assert state.retry_attempts == %{}
+        assert %{reason: "runtime_failure", detail: detail} = state.blocked[issue_id]
+        assert detail["reason"] == "blocked_on_push_auth"
+        assert detail["detail"] == %{"action" => "refresh GitHub credentials"}
+
+        snapshot = GenServer.call(pid, :snapshot)
+        assert [%{issue_id: ^issue_id, reason: "runtime_failure"}] = snapshot.blocked
       end
     end
   end

@@ -23,6 +23,12 @@ defmodule SymphonyElixir.Repo.Migrations.ClassifyTerminalRunFailures do
   )
 
   def up do
+    up_step_1()
+    up_step_2()
+    up_step_3()
+  end
+
+  defp up_step_1 do
     alter table(:runs) do
       add(:failure_evidence, :map)
     end
@@ -35,7 +41,9 @@ defmodule SymphonyElixir.Repo.Migrations.ClassifyTerminalRunFailures do
         failure_evidence = NULL
     WHERE status IN ('running', 'completed')
     """)
+  end
 
+  defp up_step_2 do
     execute("""
     UPDATE runs
     SET failure_evidence = CASE
@@ -78,7 +86,9 @@ defmodule SymphonyElixir.Repo.Migrations.ClassifyTerminalRunFailures do
         END
     WHERE status IN ('failed', 'blocked', 'cancelled', 'stopped')
     """)
+  end
 
+  defp up_step_3 do
     execute("""
     DO $$
     BEGIN

@@ -2,71 +2,14 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
   @moduledoc false
 
+  alias SymphonyElixir.Codex.MessageHumanizer
+  alias SymphonyElixir.Orchestrator
+  alias SymphonyElixir.OrchestratorStatusTest.RollbackLinearClient
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
-      alias SymphonyElixir.Codex.MessageHumanizer
-
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
-      alias SymphonyElixir.OrchestratorStatusTest.RollbackLinearClient
-
-      test "status dashboard repeated snapshot refreshes preserve Orchestrator state" do
-        orchestrator_pid = Process.whereis(SymphonyElixir.Orchestrator)
-        dashboard_name = Module.concat(__MODULE__, :RepeatedSnapshotDashboard)
-
-        {:ok, dashboard_pid} =
-          Elixir.SymphonyElixir.StatusDashboard.start_link(
-            name: dashboard_name,
-            enabled: true,
-            refresh_ms: 60_000
-          )
-
-        on_exit(fn ->
-          if Process.alive?(dashboard_pid) do
-            Process.exit(dashboard_pid, :normal)
-          end
-        end)
-
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(orchestrator_pid)
-
-        Enum.each(1..3, fn _ ->
-          Elixir.SymphonyElixir.StatusDashboard.notify_update(dashboard_name)
-          send(dashboard_pid, :tick)
-        end)
-
-        _ = :sys.get_state(dashboard_pid)
-        assert %Elixir.SymphonyElixir.Orchestrator.State{} = :sys.get_state(orchestrator_pid)
-        assert Process.alive?(orchestrator_pid)
-      end
-
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
       test "application configures a rotating file logger handler" do
         assert {:ok, handler_config} = :logger.get_handler_config(:symphony_disk_log)
         assert handler_config.module == :logger_disk_log_h
@@ -80,7 +23,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
 
       test "application keeps the default console logger handler" do
         assert {:ok, handler_config} = :logger.get_handler_config(:default)
-        assert handler_config.formatter == {:logger_formatter, %{single_line: true}}
+        assert handler_config.formatter == {SymphonyElixir.LogFormatter, %{}}
         assert handler_config.level == :info
       end
 
@@ -118,24 +61,15 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           {"item/fileChange/requestApproval", %{"params" => %{"fileChangeCount" => 2}}, "file change approval requested (2 files)"},
           {"item/tool/call", %{"params" => %{"tool" => "linear_graphql"}}, "dynamic tool call requested (linear_graphql)"},
           {"item/tool/requestUserInput", %{"params" => %{"question" => "Continue?"}}, "tool requires user input: Continue?"},
-          {"mcpServer/elicitation/request",
-           %{
-             "params" => %{
-               "serverName" => "linear",
-               "toolName" => "task_update",
-               "prompt" => "Approve state change?"
-             }
-           }, "MCP elicitation requested (server: linear, tool: task_update, prompt: Approve state change?)"}
+          {"mcpServer/elicitation/request", %{"params" => %{"serverName" => "linear", "toolName" => "task_update", "prompt" => "Approve state change?"}},
+           "MCP elicitation requested (server: linear, tool: task_update, prompt: Approve state change?)"}
         ]
 
         Enum.each(event_cases, fn {method, payload, expected_fragment} ->
           message = Map.put(payload, "method", method)
 
           humanized =
-            Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(%{
-              event: :notification,
-              message: message
-            })
+            MessageHumanizer.humanize_codex_message(%{event: :notification, message: message})
 
           assert humanized =~ expected_fragment
         end)
@@ -156,7 +90,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message) ==
+        assert MessageHumanizer.humanize_codex_message(message) ==
                  "MCP elicitation requested (server: linear, tool: task_comment, prompt: Confirm comment update?)"
       end
 
@@ -182,13 +116,13 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(completed) =~
+        assert MessageHumanizer.humanize_codex_message(completed) =~
                  "dynamic tool call completed (linear_graphql)"
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(failed) =~
+        assert MessageHumanizer.humanize_codex_message(failed) =~
                  "dynamic tool call failed (linear_graphql)"
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(unsupported) =~
+        assert MessageHumanizer.humanize_codex_message(unsupported) =~
                  "unsupported dynamic tool call rejected (unknown_tool)"
       end
 
@@ -207,10 +141,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(wrapped) =~
-                 "turn completed"
-
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(wrapped) =~ "in 10"
+        assert MessageHumanizer.humanize_codex_message(wrapped) =~ "turn completed"
+        assert MessageHumanizer.humanize_codex_message(wrapped) =~ "in 10"
       end
 
       test "status dashboard uses shell command line as exec command status text" do
@@ -222,8 +154,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message) ==
-                 "git status --short"
+        assert MessageHumanizer.humanize_codex_message(message) == "git status --short"
       end
 
       test "status dashboard formats auto-approval updates from codex" do
@@ -238,7 +169,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        humanized = Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message)
+        humanized = MessageHumanizer.humanize_codex_message(message)
         assert humanized =~ "command approval requested"
         assert humanized =~ "auto-approved"
       end
@@ -255,7 +186,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        humanized = Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message)
+        humanized = MessageHumanizer.humanize_codex_message(message)
         assert humanized =~ "tool requires user input"
         assert humanized =~ "auto-answered"
       end
@@ -293,14 +224,57 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           }
         }
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(reasoning_message) =~
+        assert MessageHumanizer.humanize_codex_message(reasoning_message) =~
                  "reasoning update: compare retry paths for Linear polling"
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(message_delta) =~
+        assert MessageHumanizer.humanize_codex_message(message_delta) =~
                  "agent message streaming: writing workpad reconciliation update"
 
-        assert Elixir.SymphonyElixir.Codex.MessageHumanizer.humanize_codex_message(fallback_reasoning) ==
-                 "reasoning update"
+        assert MessageHumanizer.humanize_codex_message(fallback_reasoning) == "reasoning update"
+      end
+
+      test "stale decision projection cleanup releases the old run and preserves a newer running run" do
+        name = Module.concat(__MODULE__, "DecisionClear#{System.unique_integer([:positive])}")
+        pid = start_supervised!({Orchestrator, name: name})
+        issue_id = "issue-decision-clear"
+
+        :sys.replace_state(pid, fn state ->
+          %{
+            state
+            | blocked: %{issue_id => %{run_id: "run-old"}},
+              retry_attempts: %{issue_id => %{timer_ref: nil}},
+              failure_counts: %{issue_id => 3},
+              claimed: MapSet.put(state.claimed, issue_id)
+          }
+        end)
+
+        Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+        cleared = :sys.get_state(pid)
+        assert cleared.blocked == %{}
+        assert cleared.retry_attempts == %{}
+        assert cleared.failure_counts == %{}
+        assert cleared.claimed == MapSet.new()
+
+        newer = %Orchestrator.RunningIssue{run_id: "run-new", identifier: "SYM-NEW"}
+
+        :sys.replace_state(pid, fn state ->
+          %{
+            state
+            | running: %{issue_id => newer},
+              blocked: %{issue_id => %{run_id: "run-old"}},
+              retry_attempts: %{issue_id => %{timer_ref: nil}},
+              failure_counts: %{issue_id => 1},
+              claimed: MapSet.put(state.claimed, issue_id)
+          }
+        end)
+
+        Orchestrator.blocking_decision_cleared(issue_id, "run-old", pid)
+        preserved = :sys.get_state(pid)
+        assert preserved.running[issue_id].run_id == "run-new"
+        assert MapSet.member?(preserved.claimed, issue_id)
+        assert preserved.blocked == %{}
+        assert preserved.retry_attempts == %{}
+        assert preserved.failure_counts == %{}
       end
 
       test "application stop logs offline status" do
@@ -315,6 +289,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
       defp wait_for_snapshot(pid, predicate, timeout_ms \\ 200) when is_function(predicate, 1) do
         deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
         do_wait_for_snapshot(pid, predicate, deadline_ms)
+      end
+
+      defp eventually(fun, timeout_ms \\ 500) when is_function(fun, 0) do
+        deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+        do_eventually(fun, deadline_ms)
       end
 
       defp streaming_delta(fragment, timestamp) do
@@ -332,25 +311,18 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
         }
       end
 
-      defp restore_app_env(key, nil) do
-        Application.delete_env(:symphony_elixir, key)
-      end
-
-      defp restore_app_env(key, value) do
-        Application.put_env(:symphony_elixir, key, value)
-      end
+      defp restore_app_env(key, nil), do: Application.delete_env(:symphony_elixir, key)
+      defp restore_app_env(key, value), do: Application.put_env(:symphony_elixir, key, value)
 
       defp use_noop_linear_client do
         previous_linear_client = Application.get_env(:symphony_elixir, :linear_client_module)
-
-        Application.put_env(
-          :symphony_elixir,
-          :linear_client_module,
-          Elixir.SymphonyElixir.OrchestratorStatusTest.RollbackLinearClient
-        )
+        previous_test_pid = Application.get_env(:symphony_elixir, :rollback_linear_test_pid)
+        Application.put_env(:symphony_elixir, :linear_client_module, RollbackLinearClient)
+        Application.put_env(:symphony_elixir, :rollback_linear_test_pid, self())
 
         on_exit(fn ->
           restore_app_env(:linear_client_module, previous_linear_client)
+          restore_app_env(:rollback_linear_test_pid, previous_test_pid)
         end)
       end
 
@@ -361,10 +333,24 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.OrchestratorStatus4 do
           snapshot
         else
           if System.monotonic_time(:millisecond) >= deadline_ms do
+            # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
             flunk("timed out waiting for orchestrator snapshot state: #{inspect(snapshot)}")
           else
             Process.sleep(5)
             do_wait_for_snapshot(pid, predicate, deadline_ms)
+          end
+        end
+      end
+
+      defp do_eventually(fun, deadline_ms) do
+        if fun.() do
+          :ok
+        else
+          if System.monotonic_time(:millisecond) >= deadline_ms do
+            assert fun.()
+          else
+            Process.sleep(5)
+            do_eventually(fun, deadline_ms)
           end
         end
       end

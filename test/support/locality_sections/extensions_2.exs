@@ -2,52 +2,26 @@
 defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
   @moduledoc false
 
+  alias SymphonyElixir.ExtensionsTest.StaticOrchestrator
+  alias SymphonyElixir.HttpServer
+  alias SymphonyElixir.Orchestrator
+  alias SymphonyElixir.StatusDashboard
+  alias SymphonyElixir.Workflow
+  alias SymphonyElixir.WorkflowStore
+
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
-    quote do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote context: __CALLER__.module do
       import Phoenix.ConnTest
       import Phoenix.LiveViewTest
-
-      alias SymphonyElixir.Linear.Adapter
-      alias SymphonyElixir.TestSupport.FakePersistence
-
-      import ExUnit.CaptureLog
-      alias SymphonyElixir.AgentRunner
-      alias SymphonyElixir.CLI
-      alias SymphonyElixir.Codex.AppServer
-      alias SymphonyElixir.Config
-      alias SymphonyElixir.HttpServer
-      alias SymphonyElixir.Linear.Client
-      alias SymphonyElixir.Linear.Health
-      alias SymphonyElixir.Linear.Issue
-      alias SymphonyElixir.Orchestrator
-      alias SymphonyElixir.PromptBuilder
-      alias SymphonyElixir.StatusDashboard
-      alias SymphonyElixir.TestSupport.FakePersistence
-      alias SymphonyElixir.Tracker
-      alias SymphonyElixir.Worker.HeartbeatMetrics
-      alias SymphonyElixir.Workflow
-      alias SymphonyElixir.WorkflowStore
-      alias SymphonyElixir.Workspace
-
-      import SymphonyElixir.TestSupport,
-        only: [
-          ensure_panel_children_running!: 0,
-          panel_supervisor_running?: 0,
-          write_workflow_file!: 1,
-          write_workflow_file!: 2,
-          restore_env: 2,
-          stop_default_http_server: 0
-        ]
-
-      alias SymphonyElixir.ExtensionsTest.{FakeLinearClient, SlowOrchestrator, StaticOrchestrator}
 
       test "dashboard liveview renders and refreshes over pubsub" do
         orchestrator_name = Module.concat(__MODULE__, :DashboardOrchestrator)
         snapshot = static_snapshot()
 
         {:ok, orchestrator_pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
+          StaticOrchestrator.start_link(
             name: orchestrator_name,
             snapshot: snapshot,
             refresh: %{
@@ -116,7 +90,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           Keyword.put(state, :snapshot, updated_snapshot)
         end)
 
-        Elixir.SymphonyElixir.StatusDashboard.notify_update()
+        StatusDashboard.notify_update()
 
         assert_eventually(fn ->
           render(view) =~ "agent message content streaming: structured update"
@@ -140,12 +114,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
             }
           })
 
-        {:ok, _pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
-            name: orchestrator_name,
-            snapshot: snapshot
-          )
-
+        {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
         start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
         {:ok, _view, html} = live(build_conn(), "/")
@@ -164,24 +133,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           |> Map.put(:rate_limits, %{
             "limit_id" => "codex",
             "plan_type" => "pro",
-            "primary" => %{
-              "used_percent" => 65,
-              "window_duration_mins" => 300,
-              "resets_at" => 1_779_341_757
-            },
-            "secondary" => %{
-              "used_percent" => 18,
-              "window_duration_mins" => 10_080,
-              "resets_at" => 1_779_848_319
-            }
+            "primary" => %{"used_percent" => 65, "window_duration_mins" => 300, "resets_at" => 1_779_341_757},
+            "secondary" => %{"used_percent" => 18, "window_duration_mins" => 10_080, "resets_at" => 1_779_848_319}
           })
 
-        {:ok, _pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
-            name: orchestrator_name,
-            snapshot: snapshot
-          )
-
+        {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
         start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
 
         {:ok, _view, html} = live(build_conn(), "/")
@@ -199,16 +155,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         orchestrator_name = Module.concat(__MODULE__, :DashboardListeningOrchestrator)
 
         {:ok, _orchestrator_pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
+          StaticOrchestrator.start_link(
             name: orchestrator_name,
             snapshot: static_snapshot(),
             owner: self(),
-            refresh: %{
-              queued: false,
-              coalesced: false,
-              requested_at: DateTime.utc_now(),
-              operations: []
-            }
+            refresh: %{queued: false, coalesced: false, requested_at: DateTime.utc_now(), operations: []}
           )
 
         start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
@@ -269,7 +220,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         orchestrator_name = Module.concat(__MODULE__, :DashboardOperatorFailureOrchestrator)
 
         {:ok, _orchestrator_pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
+          StaticOrchestrator.start_link(
             name: orchestrator_name,
             snapshot: static_snapshot(),
             owner: self(),
@@ -312,15 +263,10 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           end)
 
         {:ok, orchestrator_pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
+          StaticOrchestrator.start_link(
             name: orchestrator_name,
             snapshot: snapshot,
-            refresh: %{
-              queued: false,
-              coalesced: false,
-              requested_at: DateTime.utc_now(),
-              operations: []
-            }
+            refresh: %{queued: false, coalesced: false, requested_at: DateTime.utc_now(), operations: []}
           )
 
         start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
@@ -361,7 +307,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           Keyword.put(state, :snapshot, updated_snapshot)
         end)
 
-        Elixir.SymphonyElixir.StatusDashboard.notify_update()
+        StatusDashboard.notify_update()
 
         assert_eventually(fn ->
           html = render(view)
@@ -390,13 +336,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           })
 
         orchestrator_name = Module.concat(__MODULE__, :DatabaseUnavailableDashboardOrchestrator)
-
-        {:ok, _pid} =
-          Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator.start_link(
-            name: orchestrator_name,
-            snapshot: snapshot
-          )
-
+        {:ok, _pid} = StaticOrchestrator.start_link(name: orchestrator_name, snapshot: snapshot)
         start_test_endpoint(orchestrator: orchestrator_name)
 
         {:ok, _view, html} = live(build_conn(), "/")
@@ -406,12 +346,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
       end
 
       test "http server serves embedded assets, accepts form posts, and rejects invalid hosts" do
-        spec = Elixir.SymphonyElixir.HttpServer.child_spec(port: 0)
-        assert spec.id == Elixir.SymphonyElixir.HttpServer
-        assert spec.start == {Elixir.SymphonyElixir.HttpServer, :start_link, [[port: 0]]}
+        spec = HttpServer.child_spec(port: 0)
+        assert spec.id == HttpServer
+        assert spec.start == {HttpServer, :start_link, [[port: 0]]}
 
-        assert :ignore = Elixir.SymphonyElixir.HttpServer.start_link(port: nil)
-        assert Elixir.SymphonyElixir.HttpServer.bound_port() == nil
+        assert :ignore = HttpServer.start_link(port: nil)
+        assert HttpServer.bound_port() == nil
 
         snapshot = static_snapshot()
         orchestrator_name = Module.concat(__MODULE__, :BoundPortOrchestrator)
@@ -430,15 +370,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
           snapshot_timeout_ms: 50
         ]
 
-        static_opts = [name: orchestrator_name, snapshot: snapshot, refresh: refresh]
-        static_orchestrator = {Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator, static_opts}
+        start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
 
-        start_supervised!(static_orchestrator)
-
-        start_supervised!({Elixir.SymphonyElixir.HttpServer, server_opts})
+        start_supervised!({HttpServer, server_opts})
 
         port = wait_for_bound_port()
-        assert port == Elixir.SymphonyElixir.HttpServer.bound_port()
+        assert port == HttpServer.bound_port()
 
         response = Req.get!("http://127.0.0.1:#{port}/api/v1/state")
         assert response.status == 200
@@ -470,12 +407,11 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         assert method_not_allowed_response.status == 405
         assert method_not_allowed_response.body["error"]["code"] == "method_not_allowed"
 
-        assert {:error, _reason} =
-                 Elixir.SymphonyElixir.HttpServer.start_link(host: "bad host", port: 0)
+        assert {:error, _reason} = HttpServer.start_link(host: "bad host", port: 0)
       end
 
       test "http server starts from raw server config when workflow policy is invalid" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           server_host: "127.0.0.1",
           workflow_policy: %{
             "states" => %{
@@ -491,21 +427,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         snapshot = static_snapshot()
         orchestrator_name = Module.concat(__MODULE__, :InvalidWorkflowHttpServerOrchestrator)
 
-        static_orchestrator =
-          {Elixir.SymphonyElixir.ExtensionsTest.StaticOrchestrator, name: orchestrator_name, snapshot: snapshot}
-
-        start_supervised!(static_orchestrator)
-
-        http_server =
-          {Elixir.SymphonyElixir.HttpServer, port: 0, orchestrator: orchestrator_name, snapshot_timeout_ms: 50}
-
-        start_supervised!(http_server)
+        start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot})
+        start_supervised!({HttpServer, port: 0, orchestrator: orchestrator_name, snapshot_timeout_ms: 50})
 
         assert is_integer(wait_for_bound_port())
       end
 
       test "application support processes ignore persisted workflow policy during boot" do
-        write_workflow_file!(Elixir.SymphonyElixir.Workflow.workflow_file_path(),
+        write_workflow_file!(Workflow.workflow_file_path(),
           server_host: "127.0.0.1",
           observability_enabled: true,
           project_repository_url: "git@example.com:org/repo.git",
@@ -523,23 +452,12 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         orchestrator_name = Module.concat(__MODULE__, :InvalidWorkflowPolicyBootOrchestrator)
         dashboard_name = Module.concat(__MODULE__, :InvalidWorkflowPolicyBootDashboard)
 
-        {:ok, orchestrator_pid} = Elixir.SymphonyElixir.Orchestrator.start_link(name: orchestrator_name)
-
-        {:ok, dashboard_pid} =
-          Elixir.SymphonyElixir.StatusDashboard.start_link(
-            name: dashboard_name,
-            enabled: true,
-            refresh_ms: 60_000
-          )
+        {:ok, orchestrator_pid} = Orchestrator.start_link(name: orchestrator_name)
+        {:ok, dashboard_pid} = StatusDashboard.start_link(name: dashboard_name, enabled: true, refresh_ms: 60_000)
 
         on_exit(fn ->
-          if Process.alive?(orchestrator_pid) do
-            Process.exit(orchestrator_pid, :normal)
-          end
-
-          if Process.alive?(dashboard_pid) do
-            Process.exit(dashboard_pid, :normal)
-          end
+          if Process.alive?(orchestrator_pid), do: Process.exit(orchestrator_pid, :normal)
+          if Process.alive?(dashboard_pid), do: Process.exit(dashboard_pid, :normal)
         end)
 
         assert %{polling: %{listening?: false}, config_error: nil} =
@@ -583,7 +501,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
               issue_id: "issue-retry",
               identifier: "MT-RETRY",
               attempt: 2,
-              due_in_ms: 2000,
+              due_in_ms: 2_000,
               error: "boom"
             }
           ],
@@ -611,10 +529,10 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
 
       defp wait_for_bound_port do
         assert_eventually(fn ->
-          is_integer(Elixir.SymphonyElixir.HttpServer.bound_port())
+          is_integer(HttpServer.bound_port())
         end)
 
-        Elixir.SymphonyElixir.HttpServer.bound_port()
+        HttpServer.bound_port()
       end
 
       defp assert_eventually(fun, attempts \\ 20)
@@ -628,15 +546,14 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         end
       end
 
-      defp assert_eventually(_fun, 0) do
-        flunk("condition not met in time")
-      end
+      # docs/negative-assertion-audit.md control-flow contract: fail explicitly if this branch is reached.
+      defp assert_eventually(_fun, 0), do: flunk("condition not met in time")
 
       defp ensure_workflow_store_running do
-        if Process.whereis(Elixir.SymphonyElixir.WorkflowStore) do
+        if Process.whereis(WorkflowStore) do
           :ok
         else
-          case Supervisor.restart_child(SymphonyElixir.Supervisor, Elixir.SymphonyElixir.WorkflowStore) do
+          case Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore) do
             {:ok, _pid} -> :ok
             {:error, {:already_started, _pid}} -> :ok
           end

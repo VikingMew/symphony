@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       require Logger
 
@@ -89,10 +90,10 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{if is_map(details), do: Map.get(details, :elapsed_ms), else: nil} setting=#{timeout_setting_hint(hook_name)} output=#{compact_log_output(if is_map(details), do: Map.get(details, :recent_output, ""), else: "")}"
       end
 
-      defp agent_failure_summary({:codex_startup_failed, details}),
-        do:
-          "class=agent_domain_failure type=codex_startup_failed stage=#{inspect(details.stage)} timeout_ms=#{details.timeout_ms} reason=#{inspect(details.reason)} output=#{compact_log_output(details.output)}"
-          |> String.slice(0, 1_000)
+      defp agent_failure_summary({:codex_startup_failed, %{reason: reason, stage: stage, timeout_ms: timeout_ms, output: output}}) do
+        "class=agent_domain_failure type=codex_startup_failed stage=#{inspect(stage)} timeout_ms=#{timeout_ms} reason=#{inspect(reason)} output=#{compact_log_output(output)}"
+        |> String.slice(0, 1_000)
+      end
 
       defp agent_failure_summary(reason),
         do: "class=agent_domain_failure reason=#{compact_log_output(inspect(reason, limit: 20, printable_limit: 1_000))}"

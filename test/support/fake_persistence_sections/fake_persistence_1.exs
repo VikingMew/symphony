@@ -4,10 +4,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       @moduledoc false
 
-      alias SymphonyElixir.Config.{LegacyWorkflowConvergence, WorkflowScopes}
+      alias SymphonyElixir.Config.{LegacyWorkflowConvergence, ProjectAuthority, WorkflowScopes}
+      alias SymphonyElixir.Persistence.Project
 
       @name __MODULE__
 
@@ -82,13 +84,28 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
         {:ok, updated}
       end
 
+      def compare_and_clear_blocking_decision(identifier, decision) do
+        if hook = Application.get_env(:symphony_elixir, :blocking_decision_cas_hook) do
+          hook.()
+        end
+
+        Agent.get_and_update(@name, fn state ->
+          case Enum.find(state.issues, &(Map.get(&1, :identifier) == identifier)) do
+            %{blocking_decision: ^decision} = issue ->
+              updated = Map.merge(issue, %{blocking_decision: nil, no_progress_streak: 0})
+              {{:ok, :cleared}, Map.update!(state, :issues, &replace_issue(&1, issue, updated))}
+
+            _replaced ->
+              {{:ok, :replaced}, state}
+          end
+        end)
+      end
+
       defp replace_issue(issues, issue, updated) do
         Enum.map(issues, fn candidate ->
-          if Map.get(candidate, :identifier) == Map.get(issue, :identifier) do
-            updated
-          else
-            candidate
-          end
+          if Map.get(candidate, :identifier) == Map.get(issue, :identifier),
+            do: updated,
+            else: candidate
         end)
       end
 
@@ -140,6 +157,16 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
         Agent.update(@name, &Map.put(&1, :next_import_workflow_error, reason))
       end
 
+      def fail_next_runtime_publication!(reason) do
+        ensure_started()
+        Agent.update(@name, &Map.put(&1, :next_runtime_publication_error, reason))
+      end
+
+      def runtime_publication_count do
+        ensure_started()
+        Agent.get(@name, & &1.runtime_publication_count)
+      end
+
       def default_project do
         ensure_started()
         Agent.get(@name, fn state -> {:ok, hd(state.projects)} end)
@@ -149,18 +176,90 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
         ensure_started()
 
         with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
-             {:ok, project_config} <-
-               Elixir.SymphonyElixir.Config.WorkflowScopes.project_from_loaded(loaded) do
+             {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
           persist_project_workflow(project, project_config, source, :import_workflow)
         end
       end
+
+      def save_project_settings(project_id, attrs, raw_workflow_md) do
+        ensure_started()
+
+        with :ok <- reject_project_hook_fields(attrs),
+             {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
+             {:ok, project_config} <- WorkflowScopes.project_from_loaded(loaded) do
+          result =
+            Agent.get_and_update(
+              @name,
+              &save_project_settings_state(&1, project_id, attrs, project_config, raw_workflow_md)
+            )
+
+          publish_project_settings_result(result)
+        end
+      end
+
+      defp save_project_settings_state(state, project_id, attrs, project_config, raw) do
+        state = record_call(state, {:save_project_settings, project_id, attrs, raw})
+
+        with {:ok, project, projects} <- stage_project(state.projects, project_id, attrs),
+             nil <- state.next_import_workflow_error do
+          workflow = project_workflow(project, project_config, "web_project_settings")
+          saved = %{project: project, workflow: workflow}
+
+          next_state =
+            state
+            |> Map.put(:projects, projects)
+            |> Map.update!(:workflows, &put_workflow_record(&1, workflow))
+
+          {{:ok, saved}, next_state}
+        else
+          {:error, reason} -> {{:error, reason}, state}
+          reason -> {{:error, reason}, Map.put(state, :next_import_workflow_error, nil)}
+        end
+      end
+
+      defp stage_project(projects, nil, attrs) do
+        changeset = Project.changeset(%Project{}, attrs)
+
+        if changeset.valid? do
+          project = attrs |> atomize_project_attrs() |> Map.put(:id, "fake-project-#{System.unique_integer([:positive])}")
+          {:ok, project, projects ++ [project]}
+        else
+          {:error, changeset}
+        end
+      end
+
+      defp stage_project(projects, project_id, attrs) do
+        case Enum.find(projects, &(Map.get(&1, :id) == project_id)) do
+          nil ->
+            {:error, :not_found}
+
+          project ->
+            changeset = Project.changeset(struct(Project, Map.take(project, Project.__schema__(:fields))), attrs)
+
+            if changeset.valid? do
+              updated = Map.merge(project, atomize_project_attrs(attrs))
+              {:ok, updated, replace_project(projects, project_id, updated)}
+            else
+              {:error, changeset}
+            end
+        end
+      end
+
+      defp publish_project_settings_result({:ok, saved} = success) do
+        case maybe_publish_runtime() do
+          :ok -> success
+          {:error, reason} -> {:error, {:runtime_publication_failed, saved, reason}}
+        end
+      end
+
+      defp publish_project_settings_result(error), do: error
 
       def import_package(project, raw_workflow_md, source) do
         ensure_started()
 
         with {:ok, loaded} <- SymphonyElixir.Workflow.parse_content(raw_workflow_md),
-             {:ok, instance, project_config} <-
-               Elixir.SymphonyElixir.Config.WorkflowScopes.split_package(loaded.config, loaded.prompt) do
+             {:ok, instance, project_config} <- WorkflowScopes.split_package(loaded.config, loaded.prompt),
+             :ok <- validate_project_authority(project, loaded.config) do
           workflow = project_workflow(project, project_config, source)
 
           result =
@@ -198,8 +297,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
       end
 
       def put_instance_workflow(config, prompt_body) do
-        with {:ok, instance} <-
-               Elixir.SymphonyElixir.Config.WorkflowScopes.new_instance(config, prompt_body) do
+        with {:ok, instance} <- WorkflowScopes.new_instance(config, prompt_body) do
           Agent.update(@name, fn state ->
             state
             |> record_call({:put_instance_workflow, config, prompt_body})
@@ -213,13 +311,13 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
 
       def put_package_unchecked(project, config, prompt_body) do
         instance = %{
-          config: Map.take(config, Elixir.SymphonyElixir.Config.WorkflowScopes.instance_sections()),
+          config: Map.take(config, WorkflowScopes.instance_sections()),
           prompt_body: prompt_body
         }
 
         project_config =
           config
-          |> Map.take(Elixir.SymphonyElixir.Config.WorkflowScopes.project_sections())
+          |> Map.take(WorkflowScopes.project_sections())
           |> update_in([Access.key("tracker", %{})], &Map.delete(&1, "api_key"))
 
         workflow = project_workflow(project, project_config, "test")
@@ -261,13 +359,10 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
           instance =
             case state.instance_workflow do
               nil -> nil
-              value -> Elixir.SymphonyElixir.Config.WorkflowScopes.dump_instance(value)
+              value -> WorkflowScopes.dump_instance(value)
             end
 
-          Elixir.SymphonyElixir.Config.LegacyWorkflowConvergence.status(
-            instance,
-            state.legacy_instance_workflow_candidates
-          )
+          LegacyWorkflowConvergence.status(instance, state.legacy_instance_workflow_candidates)
         end)
       end
 
@@ -275,12 +370,11 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
         ensure_started()
 
         Agent.get_and_update(@name, fn state ->
-          case state.next_legacy_reconciliation_error do
-            nil ->
-              reconcile_legacy_state(state, project_slug)
+          state = record_call(state, {:reconcile_legacy_instance_workflow, project_slug})
 
-            reason ->
-              {{:error, {:transaction_failed, reason}}, %{state | next_legacy_reconciliation_error: nil}}
+          case state.next_legacy_reconciliation_error do
+            nil -> reconcile_legacy_state(state, project_slug)
+            reason -> {{:error, {:transaction_failed, reason}}, %{state | next_legacy_reconciliation_error: nil}}
           end
         end)
       end
@@ -309,10 +403,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
             end
           end)
 
-        if match?({:ok, _workflow}, result) do
-          maybe_publish_runtime()
-        end
-
+        if match?({:ok, _workflow}, result), do: maybe_publish_runtime()
         result
       end
 
@@ -400,10 +491,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
             end
           end)
 
-        if match?({:ok, _project}, result) do
-          maybe_publish_runtime()
-        end
-
+        if match?({:ok, _project}, result), do: maybe_publish_runtime()
         result
       end
 
@@ -427,10 +515,7 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
             end
           end)
 
-        if match?({:ok, _project}, result) do
-          maybe_publish_runtime()
-        end
-
+        if match?({:ok, _project}, result), do: maybe_publish_runtime()
         result
       end
 
@@ -495,95 +580,46 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
         end)
       end
 
-      def list_events(opts \\ []) do
+      def admit_issue_run(issue_attrs, run_attrs, opts \\ []) do
         ensure_started()
 
-        Agent.get(@name, fn state ->
-          state.events
-          |> filter_eq(:issue_identifier, Keyword.get(opts, :issue_identifier))
-          |> filter_eq(:run_id, Keyword.get(opts, :run_id))
-          |> filter_eq(:event_type, Keyword.get(opts, :event_type))
-          |> filter_eq(:project_id, Keyword.get(opts, :project_id))
-          |> sort_events(Keyword.get(opts, :order))
-          |> Enum.take(Keyword.get(opts, :limit, length(state.events)))
-        end)
-      end
-
-      def list_analytics_events do
-        ensure_started()
-        Agent.get(@name, & &1.events)
-      end
-
-      def record_event(attrs) when is_map(attrs) do
-        ensure_started()
-
-        event =
-          attrs
-          |> Map.put_new(:id, "event-#{System.unique_integer([:positive])}")
-          |> Map.put_new(:occurred_at, DateTime.utc_now())
-
-        Agent.update(@name, fn state ->
-          state
-          |> record_call({:record_event, event})
-          |> update_in([:events], &[event | &1])
-        end)
-
-        {:ok, event}
-      end
-
-      def list_workers(_opts \\ []) do
-        ensure_started()
-        Agent.get(@name, & &1.workers)
-      end
-
-      def list_worker_sessions(_opts \\ []) do
-        ensure_started()
-        Agent.get(@name, & &1.worker_sessions)
-      end
-
-      def available_worker_slots(opts \\ []) do
-        ensure_started()
+        if hook = Application.get_env(:symphony_elixir, :fake_admit_run_hook) do
+          hook.()
+        end
 
         Agent.get_and_update(@name, fn state ->
-          capacity =
-            state.worker_sessions
-            |> Enum.filter(&(Map.get(&1, :status) == "online"))
-            |> Enum.sum_by(&Map.fetch!(&1, :total_slots))
+          issue = admission_issue(state.issues, issue_attrs)
+          active_run = Enum.find(state.runs, &(Map.get(&1, :issue_id) == issue.id and Map.get(&1, :status) == "running"))
+          cutoff = Keyword.get(opts, :orphan_cutoff)
 
-          {capacity, record_call(state, {:available_worker_slots, opts})}
-        end)
-      end
-
-      def active_worker_session(worker_id, session_id) do
-        ensure_started()
-
-        Agent.get(@name, fn state ->
-          worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
-          session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
-
-          if worker && session && session.worker_id == worker_id && session.status == "online" do
-            {:ok, worker, session}
+          if active_run && not replaceable_orphan?(active_run, cutoff, opts) do
+            {{:error, {:active_run, active_run.id}}, record_call(state, {:admit_issue_run, issue_attrs, run_attrs})}
           else
-            {:error, :worker_session_not_found}
+            now = Keyword.get(opts, :now, DateTime.utc_now())
+            {runs, events, replaced_run} = replace_fake_orphan(state.runs, state.events, active_run, issue, now)
+
+            run =
+              run_attrs
+              |> atomize_keys()
+              |> Map.put(:issue_id, issue.id)
+              |> Map.put_new(:project_id, issue.project_id)
+              |> Map.put_new(:id, "run-#{System.unique_integer([:positive])}")
+              |> Map.put_new(:kind, "issue")
+              |> Map.put_new(:status, "running")
+              |> Map.put_new(:attempt, 0)
+              |> Map.put_new(:started_at, now)
+              |> Map.put_new(:inserted_at, now)
+              |> Map.put_new(:updated_at, now)
+
+            next_state =
+              state
+              |> record_call({:admit_issue_run, issue_attrs, run_attrs})
+              |> Map.put(:issues, [issue | Enum.reject(state.issues, &(Map.get(&1, :project_id) == issue.project_id and Map.get(&1, :identifier) == issue.identifier))])
+              |> Map.put(:runs, [run | runs])
+              |> Map.put(:events, events)
+
+            {{:ok, %{issue: issue, run: run, replaced_run: replaced_run}}, next_state}
           end
-        end)
-      end
-
-      def worker_session_identity(worker_id, session_id) do
-        ensure_started()
-
-        Agent.get_and_update(@name, fn state ->
-          worker = Enum.find(state.workers, &(Map.get(&1, :id) == worker_id))
-          session = Enum.find(state.worker_sessions, &(Map.get(&1, :id) == session_id))
-
-          result =
-            if worker && session && session.worker_id == worker_id do
-              {:ok, worker, session}
-            else
-              {:error, :worker_session_not_found}
-            end
-
-          {result, record_call(state, {:worker_session_identity, worker_id, session_id})}
         end)
       end
     end

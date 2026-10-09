@@ -27,6 +27,7 @@ ExUnit.after_suite(fn _result -> on_exit.() end)
 {:ok, _} = Application.ensure_all_started(:symphony_elixir)
 
 Code.require_file("support/test_support.exs", __DIR__)
+Code.require_file("support/settings_fake_persistence_support.exs", __DIR__)
 
 Path.join(__DIR__, "support/locality_sections/*.exs")
 |> Path.wildcard()

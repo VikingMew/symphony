@@ -4,17 +4,21 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
       require Logger
       alias SymphonyElixir.{Config, PathSafety, PersistenceEventWriter, WorkspaceCleanupPolicy}
       alias SymphonyElixir.Workspace.{HookRunner, Remote, SourcePreparation}
 
+      defp run_git(cwd, args, nil), do: run_git(cwd, args)
+
+      defp run_git(cwd, args, timeout_ms) when is_integer(timeout_ms) and timeout_ms > 0 do
+        run_git(cwd, args, timeout_ms, fn _chunk, _recent_output -> :ok end)
+      end
+
       defp run_git(cwd, args, timeout_ms, on_output) when is_integer(timeout_ms) and timeout_ms > 0 do
         executable = System.find_executable("git") || "git"
-
-        command =
-          SymphonyElixir.Shell.escape(executable) <>
-            " " <> Enum.map_join(args, " ", &SymphonyElixir.Shell.escape/1)
+        command = SymphonyElixir.Shell.escape(executable) <> " " <> Enum.map_join(args, " ", &SymphonyElixir.Shell.escape/1)
 
         command
         |> run_local_hook_command(cwd, timeout_ms, on_output)
@@ -35,17 +39,9 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         error -> {:error, error}
       end
 
-      defp maybe_append_git_arg(args, _flag, nil) do
-        args
-      end
-
-      defp maybe_append_git_arg(args, _flag, "") do
-        args
-      end
-
-      defp maybe_append_git_arg(args, flag, value) do
-        args ++ [flag, value]
-      end
+      defp maybe_append_git_arg(args, _flag, nil), do: args
+      defp maybe_append_git_arg(args, _flag, ""), do: args
+      defp maybe_append_git_arg(args, flag, value), do: args ++ [flag, value]
 
       defp maybe_run_before_remove_hook(workspace, nil) do
         hooks = Config.settings!().hooks
@@ -104,27 +100,12 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         end
       end
 
-      defp ignore_hook_failure(:ok) do
-        :ok
-      end
+      defp ignore_hook_failure(:ok), do: :ok
+      defp ignore_hook_failure({:error, _reason}), do: :ok
 
-      defp ignore_hook_failure({:error, _reason}) do
-        :ok
-      end
+      defp blank?(value), do: SymphonyElixir.Text.blankish?(value)
 
-      defp blank?(value) do
-        SymphonyElixir.Text.blankish?(value)
-      end
-
-      defp run_hook(
-             command,
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             timeout_override_ms \\ nil,
-             opts \\ []
-           )
+      defp run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_override_ms \\ nil, opts \\ [])
 
       defp run_hook(command, workspace, issue_context, hook_name, nil, timeout_override_ms, opts) do
         timeout_ms = timeout_override_ms || Config.settings!().hooks.timeout_ms
@@ -134,17 +115,7 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         log_workspace_command_start(hook_name, issue_context, workspace, nil)
         log_phase(phase, :started, issue_context, workspace, nil)
         persist_phase_event(phase, :started, issue_context, workspace, nil, started_at, %{})
-
-        persist_hook_event(
-          "workspace.hook_started",
-          issue_context,
-          hook_name,
-          workspace,
-          nil,
-          command,
-          started_at,
-          %{}
-        )
+        persist_hook_event("workspace.hook_started", issue_context, hook_name, workspace, nil, command, started_at, %{})
 
         emit_system_progress(opts, issue_context, %{
           phase: phase,
@@ -157,30 +128,12 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
 
         command
         |> run_local_hook_command(workspace, timeout_ms, fn chunk, recent_output ->
-          persist_hook_output(
-            issue_context,
-            hook_name,
-            workspace,
-            nil,
-            command,
-            started_at,
-            chunk,
-            recent_output
-          )
+          persist_hook_output(issue_context, hook_name, workspace, nil, command, started_at, chunk, recent_output)
 
-          emit_system_output(
-            opts,
-            issue_context,
-            phase,
-            "hook:#{hook_name}",
-            "Running #{hook_name}",
-            chunk,
-            recent_output,
-            %{
-              workspace: workspace,
-              hook: hook_name
-            }
-          )
+          emit_system_output(opts, issue_context, phase, "hook:#{hook_name}", "Running #{hook_name}", chunk, recent_output, %{
+            workspace: workspace,
+            hook: hook_name
+          })
         end)
         |> handle_local_hook_result(%{
           workspace: workspace,
@@ -193,16 +146,7 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         })
       end
 
-      defp run_hook(
-             command,
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             timeout_override_ms,
-             opts
-           )
-           when is_binary(worker_host) do
+      defp run_hook(command, workspace, issue_context, hook_name, worker_host, timeout_override_ms, opts) when is_binary(worker_host) do
         timeout_ms = timeout_override_ms || Config.settings!().hooks.timeout_ms
         started_at = System.monotonic_time(:millisecond)
         phase = phase_for_hook(hook_name)
@@ -263,10 +207,7 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         )
       end
 
-      defp handle_local_hook_result(
-             {:error, {:workspace_hook_timeout, _command_name, timeout_ms, details}},
-             context
-           ) do
+      defp handle_local_hook_result({:error, {:workspace_hook_timeout, _command_name, timeout_ms, details}}, context) do
         Logger.warning(
           "Workspace hook timed out hook=#{context.hook_name} #{issue_log_context(context.issue_context)} workspace=#{context.workspace} worker_host=#{worker_host_for_log(context.worker_host)} timeout_ms=#{timeout_ms} elapsed_ms=#{Map.get(details, :elapsed_ms)} output=#{inspect(Map.get(details, :recent_output, ""))}"
         )
@@ -326,27 +267,9 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         )
       end
 
-      defp handle_hook_command_result(
-             result,
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             command,
-             started_at,
-             opts \\ []
-           )
+      defp handle_hook_command_result(result, workspace, issue_context, hook_name, worker_host, command, started_at, opts \\ [])
 
-      defp handle_hook_command_result(
-             {_output, 0},
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             command,
-             started_at,
-             opts
-           ) do
+      defp handle_hook_command_result({_output, 0}, workspace, issue_context, hook_name, worker_host, command, started_at, opts) do
         persist_hook_event(
           "workspace.hook_completed",
           issue_context,
@@ -380,46 +303,20 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         :ok
       end
 
-      defp handle_hook_command_result(
-             {output, status},
-             workspace,
-             issue_context,
-             hook_name,
-             worker_host,
-             command,
-             started_at,
-             opts
-           ) do
+      defp handle_hook_command_result({output, status}, workspace, issue_context, hook_name, worker_host, command, started_at, opts) do
         sanitized_output = sanitize_hook_output_for_log(output)
 
         Logger.warning("Workspace hook failed hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} status=#{status} output=#{inspect(sanitized_output)}")
 
-        persist_hook_event(
-          "workspace.hook_failed",
-          issue_context,
-          hook_name,
-          workspace,
-          worker_host,
-          command,
-          started_at,
-          %{
-            status: status,
-            output: sanitized_output
-          }
-        )
+        persist_hook_event("workspace.hook_failed", issue_context, hook_name, workspace, worker_host, command, started_at, %{
+          status: status,
+          output: sanitized_output
+        })
 
-        persist_phase_event(
-          phase_for_hook(hook_name),
-          :failed,
-          issue_context,
-          workspace,
-          worker_host,
-          started_at,
-          %{
-            exit_status: status,
-            output: sanitized_output
-          }
-        )
+        persist_phase_event(phase_for_hook(hook_name), :failed, issue_context, workspace, worker_host, started_at, %{
+          exit_status: status,
+          output: sanitized_output
+        })
 
         emit_system_progress(opts, issue_context, %{
           phase: phase_for_hook(hook_name),
@@ -444,16 +341,7 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         end
       end
 
-      defp emit_system_output(
-             opts,
-             issue_context,
-             phase,
-             operation,
-             prefix,
-             chunk,
-             recent_output,
-             extra_metadata
-           ) do
+      defp emit_system_output(opts, issue_context, phase, operation, prefix, chunk, recent_output, extra_metadata) do
         detail =
           chunk
           |> latest_progress_line()
@@ -490,8 +378,7 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         |> String.trim()
       end
 
-      defp emit_system_progress(opts, issue_context, metadata)
-           when is_list(opts) and is_map(issue_context) and is_map(metadata) do
+      defp emit_system_progress(opts, issue_context, metadata) when is_list(opts) and is_map(issue_context) and is_map(metadata) do
         case {Keyword.get(opts, :progress_recipient), Map.get(issue_context, :issue_id)} do
           {recipient, issue_id} when is_pid(recipient) and is_binary(issue_id) ->
             send(
@@ -507,11 +394,9 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         end
       end
 
-      defp emit_system_progress(_opts, _issue_context, _metadata) do
-        :ok
-      end
+      defp emit_system_progress(_opts, _issue_context, _metadata), do: :ok
 
-      defp sanitize_hook_output_for_log(output, max_bytes \\ 2048) do
+      defp sanitize_hook_output_for_log(output, max_bytes \\ 2_048) do
         HookRunner.sanitize_output(output, max_bytes)
       end
 
@@ -531,43 +416,16 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         Logger.info("Running workspace hook hook=#{hook_name} #{issue_log_context(issue_context)} workspace=#{workspace} worker_host=#{worker_host}")
       end
 
-      defp persist_hook_output(
-             issue_context,
-             hook_name,
-             workspace,
-             worker_host,
-             command,
-             started_at,
-             chunk,
-             recent_output
-           ) do
+      defp persist_hook_output(issue_context, hook_name, workspace, worker_host, command, started_at, chunk, recent_output) do
         sanitized_chunk = sanitize_hook_output_for_log(chunk, @hook_event_output_bytes)
 
-        persist_hook_event(
-          "workspace.hook_output",
-          issue_context,
-          hook_name,
-          workspace,
-          worker_host,
-          command,
-          started_at,
-          %{
-            output: sanitized_chunk,
-            recent_output: sanitize_hook_output_for_log(recent_output, @hook_recent_output_bytes)
-          }
-        )
+        persist_hook_event("workspace.hook_output", issue_context, hook_name, workspace, worker_host, command, started_at, %{
+          output: sanitized_chunk,
+          recent_output: sanitize_hook_output_for_log(recent_output, @hook_recent_output_bytes)
+        })
       end
 
-      defp persist_hook_event(
-             event_type,
-             issue_context,
-             hook_name,
-             workspace,
-             worker_host,
-             command,
-             started_at,
-             payload
-           ) do
+      defp persist_hook_event(event_type, issue_context, hook_name, workspace, worker_host, command, started_at, payload) do
         payload =
           Map.merge(
             %{
@@ -590,43 +448,18 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         )
       end
 
-      defp phase_for_hook("project_bootstrap") do
-        "workspace_bootstrap"
-      end
-
-      defp phase_for_hook("after_create") do
-        "workspace_after_create"
-      end
-
-      defp phase_for_hook("before_run") do
-        "before_run"
-      end
-
-      defp phase_for_hook("after_run") do
-        "after_run"
-      end
-
-      defp phase_for_hook("before_remove") do
-        "workspace_cleanup"
-      end
-
-      defp phase_for_hook(hook_name) do
-        "workspace_hook:#{hook_name}"
-      end
+      defp phase_for_hook("project_bootstrap"), do: "workspace_bootstrap"
+      defp phase_for_hook("after_create"), do: "workspace_after_create"
+      defp phase_for_hook("before_run"), do: "before_run"
+      defp phase_for_hook("after_run"), do: "after_run"
+      defp phase_for_hook("before_remove"), do: "workspace_cleanup"
+      defp phase_for_hook(hook_name), do: "workspace_hook:#{hook_name}"
 
       defp log_phase(phase, status, issue_context, workspace, worker_host) do
         Logger.info("Run phase phase=#{phase} status=#{status} #{issue_log_context(issue_context)} worker_host=#{worker_host_for_log(worker_host)} workspace=#{workspace}")
       end
 
-      defp persist_phase_event(
-             phase,
-             status,
-             issue_context,
-             workspace,
-             worker_host,
-             started_at,
-             payload
-           ) do
+      defp persist_phase_event(phase, status, issue_context, workspace, worker_host, started_at, payload) do
         payload =
           Map.merge(
             %{
@@ -649,6 +482,8 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         )
       end
 
+      # Hook and phase events are best-effort telemetry: persistence failure is
+      # visible but must not change the workspace action being measured.
       defp record_telemetry_event(attrs, issue_context) do
         case PersistenceEventWriter.record(attrs, issue_context) do
           :ok ->
@@ -656,16 +491,14 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
 
           {_outcome, reason} ->
             Logger.warning(
-              "Workspace event persistence degraded action=continue_degraded event_type=#{Map.get(attrs, :event_type)} #{issue_log_context(issue_context)} session_id=n/a run_id=n/a outcome=#{inspect({:degraded, reason}, limit: 20, printable_limit: 1000)}"
+              "Workspace event persistence degraded action=continue_degraded event_type=#{Map.get(attrs, :event_type)} #{issue_log_context(issue_context)} session_id=n/a run_id=n/a outcome=#{inspect({:degraded, reason}, limit: 20, printable_limit: 1_000)}"
             )
 
             :ok
         end
       end
 
-      defp command_preview(nil) do
-        nil
-      end
+      defp command_preview(nil), do: nil
 
       defp command_preview(command) when is_binary(command) do
         sanitize_hook_output_for_log(command, @hook_command_preview_bytes)
@@ -714,13 +547,8 @@ defmodule SymphonyElixir.Workspace.Sections.Hooks do
         end
       end
 
-      defp worker_host_for_log(nil) do
-        "local"
-      end
-
-      defp worker_host_for_log(worker_host) do
-        worker_host
-      end
+      defp worker_host_for_log(nil), do: "local"
+      defp worker_host_for_log(worker_host), do: worker_host
 
       defp issue_context(%{id: issue_id, identifier: identifier}) do
         %{

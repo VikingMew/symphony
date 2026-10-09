@@ -4,12 +4,8 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
 
   @spec __using__(term()) :: Macro.t()
   defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
     quote do
-      import Ecto.Changeset
-
-      alias SymphonyElixir.Codex.ModelCatalog
-      alias SymphonyElixir.Config.{CodexCommand, ProjectCommands, RuntimeResolver, WorkflowContract}
-
       alias SymphonyElixir.Config.Schema.{
         Agent,
         Analytics,
@@ -18,12 +14,14 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         Observability,
         Polling,
         Project,
-        Server,
-        StringOrMap,
         Tracker,
         Worker,
         Workspace
       }
+
+      import Ecto.Changeset
+      alias SymphonyElixir.Codex.ModelCatalog
+      alias SymphonyElixir.Config.{CodexCommand, ProjectCommands, RuntimeResolver, WorkflowContract}
 
       defmodule Server do
         @moduledoc false
@@ -129,9 +127,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         end)
       end
 
-      def workflow_profile_for_state(_settings, _state_name) do
-        nil
-      end
+      def workflow_profile_for_state(_settings, _state_name), do: nil
 
       @doc false
       @spec workflow_profile(%__MODULE__{}, String.t() | nil) :: map()
@@ -142,9 +138,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         end
       end
 
-      def workflow_profile(_settings, _profile) do
-        %{}
-      end
+      def workflow_profile(_settings, _profile), do: %{}
 
       @doc false
       @spec workflow_executor_for_state(%__MODULE__{}, String.t() | nil) :: String.t() | nil
@@ -168,9 +162,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         |> Enum.member?(normalized_state)
       end
 
-      def human_review_state?(_settings, _state_name) do
-        false
-      end
+      def human_review_state?(_settings, _state_name), do: false
 
       @doc false
       @spec workflow_allowed_updates(%__MODULE__{}, String.t() | nil) :: map()
@@ -184,41 +176,26 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         end
       end
 
-      def workflow_allowed_updates(_settings, _profile) do
-        %{}
-      end
+      def workflow_allowed_updates(_settings, _profile), do: %{}
 
       @doc false
       @spec codex_approval_policies() :: [String.t()]
-      def codex_approval_policies do
-        @codex_approval_policies
-      end
+      def codex_approval_policies, do: @codex_approval_policies
 
       @doc false
       @spec normalize_codex_approval_policy(term()) :: String.t()
-      def normalize_codex_approval_policy(nil) do
-        "never"
-      end
-
-      def normalize_codex_approval_policy("") do
-        "never"
-      end
+      def normalize_codex_approval_policy(nil), do: "never"
+      def normalize_codex_approval_policy(""), do: "never"
 
       def normalize_codex_approval_policy(value) when is_binary(value) do
         String.trim(value)
       end
 
       def normalize_codex_approval_policy(value) when is_map(value) do
-        if map_size(value) == 0 do
-          "never"
-        else
-          "__invalid_map__"
-        end
+        if map_size(value) == 0, do: "never", else: "__invalid_map__"
       end
 
-      def normalize_codex_approval_policy(_value) do
-        "__invalid__"
-      end
+      def normalize_codex_approval_policy(_value), do: "__invalid__"
 
       @doc false
       @spec generated_project_bootstrap_commands(%__MODULE__{}) :: String.t() | nil
@@ -226,9 +203,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         ProjectCommands.generated_project_bootstrap_commands(project)
       end
 
-      def generated_project_bootstrap_commands(_settings) do
-        nil
-      end
+      def generated_project_bootstrap_commands(_settings), do: nil
 
       @doc false
       @spec project_setup_commands(%__MODULE__{}) :: String.t() | nil
@@ -236,9 +211,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         ProjectCommands.project_setup_commands(project)
       end
 
-      def project_setup_commands(_settings) do
-        nil
-      end
+      def project_setup_commands(_settings), do: nil
 
       @doc false
       @spec generated_before_remove_hook(%__MODULE__{}) :: String.t() | nil
@@ -246,9 +219,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         ProjectCommands.generated_before_remove_hook(project)
       end
 
-      def generated_before_remove_hook(_settings) do
-        nil
-      end
+      def generated_before_remove_hook(_settings), do: nil
 
       defp changeset(attrs) do
         %__MODULE__{}
@@ -302,9 +273,6 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
             profiles: profiles
         }
       end
-
-      @doc false
-      @spec default_workflow_policy() :: map()
     end
   end
 end

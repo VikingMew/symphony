@@ -32,8 +32,10 @@ clause register, and L-01 through L-08 audit. Design rationale is in
 for existing clause debt. There is no
 handwritten file-size allowlist. Current data entries are the three `.github/media` binaries,
 `docs/negative-assertion-inventory.tsv`, and `mix.lock`. The generated inventory is empty: all
-tracked source and static assets are handwritten. The stale snapshot `.gitattributes` rule and tracked `.DS_Store` metadata were deleted because
-neither is a maintained source or asset contract.
+tracked source and static assets are handwritten. The main-branch `.gitattributes` rule is retained
+for future generated status-dashboard snapshots;
+no tracked file currently matches it, so it does not add a generated manifest entry. The unrelated
+tracked `.DS_Store` metadata was deleted.
 
 ## Reproduction
 
@@ -52,11 +54,11 @@ The gate also runs through `scripts/check.sh` via `mix lint`.
 | --- | --- | --- | --- |
 | L-01 | Not compliant. The baseline command found 12 handwritten files over 1,000 lines; `lib/symphony_elixir/orchestrator.ex` was 4,239 and `priv/static/dashboard.css` was 1,397. | Split runtime/test responsibilities and CSS; add the tracked-file gate with no handwritten grandfather entry. | Compliant. The baseline command and `mix locality.check` report no oversized handwritten file. |
 | L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 57-entry dateless baseline with all five required fields and a nearby index marker; two starting entries were removed after their clauses fell below the limit. |
-| L-03 | Compliant baseline: `mix credo --strict --format json` reported zero issues with Credo 1.7.16 default depth 2. | Pin `max_nesting: 2`, add an AST-focused test, and extract four newly surfaced nested control paths. | Compliant. Credo and `mix locality.check` report no nesting issue and no nesting suppression was added. |
+| L-03 | Compliant baseline: `mix credo --strict --format json` reported zero issues with Credo 1.7.16 default depth 2. | Pin `max_nesting: 2`, add an AST-focused test, and extract four newly surfaced nested control paths. | Compliant. Credo and `mix locality.check` report no nesting issue and no nesting suppression was added; responsibility fragments suppress only the `LongQuoteBlocks` advisory at their compile-time `quote` boundary. |
 | L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 54 rows below. | Compliant. 54 of 536 code files (10.1%) pass the no-navigation concept review; split section samples were re-reviewed after the main merge. |
 | L-05 | Partially compliant. No AST gate or explicit pipeline ruling existed. | Check receiver-call AST, distinguish field access, document pipelines, and inspect module-boundary matches. | Compliant. The final AST scan has zero implicit three-call chain; focused tests cover a failing chain and allowed pipeline. |
 | L-06 | Partially compliant. Policy literals had no single disposition record. | Review the literal inventory by category and retain runtime policy in `SymphonyElixir.Config` or named attributes. | Compliant. The classification below has no unexplained literal or new runtime config source. |
-| L-07 | Not compliant. The generated/data inventory was absent and `.gitattributes` named a missing snapshot directory. | Add the canonical manifest/header check, classify data, and delete stale generated metadata/rules. | Compliant. Generated inventory is empty, all data entries exist, stale generated metadata/rules are gone, and focused tests cover headers, data, and stale entries. |
+| L-07 | Not compliant. The generated/data inventory was absent and `.gitattributes` named a snapshot directory with no current tracked files. | Add the canonical manifest/header check, classify data, retain main's future snapshot marker, and delete unrelated `.DS_Store` metadata. | Compliant. Generated inventory is empty, all data entries exist, the snapshot marker has no current tracked match, and focused tests cover headers, data, and stale entries. |
 | L-08 | Not compliant because oversized files remained and long clauses had no nearby index. | Complete L-01 and add the index marker to every registered clause file. | Compliant. No long handwritten file remains; all 57 remaining temporary L-02 entries are indexed below and beside the code. |
 
 Final totals: **compliant 8; non-compliant 0; not applicable 0; total 8**.
@@ -153,28 +155,28 @@ mechanism.
 | `lib/symphony_elixir/codex/app_server.ex` | `handle_incoming/7@631` | 89 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/codex/app_server.ex` | `handle_turn_method/7@799` | 77 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/codex/app_server.ex` | `run_turn/4@87` | 102 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/codex/dynamic_tool/sections/request_execution.ex` | `__using__/1@6` | 574 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex` | `__using__/1@6` | 661 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/config/schema/sections/defaults.ex` | `__using__/1@6` | 285 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/config/schema/sections/defaults.ex` | `default_profiles/0@85` | 79 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/config/schema/sections/parsing.ex` | `__using__/1@6` | 271 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/config/schema/sections/types.ex` | `__using__/1@6` | 518 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/completion.ex` | `__using__/1@6` | 338 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/control.ex` | `__using__/1@6` | 918 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/control.ex` | `handle_call/3@255` | 99 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `__using__/1@6` | 714 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `dispatch_issue_agent/8@167` | 86 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/lifecycle.ex` | `__using__/1@6` | 737 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex` | `__using__/1@6` | 401 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/reconciliation.ex` | `__using__/1@6` | 806 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 888 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 781 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 852 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/codex/dynamic_tool/sections/request_execution.ex` | `__using__/1@6` | 575 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex` | `__using__/1@6` | 662 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/config/schema/sections/defaults.ex` | `__using__/1@6` | 286 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/config/schema/sections/defaults.ex` | `default_profiles/0@86` | 79 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/config/schema/sections/parsing.ex` | `__using__/1@6` | 272 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/config/schema/sections/types.ex` | `__using__/1@6` | 519 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/completion.ex` | `__using__/1@6` | 339 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/control.ex` | `__using__/1@6` | 919 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/control.ex` | `handle_call/3@256` | 99 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `__using__/1@6` | 715 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `dispatch_issue_agent/8@168` | 86 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/lifecycle.ex` | `__using__/1@6` | 738 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex` | `__using__/1@6` | 402 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/reconciliation.ex` | `__using__/1@6` | 807 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 889 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 782 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 853 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/executor.ex` | `execute/3@20` | 72 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@93` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 572 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `__using__/1@6` | 563 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `prepare_worktree_source/4@271` | 66 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 573 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `__using__/1@6` | 564 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `prepare_worktree_source/4@272` | 66 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir_web/live/admin_live/events.ex` | `render/1@11` | 111 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir_web/live/admin_live/run_detail.ex` | `render/1@13` | 107 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir_web/live/admin_live/settings/agents.ex` | `render/1@14` | 164 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
@@ -188,21 +190,21 @@ mechanism.
 | `mix.exs` | `coverage_ignore_groups/0@53` | 136 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `priv/repo/migrations/20260501000000_create_symphony_persistence.exs` | `change/0@5` | 132 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `priv/repo/migrations/20260501001000_create_worker_control_plane.exs` | `change/0@5` | 72 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `test/support/fake_persistence_sections/fake_persistence_1.exs` | `__using__/1@6` | 620 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/fake_persistence_sections/fake_persistence_2.exs` | `__using__/1@6` | 659 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/agent_runner_1.exs` | `__using__/1@11` | 613 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/agent_runner_2.exs` | `__using__/1@11` | 468 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/assignment_manager_1.exs` | `__using__/1@16` | 718 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/assignment_manager_2.exs` | `__using__/1@18` | 772 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/fake_persistence_sections/fake_persistence_1.exs` | `__using__/1@6` | 621 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/fake_persistence_sections/fake_persistence_2.exs` | `__using__/1@6` | 660 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/agent_runner_1.exs` | `__using__/1@11` | 614 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/agent_runner_2.exs` | `__using__/1@11` | 469 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/assignment_manager_1.exs` | `__using__/1@16` | 722 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/assignment_manager_2.exs` | `__using__/1@18` | 768 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/assignment_manager_3.exs` | `__using__/1@20` | 507 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/core_1.exs` | `__using__/1@13` | 762 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/core_2.exs` | `__using__/1@15` | 685 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/core_1.exs` | `__using__/1@13` | 763 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/core_2.exs` | `__using__/1@15` | 693 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/extensions_1.exs` | `__using__/1@16` | 645 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/extensions_2.exs` | `__using__/1@13` | 550 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/orchestrator_status_1.exs` | `__using__/1@10` | 838 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/orchestrator_status_2.exs` | `__using__/1@11` | 665 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/orchestrator_status_3.exs` | `__using__/1@13` | 617 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/locality_sections/orchestrator_status_4.exs` | `__using__/1@10` | 348 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/extensions_2.exs` | `__using__/1@13` | 551 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/orchestrator_status_1.exs` | `__using__/1@10` | 839 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/orchestrator_status_2.exs` | `__using__/1@11` | 672 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/orchestrator_status_3.exs` | `__using__/1@13` | 622 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/locality_sections/orchestrator_status_4.exs` | `__using__/1@10` | 349 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/test_support.exs` | `__using__/1@123` | 95 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/test_support.exs` | `workflow_content/1@330` | 152 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `test/symphony_elixir/live_e2e_test.exs` | `run_live_issue_flow!/1@410` | 82 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
