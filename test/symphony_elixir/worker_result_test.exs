@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.WorkerResultTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.WorkerResult
+  alias SymphonyElixir.{RunFailure, WorkerResult}
 
   test "publishes the producer and receiver limits" do
     assert WorkerResult.limits() == %{
@@ -103,6 +103,35 @@ defmodule SymphonyElixir.WorkerResultTest do
 
     assert {:ok, validated} = WorkerResult.validate(timeout)
     assert validated["failure_evidence"]["phase"] == "fetch_failed"
+  end
+
+  test "accepts blocked source topology evidence and preserves its classification" do
+    evidence = %{
+      "phase" => "checkout_failed",
+      "command_status" => "failed",
+      "operation" => "merge_base_exhausted",
+      "default_ref" => "refs/remotes/origin/main",
+      "task_ref" => "refs/remotes/origin/feature",
+      "base_sha" => "base-sha",
+      "task_sha" => "task-sha",
+      "checkout_depth" => 1,
+      "repository_shallow" => false,
+      "detail" => "complete histories have no common ancestor"
+    }
+
+    blocked =
+      summary([])
+      |> Map.put("phase", "source_preparation")
+      |> Map.put("outcome", "blocked")
+      |> Map.put("reason", "source_topology_invalid")
+      |> Map.put("validation_status", "pending")
+      |> Map.put("failure_evidence", evidence)
+
+    assert {:ok, validated} = WorkerResult.validate(blocked)
+    assert validated["failure_evidence"] == evidence
+
+    assert {:blocked, %RunFailure{classification: "source_preparation_timeout", evidence: ^evidence}} =
+             WorkerResult.terminal_outcome("task.failed", blocked)
   end
 
   test "requires a valid summary for terminal task events" do

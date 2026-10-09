@@ -5,7 +5,7 @@ domain: [spec, agent-runner]
 status: current
 language: en
 owner: SymphonyElixir.AgentRunner
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Agent Runner Protocol Specification
@@ -239,7 +239,9 @@ Behavior:
 2. Create a missing Linear task branch at `base_sha`, or fetch and checkout an existing remote
    task branch without resetting its commits. Preserve the existing `task_sha`. If shallow history
    hides a common ancestor, deepen both explicit refspecs by the configured checkout depth until it
-   appears; fail on no progress or unrelated complete history.
+   appears. Recheck merge-base after every successful deepen; global visible-commit count MUST NOT
+   gate that check. Complete unrelated histories produce a blocked `source_topology_invalid` result
+   with `merge_base_exhausted` evidence.
 3. If the task already contains `base_sha`, keep HEAD unchanged; otherwise merge that immutable SHA.
    Verify `task_sha` and `base_sha` are HEAD ancestors and the remote-default merge base equals
    `base_sha`. Record the default branch, SHAs, prepared branch, and prepared HEAD.
@@ -248,7 +250,8 @@ Behavior:
 5. Start app-server session only after source preparation succeeds.
 6. Forward app-server events to orchestrator.
 7. For worker implementation, treat only a captured `handoff` payload as implementation completion.
-8. On any error, fail the worker attempt (the orchestrator will retry).
+8. On ordinary errors, fail the worker attempt (the orchestrator will retry). A complete unrelated
+   source topology is blocked immediately and does not consume the failure budget.
 
 Note:
 

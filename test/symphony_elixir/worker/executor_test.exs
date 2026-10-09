@@ -302,6 +302,31 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert_receive {:source_progress, "source_preparation", %{operation: "git_deepen", status: "started"}}
   end
 
+  test "accepts a visible merge base when targeted deepen reduces the global commit count" do
+    fixture = non_monotonic_history_fixture!()
+    on_exit(fn -> File.rm_rf(fixture.root) end)
+
+    workspace = Path.join(fixture.root, "lease")
+    observations = make_ref()
+
+    assert {:ok, source} =
+             Executor.prepare(
+               payload(fixture.remote_url),
+               workspace,
+               deepen_observer(workspace, fixture.base_sha, fixture.task_sha, observations)
+             )
+
+    rounds = Process.delete(observations).rounds |> Enum.reverse()
+    assert length(rounds) >= 2
+
+    assert %{before: before_count, after: after_count, merge_base: merge_base} =
+             Enum.find(rounds, & &1.merge_base)
+
+    assert after_count <= before_count
+    assert merge_base == fixture.common_sha
+    assert_synced_source(source, workspace, fixture.task_sha, fixture.base_sha)
+  end
+
   test "rebuilds a stale lease workspace before fetching source" do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
@@ -576,11 +601,86 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
   end
 
   defp commit_and_push!(author, branch, file, message) do
+    sha = commit!(author, file, message)
+    git!(author, ["push", "origin", branch])
+    sha
+  end
+
+  defp commit!(author, file, message) do
     File.write!(Path.join(author, file), message)
     git!(author, ["add", file])
     git!(author, ["commit", "-m", message])
-    git!(author, ["push", "origin", branch])
     git!(author, ["rev-parse", "HEAD"])
+  end
+
+  defp non_monotonic_history_fixture! do
+    fixture = git_fixture!()
+
+    git!(fixture.author, ["checkout", "-b", "common-side"])
+    Enum.each(1..5, &commit!(fixture.author, "common-side-#{&1}.txt", "common side #{&1}"))
+    git!(fixture.author, ["checkout", "trunk"])
+    commit!(fixture.author, "trunk.txt", "advance trunk")
+    git!(fixture.author, ["merge", "--no-ff", "-m", "merge common history", "common-side"])
+    common_sha = git!(fixture.author, ["rev-parse", "HEAD"])
+    git!(fixture.author, ["push", "origin", "trunk"])
+
+    git!(fixture.author, ["checkout", "-b", "feature/sym-74"])
+    task_sha = commit_and_push!(fixture.author, "feature/sym-74", "task.txt", "task commit")
+
+    git!(fixture.author, ["checkout", "-b", "long-side", common_sha])
+    Enum.each(1..5, &commit!(fixture.author, "long-side-#{&1}.txt", "long side #{&1}"))
+    git!(fixture.author, ["checkout", "trunk"])
+    git!(fixture.author, ["merge", "--no-ff", "-m", "merge long side", "long-side"])
+
+    git!(fixture.author, ["checkout", "-b", "stale-side", common_sha])
+    commit!(fixture.author, "stale-side.txt", "stale side")
+    git!(fixture.author, ["checkout", "trunk"])
+    git!(fixture.author, ["merge", "--no-ff", "-m", "merge stale side", "stale-side"])
+
+    Enum.each(3..4, fn round ->
+      branch = "tip-side-#{round}"
+      git!(fixture.author, ["checkout", "-b", branch])
+      commit!(fixture.author, "tip-side-#{round}.txt", "tip side #{round}")
+      git!(fixture.author, ["checkout", "trunk"])
+      git!(fixture.author, ["merge", "--no-ff", "-m", "merge tip side #{round}", branch])
+    end)
+
+    git!(fixture.author, ["push", "origin", "trunk"])
+    base_sha = git!(fixture.author, ["rev-parse", "HEAD"])
+    Map.merge(fixture, %{base_sha: base_sha, common_sha: common_sha, task_sha: task_sha})
+  end
+
+  defp deepen_observer(workspace, base_sha, task_sha, observations) do
+    fn
+      "source_preparation", %{operation: "git_deepen", status: "started"} ->
+        state = Process.get(observations, %{rounds: []})
+        Process.put(observations, Map.put(state, :before, history_count!(workspace)))
+
+      "source_preparation", %{operation: "git_deepen", status: "completed"} ->
+        state = Process.get(observations)
+
+        round = %{
+          before: Map.fetch!(state, :before),
+          after: history_count!(workspace),
+          merge_base: visible_merge_base(workspace, base_sha, task_sha)
+        }
+
+        Process.put(observations, %{rounds: [round | state.rounds]})
+
+      _phase, _event ->
+        :ok
+    end
+  end
+
+  defp history_count!(workspace),
+    do: workspace |> git!(["rev-list", "--count", "--all"]) |> String.to_integer()
+
+  defp visible_merge_base(workspace, base_sha, task_sha) do
+    case System.cmd("git", ["merge-base", base_sha, task_sha], cd: workspace, stderr_to_stdout: true) do
+      {output, 0} -> String.trim(output)
+      {_output, 1} -> nil
+      {output, status} -> flunk("git merge-base failed (#{status}): #{output}")
+    end
   end
 
   defp git!(cwd, args) do
@@ -692,7 +792,7 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     refute_receive {:source_progress, "source_preparation", %{operation: "git_merge", status: "started"}}
   end
 
-  test "returns a checkout preparation failure when histories have no common ancestor" do
+  test "returns source topology evidence when complete histories have no common ancestor" do
     fixture = git_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
 
@@ -700,14 +800,55 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     git!(fixture.author, ["rm", "-rf", "."])
     task_sha = commit_and_push!(fixture.author, "feature/sym-74", "orphan.txt", "orphan task")
     git!(fixture.author, ["checkout", "trunk"])
-    _base_sha = commit_and_push!(fixture.author, "trunk", "base.txt", "advance default")
+    base_sha = commit_and_push!(fixture.author, "trunk", "base.txt", "advance default")
 
-    assert {:error, {:source_preparation_failed, failure, %{status: :failed, detail: detail}}} =
+    assert {:blocked, :source_topology_invalid, evidence} =
              Executor.prepare(payload(fixture.remote_url), Path.join(fixture.root, "lease"), no_progress())
 
-    assert failure in [:merge_base_exhausted, :merge_base_no_progress]
-    assert detail =~ "common ancestor" or detail =~ "no additional commits"
-    assert task_sha != fixture.main_sha
+    assert evidence == %{
+             phase: "checkout_failed",
+             command_status: "failed",
+             operation: "merge_base_exhausted",
+             default_ref: "refs/remotes/origin/trunk",
+             task_ref: "refs/remotes/origin/feature/sym-74",
+             base_sha: base_sha,
+             task_sha: task_sha,
+             checkout_depth: 1,
+             repository_shallow: false,
+             detail: "complete histories have no common ancestor"
+           }
+
+    execution =
+      panel_payload()
+      |> put_in(["source", "repository"], fixture.remote_url)
+      |> put_in(["source", "default_branch"], "trunk")
+      |> put_in(["source", "implementation_branch"], "feature/sym-74")
+      |> ExecutionPayload.from_task_payload()
+
+    config = %Config{
+      panel_url: "http://panel.test",
+      registration_token: "worker-token",
+      worker_name: "worker-test",
+      workspace_root: Path.join(fixture.root, "workspaces"),
+      cache_root: Path.join(fixture.root, "cache"),
+      log_root: Path.join(fixture.root, "logs")
+    }
+
+    claim = %{
+      "project_id" => "project-1",
+      "task_id" => "task-1",
+      "lease_id" => "lease-1",
+      "run_id" => "run-1",
+      "issue_id" => "issue-1",
+      "execution" => execution
+    }
+
+    assert %{
+             status: :blocked,
+             reason: :source_topology_invalid,
+             detail: "complete histories have no common ancestor",
+             failure_evidence: ^evidence
+           } = Executor.execute(config, claim)
   end
 
   test "returns a typed checkout preparation failure on merge conflict" do

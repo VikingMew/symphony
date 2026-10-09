@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-10-07
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -197,6 +197,10 @@ source/phase/operation 合并为 `system_progress`。Codex payload 继续进入�
 `source_preparation`；reason 分别为 `source_preparation_timeout` 与 `source_preparation_failed`，操作差异
 只进入既有 `clone_failed` / `fetch_failed` / `checkout_failed` evidence 闭集。任何失败都不继续到旧
 HEAD、本地 branch fallback、hook 或 Codex。
+若 repository 已非 shallow 且捕获的 base/task SHA 仍无共同祖先，Runtime 保持同一顶层 phase，输出
+`blocked / source_topology_invalid`。`checkout_failed / merge_base_exhausted` evidence 保留两侧 ref、SHA、
+checkout depth 与 `repository_shallow: false`；Panel 立即持久化 blocker，不增加 `failure_counts`，也不安排
+自动 retry。clone/fetch timeout、ref 缺失、merge conflict 等其余准备错误仍为 `failed`。
 
 手动 `cancel-current` 是当前内存 assignment 的控制动作，不是持久任务状态。Panel 在当前
 assignment 上记录 pending cancellation；只有持有同一 worker/session 且 heartbeat 提交匹配 active

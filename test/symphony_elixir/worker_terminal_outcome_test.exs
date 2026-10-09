@@ -376,6 +376,51 @@ defmodule SymphonyElixir.WorkerTerminalOutcomeTest do
     assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
   end
 
+  test "source topology blockers persist immediately without consuming the failure budget" do
+    {orchestrator, pid} = start_orchestrator(max_failure_retries: 2)
+    issue_id = "issue-source-topology"
+    identifier = "SYM-SOURCE-TOPOLOGY"
+    put_persisted_issue(issue_id, identifier)
+    put_running(pid, issue_id, identifier, run_id: "run-source-topology")
+
+    evidence = %{
+      "phase" => "checkout_failed",
+      "command_status" => "failed",
+      "operation" => "merge_base_exhausted",
+      "default_ref" => "refs/remotes/origin/main",
+      "task_ref" => "refs/remotes/origin/feature",
+      "base_sha" => "base-sha",
+      "task_sha" => "task-sha",
+      "checkout_depth" => 1,
+      "repository_shallow" => false,
+      "detail" => "complete histories have no common ancestor"
+    }
+
+    outcome =
+      WorkerApiController.terminal_outcome("task.failed", %{
+        "phase" => "source_preparation",
+        "outcome" => "blocked",
+        "reason" => "source_topology_invalid",
+        "failure_evidence" => evidence
+      })
+
+    assert {:blocked, %RunFailure{classification: "source_preparation_timeout", evidence: ^evidence}} = outcome
+    Orchestrator.worker_task_finished(issue_id, outcome, orchestrator)
+
+    state = :sys.get_state(pid)
+    assert state.failure_counts == %{}
+    assert state.retry_attempts == %{}
+    assert %{reason: "source_preparation_timeout", detail: ^evidence} = state.blocked[issue_id]
+
+    persisted = FakePersistence.get_issue_by_identifier(identifier)
+    assert persisted.blocking_decision["reason"] == "source_preparation_timeout"
+    assert persisted.blocking_decision["evidence"] == evidence
+    assert_receive {:linear_comment, ^issue_id, comment}
+    assert comment =~ "merge_base_exhausted"
+    assert_receive {:linear_state_lookup, ^issue_id, "Blocked"}
+    assert_receive {:linear_state_update, ^issue_id, "state-blocked"}
+  end
+
   test "blocked worker outcome without a running entry releases the claim" do
     {orchestrator, pid} = start_orchestrator()
     issue_id = "issue-worker-restarted"

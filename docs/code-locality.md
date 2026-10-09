@@ -4,7 +4,7 @@ genre: reference
 domain: [backend, quality, testing]
 status: current
 language: en
-updated: 2026-10-08
+updated: 2026-10-09
 owner: SymphonyElixir.Locality
 ---
 
@@ -170,7 +170,7 @@ mechanism.
 | `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 889 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 845 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 888 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@102` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@106` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 573 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `__using__/1@6` | 564 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `prepare_worktree_source/4@272` | 66 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |

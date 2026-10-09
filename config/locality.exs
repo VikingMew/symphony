@@ -156,7 +156,7 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/worker/executor.ex",
       lines: 71,
-      identifier: "run_codex/5@102"
+      identifier: "run_codex/5@106"
     },
     %{
       owner: "Symphony maintainers",
