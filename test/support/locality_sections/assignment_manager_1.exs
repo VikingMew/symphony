@@ -643,7 +643,7 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.AssignmentManager1 do
                    context.manager
                  )
 
-        assert :ok = BlockingDecision.clear(ready.identifier)
+        assert {:ok, {:cleared, _context}} = BlockingDecision.clear(ready.identifier)
 
         assert {:ok, assignment, %{capacity: 1, reason: :assigned}} =
                  AssignmentManager.claim_with_policy_evidence(

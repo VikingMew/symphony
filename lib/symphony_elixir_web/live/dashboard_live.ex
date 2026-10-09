@@ -9,7 +9,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
   import SymphonyElixirWeb.DashboardPresenter
 
   alias SymphonyElixir.PersistenceProvider
-  alias SymphonyElixirWeb.{ObservabilityPubSub, Presenter, WebRuntime}
+  alias SymphonyElixirWeb.{DashboardBlockingDecisionControl, ObservabilityPubSub, Presenter, WebRuntime}
   @runtime_tick_ms 1_000
 
   @impl true
@@ -113,6 +113,11 @@ defmodule SymphonyElixirWeb.DashboardLive do
      |> put_operator_request_flash("Day dreaming", result)
      |> refresh_payload()}
   end
+
+  @impl true
+  defdelegate handle_event(event, params, socket),
+    to: DashboardBlockingDecisionControl,
+    as: :remove_persistent_block
 
   @impl true
   def render(assigns) do
@@ -297,19 +302,48 @@ defmodule SymphonyElixirWeb.DashboardLive do
                   </tr>
                 </thead>
                 <tbody>
-                  <tr :for={entry <- @payload.blocked}>
-                    <td>
-                      <div class="issue-stack">
-                        <span class="issue-id"><%= running_entry_label(entry) %></span>
-                        <a :if={Map.get(entry, :run_id)} class="issue-link" href={"/runs/#{Map.get(entry, :run_id)}"}>Run detail</a>
-                        <a :if={entry.issue_identifier} class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
-                      </div>
-                    </td>
-                    <td><span class={state_badge_class(entry.state || "blocked")}><%= entry.state || "blocked" %></span></td>
-                    <td><span class="status-badge status-warning"><%= entry.reason %></span></td>
-                    <td class="mono numeric"><%= entry.blocked_at || "n/a" %></td>
-                    <td><%= entry.detail || "n/a" %></td>
-                  </tr>
+                  <%= for entry <- @payload.blocked do %>
+                    <tr>
+                      <td>
+                        <div class="issue-stack">
+                          <span class="issue-id"><%= running_entry_label(entry) %></span>
+                          <a :if={Map.get(entry, :run_id)} class="issue-link" href={"/runs/#{Map.get(entry, :run_id)}"}>Run detail</a>
+                          <a :if={entry.issue_identifier} class="issue-link" href={"/api/v1/#{entry.issue_identifier}"}>JSON details</a>
+                        </div>
+                      </td>
+                      <td><span class={state_badge_class(entry.state || "blocked")}><%= entry.state || "blocked" %></span></td>
+                      <td><span class="status-badge status-warning"><%= entry.reason %></span></td>
+                      <td class="mono numeric"><%= entry.blocked_at || "n/a" %></td>
+                      <td><%= entry.detail || "n/a" %></td>
+                    </tr>
+                    <%= if decision = Map.get(entry, :blocking_decision) do %>
+                      <tr class="blocking-decision-row">
+                        <td colspan="5">
+                          <div class="runtime-task-status">
+                            <span class="metric-label">
+                              Decision reason: <span class="mono"><%= decision.reason %></span>
+                            </span>
+                            <span class="metric-label">
+                              Origin state: <span class="mono"><%= decision.origin_state %></span>
+                            </span>
+                            <span class="metric-label">
+                              Run: <span class="mono"><%= decision.run_id %></span>
+                            </span>
+                            <span class="metric-label">
+                              Decision time: <span class="mono numeric"><%= decision.decided_at %></span>
+                            </span>
+                            <button
+                              id={"clear-blocking-decision-#{entry.issue_identifier}"}
+                              class="subtle-button"
+                              phx-click="clear_blocking_decision"
+                              phx-value-issue_identifier={entry.issue_identifier}
+                              data-confirm="Clear this persistent blocking decision? This does not change the Linear issue state."
+                            >Clear blocking decision</button>
+                          </div>
+                        </td>
+                      </tr>
+                    <% end %>
+                  <% end %>
                 </tbody>
               </table>
             </div>

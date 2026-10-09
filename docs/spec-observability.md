@@ -5,7 +5,7 @@ domain: [spec, observability]
 status: current
 language: en
 owner: SymphonyElixir.LogFile
-updated: 2026-10-08
+updated: 2026-10-09
 ---
 
 # Logging and Observability Specification
@@ -57,8 +57,9 @@ SHOULD return:
 - `running` (list of running session rows)
 - each running row SHOULD include `turn_count`
 - `retrying` (list of retry queue rows)
-- `blocked` (temporary input blocks and persistent tracker blocks); persistent rows include tracker
-  state, typed reason, run id, evidence, and UTC decision time
+- `blocked` (temporary input blocks and persistent tracker blocks); persistent rows include a
+  `blocking_decision` object with reason, origin state, run id, and UTC decision time in addition to
+  the existing tracker state and evidence/detail
 - `codex_totals`
   - `input_tokens`
   - `output_tokens`
@@ -204,6 +205,9 @@ Enablement (extension):
 - The dashboard current-state cards SHOULD consume the same `/api/v1/state` presentation payload as
   automation, including worker-mode `running` rows and `codex_totals`, rather than deriving a
   separate current-state source.
+- A blocked row with canonical `blocking_decision` data MUST render reason, origin state, run id,
+  and decision time from that one object and MAY expose a confirmed clear control. A blocked row
+  without the object MUST NOT render a decision row, clear control, or placeholder decision fields.
 
 #### 13.7.2 JSON REST API (`/api/v1/*`)
 
@@ -396,6 +400,15 @@ Minimum endpoints:
     string and is forwarded unchanged.
 - `POST /api/v1/control/daydream`
   - Requests a day-dreaming operator task with the same optional `project_id` contract as nap.
+- `POST /api/v1/control/blocking-decisions/:issue_identifier/clear`
+  - Requires the literal JSON/form value `confirm: true`; any missing or other value returns
+    `400 invalid_parameter` without invoking the orchestrator.
+  - Serializes through the configured Orchestrator. The first clear returns
+    `{"status":"cleared","issue_identifier":"..."}`; a repeated clear returns
+    `{"status":"already_cleared","issue_identifier":"..."}` with no repeated side effect.
+  - Clears only the canonical persisted decision and no-progress streak plus matching in-memory
+    blocker projections. It does not change Linear state, issue snapshot, or run history and does
+    not create a run.
 
 Worker cancellation results are returned in `cancelled_tasks` for both force-stop and cancel-current:
 
@@ -440,8 +453,9 @@ Control endpoint responses:
 - An orchestrator map is returned unchanged with `200 OK`, including business-level failed,
   queued, or already-running results.
 - An unavailable orchestrator returns `503 orchestrator_unavailable`.
-- A missing or unknown listening `mode`, or a present `project_id` that is not a string or is blank
-  after trimming, returns `400 invalid_parameter` without invoking the orchestrator.
+- A missing or unknown listening `mode`, a present `project_id` that is not a string or is blank
+  after trimming, or a blocking-decision clear without literal `confirm: true`, returns
+  `400 invalid_parameter` without invoking the orchestrator.
 - The controls use the same optional dashboard-session authentication boundary as the other
   `/api/v1/*` endpoints. Each defined control path returns `405 method_not_allowed` for non-POST
   methods.

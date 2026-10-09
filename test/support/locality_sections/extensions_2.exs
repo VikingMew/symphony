@@ -55,6 +55,8 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         assert html =~ "remaining"
         assert html =~ "status-badge-live"
         assert html =~ "status-badge-offline"
+        assert Floki.find(html, ".blocking-decision-row") == []
+        assert Floki.find(html, "button[phx-click='clear_blocking_decision']") == []
 
         updated_snapshot =
           put_in(snapshot.running, [
@@ -95,6 +97,56 @@ defmodule SymphonyElixir.TestSupport.LocalitySections.Extensions2 do
         assert_eventually(fn ->
           render(view) =~ "agent message content streaming: structured update"
         end)
+      end
+
+      test "dashboard renders and clears a confirmed canonical blocking decision" do
+        orchestrator_name = Module.concat(__MODULE__, :DashboardBlockingDecisionOrchestrator)
+
+        decision = %{
+          reason: "reported_blocker",
+          origin_state: "In Progress",
+          run_id: "run-blocked-1",
+          decided_at: "2026-10-09T14:00:00Z"
+        }
+
+        snapshot =
+          update_in(static_snapshot().blocked, fn [entry] ->
+            [
+              entry
+              |> Map.put(:run_id, decision.run_id)
+              |> Map.put(:blocking_decision, decision)
+            ]
+          end)
+
+        {:ok, _pid} =
+          StaticOrchestrator.start_link(
+            name: orchestrator_name,
+            snapshot: snapshot,
+            owner: self()
+          )
+
+        start_test_endpoint(orchestrator: orchestrator_name, snapshot_timeout_ms: 50)
+
+        {:ok, view, html} = live(build_conn(), "/")
+        assert html =~ "Decision reason:"
+        assert html =~ "reported_blocker"
+        assert html =~ "Origin state:"
+        assert html =~ "In Progress"
+        assert html =~ "run-blocked-1"
+        assert html =~ "2026-10-09T14:00:00Z"
+
+        assert html =~ "Clear blocking decision"
+
+        assert html =~
+                 ~s(data-confirm="Clear this persistent blocking decision? This does not change the Linear issue state.")
+
+        cleared_html =
+          view
+          |> element("button[phx-click='clear_blocking_decision']", "Clear blocking decision")
+          |> render_click()
+
+        assert_receive {:blocking_decision_cleared, "MT-BLOCKED"}
+        assert Floki.find(cleared_html, ".blocking-decision-row") == []
       end
 
       test "dashboard renders scrubbed raw rate-limit debug payload only for unrecognized updates" do

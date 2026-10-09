@@ -63,6 +63,20 @@ defmodule SymphonyElixirWeb.ControlApiController do
     end
   end
 
+  @spec clear_blocking_decision(Conn.t(), map()) :: Conn.t()
+  def clear_blocking_decision(
+        conn,
+        %{"issue_identifier" => issue_identifier, "confirm" => true}
+      ) do
+    control_response(
+      conn,
+      Orchestrator.clear_blocking_decision(issue_identifier, WebRuntime.orchestrator())
+    )
+  end
+
+  def clear_blocking_decision(conn, _params),
+    do: error_response(conn, 400, "invalid_parameter", "confirm must be true")
+
   @spec method_not_allowed(Conn.t(), map()) :: Conn.t()
   def method_not_allowed(conn, _params),
     do: error_response(conn, 405, "method_not_allowed", "Method not allowed")
@@ -87,6 +101,15 @@ defmodule SymphonyElixirWeb.ControlApiController do
 
   defp control_response(conn, :unavailable),
     do: error_response(conn, 503, "orchestrator_unavailable", "Orchestrator is unavailable")
+
+  defp control_response(conn, {:error, reason}),
+    do:
+      error_response(
+        conn,
+        500,
+        "blocking_decision_clear_failed",
+        "Blocking decision clear failed: #{inspect(reason)}"
+      )
 
   defp control_response(conn, result) when is_map(result), do: json(conn, result)
 

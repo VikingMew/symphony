@@ -251,6 +251,10 @@ defmodule SymphonyElixirWeb.Presenter do
       session_history: session_history_payload(Map.get(entry, :session_history, [])),
       session_history_total_count: session_history_total_count(entry)
     }
+    |> maybe_put_present(
+      :blocking_decision,
+      blocking_decision_payload(Map.get(entry, :blocking_decision))
+    )
   end
 
   defp running_issue_payload(running) do
@@ -310,6 +314,21 @@ defmodule SymphonyElixirWeb.Presenter do
       reason: blocked.reason,
       detail: blocked.detail,
       blocked_at: iso8601(blocked.blocked_at)
+    }
+    |> maybe_put_present(
+      :blocking_decision,
+      blocking_decision_payload(Map.get(blocked, :blocking_decision))
+    )
+  end
+
+  defp blocking_decision_payload(nil), do: nil
+
+  defp blocking_decision_payload(decision) do
+    %{
+      reason: Map.fetch!(decision, :reason),
+      origin_state: Map.fetch!(decision, :origin_state),
+      run_id: Map.fetch!(decision, :run_id),
+      decided_at: Map.fetch!(decision, :decided_at)
     }
   end
 

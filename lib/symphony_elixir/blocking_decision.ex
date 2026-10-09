@@ -114,17 +114,27 @@ defmodule SymphonyElixir.BlockingDecision do
     end
   end
 
-  @spec clear(String.t(), module()) :: :ok | {:error, term()}
+  @spec clear(String.t(), module()) ::
+          {:ok, :already_cleared | {:cleared, %{issue_id: String.t(), run_id: String.t()}}}
+          | {:error, term()}
   def clear(identifier, persistence \\ PersistenceProvider.module()) do
     case PersistenceProvider.read(fn -> persistence.get_issue_by_identifier(identifier) end) do
-      issue when is_map(issue) ->
+      %{blocking_decision: %{} = decision} = issue ->
         case persistence.update_issue(issue, %{blocking_decision: nil, no_progress_streak: 0}) do
-          {:ok, _issue} -> :ok
-          {:error, reason} -> {:error, reason}
+          {:ok, _issue} ->
+            {:ok,
+             {:cleared,
+              %{
+                issue_id: Map.fetch!(issue, :tracker_issue_id),
+                run_id: Map.fetch!(decision, "run_id")
+              }}}
+
+          {:error, reason} ->
+            {:error, reason}
         end
 
-      nil ->
-        :ok
+      issue when is_map(issue) or is_nil(issue) ->
+        {:ok, :already_cleared}
 
       {:error, reason} ->
         {:error, reason}
