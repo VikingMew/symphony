@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixirWeb.DashboardLive do
   @moduledoc """
   Live observability dashboard for Symphony.

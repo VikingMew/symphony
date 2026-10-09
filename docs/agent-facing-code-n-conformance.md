@@ -33,7 +33,7 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
 Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
-current baseline waterline is 559 exact findings; the N group is not fully compliant while that
+initial baseline waterline was 563 exact findings and the current waterline is 411; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
@@ -78,10 +78,10 @@ and the checker's baseline read/compare branch, leaving the direct rules as one 
 checker or its task test. Shallow CI checkouts are completed so `origin/main` and the real merge base
 are available; failure to provide that Git history is a hard gate failure.
 
-The location mapper compares the merge-base source with the current working tree, maps only
-untouched declaration lines in the same path, and retains exact location sets. Rewritten or removed
-declaration lines do not authorize a replacement row. Git diff failures remain hard failures.
-The repository-verification rebase retains all 559 findings with only coordinate changes; it adds
-no exemption or relaxed threshold. `baseline_locations_test.exs` covers line movement, new aggregate
-locations, rewritten declarations, stale deletion, and missing history. Existing comments remain
-unchanged; the new mapper has no explanatory inline comments to reconcile.
+The location mapper compares the merge-base source with the current working tree. It maps untouched
+lines in the same path and accepts a cross-file responsibility move only when normalized declaration
+heads, including function arity, remain a non-expanding multiset. A rewritten `shared/0` declaration
+cannot authorize `shared/1`, and an added same-head collision exceeds the merge-base multiset. Git diff
+failures remain hard failures. The locality responsibility split reduces the repository-verification waterline from 559 to 411
+findings without adding an exemption or relaxing the ratchet. Existing comments remain unchanged;
+the mapper has no explanatory inline comments to reconcile.

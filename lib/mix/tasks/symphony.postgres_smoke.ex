@@ -7,6 +7,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   use Mix.Task
 
   alias Ecto.Adapters.SQL
+  alias Mix.Tasks.Symphony.PostgresSmokeAssertions, as: Assertions
   alias SymphonyElixir.{BlockingDecision, Config.LegacyWorkflowConvergence, Persistence, Repo, SQLiteImporter}
   alias SymphonyElixir.Persistence.{EventRecord, Project, WorkflowStore}
   alias SymphonyElixir.Workflow
@@ -109,7 +110,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
       Mix.shell().info("smoke release_migrator_noop=PASS")
       cleanup_legacy_fixture!(repo)
       verify_postgres_schema!(repo)
-      verify_worker_session_compatibility!(repo)
+      Assertions.verify_worker_session_compatibility!(repo, @session_id, @legacy_session_id, @worker_id)
       verify_bootstrap_concurrency!()
     end)
   end
@@ -120,7 +121,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
 
     if scenario == :existing do
       Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
-      seed_pre_repair_worker_session!(repo)
+      Assertions.seed_pre_repair_worker_session!(repo, @worker_id, @session_id)
     end
 
     Ecto.Migrator.run(repo, migrations_path, :up, to: @pre_convergence_migration)
@@ -130,7 +131,7 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     SQL.query!(repo, "DROP SCHEMA public CASCADE", [])
     SQL.query!(repo, "CREATE SCHEMA public", [])
     Ecto.Migrator.run(repo, migrations_path, :up, to: @capacity_migration)
-    seed_pre_repair_worker_session!(repo)
+    Assertions.seed_pre_repair_worker_session!(repo, @worker_id, @session_id)
     Ecto.Migrator.run(repo, migrations_path, :up, to: @convergence_migration)
   end
 
@@ -774,7 +775,15 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
   defp import_and_exercise!(sqlite_path) do
     with_repo!(fn repo ->
       {:ok, counts} = SQLiteImporter.import_backup(repo, sqlite_path)
-      assert_imported_relationships!(repo)
+
+      Assertions.assert_imported_relationships!(repo, %{
+        issue_id: @issue_id,
+        project_id: @project_id,
+        run_id: @run_id,
+        session_id: @session_id,
+        worker_id: @worker_id,
+        workflow_id: @workflow_id
+      })
 
       {:error, {:target_not_empty, _counts}} = SQLiteImporter.import_backup(repo, sqlite_path)
 
@@ -935,130 +944,6 @@ defmodule Mix.Tasks.Symphony.PostgresSmoke do
     if indexes < 14, do: Mix.raise("Expected PostgreSQL indexes, found #{indexes}")
 
     verify_hook_columns_removed!(repo)
-  end
-
-  defp seed_pre_repair_worker_session!(repo) do
-    SQL.query!(
-      repo,
-      """
-      INSERT INTO workers (id, name, status, labels, capabilities, inserted_at, updated_at)
-      VALUES ($1::text::uuid, 'migration-smoke-worker', 'online', '{}', '{}', NOW(), NOW())
-      """,
-      [@worker_id]
-    )
-
-    SQL.query!(
-      repo,
-      """
-      INSERT INTO worker_sessions (
-        id, worker_id, protocol_version, total_slots, connected_at, status, inserted_at, updated_at
-      )
-      VALUES ($1::text::uuid, $2::text::uuid, 'worker-api-v1', 7, NOW(), 'online', NOW(), NOW())
-      """,
-      [@session_id, @worker_id]
-    )
-  end
-
-  defp verify_worker_session_compatibility!(repo) do
-    %{rows: [["YES", "1"]]} =
-      SQL.query!(
-        repo,
-        """
-        SELECT is_nullable, column_default
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'worker_sessions'
-          AND column_name = 'total_slots'
-        """,
-        []
-      )
-
-    %{rows: [[7]]} =
-      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::text::uuid", [@session_id])
-
-    SQL.query!(
-      repo,
-      """
-      INSERT INTO worker_sessions (
-        id, worker_id, protocol_version, connected_at, status, inserted_at, updated_at
-      )
-      VALUES ($1::text::uuid, $2::text::uuid, 'legacy-worker-api-v1', NOW(), 'online', NOW(), NOW())
-      """,
-      [@legacy_session_id, @worker_id]
-    )
-
-    %{rows: [[1]]} =
-      SQL.query!(repo, "SELECT total_slots FROM worker_sessions WHERE id = $1::text::uuid", [@legacy_session_id])
-
-    SQL.query!(repo, "DELETE FROM workers WHERE id = $1::text::uuid", [@worker_id])
-  end
-
-  defp assert_imported_relationships!(repo) do
-    %{rows: [[@project_id, @workflow_id]]} =
-      SQL.query!(
-        repo,
-        """
-        SELECT p.id::text, w.id::text
-        FROM projects p
-        JOIN workflows w ON w.project_id = p.id
-        WHERE p.id = $1::text::uuid
-        """,
-        [@project_id]
-      )
-
-    %{rows: [[@run_id, @issue_id, "completed", nil, nil]]} =
-      SQL.query!(
-        repo,
-        "SELECT id::text, issue_id::text, status, failure_reason, failure_evidence FROM runs WHERE id = $1::text::uuid",
-        [@run_id]
-      )
-
-    %{rows: [[%{"state" => "In Progress"}]]} =
-      SQL.query!(repo, "SELECT snapshot FROM issues WHERE id = $1::text::uuid", [@issue_id])
-
-    %{rows: legacy_failures} =
-      SQL.query!(
-        repo,
-        """
-        SELECT status, failure_reason, failure_evidence
-        FROM runs
-        WHERE issue_identifier LIKE 'SYM-LEGACY-%'
-        ORDER BY issue_identifier
-        """,
-        []
-      )
-
-    [
-      ["failed", "unknown", %{"import" => "unclassified_legacy_reason", "legacy_failure_reason" => "opaque legacy"}],
-      ["blocked", "unknown", %{"import" => "missing_failure_reason"}],
-      ["cancelled", "environment_unavailable", environment_evidence]
-    ] = legacy_failures
-
-    %{
-      "import" => "historical_mapping",
-      "kind" => "environment_unavailable",
-      "legacy_failure_reason" => "workspace erofs"
-    } = environment_evidence
-
-    %{rows: [[@session_id, @worker_id]]} =
-      SQL.query!(
-        repo,
-        "SELECT id::text, worker_id::text FROM worker_sessions WHERE id = $1::text::uuid",
-        [@session_id]
-      )
-
-    %{rows: [[yaml_config, "", raw_workflow_md]]} =
-      SQL.query!(
-        repo,
-        "SELECT yaml_config, prompt_body, raw_workflow_md FROM workflows WHERE id = $1::text::uuid",
-        [@workflow_id]
-      )
-
-    ["project", "tracker"] = Enum.sort(Map.keys(yaml_config))
-    false = String.contains?(raw_workflow_md, "Smoke prompt")
-
-    %{rows: [[%{"config" => %{}, "prompt_body" => "Smoke prompt"}]]} =
-      SQL.query!(repo, "SELECT value FROM app_settings WHERE key = 'instance_workflow'", [])
   end
 
   defp with_repo!(fun) do

@@ -267,7 +267,7 @@ defmodule Mix.Tasks.Docs.Drift do
           | doc_last_modified: DateTime.to_iso8601(doc_time),
             owner_last_touched: DateTime.to_iso8601(owner_time),
             delta_days: delta,
-            status: if(delta > threshold, do: "stale", else: "fresh"),
+            status: freshness_status(delta, threshold),
             reason: nil
         }
       else
@@ -277,6 +277,9 @@ defmodule Mix.Tasks.Docs.Drift do
       record
     end
   end
+
+  defp freshness_status(delta, threshold) when delta > threshold, do: "stale"
+  defp freshness_status(_delta, _threshold), do: "fresh"
 
   defp owner(document) do
     case String.split(File.read!(document), ~r/\r?\n/) do

@@ -13,7 +13,7 @@ defmodule SymphonyElixir.MixedKeyAccessGovernanceTest do
     "lib/symphony_elixir/persistence/workflow_store.ex",
     "lib/symphony_elixir/profile_prompt_summary.ex",
     "lib/symphony_elixir/run_history.ex",
-    "lib/symphony_elixir/worker/assignment_manager.ex",
+    "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
     "lib/symphony_elixir_web/dashboard_presenter.ex",
     "lib/symphony_elixir_web/linear_status_signal.ex",
     "lib/symphony_elixir_web/live/admin_live.ex",

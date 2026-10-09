@@ -120,11 +120,15 @@ defmodule Mix.Tasks.PrBody.CheckTest do
 
       output =
         capture_io(:stderr, fn ->
-          assert_raise Mix.Error, ~r/PR body format invalid/, fn -> Check.run(["--file", "body.md"]) end
+          assert_invalid_check_raises()
         end)
 
       assert output =~ expected
     end)
+  end
+
+  defp assert_invalid_check_raises do
+    assert_raise Mix.Error, ~r/PR body format invalid/, fn -> Check.run(["--file", "body.md"]) end
   end
 
   defp write_contract_and_entry! do

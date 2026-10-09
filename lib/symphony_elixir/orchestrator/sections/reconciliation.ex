@@ -1,0 +1,846 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
+defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
+  @moduledoc false
+
+  @spec __using__(term()) :: Macro.t()
+  defmacro __using__(_opts) do
+    # credo:disable-for-next-line Credo.Check.Refactor.LongQuoteBlocks
+    quote do
+      require Logger
+
+      alias SymphonyElixir.{
+        AgentRunner,
+        BlockingDecision,
+        Codex.RateLimitGate,
+        Codex.Update,
+        Config,
+        EnvironmentFailureCircuit,
+        MergeConflictReconciler,
+        Nap.Results,
+        Payload,
+        PersistenceProvider,
+        RunAdmission,
+        RunLifecycle,
+        StatusDashboard,
+        Tracker,
+        WorkflowStore,
+        Workspace,
+        WorkspacePreflight
+      }
+
+      alias SymphonyElixir.Config.Schema
+      alias SymphonyElixir.Linear.{DispatchScope, Issue}
+      alias SymphonyElixir.Orchestrator.DispatchPolicy
+      alias SymphonyElixir.Orchestrator.Events
+      alias SymphonyElixir.Orchestrator.InputBlocker
+      alias SymphonyElixir.Orchestrator.RetryPolicy
+      alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
+      alias SymphonyElixir.Orchestrator.SessionHistory
+      alias SymphonyElixir.RunFailure, as: Failure
+      alias SymphonyElixir.Worker.AssignmentManager
+      alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
+
+      defp block_issue_for_input(state, issue_id, running_entry, outcome, session_id) do
+        summary = InputBlocker.summary(outcome)
+
+        Logger.warning("Agent task blocked for issue_id=#{issue_id} session_id=#{session_id} #{summary}; waiting for operator input")
+
+        updated_running_entry =
+          append_session_history(
+            running_entry,
+            :blocked,
+            "Agent blocked",
+            %{message: outcome.detail, reason: outcome.reason, source: :agent}
+          )
+
+        failure =
+          Failure.classify({:blocked, %{reason: outcome.reason, detail: outcome.detail, summary: summary}})
+
+        persist_run_finished(updated_running_entry, "blocked", failure)
+
+        references =
+          run_references(updated_running_entry)
+          |> Map.merge(Map.get(outcome, :references, %{}))
+          |> Map.put(:session_id, session_id)
+
+        persist_and_block_issue(
+          state,
+          issue_id,
+          updated_running_entry,
+          Failure.reason(failure),
+          Failure.evidence(failure),
+          references
+        )
+      end
+
+      defp agent_exit_summary(:normal, %{agent_result: :success}), do: "completed"
+
+      defp agent_exit_summary(:normal, %{agent_result: {:failed, reason}}),
+        do: "failed #{agent_failure_summary(reason)}"
+
+      defp agent_exit_summary(:normal, %{agent_result: {:blocked, outcome}}),
+        do: InputBlocker.summary(outcome)
+
+      defp agent_exit_summary(:normal, _running_entry), do: "completed"
+
+      defp agent_exit_summary(reason, _running_entry),
+        do: "crashed #{inspect(reason, limit: 20, printable_limit: 1_000)}"
+
+      defp agent_failure_summary({:workspace_hook_timeout, hook_name, timeout_ms, details}) do
+        "class=workspace_hook_timeout hook=#{hook_name} timeout_ms=#{timeout_ms} elapsed_ms=#{if is_map(details), do: Map.get(details, :elapsed_ms), else: nil} setting=#{timeout_setting_hint(hook_name)} output=#{compact_log_output(if is_map(details), do: Map.get(details, :recent_output, ""), else: "")}"
+      end
+
+      defp agent_failure_summary({:codex_startup_failed, %{reason: reason, stage: stage, timeout_ms: timeout_ms, output: output}}) do
+        "class=agent_domain_failure type=codex_startup_failed stage=#{inspect(stage)} timeout_ms=#{timeout_ms} reason=#{inspect(reason)} output=#{compact_log_output(output)}"
+        |> String.slice(0, 1_000)
+      end
+
+      defp agent_failure_summary(reason),
+        do: "class=agent_domain_failure reason=#{compact_log_output(inspect(reason, limit: 20, printable_limit: 1_000))}"
+
+      defp timeout_setting_hint("project_bootstrap"),
+        do: "Settings / Workflow / Bootstrap / Initialize timeout ms"
+
+      defp timeout_setting_hint(_), do: "Settings / Workflow / Lifecycle Hooks / Hook timeout ms"
+
+      defp compact_log_output(output) do
+        output
+        |> to_string()
+        |> String.replace("\r", "\n")
+        |> String.split("\n", trim: true)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.take(-8)
+        |> Enum.join(" | ")
+        |> String.slice(0, 1_000)
+      end
+
+      defp maybe_dispatch(%State{} = state) do
+        Logger.debug("event=poll_heartbeat listening_mode=#{listening_mode(state)} tick_timestamp=#{System.system_time(:millisecond)}")
+
+        state =
+          state
+          |> reconcile_stale_operator_entries()
+          |> reconcile_running_issues()
+          |> reconcile_blocked_issues()
+          |> refresh_deployment_capacity()
+
+        workflows = WorkflowStore.list_enabled()
+
+        if workflows == [] do
+          handle_dispatch_error(state, :setup_required)
+        else
+          dispatch_workflows(workflows, state)
+        end
+      end
+
+      defp dispatch_workflows([workflow | _rest] = workflows, state) do
+        Config.with_workflow_context(workflow, fn ->
+          if RunAdmission.execution_mode() == "worker" do
+            state
+          else
+            dispatch_workflows_centrally(state, workflows)
+          end
+        end)
+      end
+
+      defp dispatch_workflows_centrally(%State{} = state, workflows) do
+        with :ok <- Config.validate!(),
+             state = reconcile_ready_to_merge_issues(state),
+             :allow <- environment_failure_circuit_allows_dispatch(),
+             :allow <- rate_limit_gate_allows_dispatch(state),
+             {:ok, issues} <- Tracker.fetch_candidate_issues() do
+          dispatch_scoped_issues(workflows, issues, %{state | last_config_error: nil})
+        else
+          {:error, reason} ->
+            Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
+
+            Logger.warning(
+              "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} candidate_fetch=failed reason=#{inspect(reason)} dispatch=blocked"
+            )
+
+            handle_dispatch_error(state, reason)
+
+          {:block, details} ->
+            state
+            |> apply_rate_limit_gate_block(details)
+            |> Map.put(:last_config_error, nil)
+
+          {:environment_failure_circuit_open, circuit} ->
+            Logger.warning(
+              "event=poll_workflow_decision listening_mode=#{listening_mode(state)} project_slug=#{get_in(hd(workflows).config, ["tracker", "project_slug"])} dispatch=blocked reason=environment_failure_circuit_open fingerprint=#{circuit.triggering_fingerprint}"
+            )
+
+            %{state | last_config_error: nil}
+        end
+      end
+
+      defp dispatch_scoped_issues(workflows, issues, state) do
+        scope = Config.settings!().dispatch_scope
+
+        grouped = Enum.reduce(issues, %{}, &group_scoped_issue(&1, &2, workflows, scope))
+
+        Enum.reduce(grouped, state, fn {_project_id, {workflow, workflow_issues}}, state_acc ->
+          Config.with_workflow_context(workflow, fn ->
+            dispatch_fetched_workflow(state_acc, workflow, Enum.reverse(workflow_issues))
+          end)
+        end)
+      end
+
+      defp group_scoped_issue(issue, groups, workflows, scope) do
+        case DispatchScope.resolve_context(issue, workflows, scope) do
+          {:ok, workflow, resolved_issue} ->
+            Map.update(groups, workflow.project_id, {workflow, [resolved_issue]}, fn {existing, existing_issues} ->
+              {existing, [resolved_issue | existing_issues]}
+            end)
+
+          {:error, reason, rejected_issue} ->
+            log_poll_context_rejection(rejected_issue, reason)
+            groups
+        end
+      end
+
+      defp log_poll_context_rejection(issue, reason) do
+        scope = DispatchScope.context_evidence(issue)["dispatch_scope"]
+
+        Logger.warning(
+          "event=admission_rejected issue_id=#{issue.id} issue_identifier=#{issue.identifier} " <>
+            "scope=#{inspect(scope)} context_source=#{inspect(issue.context_source)} reason=#{inspect(reason)}",
+          event: "linear.admission_rejected",
+          operation: "resolve_poll_candidate_context",
+          location: "SymphonyElixir.Orchestrator.group_scoped_issue/4",
+          offending_value: %{scope: scope, context_source: issue.context_source, reason: reason},
+          expected_shape: "candidate resolves to one enabled Symphony project within dispatch scope",
+          error_code: "admission_rejected",
+          retryable: false,
+          issue_id: issue.id,
+          issue_identifier: issue.identifier
+        )
+      end
+
+      defp dispatch_fetched_workflow(state, workflow, issues) do
+        if available_slots(state) > 0 and workflow_slots_available?(state, workflow) do
+          Logger.info(
+            "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared candidate_count=#{length(issues)} dispatch=attempted"
+          )
+
+          persist_polled_issues(issues)
+          choose_issues(issues, state)
+        else
+          Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared dispatch=skipped reason=capacity")
+
+          state
+        end
+      end
+
+      defp reconcile_ready_to_merge_issues(%State{} = state) do
+        case Tracker.fetch_issues_by_states(["Ready to Merge"]) do
+          {:ok, issues} ->
+            persist_polled_issues(issues)
+
+            issues
+            |> Enum.take(@mergeability_checks_per_poll)
+            |> Enum.reduce(state, fn
+              %Issue{} = issue, state_acc -> reconcile_ready_to_merge_issue(state_acc, issue)
+              _issue, state_acc -> state_acc
+            end)
+
+          {:error, reason} ->
+            Logger.error("Failed to fetch Ready to Merge issues for mergeability reconciliation: #{inspect(reason)}")
+            state
+        end
+      end
+
+      defp reconcile_ready_to_merge_issue(state, issue) do
+        case MergeConflictReconciler.reconcile(issue, Config.settings!().project) do
+          {:blocked, decision, delivery} ->
+            blocked_entry = %{
+              issue_id: issue.id,
+              identifier: issue.identifier,
+              state: if(delivery_transition_completed?(delivery), do: "Blocked", else: issue.state),
+              run_id: decision["run_id"],
+              blocked_at: decision["decided_at"],
+              reason: decision["reason"],
+              detail: decision["evidence"],
+              worker_host: nil,
+              workspace_path: nil,
+              session_id: nil,
+              session_history: [],
+              session_history_total_count: 0
+            }
+
+            state
+            |> Map.update!(:blocked, &Map.put(&1, issue.id, blocked_entry))
+            |> Map.update!(:claimed, &MapSet.put(&1, issue.id))
+
+          _result ->
+            state
+        end
+      end
+
+      defp workflow_slots_available?(%State{} = state, _workflow), do: available_slots(state) > 0
+
+      defp handle_dispatch_error(%State{} = state, reason) do
+        if config_validation_error?(reason) do
+          log_config_error_once(state, reason)
+        else
+          Logger.error("Failed to fetch from Linear: #{inspect(reason)}")
+          %{state | last_config_error: nil}
+        end
+      end
+
+      defp log_config_error_once(%State{last_config_error: reason} = state, reason), do: state
+
+      defp log_config_error_once(%State{} = state, reason) do
+        Logger.error(config_validation_error_message(reason))
+        %{state | last_config_error: reason}
+      end
+
+      defp config_validation_error?(:missing_linear_api_token), do: true
+      defp config_validation_error?(:missing_linear_endpoint), do: true
+      defp config_validation_error?(:missing_linear_project_slug), do: true
+      defp config_validation_error?(:missing_project_repository_url), do: true
+      defp config_validation_error?(:missing_tracker_kind), do: true
+      defp config_validation_error?(:setup_required), do: true
+      defp config_validation_error?(:workflow_front_matter_not_a_map), do: true
+      defp config_validation_error?({:unsupported_tracker_kind, _kind}), do: true
+      defp config_validation_error?({:invalid_workflow_config, _message}), do: true
+      defp config_validation_error?({:missing_workflow_file, _path, _reason}), do: true
+      defp config_validation_error?({:workflow_parse_error, _reason}), do: true
+      defp config_validation_error?(_reason), do: false
+
+      defp config_validation_error_message(:missing_linear_api_token),
+        do: "Linear API token missing in runtime environment"
+
+      defp config_validation_error_message(:missing_linear_endpoint),
+        do: "Linear endpoint missing in runtime tracker settings"
+
+      defp config_validation_error_message(:missing_linear_project_slug),
+        do: "Linear project slug missing in Project Settings"
+
+      defp config_validation_error_message(:missing_project_repository_url),
+        do: "Project repository URL missing in Project Settings"
+
+      defp config_validation_error_message(:missing_tracker_kind),
+        do: "Tracker kind missing in runtime tracker settings"
+
+      defp config_validation_error_message(:setup_required),
+        do: "No workflow is configured. Import a workflow package in /settings/import."
+
+      defp config_validation_error_message(:workflow_front_matter_not_a_map) do
+        "Failed to parse workflow config: front matter must decode to a map"
+      end
+
+      defp config_validation_error_message({:unsupported_tracker_kind, kind}) do
+        "Unsupported tracker kind in runtime tracker settings: #{inspect(kind)}"
+      end
+
+      defp config_validation_error_message({:invalid_workflow_config, message}) do
+        "Invalid workflow config: #{message}"
+      end
+
+      defp config_validation_error_message({:missing_workflow_file, path, reason}) do
+        "Missing workflow file at #{path}: #{inspect(reason)}"
+      end
+
+      defp config_validation_error_message({:workflow_parse_error, reason}) do
+        "Failed to parse workflow config: #{inspect(reason)}"
+      end
+
+      defp config_validation_error_message(reason), do: inspect(reason)
+
+      defp reconcile_running_issues(%State{} = state) do
+        state = reconcile_stalled_running_issues(state)
+        running_ids = issue_running_ids(state.running)
+
+        if running_ids == [] do
+          state
+        else
+          with {:ok, state_sets} <- runtime_state_sets(),
+               {:ok, issues} <- Tracker.fetch_issue_states_by_ids(running_ids) do
+            issues
+            |> reconcile_running_issue_states(
+              state,
+              state_sets.active,
+              state_sets.terminal
+            )
+            |> reconcile_missing_running_issue_ids(running_ids, issues)
+          else
+            {:error, reason} ->
+              Logger.debug("Failed to refresh running issue states: #{inspect(reason)}; keeping active workers")
+
+              state
+          end
+        end
+      end
+
+      @doc """
+      Reconciles already-refreshed issue states against the current runtime state.
+
+      This is a side-effecting runtime boundary used by the orchestrator and
+      integration tests. It may stop active tasks and clean workspaces according to
+      the configured active and terminal state sets.
+      """
+      @spec reconcile_issue_states([Issue.t()], term()) :: term()
+      def reconcile_issue_states(issues, %State{} = state) when is_list(issues) do
+        case runtime_state_sets() do
+          {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+          {:error, _reason} -> state
+        end
+      end
+
+      def reconcile_issue_states(issues, state) when is_list(issues) do
+        case runtime_state_sets() do
+          {:ok, state_sets} -> reconcile_running_issue_states(issues, state, state_sets.active, state_sets.terminal)
+          {:error, _reason} -> state
+        end
+      end
+
+      defp reconcile_running_issue_states([], state, _active_states, _terminal_states), do: state
+
+      defp reconcile_running_issue_states([issue | rest], state, active_states, terminal_states) do
+        reconcile_running_issue_states(
+          rest,
+          reconcile_issue_state(issue, state, active_states, terminal_states),
+          active_states,
+          terminal_states
+        )
+      end
+
+      defp reconcile_issue_state(%Issue{} = issue, state, active_states, terminal_states) do
+        cond do
+          terminal_issue_state?(issue.state, terminal_states) ->
+            Logger.info("Issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
+
+            terminate_running_issue(state, issue.id, true)
+
+          !DispatchPolicy.issue_routable_to_worker?(issue) ->
+            Logger.info("Issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; stopping active agent")
+
+            terminate_running_issue(state, issue.id, false)
+
+          active_issue_state?(issue.state, active_states) ->
+            refresh_running_issue_state(state, issue)
+
+          true ->
+            Logger.info("Issue moved to non-active state: #{issue_context(issue)} state=#{issue.state}; stopping active agent")
+
+            terminate_running_issue(state, issue.id, false)
+        end
+      end
+
+      defp reconcile_issue_state(_issue, state, _active_states, _terminal_states), do: state
+
+      defp reconcile_missing_running_issue_ids(%State{} = state, requested_issue_ids, issues)
+           when is_list(requested_issue_ids) and is_list(issues) do
+        visible_issue_ids =
+          issues
+          |> Enum.flat_map(fn
+            %Issue{id: issue_id} when is_binary(issue_id) -> [issue_id]
+            _ -> []
+          end)
+          |> MapSet.new()
+
+        Enum.reduce(requested_issue_ids, state, fn issue_id, state_acc ->
+          if MapSet.member?(visible_issue_ids, issue_id) do
+            state_acc
+          else
+            log_missing_running_issue(state_acc, issue_id)
+            terminate_running_issue(state_acc, issue_id, false)
+          end
+        end)
+      end
+
+      defp reconcile_missing_running_issue_ids(state, _requested_issue_ids, _issues), do: state
+
+      defp reconcile_blocked_issues(%State{blocked: blocked} = state) when map_size(blocked) == 0,
+        do: state
+
+      defp reconcile_blocked_issues(%State{blocked: blocked} = state) do
+        blocked_ids = Map.keys(blocked)
+
+        with {:ok, state_sets} <- runtime_state_sets(),
+             {:ok, issues} <- Tracker.fetch_issue_states_by_ids(blocked_ids) do
+          issues
+          |> reconcile_blocked_issue_states(state, state_sets.active, state_sets.terminal)
+          |> reconcile_missing_blocked_issue_ids(blocked_ids, issues)
+        else
+          {:error, reason} ->
+            Logger.debug("Failed to refresh blocked issue states: #{inspect(reason)}; keeping blocked claims")
+
+            state
+        end
+      end
+
+      defp reconcile_blocked_issue_states([], state, _active_states, _terminal_states), do: state
+
+      defp reconcile_blocked_issue_states([issue | rest], state, active_states, terminal_states) do
+        reconcile_blocked_issue_states(
+          rest,
+          reconcile_blocked_issue_state(issue, state, active_states, terminal_states),
+          active_states,
+          terminal_states
+        )
+      end
+
+      defp reconcile_blocked_issue_state(%Issue{} = issue, state, active_states, terminal_states) do
+        cond do
+          SymphonyElixir.StateName.normalize(issue.state) == "blocked" ->
+            _ = retry_blocked_delivery(issue)
+            refresh_blocked_issue_state(state, issue)
+
+          terminal_issue_state?(issue.state, terminal_states) ->
+            Logger.info("Blocked issue moved to terminal state: #{issue_context(issue)} state=#{issue.state}; releasing blocked claim")
+
+            _ = BlockingDecision.clear(issue.identifier)
+            release_blocked_issue(state, issue.id)
+
+          !DispatchPolicy.issue_routable_to_worker?(issue) ->
+            Logger.info("Blocked issue no longer routed to this worker: #{issue_context(issue)} assignee=#{inspect(issue.assignee_id)}; releasing blocked claim")
+
+            _ = BlockingDecision.clear(issue.identifier)
+            release_blocked_issue(state, issue.id)
+
+          active_issue_state?(issue.state, active_states) ->
+            Logger.info("Blocked issue recovered to active state: #{issue_context(issue)} state=#{issue.state}; clearing decision")
+
+            _ = BlockingDecision.clear(issue.identifier)
+            release_blocked_issue(state, issue.id)
+
+          true ->
+            Logger.info("Blocked issue moved to non-active state: #{issue_context(issue)} state=#{issue.state}; releasing blocked claim")
+
+            _ = BlockingDecision.clear(issue.identifier)
+            release_blocked_issue(state, issue.id)
+        end
+      end
+
+      defp reconcile_blocked_issue_state(_issue, state, _active_states, _terminal_states), do: state
+
+      defp retry_blocked_delivery(%Issue{id: issue_id, identifier: identifier}) do
+        case BlockingDecision.deliver(issue_id, identifier) do
+          {:ok, _delivery} ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error("Blocking decision delivery retry failed issue_id=#{issue_id} issue_identifier=#{identifier} reason=#{inspect(reason)}")
+
+            {:error, reason}
+        end
+      end
+
+      defp reconcile_missing_blocked_issue_ids(%State{} = state, requested_issue_ids, issues)
+           when is_list(requested_issue_ids) and is_list(issues) do
+        visible_issue_ids =
+          issues
+          |> Enum.flat_map(fn
+            %Issue{id: issue_id} when is_binary(issue_id) -> [issue_id]
+            _ -> []
+          end)
+          |> MapSet.new()
+
+        Enum.reduce(requested_issue_ids, state, fn issue_id, state_acc ->
+          if MapSet.member?(visible_issue_ids, issue_id),
+            do: state_acc,
+            else: release_blocked_issue(state_acc, issue_id)
+        end)
+      end
+
+      defp reconcile_missing_blocked_issue_ids(state, _requested_issue_ids, _issues), do: state
+
+      defp refresh_blocked_issue_state(%State{} = state, %Issue{} = issue) do
+        case Map.get(state.blocked, issue.id) do
+          %{} = blocked_entry ->
+            %{
+              state
+              | blocked: Map.put(state.blocked, issue.id, %{blocked_entry | state: issue.state})
+            }
+
+          _ ->
+            state
+        end
+      end
+
+      defp release_blocked_issue(%State{} = state, issue_id) do
+        %{
+          state
+          | blocked: Map.delete(state.blocked, issue_id),
+            claimed: MapSet.delete(state.claimed, issue_id),
+            retry_attempts: Map.delete(state.retry_attempts, issue_id)
+        }
+      end
+
+      defp clear_blocking_decision_projection(%State{} = state, issue_id, decision_run_id) do
+        state = cancel_issue_retry(state, issue_id)
+
+        blocked =
+          case Map.get(state.blocked, issue_id) do
+            %{run_id: ^decision_run_id} -> Map.delete(state.blocked, issue_id)
+            _entry -> state.blocked
+          end
+
+        projection_for_newer_run? =
+          Enum.any?([Map.get(state.running, issue_id), Map.get(blocked, issue_id)], fn
+            %{run_id: run_id} -> run_id != decision_run_id
+            _entry -> false
+          end)
+
+        %{
+          state
+          | blocked: blocked,
+            claimed:
+              if(projection_for_newer_run?,
+                do: state.claimed,
+                else: MapSet.delete(state.claimed, issue_id)
+              ),
+            failure_counts: Map.delete(state.failure_counts, issue_id)
+        }
+      end
+
+      defp restore_persistent_blocked(%State{} = state) do
+        persistence = persistence()
+
+        case PersistenceProvider.read(fn -> persistence.list_blocked_issues() end) do
+          issues when is_list(issues) ->
+            Enum.reduce(issues, state, &restore_blocked_entry(&1, &2))
+
+          {:error, reason} ->
+            Logger.error("Failed to restore persistent blocking decisions reason=#{inspect(reason)}")
+            state
+        end
+      end
+
+      defp restore_blocked_entry(issue, acc) do
+        decision = Map.get(issue, :blocking_decision) || %{}
+        issue_id = Map.get(issue, :tracker_issue_id)
+
+        if is_binary(issue_id) do
+          entry = %{
+            issue_id: issue_id,
+            identifier: Map.get(issue, :identifier),
+            state: Map.get(issue, :state) || "Blocked",
+            run_id: decision["run_id"],
+            blocked_at: decision["decided_at"],
+            reason: decision["reason"],
+            detail: decision["evidence"],
+            worker_host: nil,
+            workspace_path: nil,
+            session_id: nil,
+            session_history: [],
+            session_history_total_count: 0
+          }
+
+          %{
+            acc
+            | blocked: Map.put(acc.blocked, issue_id, entry),
+              claimed: MapSet.put(acc.claimed, issue_id)
+          }
+        else
+          acc
+        end
+      end
+
+      defp log_missing_running_issue(%State{} = state, issue_id) when is_binary(issue_id) do
+        case Map.get(state.running, issue_id) do
+          %{identifier: identifier} ->
+            Logger.info("Issue no longer visible during running-state refresh: issue_id=#{issue_id} issue_identifier=#{identifier}; stopping active agent")
+
+          _ ->
+            Logger.info("Issue no longer visible during running-state refresh: issue_id=#{issue_id}; stopping active agent")
+        end
+      end
+
+      defp log_missing_running_issue(_state, _issue_id), do: :ok
+
+      defp refresh_running_issue_state(%State{} = state, %Issue{} = issue) do
+        case Map.get(state.running, issue.id) do
+          %{issue: _} = running_entry ->
+            %{state | running: Map.put(state.running, issue.id, %{running_entry | issue: issue})}
+
+          _ ->
+            state
+        end
+      end
+
+      defp terminate_running_issue(
+             %State{} = state,
+             issue_id,
+             cleanup_workspace,
+             persist_terminal \\ true,
+             action \\ "reconciliation_stop"
+           ) do
+        case Map.get(state.running, issue_id) do
+          nil ->
+            release_issue_claim(state, issue_id)
+
+          %{pid: pid, ref: ref, identifier: identifier} = running_entry ->
+            state = record_session_completion_totals(state, running_entry)
+
+            if cleanup_workspace do
+              cleanup_issue_workspace(identifier, running_entry.admission.workspace_authority)
+            end
+
+            if persist_terminal do
+              failure =
+                Failure.classify({:operator_stopped, %{action: action, run_kind: running_entry_kind(running_entry)}})
+
+              persist_run_finished(running_entry, "stopped", failure)
+            end
+
+            if is_pid(pid) do
+              terminate_task(pid)
+            end
+
+            if is_reference(ref) do
+              Process.demonitor(ref, [:flush])
+            end
+
+            %{
+              state
+              | running: Map.delete(state.running, issue_id),
+                claimed: MapSet.delete(state.claimed, issue_id),
+                retry_attempts: Map.delete(state.retry_attempts, issue_id)
+            }
+
+          _ ->
+            release_issue_claim(state, issue_id)
+        end
+      end
+
+      defp reconcile_stalled_running_issues(%State{} = state) do
+        if map_size(state.running) == 0 do
+          state
+        else
+          do_reconcile_stalled_running_issues(state)
+        end
+      end
+
+      defp do_reconcile_stalled_running_issues(state) do
+        now = DateTime.utc_now()
+
+        Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+          restart_stalled_issue_with_context(state_acc, issue_id, running_entry, now)
+        end)
+      end
+
+      defp restart_stalled_issue_with_context(state, _issue_id, %RunningOperator{}, _now), do: state
+
+      defp restart_stalled_issue_with_context(state, issue_id, %RunningIssue{} = running_entry, now) do
+        case retry_settings(%{project_id: Map.get(running_entry, :project_id), identifier: running_entry.identifier}) do
+          {:ok, settings} ->
+            restart_stalled_issue(state, issue_id, running_entry, now, settings.codex.stall_timeout_ms)
+
+          {:error, reason} ->
+            Logger.warning("Skipping stalled issue check; workflow context unavailable issue_id=#{issue_id} issue_identifier=#{running_entry.identifier} reason=#{inspect(reason)}")
+            state
+        end
+      end
+
+      defp restart_stalled_issue(state, _issue_id, _running_entry, _now, timeout_ms) when timeout_ms <= 0, do: state
+
+      defp restart_stalled_issue(state, issue_id, %RunningIssue{} = running_entry, now, timeout_ms) do
+        stall_decision = RetryPolicy.stall_decision(issue_id, running_entry, now, timeout_ms)
+
+        case stall_decision do
+          {:stalled, decision} ->
+            Logger.warning("Issue stalled: issue_id=#{issue_id} issue_identifier=#{decision.identifier} session_id=#{decision.session_id} elapsed_ms=#{decision.elapsed_ms}; restarting with backoff")
+
+            summary = decision.metadata.error
+
+            failure =
+              Failure.classify({:stall_timeout, %{elapsed_ms: decision.elapsed_ms, timeout_ms: timeout_ms, phase: "codex"}})
+
+            state
+            |> terminate_running_issue(issue_id, false, false)
+            |> fail_or_retry(
+              issue_id,
+              running_entry,
+              summary,
+              :failure_retries_exhausted,
+              %{kind: :stall, elapsed_ms: decision.elapsed_ms},
+              failure: failure
+            )
+            |> tap(fn _state -> persist_run_finished(running_entry, "failed", failure) end)
+
+          :active ->
+            state
+        end
+      end
+
+      defp terminate_task(pid) when is_pid(pid) do
+        case Task.Supervisor.terminate_child(SymphonyElixir.TaskSupervisor, pid) do
+          :ok ->
+            :ok
+
+          {:error, :not_found} ->
+            Process.exit(pid, :shutdown)
+        end
+      end
+
+      defp terminate_task(_pid), do: :ok
+
+      defp choose_issues(issues, state) do
+        dispatch_settings = dispatch_policy_settings(state)
+        worker_settings = worker_policy_settings()
+
+        issues
+        |> DispatchPolicy.sort_issues_for_dispatch()
+        |> Enum.reduce(state, fn issue, state_acc ->
+          if DispatchPolicy.should_dispatch_issue?(
+               issue,
+               state_acc,
+               dispatch_settings,
+               worker_settings
+             ) do
+            dispatch_issue(state_acc, issue)
+          else
+            reasons = DispatchPolicy.skip_reasons(issue, state_acc, dispatch_settings, worker_settings)
+            Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
+            state_acc
+          end
+        end)
+      end
+
+      defp listening_mode(%State{} = state), do: listening_mode_string(state)
+      defp workflow_name(%{project_id: project_id}), do: project_id
+
+      defp terminal_issue_state?(state_name, terminal_states) when is_binary(state_name) do
+        DispatchPolicy.terminal_issue_state?(state_name, terminal_states)
+      end
+
+      defp terminal_issue_state?(_state_name, _terminal_states), do: false
+
+      defp active_issue_state?(state_name, active_states) when is_binary(state_name) do
+        DispatchPolicy.active_issue_state?(state_name, active_states)
+      end
+
+      defp normalize_issue_state(state_name) when is_binary(state_name) do
+        SymphonyElixir.StateName.normalize(state_name)
+      end
+
+      defp runtime_state_sets do
+        with {:ok, settings} <- Config.settings() do
+          {:ok,
+           %{
+             active: DispatchPolicy.normalized_state_set(settings.tracker.active_states),
+             terminal: DispatchPolicy.normalized_state_set(settings.tracker.terminal_states)
+           }}
+        end
+      end
+
+      @spec dispatch_policy_settings(listening_mode(), pos_integer()) :: DispatchPolicy.dispatch_settings()
+      def dispatch_policy_settings(listening_mode, max_concurrent_agents) do
+        config = Config.settings!()
+
+        DispatchPolicy.build_settings(%{
+          active_states: config.tracker.active_states,
+          terminal_states: config.tracker.terminal_states,
+          refinement_states: refinement_states(config),
+          listening_mode: listening_mode,
+          max_concurrent_agents: max_concurrent_agents,
+          workflow_executor_for_state: &Config.workflow_executor_for_state/1,
+          human_review_state?: &Config.human_review_state?/1
+        })
+      end
+    end
+  end
+end

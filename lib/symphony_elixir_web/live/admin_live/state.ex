@@ -43,16 +43,30 @@ defmodule SymphonyElixirWeb.AdminLive.State do
       ProjectSettings.configuration_missing_items(workflow_setup_required, selected_project)
 
     socket
+    |> assign_primary_state(projects, persistence_error, default_project, selected_project, explicit_project, workflow)
+    |> assign_workflow_state(instance_workflow, projects, workflow_form, workflow_setup_required, legacy_status)
+    |> assign_configuration_items(configuration_items)
+    |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
+    |> RunDetail.assign_data()
+    |> IssueDetail.assign_data()
+  end
+
+  defp assign_primary_state(socket, projects, error, default_project, selected_project, explicit_project, workflow) do
+    socket
     |> assign(:projects, projects)
-    |> assign(:persistence_error, persistence_error)
+    |> assign(:persistence_error, error)
     |> assign(:default_project, default_project)
     |> assign(:selected_project, selected_project)
     |> assign(:explicit_project, explicit_project)
     |> assign(:current_workflow, workflow)
+  end
+
+  defp assign_workflow_state(socket, instance_workflow, projects, workflow_form, setup_required, legacy_status) do
+    socket
     |> assign(:current_instance_workflow, instance_workflow)
     |> assign(:project_workflow_forms, project_workflow_forms(projects, instance_workflow))
     |> assign(:project_authority_diagnostics, project_authority_diagnostics(projects))
-    |> assign(:settings_import_form, import_form(instance_workflow, explicit_project))
+    |> assign(:settings_import_form, import_form(instance_workflow, socket.assigns.explicit_project))
     |> assign(:legacy_instance_workflow_status, legacy_status)
     |> assign(:legacy_reconciliation_notice, Map.get(socket.assigns, :legacy_reconciliation_notice))
     |> Runs.assign_page(reset: true)
@@ -61,7 +75,11 @@ defmodule SymphonyElixirWeb.AdminLive.State do
     |> assign(:execution_mode, Config.execution_mode())
     |> assign(:workflow_form, workflow_form)
     |> WorkflowState.assign_validation(workflow_form)
-    |> assign(:workflow_setup_required, workflow_setup_required)
+    |> assign(:workflow_setup_required, setup_required)
+  end
+
+  defp assign_configuration_items(socket, configuration_items) do
+    socket
     |> assign(
       :project_configuration_items,
       ProjectSettings.scoped_configuration_items(configuration_items, "Project")
@@ -74,9 +92,6 @@ defmodule SymphonyElixirWeb.AdminLive.State do
       :runtime_configuration_items,
       ProjectSettings.scoped_configuration_items(configuration_items, "Runtime")
     )
-    |> assign(:runtime_workflow_source, runtime_source_summary(runtime))
-    |> RunDetail.assign_data()
-    |> IssueDetail.assign_data()
   end
 
   defp projects do

@@ -327,7 +327,7 @@ defmodule SymphonyElixir.AgentCodeNCheck do
 
   defp validate_baseline(root, relative_path, findings, base_baseline_option) do
     current = read_baseline(Path.join(root, relative_path))
-    base = base_baseline(root, relative_path, base_baseline_option)
+    base = base_baseline(root, relative_path, base_baseline_option, findings)
 
     baseline_remaining =
       case current do
@@ -402,16 +402,16 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   defp baseline_ratchet_errors(_current, {:error, error}, _findings), do: [error]
   defp baseline_ratchet_errors(_current, _base, _findings), do: []
 
-  defp base_baseline(_root, _path, option) when option == :missing, do: :missing
-  defp base_baseline(_root, _path, rows) when is_list(rows), do: {:ok, rows}
+  defp base_baseline(_root, _path, option, _findings) when option == :missing, do: :missing
+  defp base_baseline(_root, _path, rows, _findings) when is_list(rows), do: {:ok, rows}
 
-  defp base_baseline(root, path, :from_git) do
+  defp base_baseline(root, path, :from_git, findings) do
     case System.cmd("git", ["merge-base", "HEAD", "origin/main"], cd: root, stderr_to_stdout: true) do
       {merge_base, 0} ->
         revision = String.trim(merge_base)
 
         case read_base_baseline(root, path, revision) do
-          {:ok, rows} -> BaselineLocations.relocate_baseline(root, revision, rows)
+          {:ok, rows} -> BaselineLocations.relocate_baseline(root, revision, rows, findings)
           result -> result
         end
 

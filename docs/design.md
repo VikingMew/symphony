@@ -27,6 +27,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | [execution-runtime-design.md](execution-runtime-design.md) | External execution runtime and container credential boundary | landed |
 | [agent-facing-dependency-boundary-design.md](agent-facing-dependency-boundary-design.md) | Agent-facing dependency and boundary governance | landed |
 | [agent-facing-code-design.md](agent-facing-code-design.md) | Agent-facing code conformance and merge-gate behavior | landed |
+| [code-locality-design.md](code-locality-design.md) | Repository-wide code locality ownership and enforcement | landed |
 | [repository-verification-design.md](repository-verification-design.md) | Repository verification and V-01 through V-09 | landed |
 | [run-failure-classification-design.md](run-failure-classification-design.md) | Closed persisted run failure classification and evidence contract | landed |
 | [issue-persistence-design.md](issue-persistence-design.md) | Issue persistence and poll-snapshot state boundary | landed |
@@ -153,6 +154,7 @@ lib/symphony_elixir/
 ├── config.ex
 ├── config/schema.ex
 ├── http_server.ex
+├── locality.ex
 ├── log_file.ex
 ├── orchestrator.ex
 ├── path_safety.ex
@@ -190,6 +192,7 @@ lib/symphony_elixir/
 | `SymphonyElixir.HttpServer` | `http_server.ex` | Starts optional Phoenix/Bandit observability HTTP server. |
 | `SymphonyElixir.StatusDashboard` | `status_dashboard.ex` | Terminal/operator status rendering. |
 | `SymphonyElixir.LogFile` | `log_file.ex` | Runtime log file configuration and writing. |
+| `SymphonyElixir.Locality` | `locality.ex` | Deterministic tracked-file, AST, manifest, generated-header, and waterline checks. |
 | `SymphonyElixir.Persistence` | `persistence.ex` | PostgreSQL-backed projects, workflows, runs, tasks, workers, leases, and events. |
 | `SymphonyElixir.PersistenceProvider` | `persistence_provider.ex` | Runtime indirection for persistence fakes in tests. |
 | `SymphonyElixir.Repo` | `repo.ex` | PostgreSQL Ecto repository. |
@@ -197,6 +200,8 @@ lib/symphony_elixir/
 | `SymphonyElixir.SQLiteImporter` | `sqlite_importer.ex` | Imports one stopped legacy backup into an empty PostgreSQL schema. |
 | `SymphonyElixir.SSH` | `ssh.ex` | SSH worker support. |
 | `SymphonyElixir.SpecsCheck` | `specs_check.ex` | Internal spec consistency checks. |
+| `SymphonyElixir.Worker.Executor` | `worker/executor.ex` | Lease-owned source preparation, Codex execution, validation, and handoff pipeline. |
+| `SymphonyElixir.Worker.Executor.DeliveryEvidence` | `worker/executor/delivery_evidence.ex` | Projects successful restricted-tool audits into completion evidence. |
 
 ## 6. Tracker and Linear Integration
 
@@ -327,6 +332,7 @@ lib/mix/tasks/
 | `mix symphony.build` | Builds the escript executable used by `mix build`. |
 | `mix workspace.before_remove` | Hook task intended for workspace cleanup before removal. |
 | `mix docs.check` | Validates documentation frontmatter, layer registration, and owner anchors. |
+| `mix locality.check` | Enforces the L4 code-locality contract from `config/locality.exs` and emits its deterministic waterline. |
 
 ## 10. Tests
 
@@ -401,6 +407,7 @@ SymphonyElixir.Orchestrator
 | Add another tracker | `tracker.ex`, then implement a new adapter module |
 | Change Codex app-server protocol handling | `codex/app_server.ex` |
 | Change dynamic tools exposed to Codex | `codex/dynamic_tool.ex` |
+| Change locality thresholds, baseline, exclusions, or audit enforcement | `config/locality.exs`, `lib/symphony_elixir/locality.ex`, `docs/code-locality-design.md`, `docs/code-locality.md` |
 | Change dashboard UI | `symphony_elixir_web/live/dashboard_live.ex`, `symphony_elixir_web/live/admin_live.ex`, `presenter.ex` |
 | Change JSON observability API | `symphony_elixir_web/controllers/observability_api_controller.ex` |
 | Change JSON runtime control API | `symphony_elixir_web/controllers/control_api_controller.ex` |
