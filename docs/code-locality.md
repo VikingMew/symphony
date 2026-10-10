@@ -4,7 +4,7 @@ genre: reference
 domain: [backend, quality, testing]
 status: current
 language: en
-updated: 2026-10-08
+updated: 2026-10-10
 owner: SymphonyElixir.Locality
 ---
 
@@ -55,7 +55,7 @@ The gate also runs through `scripts/check.sh` via `mix lint`.
 | L-01 | Not compliant. The baseline command found 12 handwritten files over 1,000 lines; `lib/symphony_elixir/orchestrator.ex` was 4,239 and `priv/static/dashboard.css` was 1,397. | Split runtime/test responsibilities and CSS; add the tracked-file gate with no handwritten grandfather entry. | Compliant. The baseline command and `mix locality.check` report no oversized handwritten file. |
 | L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 56-entry dateless baseline with all five required fields and a nearby index marker; three starting entries were removed after their clauses fell below the limit. |
 | L-03 | Compliant baseline: `mix credo --strict --format json` reported zero issues with Credo 1.7.16 default depth 2. | Pin `max_nesting: 2`, add an AST-focused test, and extract four newly surfaced nested control paths. | Compliant. Credo and `mix locality.check` report no nesting issue and no nesting suppression was added; responsibility fragments suppress only the `LongQuoteBlocks` advisory at their compile-time `quote` boundary. |
-| L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 52 rows below. | Compliant. 52 of 515 code files (10.1%) pass the no-navigation concept review; split section samples were re-reviewed after the main merge. |
+| L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 53 rows below. | Compliant. 53 of 521 code files (10.2%) pass the no-navigation concept review; the shared baseline module and refreshed sample remain focused by path. |
 | L-05 | Partially compliant. No AST gate or explicit pipeline ruling existed. | Check receiver-call AST, distinguish field access, document pipelines, and inspect module-boundary matches. | Compliant. The final AST scan has zero implicit three-call chain; focused tests cover a failing chain and allowed pipeline. |
 | L-06 | Partially compliant. Policy literals had no single disposition record. | Review the literal inventory by category and retain runtime policy in `SymphonyElixir.Config` or named attributes. | Compliant. The classification below has no unexplained literal or new runtime config source. |
 | L-07 | Not compliant. The generated/data inventory was absent and `.gitattributes` named a snapshot directory with no current tracked files. | Add the canonical manifest/header check, classify data, retain main's future snapshot marker, and delete unrelated `.DS_Store` metadata. | Compliant. Generated inventory is empty, all data entries exist, the snapshot marker has no current tracked match, and focused tests cover headers, data, and stale entries. |
@@ -65,59 +65,60 @@ Final totals: **compliant 8; non-compliant 0; not applicable 0; total 8**.
 
 ## L-04 deterministic sample
 
-Sort the canonical 515-file code set. Let `n = 515`, `s = max(20, ceil(n / 10)) = 52`, and select
-zero-based index `floor(i * n / s)` for every `i` from 0 through 51. Each row answers whether one
+Sort the canonical 521-file code set. Let `n = 521`, `s = max(20, ceil(n / 10)) = 53`, and select
+zero-based index `floor(i * n / s)` for every `i` from 0 through 52. Each row answers whether one
 concept can be understood in the file without navigating elsewhere.
 
 | File | Verdict and rationale |
 | --- | --- |
 | `.codex/skills/land/land_watch.py` | Pass — one repository automation command boundary. |
 | `.github/workflows/publish-image.yml` | Pass — one CI workflow and its repository check sequence. |
-| `config/agent_code_governance.yml` | Pass — one canonical governance and threshold inventory. |
-| `lib/mix/tasks/agent_code_x.check.ex` | Pass — one named Mix command boundary. |
-| `lib/mix/tasks/symphony/postgres_smoke_assertions.ex` | Pass — focused assertions for the PostgreSQL smoke boundary. |
-| `lib/symphony_elixir/auth.ex` | Pass — one authentication boundary. |
-| `lib/symphony_elixir/codex/app_server/sections/tail_3.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir/codex/protocol.ex` | Pass — one Codex protocol boundary. |
-| `lib/symphony_elixir/config/codex_command.ex` | Pass — one configuration projection for Codex commands. |
-| `lib/symphony_elixir/config/workflow_scopes.ex` | Pass — one workflow-scope configuration concern. |
-| `lib/symphony_elixir/linear/diagnostics.ex` | Pass — one Linear diagnostics boundary. |
-| `lib/symphony_elixir/locality.ex` | Pass — one repository-locality checker. |
-| `lib/symphony_elixir/orchestrator/dispatch_policy.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
-| `lib/symphony_elixir/persistence/run_record.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/pr_review.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/release/legacy_workflow_command.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/sqlite_importer.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/worker/claim_commit.ex` | Pass — one worker claim-commit boundary. |
-| `lib/symphony_elixir/worker/heartbeat_history.ex` | Pass — one worker heartbeat-history concern. |
-| `lib/symphony_elixir/workflow_form.ex` | Pass — one module or tightly coupled module family with a responsibility named by the path. |
-| `lib/symphony_elixir/workspace_cleanup_policy.ex` | Pass — one workspace-cleanup policy boundary. |
-| `lib/symphony_elixir_web/controllers/observability_api_controller.ex` | Pass — one observability API boundary. |
-| `lib/symphony_elixir_web/live/admin_live/events.ex` | Pass — one admin event-view concern. |
-| `lib/symphony_elixir_web/live/admin_live/settings_shell.ex` | Pass — one settings-shell presentation concern. |
-| `lib/symphony_elixir_web/rate_limit_status.ex` | Pass — one rate-limit status projection. |
-| `priv/repo/migrations/20260517000000_add_project_source_strategy_fields.exs` | Pass — one monotonic schema or data transition. |
-| `priv/repo/migrations/20260905000000_move_capacity_to_deployment.exs` | Pass — one monotonic schema or data transition. |
-| `priv/static/dashboard/components.css` | Pass — one dashboard component-style boundary. |
-| `scripts/prepare_navigation_git_history.sh` | Pass — one repository-check preparation command. |
-| `test/mix/tasks/pr_body_check_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/support/live_e2e_docker/live_worker_entrypoint.sh` | Pass — one opt-in live-E2E worker entrypoint. |
-| `test/support/locality_sections/extensions_1.exs` | Pass — one coherent scenario group composed by its small test wrapper. |
-| `test/symphony_elixir/agent_code_check_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/application_startup_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/codex/dynamic_tool_policy_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/codex/refinement_quality_gate_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/config/schema_domain_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/default_test_boundary_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/github_pull_request_test.exs` | Pass — focused tests for the contract named by the path. |
+| `config/config.exs` | Pass — one application configuration boundary. |
+| `lib/mix/tasks/docs.check.ex` | Pass — one named Mix command boundary. |
+| `lib/mix/tasks/workspace.before_remove.ex` | Pass — one named Mix command boundary. |
+| `lib/symphony_elixir/baseline_ratchet.ex` | Pass — one shared deterministic baseline generation, ceiling, and replacement boundary. |
+| `lib/symphony_elixir/codex/app_server/sections/tail_2.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
+| `lib/symphony_elixir/codex/dynamic_tool/policy.ex` | Pass — one dynamic-tool policy boundary. |
+| `lib/symphony_elixir/codex/model_catalog.ex` | Pass — one Codex model catalog. |
+| `lib/symphony_elixir/config.ex` | Pass — one runtime configuration access boundary. |
+| `lib/symphony_elixir/config/workflow_contract.ex` | Pass — one workflow contract projection. |
+| `lib/symphony_elixir/linear/client.ex` | Pass — one Linear transport boundary. |
+| `lib/symphony_elixir/linear/state_fixes.ex` | Pass — one Linear state-repair concern. |
+| `lib/symphony_elixir/observability_check.ex` | Pass — one observability source scanner and semantic ratchet owner. |
+| `lib/symphony_elixir/orchestrator/sections/lifecycle.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
+| `lib/symphony_elixir/persistence/issue_record.ex` | Pass — one issue persistence schema. |
+| `lib/symphony_elixir/persistence/workspace_record.ex` | Pass — one workspace persistence schema. |
+| `lib/symphony_elixir/prompt_builder.ex` | Pass — one agent-prompt construction boundary. |
+| `lib/symphony_elixir/run_summary.ex` | Pass — one run-summary projection. |
+| `lib/symphony_elixir/worker/application.ex` | Pass — one worker supervision boundary. |
+| `lib/symphony_elixir/worker/event_writer.ex` | Pass — one worker event-write boundary. |
+| `lib/symphony_elixir/worker/validation.ex` | Pass — one worker validation boundary. |
+| `lib/symphony_elixir/workspace/sections/hooks.ex` | Pass — one responsibility-named compile-time section of its owning runtime module. |
+| `lib/symphony_elixir_web/components/layouts.ex` | Pass — one layout component boundary. |
+| `lib/symphony_elixir_web/error_html.ex` | Pass — one HTML error renderer. |
+| `lib/symphony_elixir_web/live/admin_live/settings/components.ex` | Pass — one settings component concern. |
+| `lib/symphony_elixir_web/live/linear_diagnostics_live.ex` | Pass — one Linear diagnostics presentation boundary. |
+| `mix.exs` | Pass — one project build and dependency definition. |
+| `priv/repo/migrations/20260828010000_add_worker_execution_summaries.exs` | Pass — one monotonic schema transition. |
+| `priv/repo/migrations/20260926000000_scope_blocking_decisions_to_state_and_run.exs` | Pass — one monotonic schema transition. |
+| `scripts/dialyzer.sh` | Pass — one static-analysis command boundary. |
+| `scripts/unit.sh` | Pass — one unit-suite command boundary. |
+| `test/scripts/negative_assertion_inventory_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/support/locality_sections/agent_runner_3.exs` | Pass — one coherent scenario group composed by its small test wrapper. |
+| `test/support/locality_sections/orchestrator_status_3.exs` | Pass — one coherent scenario group composed by its small test wrapper. |
+| `test/symphony_elixir/agent_runner/policy_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/baseline_ratchet_test.exs` | Pass — focused tests for deterministic candidates, ceilings, and replacement. |
+| `test/symphony_elixir/codex/message_humanizer_status_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/codex/tool_request_handler_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/config/workflow_contract_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/docs_drift_pr_linkage_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/legacy_workflow_runtime_integration_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/linear_workflow_state_validator_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/number_format_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/orchestrator/session_history_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/persistence/legacy_workflow_reconciliation_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/prompt_builder_test.exs` | Pass — focused tests for the contract named by the path. |
-| `test/symphony_elixir/shell_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/observability_check_test.exs` | Pass — focused tests for the observability scanner and baseline lifecycle. |
+| `test/symphony_elixir/orchestrator/worker_task_prompt_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/persistence/project_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/redaction_test.exs` | Pass — focused tests for the contract named by the path. |
+| `test/symphony_elixir/specs_check_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/worker/assignment_manager_event_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/worker/paths_test.exs` | Pass — focused tests for the contract named by the path. |
 | `test/symphony_elixir/workflow_settings_package_test.exs` | Pass — focused tests for the contract named by the path. |

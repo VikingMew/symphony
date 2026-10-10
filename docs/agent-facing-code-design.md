@@ -4,7 +4,7 @@ genre: design
 domain: [governance, code-quality, agents]
 status: current
 language: zh-CN
-updated: 2026-10-08
+updated: 2026-10-10
 design_status: landed
 ---
 
@@ -132,6 +132,12 @@ N-04 和 N-06 的语义部分保留为 `AGENTS.md` 的短人核规则。独立�
 质量入口在执行 checker 或调用它的测试前运行 `scripts/prepare_navigation_git_history.sh`。
 该脚本只在 Git checkout 为 shallow 时补全历史，并要求 `origin/main` 存在，使本地与 CI 都以
 真实 merge base 执行同一棘轮比较；Git 历史不可用时门禁直接失败。
+
+`mix agent_code_n.check --write-baseline` 复用同一扫描器、真实 merge base 与
+`BaselineLocations` 映射，先在内存生成排序候选并完成形状、精确匹配和单调校验，全部通过后
+才替换文件。该命令只用于已证明的位置迁移或删除存量，不得登记新 identity；失败时目标文件
+字节不变，连续第二次执行是字节级 no-op。普通 check 使用同一 merge-base 上界，因此手工把
+新 finding 写进当前分支 baseline 也不能绕过门禁。
 
 检查器从带 token metadata 的 Elixir AST 取得模块、函数、类型、测试辅助和文件主模块位置，
 按规则、声明类别、规范化名字与排序后的精确位置组成 finding identity。结果与 identity 均排序；

@@ -17,6 +17,7 @@ defmodule Mix.Tasks.AgentCodeX.CheckTaskTest do
 
   test "arguments fail with the stable usage" do
     assert_raise Mix.Error, ~r/Usage: mix agent_code_x.check/, fn -> Check.run(["--warn"]) end
+    assert_raise Mix.Error, ~r/Usage: mix agent_code_x.check/, fn -> Check.run(["--write-baseline"]) end
   end
 
   test "mix lint owns the checker and scripts check reaches it only through lint" do

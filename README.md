@@ -360,6 +360,19 @@ mise exec -- mix test --cover
 mise exec -- mix lint
 ```
 
+The two active deletion-only inventories have deterministic refresh commands:
+
+```bash
+mise exec -- mix agent_code_n.check --write-baseline
+mise exec -- mix observability.check --write-baseline
+```
+
+Use them only after moving an existing finding or removing stock. Both compare the candidate with
+the baseline at the real `origin/main` merge base and reject new debt before changing the tracked
+file. A second run in the same worktree is byte-identical. The retired
+`config/agent_code_exemptions.yml` and `config/agent_code_thresholds.yml` files must not be
+restored; `config/agent_code_governance.yml` is the sole current G-group governance file.
+
 The ordinary unit suite is database-free. Run the explicit PostgreSQL integration target only
 against a disposable, already-created empty database:
 

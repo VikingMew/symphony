@@ -5,7 +5,7 @@ domain: [governance, code-quality, agents]
 status: current
 language: en
 owner: SymphonyElixir.AgentCodeNCheck
-updated: 2026-10-08
+updated: 2026-10-10
 ---
 
 # Agent-Facing Code N Conformance Record
@@ -73,6 +73,11 @@ It has no expiry or bypass. New findings, expanded aggregate locations, addition
 merge base after Git-proven line relocation, stale rows, malformed schema, and unsynchronized deletion all fail. Removing a finding
 and its row together passes. When no findings remain, the change must delete both the baseline file
 and the checker's baseline read/compare branch, leaving the direct rules as one hard gate.
+
+`mix agent_code_n.check --write-baseline` writes the scanner's exact sorted identities only after
+the same merge-base location mapping and ratchet pass. It is limited to Git-proven position moves
+and stock deletion, never baseline expansion. Rejection leaves the file byte-identical, and a
+second successful run without source changes is a byte-level no-op.
 
 `scripts/check.sh` and `scripts/unit.sh` run `scripts/prepare_navigation_git_history.sh` before the
 checker or its task test. Shallow CI checkouts are completed so `origin/main` and the real merge base

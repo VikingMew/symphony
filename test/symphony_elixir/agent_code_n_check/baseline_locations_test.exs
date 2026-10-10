@@ -16,7 +16,41 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
     location_git!(root, ["add", "."])
     location_git!(root, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "Navigation baseline fixture"])
     location_git!(root, ["update-ref", "refs/remotes/origin/main", "HEAD"])
+    location_git!(root, ["checkout", "-qb", "topic-one"])
     %{root: root}
+  end
+
+  test "A writer refreshes Git-proven drift on two topics and is byte-idempotent", %{root: root} do
+    assert_navigation_topic_refresh(root, "\n")
+    location_git!(root, ["add", "."])
+    location_git!(root, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "First drift"])
+
+    location_git!(root, ["checkout", "-qb", "topic-two", "origin/main"])
+    assert_navigation_topic_refresh(root, "\n\n")
+  end
+
+  test "B writer rejects a new identity and preserves baseline bytes", %{root: root} do
+    path = Path.join(root, "config/agent_code_navigation_baseline.yml")
+    before = File.read!(path)
+    File.write!(Path.join(root, "lib/gamma.ex"), "defmodule Demo.Gamma do\n  def shared, do: :ok\nend\n")
+
+    report = AgentCodeNCheck.write_navigation_baseline(root: root)
+
+    assert report["status"] == "fail"
+    assert report["baseline_write"] == "rejected"
+    assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.added: "))
+    assert File.read!(path) == before
+  end
+
+  test "C writer deletes the baseline after the final finding is removed", %{root: root} do
+    File.rm!(Path.join(root, "lib/beta.ex"))
+
+    report = AgentCodeNCheck.write_navigation_baseline(root: root)
+
+    assert report["status"] == "pass"
+    assert report["baseline_write"] == "deleted"
+    refute File.exists?(Path.join(root, "config/agent_code_navigation_baseline.yml"))
+    assert AgentCodeNCheck.check(root: root)["status"] == "pass"
   end
 
   test "Git-proven line insertions relocate exact rows without changing the waterline", %{root: root} do
@@ -105,6 +139,18 @@ defmodule SymphonyElixir.AgentCodeNCheck.BaselineLocationsTest do
   defp refresh_location_fixture(root) do
     findings = AgentCodeNCheck.check(root: root, base_baseline: :missing)["findings"]
     File.write!(Path.join(root, "config/agent_code_navigation_baseline.yml"), Jason.encode!(findings))
+  end
+
+  defp assert_navigation_topic_refresh(root, prefix) do
+    source_path = Path.join(root, "lib/alpha.ex")
+    baseline_path = Path.join(root, "config/agent_code_navigation_baseline.yml")
+    File.write!(source_path, prefix <> File.read!(source_path))
+
+    assert AgentCodeNCheck.write_navigation_baseline(root: root)["baseline_write"] == "written"
+    first = File.read!(baseline_path)
+    assert AgentCodeNCheck.write_navigation_baseline(root: root)["baseline_write"] == "unchanged"
+    assert File.read!(baseline_path) == first
+    assert AgentCodeNCheck.check(root: root)["status"] == "pass"
   end
 
   defp location_git!(root, args) do
