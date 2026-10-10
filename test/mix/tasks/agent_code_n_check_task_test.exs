@@ -29,6 +29,17 @@ defmodule Mix.Tasks.AgentCodeN.CheckTaskTest do
     assert_raise Mix.Error, ~r/Usage: mix agent_code_n.check/, fn -> Check.run(["--warn"]) end
   end
 
+  test "write-baseline is accepted and byte-idempotent for the checked-in baseline" do
+    path = "config/agent_code_navigation_baseline.yml"
+    before = File.read!(path)
+    on_exit(fn -> File.write!(path, before) end)
+
+    output = capture_io(fn -> assert nil == Check.run(["--write-baseline"]) end)
+
+    assert output =~ "agent_code_n.check: PASS navigation baseline remaining:"
+    assert File.read!(path) == before
+  end
+
   test "mix lint owns the checker exactly once and scripts check reaches it through lint" do
     mix = File.read!("mix.exs")
     check = File.read!("scripts/check.sh")

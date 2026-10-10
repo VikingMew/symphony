@@ -4,7 +4,7 @@ genre: design
 domain: [observability, logging, errors]
 status: current
 language: en
-updated: 2026-10-08
+updated: 2026-10-10
 design_status: landed
 ---
 
@@ -68,8 +68,17 @@ an exact path, content-derived stable identifier, and reason. The single
 
 - a finding absent from the inventory fails;
 - malformed, duplicate, unsorted, or stale inventory entries fail;
-- no wildcard, due date, alternate allowlist, runtime flag, or updater command exists;
+- no wildcard, due date, alternate allowlist, or runtime flag exists;
 - output contains one deterministic `observability baseline remaining: N` line.
+
+Both ordinary `mix observability.check` and
+`mix observability.check --write-baseline` load the inventory at the real `origin/main` merge base.
+The deletion-only key is a multiset of `(content-derived identifier without its duplicate-number
+suffix, reason)`. Path-only movement preserves that key; another occurrence increases its count and
+fails. The writer builds the exact sorted `path + identifier + reason` candidate in memory, validates
+the merge-base ceiling, and only then replaces the file. It is only for path refreshes and stock
+deletion, never new debt. Git, base parsing, or ratchet failure leaves the target byte-identical; a
+second successful run is a byte-level no-op.
 
 When the waterline reaches zero, the baseline file and the baseline-loading branch are deleted, so
 all findings become hard failures. A nonzero waterline is incomplete conformance and must remain
@@ -83,6 +92,6 @@ visible in the O-clause audit.
   change classification.
 - Centralized and worker tests join one tool call by `issue_id`, `run_id`, `session_id`, and
   `tool_call_id`.
-- Checker fixtures cover passing, new, malformed, duplicate, stale, alternate-exemption, and
-  deterministic-output cases.
+- Checker fixtures cover passing, new, malformed, duplicate, stale, alternate-exemption,
+  path-move, multiplicity, deletion, unchanged-on-failure, and deterministic-output cases.
 - Existing duration and token/budget aggregation tests remain the O-08 evidence.

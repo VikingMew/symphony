@@ -4,6 +4,7 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   """
 
   alias SymphonyElixir.AgentCodeNCheck.BaselineLocations
+  alias SymphonyElixir.BaselineRatchet
 
   @baseline_path "config/agent_code_navigation_baseline.yml"
   @source_patterns ["lib/**/*.ex", "test/**/*.ex", "test/**/*.exs"]
@@ -23,18 +24,46 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   def check(opts \\ []) do
     root = Keyword.get(opts, :root, File.cwd!())
     baseline_path = Keyword.get(opts, :baseline, @baseline_path)
-    {declarations, top_level_modules, source_errors} = scan_sources(root)
-
-    findings =
-      declarations
-      |> navigation_findings(top_level_modules, root)
-      |> Enum.sort()
+    {findings, source_errors} = current_navigation_findings(root)
 
     {baseline_remaining, baseline_errors} =
       validate_baseline(root, baseline_path, findings, Keyword.get(opts, :base_baseline, :from_git))
 
     errors = Enum.sort(source_errors ++ baseline_errors)
 
+    navigation_report(findings, baseline_remaining, errors)
+  end
+
+  @spec write_navigation_baseline(keyword()) :: report()
+  def write_navigation_baseline(opts \\ []) do
+    root = Keyword.get(opts, :root, File.cwd!())
+    baseline_path = Keyword.get(opts, :baseline, @baseline_path)
+    target_path = Path.join(root, baseline_path)
+    {findings, source_errors} = current_navigation_findings(root)
+    candidate = BaselineRatchet.baseline_candidate(findings, &encode_navigation_baseline/1)
+    current = if findings == [], do: :missing, else: {:ok, findings}
+    base = base_baseline(root, baseline_path, Keyword.get(opts, :base_baseline, :from_git), findings)
+
+    errors =
+      source_errors ++
+        baseline_shape_errors(current) ++
+        baseline_match_errors(current, findings) ++
+        baseline_ratchet_errors(current, base, findings)
+
+    case BaselineRatchet.replace_baseline(target_path, candidate, Enum.sort(errors)) do
+      {:ok, result} ->
+        findings
+        |> navigation_report(length(findings), [])
+        |> Map.put("baseline_write", Atom.to_string(result))
+
+      {:error, write_errors} ->
+        findings
+        |> navigation_report(length(findings), Enum.sort(write_errors))
+        |> Map.put("baseline_write", "rejected")
+    end
+  end
+
+  defp navigation_report(findings, baseline_remaining, errors) do
     %{
       "schema" => "agent-facing-code-navigation-report",
       "status" => if(errors == [], do: "pass", else: "fail"),
@@ -42,6 +71,21 @@ defmodule SymphonyElixir.AgentCodeNCheck do
       "findings" => findings,
       "errors" => errors
     }
+  end
+
+  defp current_navigation_findings(root) do
+    {declarations, top_level_modules, source_errors} = scan_sources(root)
+
+    findings =
+      declarations
+      |> navigation_findings(top_level_modules, root)
+      |> Enum.sort()
+
+    {findings, source_errors}
+  end
+
+  defp encode_navigation_baseline(rows) do
+    Enum.map(rows, &["- ", Jason.encode!(&1), "\n"])
   end
 
   @spec exit_code(report()) :: 0 | 1
@@ -394,7 +438,10 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   end
 
   defp baseline_ratchet_errors({:ok, rows}, {:ok, base_rows}, _findings) do
-    Enum.map(rows -- base_rows, &"baseline.added: #{&1}")
+    case BaselineRatchet.multiset_ceiling(rows, base_rows, & &1) do
+      :ok -> []
+      {:error, expansions} -> Enum.map(expansions, &"baseline.added: #{&1.key}")
+    end
   end
 
   defp baseline_ratchet_errors(:missing, {:ok, _base_rows}, []), do: []
@@ -406,44 +453,18 @@ defmodule SymphonyElixir.AgentCodeNCheck do
   defp base_baseline(_root, _path, rows, _findings) when is_list(rows), do: {:ok, rows}
 
   defp base_baseline(root, path, :from_git, findings) do
-    case System.cmd("git", ["merge-base", "HEAD", "origin/main"], cd: root, stderr_to_stdout: true) do
-      {merge_base, 0} ->
-        revision = String.trim(merge_base)
-
-        case read_base_baseline(root, path, revision) do
-          {:ok, rows} -> BaselineLocations.relocate_baseline(root, revision, rows, findings)
-          result -> result
-        end
-
-      {output, status} ->
-        {:error, "baseline.merge_base: git exited #{status}: #{String.trim(output)}"}
+    case BaselineRatchet.merge_base_baseline(root, path, &parse_base_navigation_baseline/1) do
+      {:ok, _revision, :missing} -> :missing
+      {:ok, revision, rows} -> BaselineLocations.relocate_baseline(root, revision, rows, findings)
+      {:error, _reason} = error -> error
     end
   end
 
-  defp read_base_baseline(root, path, merge_base) do
-    case System.cmd("git", ["ls-tree", "--name-only", merge_base, "--", path], cd: root, stderr_to_stdout: true) do
-      {"", 0} ->
-        :missing
-
-      {_listed_path, 0} ->
-        parse_base_baseline(root, path, merge_base)
-
-      {output, status} ->
-        {:error, "baseline.merge_base: git ls-tree exited #{status}: #{String.trim(output)}"}
-    end
-  end
-
-  defp parse_base_baseline(root, path, merge_base) do
-    case System.cmd("git", ["show", "#{merge_base}:#{path}"], cd: root, stderr_to_stdout: true) do
-      {content, 0} ->
-        case YamlElixir.read_from_string(content) do
-          {:ok, rows} when is_list(rows) -> {:ok, rows}
-          {:ok, _value} -> {:error, "baseline.base_schema: expected a YAML list of finding identities"}
-          {:error, reason} -> {:error, "baseline.base_schema: invalid YAML: #{inspect(reason)}"}
-        end
-
-      {output, status} ->
-        {:error, "baseline.merge_base: git show exited #{status}: #{String.trim(output)}"}
+  defp parse_base_navigation_baseline(content) do
+    case YamlElixir.read_from_string(content) do
+      {:ok, rows} when is_list(rows) -> {:ok, rows}
+      {:ok, _value} -> {:error, "baseline.base_schema: expected a YAML list of finding identities"}
+      {:error, reason} -> {:error, "baseline.base_schema: invalid YAML: #{inspect(reason)}"}
     end
   end
 

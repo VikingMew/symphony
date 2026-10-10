@@ -8,6 +8,8 @@ defmodule SymphonyElixir.ObservabilityCheck do
   @failure_fields [:event, :operation, :location, :expected_shape, :error_code, :retryable]
   @baseline_keys ~w(path identifier reason)
 
+  alias SymphonyElixir.BaselineRatchet
+
   @type finding :: %{required(String.t()) => String.t()}
   @type report :: %{required(String.t()) => term()}
 
@@ -17,13 +19,46 @@ defmodule SymphonyElixir.ObservabilityCheck do
     baseline_path = Keyword.get(opts, :baseline, @baseline_path)
     findings = source_findings(root)
     {baseline, baseline_errors} = load_baseline(Path.join(root, baseline_path))
-    errors = Enum.sort(baseline_errors ++ compare(findings, baseline))
+    base = observability_base_baseline(root, baseline_path, Keyword.get(opts, :base_baseline, :from_git))
+    errors = Enum.sort(baseline_errors ++ compare(findings, baseline) ++ observability_ratchet_errors(findings, base))
 
+    observability_report(findings, length(baseline), errors)
+  end
+
+  @spec write_observability_baseline(keyword()) :: report()
+  def write_observability_baseline(opts \\ []) do
+    root = Keyword.get(opts, :root, File.cwd!())
+    baseline_path = Keyword.get(opts, :baseline, @baseline_path)
+    target_path = Path.join(root, baseline_path)
+    findings = source_findings(root)
+
+    candidate =
+      BaselineRatchet.baseline_candidate(findings, fn entries ->
+        Jason.encode!(%{"schema" => "observability-baseline", "findings" => entries}, pretty: true)
+      end)
+
+    base = observability_base_baseline(root, baseline_path, Keyword.get(opts, :base_baseline, :from_git))
+    errors = candidate_observability_errors(findings) ++ observability_ratchet_errors(findings, base)
+
+    case BaselineRatchet.replace_baseline(target_path, candidate, Enum.sort(errors)) do
+      {:ok, result} ->
+        findings
+        |> observability_report(length(findings), [])
+        |> Map.put("baseline_write", Atom.to_string(result))
+
+      {:error, write_errors} ->
+        findings
+        |> observability_report(length(findings), Enum.sort(write_errors))
+        |> Map.put("baseline_write", "rejected")
+    end
+  end
+
+  defp observability_report(findings, baseline_remaining, errors) do
     %{
       "status" => if(errors == [], do: "pass", else: "fail"),
       "findings" => findings,
       "errors" => errors,
-      "baseline_remaining" => length(baseline)
+      "baseline_remaining" => baseline_remaining
     }
   end
 
@@ -268,6 +303,52 @@ defmodule SymphonyElixir.ObservabilityCheck do
       {:error, reason} ->
         {[], ["baseline YAML is invalid: #{path}: #{inspect(reason)}"]}
     end
+  end
+
+  defp candidate_observability_errors(findings) do
+    {valid_entries, entry_errors} = validate_entries(findings)
+    entry_errors ++ ordering_errors(valid_entries) ++ compare(findings, valid_entries)
+  end
+
+  defp observability_base_baseline(_root, _path, :missing), do: :missing
+  defp observability_base_baseline(_root, _path, entries) when is_list(entries), do: {:ok, entries}
+
+  defp observability_base_baseline(root, path, :from_git) do
+    case BaselineRatchet.merge_base_baseline(root, path, &parse_base_observability_baseline/1) do
+      {:ok, _revision, :missing} -> :missing
+      {:ok, _revision, entries} -> {:ok, entries}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp parse_base_observability_baseline(content) do
+    case parse_baseline("merge-base baseline", content) do
+      {entries, []} -> {:ok, entries}
+      {_entries, errors} -> {:error, "baseline.base_schema: #{Enum.join(errors, "; ")}"}
+    end
+  end
+
+  defp observability_ratchet_errors(_findings, {:error, error}), do: [error]
+
+  defp observability_ratchet_errors(findings, base) do
+    base_entries = if base == :missing, do: [], else: elem(base, 1)
+
+    case BaselineRatchet.multiset_ceiling(findings, base_entries, &observability_semantic_key/1) do
+      :ok ->
+        []
+
+      {:error, expansions} ->
+        Enum.map(expansions, fn expansion ->
+          {identifier, reason} = expansion.key
+
+          "baseline.added: #{identifier}: #{reason} count #{expansion.base_count} -> #{expansion.current_count}"
+        end)
+    end
+  end
+
+  defp observability_semantic_key(entry) do
+    identifier = String.replace(entry["identifier"], ~r/\.\d+$/, "")
+    {identifier, entry["reason"]}
   end
 
   defp validate_entries(entries) do
