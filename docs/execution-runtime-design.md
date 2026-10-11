@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-09
+updated: 2026-10-11
 design_status: landed
 ---
 
@@ -181,6 +181,13 @@ base before making another deepen decision; global visible-commit count is not a
 success gate because shallow-boundary changes make that count non-monotonic. It merges the immutable
 `base_sha` and verifies both captured SHAs as HEAD ancestors plus exact remote-default merge-base
 before hooks or Codex.
+
+The offline Git regression uses unequal linear branches: the task side exposes the shared root
+before the default side reaches it. The final deepen connects already visible commits, leaves the
+global count unchanged, and must still succeed. This fixture works with Git 2.50.1 and 2.55.0;
+it does not depend on the merged-branch shallow-boundary bug fixed in Git 2.54. The original
+`after_count <= before_count` assertion remains, and restoring the count-based gate makes this
+regression fail with `merge_base_no_progress`.
 
 A command timeout becomes executor reason
 `source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command

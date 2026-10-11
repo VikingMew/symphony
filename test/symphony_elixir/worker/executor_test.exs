@@ -302,8 +302,8 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     assert_receive {:source_progress, "source_preparation", %{operation: "git_deepen", status: "started"}}
   end
 
-  test "accepts a visible merge base when targeted deepen reduces the global commit count" do
-    fixture = non_monotonic_history_fixture!()
+  test "accepts a visible merge base when targeted deepen does not increase the global commit count" do
+    fixture = converging_history_fixture!()
     on_exit(fn -> File.rm_rf(fixture.root) end)
 
     workspace = Path.join(fixture.root, "lease")
@@ -613,41 +613,18 @@ defmodule SymphonyElixir.Worker.ExecutorTest do
     git!(author, ["rev-parse", "HEAD"])
   end
 
-  defp non_monotonic_history_fixture! do
+  defp converging_history_fixture! do
     fixture = git_fixture!()
-
-    git!(fixture.author, ["checkout", "-b", "common-side"])
-    Enum.each(1..5, &commit!(fixture.author, "common-side-#{&1}.txt", "common side #{&1}"))
-    git!(fixture.author, ["checkout", "trunk"])
-    commit!(fixture.author, "trunk.txt", "advance trunk")
-    git!(fixture.author, ["merge", "--no-ff", "-m", "merge common history", "common-side"])
-    common_sha = git!(fixture.author, ["rev-parse", "HEAD"])
-    git!(fixture.author, ["push", "origin", "trunk"])
 
     git!(fixture.author, ["checkout", "-b", "feature/sym-74"])
     task_sha = commit_and_push!(fixture.author, "feature/sym-74", "task.txt", "task commit")
-
-    git!(fixture.author, ["checkout", "-b", "long-side", common_sha])
-    Enum.each(1..5, &commit!(fixture.author, "long-side-#{&1}.txt", "long side #{&1}"))
     git!(fixture.author, ["checkout", "trunk"])
-    git!(fixture.author, ["merge", "--no-ff", "-m", "merge long side", "long-side"])
-
-    git!(fixture.author, ["checkout", "-b", "stale-side", common_sha])
-    commit!(fixture.author, "stale-side.txt", "stale side")
-    git!(fixture.author, ["checkout", "trunk"])
-    git!(fixture.author, ["merge", "--no-ff", "-m", "merge stale side", "stale-side"])
-
-    Enum.each(3..4, fn round ->
-      branch = "tip-side-#{round}"
-      git!(fixture.author, ["checkout", "-b", branch])
-      commit!(fixture.author, "tip-side-#{round}.txt", "tip side #{round}")
-      git!(fixture.author, ["checkout", "trunk"])
-      git!(fixture.author, ["merge", "--no-ff", "-m", "merge tip side #{round}", branch])
-    end)
-
+    Enum.each(1..4, &commit!(fixture.author, "base-#{&1}.txt", "base commit #{&1}"))
     git!(fixture.author, ["push", "origin", "trunk"])
     base_sha = git!(fixture.author, ["rev-parse", "HEAD"])
-    Map.merge(fixture, %{base_sha: base_sha, common_sha: common_sha, task_sha: task_sha})
+
+    # The task side exposes the root first; the final base-side deepen only connects already visible commits.
+    Map.merge(fixture, %{base_sha: base_sha, common_sha: fixture.main_sha, task_sha: task_sha})
   end
 
   defp deepen_observer(workspace, base_sha, task_sha, observations) do
