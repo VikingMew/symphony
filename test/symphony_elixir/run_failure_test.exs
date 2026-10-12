@@ -107,6 +107,20 @@ defmodule SymphonyElixir.RunFailureTest do
     source_failure = source_preparation_failure_summary()
     assert_source_preparation_mapping(source_failure)
 
+    topology_evidence = %{
+      "phase" => "checkout_failed",
+      "operation" => "merge_base_exhausted",
+      "repository_shallow" => false
+    }
+
+    topology =
+      worker_summary("blocked", "source_topology_invalid")
+      |> Map.put("phase", "source_preparation")
+      |> Map.put("failure_evidence", topology_evidence)
+
+    assert %RunFailure{classification: "source_preparation_timeout", evidence: ^topology_evidence} =
+             RunFailure.from_worker_summary("task.failed", topology)
+
     assert RunFailure.from_worker_summary(
              "task.failed",
              worker_summary("failed", "workspace_unavailable")

@@ -119,6 +119,28 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
       }
     end
 
+    defp claim_result(%{"source_topology" => true}) do
+      evidence = %{
+        phase: "checkout_failed",
+        command_status: "failed",
+        operation: "merge_base_exhausted",
+        default_ref: "refs/remotes/origin/main",
+        task_ref: "refs/remotes/origin/feature",
+        base_sha: "base-sha",
+        task_sha: "task-sha",
+        checkout_depth: 1,
+        repository_shallow: false,
+        detail: "complete histories have no common ancestor"
+      }
+
+      %{
+        status: :blocked,
+        reason: :source_topology_invalid,
+        detail: evidence.detail,
+        failure_evidence: evidence
+      }
+    end
+
     defp claim_result(%{"blocked_validation_failed" => true}) do
       evidence = %{"marker" => "需宿主 push", "patch_path" => "SYM-110.patch"}
 
@@ -435,6 +457,23 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
              output: "waiting for remote source"
            }
 
+    assert {:ok, _validated} = WorkerResult.validate(summary)
+  end
+
+  test "complete unrelated histories deliver a blocked source topology summary", %{config: config} do
+    put_claims([Map.put(claim("task-1", false), "source_topology", true)])
+    _runtime = start_runtime(config)
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    eventually(fn -> terminal_count("task-1", "task.failed") == 1 end)
+
+    summary = terminal_summary("task-1", "task.failed")
+    assert summary["phase"] == "source_preparation"
+    assert summary["outcome"] == "blocked"
+    assert summary["reason"] == "source_topology_invalid"
+    assert summary["validation_status"] == "pending"
+    assert summary["failure_evidence"].operation == "merge_base_exhausted"
+    assert summary["failure_evidence"].repository_shallow == false
     assert {:ok, _validated} = WorkerResult.validate(summary)
   end
 
