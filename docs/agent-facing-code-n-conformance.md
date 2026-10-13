@@ -5,7 +5,7 @@ domain: [governance, code-quality, agents]
 status: current
 language: en
 owner: SymphonyElixir.AgentCodeNCheck
-updated: 2026-10-09
+updated: 2026-10-10
 ---
 
 # Agent-Facing Code N Conformance Record
@@ -33,7 +33,7 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
 Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
-current baseline waterline is 557 exact findings; the N group is not fully compliant while that
+initial baseline waterline was 563 exact findings and the current waterline is 410; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
@@ -74,15 +74,20 @@ merge base after Git-proven line relocation, stale rows, malformed schema, and u
 and its row together passes. When no findings remain, the change must delete both the baseline file
 and the checker's baseline read/compare branch, leaving the direct rules as one hard gate.
 
+`mix agent_code_n.check --write-baseline` writes the scanner's exact sorted identities only after
+the same merge-base location mapping and ratchet pass. It is limited to Git-proven position moves
+and stock deletion, never baseline expansion. Rejection leaves the file byte-identical, and a
+second successful run without source changes is a byte-level no-op.
+
 `scripts/check.sh` and `scripts/unit.sh` run `scripts/prepare_navigation_git_history.sh` before the
 checker or its task test. Shallow CI checkouts are completed so `origin/main` and the real merge base
 are available; failure to provide that Git history is a hard gate failure.
 
-The location mapper compares the merge-base source with the current working tree, maps only
-untouched declaration lines in the same path, and retains exact location sets. Rewritten or removed
-declaration lines do not authorize a replacement row. Git diff failures remain hard failures.
-The current baseline retains 557 findings. SYM-168 updates 13 exact location sets after adding
-profile-specific validation code and tests; it adds no finding, exemption, or relaxed threshold.
-`baseline_locations_test.exs` covers line movement, new aggregate
-locations, rewritten declarations, stale deletion, and missing history. Existing comments remain
-unchanged; the new mapper has no explanatory inline comments to reconcile.
+The location mapper compares the merge-base source with the current working tree. It maps untouched
+lines in the same path and accepts a cross-file responsibility move only when normalized declaration
+heads, including function arity, remain a non-expanding multiset. A rewritten `shared/0` declaration
+cannot authorize `shared/1`, and an added same-head collision exceeds the merge-base multiset. Git diff
+failures remain hard failures. The locality responsibility split reduced the repository-verification waterline from 559 to 411
+findings; the G-group checker then replaced its ambiguous private `finding` declaration with `threshold_finding`, reducing the
+current waterline to 410 without adding an exemption or relaxing the ratchet. Existing comments remain unchanged;
+the mapper has no explanatory inline comments to reconcile.

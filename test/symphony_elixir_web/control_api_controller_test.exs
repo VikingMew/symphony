@@ -11,11 +11,21 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
     use GenServer
 
     def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: Keyword.fetch!(opts, :name))
-    def init(opts), do: {:ok, Keyword.fetch!(opts, :owner)}
+    def init(opts), do: {:ok, {Keyword.fetch!(opts, :owner), MapSet.new()}}
 
     def handle_call(request, _from, owner) do
-      send(owner, {:orchestrator_call, request})
-      {:reply, response(request), owner}
+      {test_owner, cleared} = owner
+      send(test_owner, {:orchestrator_call, request})
+
+      case request do
+        {:clear_blocking_decision, issue_identifier} ->
+          status = if MapSet.member?(cleared, issue_identifier), do: "already_cleared", else: "cleared"
+
+          {:reply, %{status: status, issue_identifier: issue_identifier}, {test_owner, MapSet.put(cleared, issue_identifier)}}
+
+        _other ->
+          {:reply, response(request), owner}
+      end
     end
 
     defp response(:start_listening), do: %{listening: true, mode: "all"}
@@ -225,6 +235,24 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
     refute_receive {:orchestrator_call, _request}
   end
 
+  test "blocking decision clear requires explicit confirmation and returns typed idempotent results" do
+    path = "/api/v1/control/blocking-decisions/SYM-150/clear"
+
+    assert_invalid_parameter(path, %{})
+    assert_invalid_parameter(path, %{confirm: false})
+    refute_receive {:orchestrator_call, _request}
+
+    assert %{"status" => "cleared", "issue_identifier" => "SYM-150"} =
+             post_json(path, %{confirm: true}, 200)
+
+    assert_receive {:orchestrator_call, {:clear_blocking_decision, "SYM-150"}}
+
+    assert %{"status" => "already_cleared", "issue_identifier" => "SYM-150"} =
+             post_json(path, %{confirm: true}, 200)
+
+    assert_receive {:orchestrator_call, {:clear_blocking_decision, "SYM-150"}}
+  end
+
   test "control routes map an unavailable orchestrator to 503" do
     endpoint_config = Application.fetch_env!(:symphony_elixir, SymphonyElixirWeb.Endpoint)
 
@@ -240,7 +268,8 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
           {"/api/v1/control/force-stop", %{}},
           {"/api/v1/control/tasks/cancel", %{}},
           {"/api/v1/control/nap", %{}},
-          {"/api/v1/control/daydream", %{project_id: "project-1"}}
+          {"/api/v1/control/daydream", %{project_id: "project-1"}},
+          {"/api/v1/control/blocking-decisions/SYM-150/clear", %{confirm: true}}
         ] do
       assert %{"error" => %{"code" => "orchestrator_unavailable"}} = post_json(path, body, 503)
     end
@@ -253,7 +282,8 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
           "/api/v1/control/force-stop",
           "/api/v1/control/tasks/cancel",
           "/api/v1/control/nap",
-          "/api/v1/control/daydream"
+          "/api/v1/control/daydream",
+          "/api/v1/control/blocking-decisions/SYM-150/clear"
         ] do
       assert %{"error" => %{"code" => "method_not_allowed"}} =
                build_conn() |> get(path) |> json_response(405)
@@ -276,7 +306,8 @@ defmodule SymphonyElixirWeb.ControlApiControllerTest do
           "/api/v1/control/force-stop",
           "/api/v1/control/tasks/cancel",
           "/api/v1/control/nap",
-          "/api/v1/control/daydream"
+          "/api/v1/control/daydream",
+          "/api/v1/control/blocking-decisions/SYM-150/clear"
         ] do
       assert %{"error" => %{"code" => "authentication_required"}} =
                build_conn() |> post(path, %{}) |> json_response(401)

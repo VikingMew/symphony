@@ -90,6 +90,20 @@ defmodule SymphonyElixirWeb.Router do
     match(:*, "/api/v1/control/nap", ControlApiController, :method_not_allowed)
     post("/api/v1/control/daydream", ControlApiController, :daydream)
     match(:*, "/api/v1/control/daydream", ControlApiController, :method_not_allowed)
+
+    post(
+      "/api/v1/control/blocking-decisions/:issue_identifier/clear",
+      ControlApiController,
+      :clear_blocking_decision
+    )
+
+    match(
+      :*,
+      "/api/v1/control/blocking-decisions/:issue_identifier/clear",
+      ControlApiController,
+      :method_not_allowed
+    )
+
     post("/api/v1/refresh", ObservabilityApiController, :refresh)
     match(:*, "/api/v1/refresh", ObservabilityApiController, :method_not_allowed)
     get("/api/v1/runs", ObservabilityApiController, :runs)

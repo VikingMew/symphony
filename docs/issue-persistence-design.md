@@ -5,7 +5,7 @@ domain: [issues, persistence, linear, observability]
 status: current
 language: en
 owner: SymphonyElixir.Persistence.IssueRecord
-updated: 2026-10-07
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -33,6 +33,13 @@ diagnosed with a typed reason but do not create an issue run merely to persist t
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.
 Neither path rewrites the poll snapshot or maintains another tracker-state mirror.
+
+The operator clear boundary reads the current issue row and returns a typed first-clear result. A
+present decision is removed together with `no_progress_streak = 0` and returns `cleared`; a missing
+decision returns `already_cleared` without another write. The mutation does not rewrite `snapshot`,
+change Linear state, update existing run rows, or create a run. Orchestrator owns serialization and
+uses the cleared decision's tracker issue id and run id to remove only its matching in-memory
+blocked/claimed/retry/failure projection.
 
 ## Atomic running-run admission
 

@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-10-07
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -96,6 +96,15 @@ CAS 发现 replacement 时不清 streak、不释放投影，而是立即重读 r
 `AssignmentManager` 返回强制性的 `poll_after_seconds` 建议：首次为 5 秒，第 2 至 5 次
 为 30 秒，第 6 次起为 60 秒并封顶。worker 必须按建议调度下一次 claim；为滚动升级兼容旧
 Panel，字段缺失时回退 5 秒。持续空闲时新任务最多额外等待 60 秒。
+
+Orchestrator 的持久 blocker 投影在同一 `blocking_decision` 对象中携带 `reason`、
+`origin_state`、`run_id` 和 `decided_at`。共享 presenter 把该对象同时提供给 Dashboard 和
+`/api/v1/state`；临时 input block 没有该对象，也不生成 decision 行或清理操作。Dashboard 的认证页面
+和认证 control API 共用串行进入 Orchestrator mailbox 的人工清理命令。命令首次清空持久 decision 与
+streak 时返回 `cleared`，后续调用返回 `already_cleared`；同时只移除旧 decision/run 对应的
+blocked、claimed、retry 和 failure 投影并刷新 Dashboard，较新 run 的投影保持不变。该操作不创建
+run、不写 Linear，也不改变 issue snapshot 或 run history；若 Linear 仍为 `Blocked`，仍需运营者另行
+恢复到可派发状态后才会进入既有 claim 准入。
 
 `not_listening` 的空响应稳定包含 `reason = not_listening`、`capacity = 0` 和
 `listening_mode = not_listening`；refine-only 仅因 mode 过滤为空时使用 `reason = listening_mode`。
@@ -197,6 +206,10 @@ source/phase/operation 合并为 `system_progress`。Codex payload 继续进入�
 `source_preparation`；reason 分别为 `source_preparation_timeout` 与 `source_preparation_failed`，操作差异
 只进入既有 `clone_failed` / `fetch_failed` / `checkout_failed` evidence 闭集。任何失败都不继续到旧
 HEAD、本地 branch fallback、hook 或 Codex。
+若 repository 已非 shallow 且捕获的 base/task SHA 仍无共同祖先，Runtime 保持同一顶层 phase，输出
+`blocked / source_topology_invalid`。`checkout_failed / merge_base_exhausted` evidence 保留两侧 ref、SHA、
+checkout depth 与 `repository_shallow: false`；Panel 立即持久化 blocker，不增加 `failure_counts`，也不安排
+自动 retry。clone/fetch timeout、ref 缺失、merge conflict 等其余准备错误仍为 `failed`。
 
 手动 `cancel-current` 是当前内存 assignment 的控制动作，不是持久任务状态。Panel 在当前
 assignment 上记录 pending cancellation；只有持有同一 worker/session 且 heartbeat 提交匹配 active

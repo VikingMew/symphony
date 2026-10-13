@@ -4,7 +4,7 @@ genre: architecture
 domain: [architecture, runtime]
 status: current
 language: en
-updated: 2026-09-23
+updated: 2026-10-09
 owner: SymphonyElixir.Orchestrator
 ---
 
@@ -212,7 +212,11 @@ concurrency, tracks active runs, handles retries, releases completed work, stops
 and publishes status information. In centralized mode it starts `AgentRunner` locally or over
 configured SSH hosts. In worker mode it exposes one ephemeral Panel assignment for external workers
 to claim through `/api/worker/v1/*`; persisted blocking decisions suppress those claims until
-explicitly cleared. Worker-mode deployment capacity and claim admission freshness come from
+explicitly cleared. Canonical decision fields are projected through the shared presenter to the
+authenticated Dashboard and state API. The Dashboard and control API send confirmed manual clear
+requests through the Orchestrator mailbox; that mutation resets only decision/streak persistence
+and matching old-run projections, leaving Linear state, issue snapshot, and run history unchanged.
+Worker-mode deployment capacity and claim admission freshness come from
 `AssignmentManager` memory last-seen entries, not PostgreSQL heartbeat freshness.
 
 ### 6.6 Workspace Manager

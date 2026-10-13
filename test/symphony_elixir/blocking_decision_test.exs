@@ -111,10 +111,40 @@ defmodule SymphonyElixir.BlockingDecisionTest do
     assert issue.blocking_decision == decision
 
     # A successful review transition invokes the same clear path.
-    assert :ok = BlockingDecision.clear("SYM-15")
+    assert {:ok,
+            {:cleared,
+             %{
+               issue_id: "linear-15",
+               run_id: "run-2"
+             }}} = BlockingDecision.clear("SYM-15")
+
     issue = FakePersistence.get_issue_by_identifier("SYM-15")
     assert issue.no_progress_streak == 0
     assert issue.blocking_decision == nil
+    assert {:ok, :already_cleared} = BlockingDecision.clear("SYM-15")
+  end
+
+  test "manual clear preserves the issue snapshot and run history" do
+    decision = BlockingDecision.new(:reported_blocker, "operator action", "run-clear", "In Progress")
+    issue = FakePersistence.get_issue_by_identifier("SYM-15")
+
+    {:ok, _issue} =
+      FakePersistence.update_issue(issue, %{
+        blocking_decision: decision,
+        no_progress_streak: 4
+      })
+
+    run = %{id: "run-clear", issue_identifier: "SYM-15", status: "blocked"}
+    FakePersistence.put_runs([run])
+
+    assert {:ok, {:cleared, %{issue_id: "linear-15", run_id: "run-clear"}}} =
+             BlockingDecision.clear("SYM-15")
+
+    cleared = FakePersistence.get_issue_by_identifier("SYM-15")
+    assert cleared.blocking_decision == nil
+    assert cleared.no_progress_streak == 0
+    assert cleared.snapshot == %{"state" => "Refining"}
+    assert FakePersistence.list_runs_for_issue("SYM-15") == [run]
   end
 
   test "persists policy-prohibited validation as ordinary reported blocker evidence" do

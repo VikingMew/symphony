@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-10-09
+updated: 2026-10-11
 design_status: landed
 ---
 
@@ -14,6 +14,10 @@ The optional execution worker is a separately deployed, non-root execution plane
 Linear access, workflow/profile selection, prompt construction, dispatch, and the one active
 in-memory assignment. The worker owns checkout, hooks, one Codex app-server turn, required gates,
 PR handoff, bounded evidence, and cleanup.
+
+`Worker.Executor` owns that pipeline and keeps its existing public evidence functions;
+`Worker.Executor.DeliveryEvidence` owns the pure projection from successful restricted-tool audits
+to implementation or refinement completion evidence.
 
 In the current containerized worker deployment, the worker container is the execution isolation
 boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the
@@ -184,9 +188,18 @@ branch lookup, targeted deepen, merge-base, merge, checkout, and DAG verificatio
 configured default ref once as `base_sha`; a missing task branch starts there, while an existing
 branch retains its pre-sync `task_sha`. If shallow tips hide their common ancestor, the worker
 deepens only the explicit default/task refspecs by `checkout_depth`, stopping as soon as merge-base
-is visible and failing on no progress, complete unrelated history, or fetch failure. It merges the
-immutable `base_sha` and verifies both captured SHAs as HEAD ancestors plus exact remote-default
-merge-base before hooks or Codex.
+is visible. After every successful deepen it checks the captured `base_sha` and `task_sha` merge
+base before making another deepen decision; global visible-commit count is not a progress or
+success gate because shallow-boundary changes make that count non-monotonic. It merges the immutable
+`base_sha` and verifies both captured SHAs as HEAD ancestors plus exact remote-default merge-base
+before hooks or Codex.
+
+The offline Git regression uses unequal linear branches: the task side exposes the shared root
+before the default side reaches it. The final deepen connects already visible commits, leaves the
+global count unchanged, and must still succeed. This fixture works with Git 2.50.1 and 2.55.0;
+it does not depend on the merged-branch shallow-boundary bug fixed in Git 2.54. The original
+`after_count <= before_count` assertion remains, and restoring the count-based gate makes this
+regression fail with `merge_base_no_progress`.
 
 A command timeout becomes executor reason
 `source_preparation_timeout`; the terminal `task.failed` summary carries phase-specific command
@@ -196,12 +209,31 @@ and Panel source for the 4096-byte source/output producer budget. `Worker.Comman
 value including the marker never exceeds 4096 bytes. This worker summary contract does not create a
 second timeout source or change the independent run-failure persistence vocabulary.
 
+Every command launched through `Worker.Command` applies the canonical `RuntimeProxy` port
+environment. This covers source preparation, project setup, required gates, and handoff. Each
+supported upper- or lower-case proxy variable is passed with its trimmed non-blank value; a missing
+or whitespace-only value is explicitly removed from the child environment, while non-blank
+`NO_PROXY` values remain intact. Compose leaves optional worker `HTTP_PROXY` and `HTTPS_PROXY`
+values empty when their deployment settings are absent. Without removal, a child inherited those
+empty entries, and the locked `elixir_make 0.9.0` downloader parsed the empty proxy to a URI with a
+nil host before calling `String.to_charlist/1`. The downloader runs only on a precompiled artifact
+cache miss, which made the dependency-build failure depend on cache contents. Normalizing at the
+command boundary makes both cache states use the same proxy contract.
+
 A non-timeout preparation error is normalized at the executor boundary to
 `reason: source_preparation_failed`, top-level `phase: source_preparation`, and bounded evidence
 using only `clone_failed`, `fetch_failed`, or `checkout_failed`. Fetch/deepen use `fetch_failed`;
 branch lookup, merge-base exhaustion, merge, checkout, and DAG verification use `checkout_failed`.
 The terminal validator accepts this exact shape, and persistence maps it to the existing
 `source_preparation_timeout` classification.
+
+When the captured SHAs still have no merge base after the repository becomes non-shallow, source
+preparation instead emits `outcome: blocked` and `reason: source_topology_invalid`. Its
+`checkout_failed` evidence uses operation `merge_base_exhausted` and records the default/task refs,
+captured SHAs, configured checkout depth, and `repository_shallow: false`. The Panel maps that
+terminal reason to the existing persisted `source_preparation_timeout` classification, immediately
+persists a blocking decision, and does not increment the issue failure count or schedule a retry.
+No new persisted classification or database migration is introduced.
 
 For implementation assignments, an accepted `handoff` dynamic-tool call only captures the final
 comment/result/references in the Codex turn and reports `linear_updated: false`. Except for the two

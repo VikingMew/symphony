@@ -5,7 +5,7 @@ domain: [observability, logging, errors]
 status: current
 language: en
 owner: SymphonyElixir.ObservabilityCheck
-updated: 2026-10-08
+updated: 2026-10-10
 ---
 
 # Agent-facing code O conformance
@@ -40,4 +40,13 @@ git grep -n -E '\brescue\b|\bcatch\b' 337aef3 -- lib | wc -l
 git show 337aef3:lib/symphony_elixir/codex/linear_tool_audit.ex | sed -n '120,180p' | rg -o 'contains\?' | wc -l
 git grep -n -E 'tool_call_id|callId' 337aef3 -- lib | wc -l
 mix observability.check
+mix observability.check --write-baseline
 ```
+
+The checked-in inventory remains exact by path, identifier, and reason. Ordinary checks and the
+writer additionally compare the semantic-key multiset at the real `origin/main` merge base. That
+key removes only a terminal duplicate-number suffix from the content-derived identifier and pairs
+it with the reason, so a path move is refreshable while an additional occurrence is rejected.
+The writer is limited to path refreshes and deletion; it cannot register new debt, leaves bytes
+unchanged on failure, and produces no byte difference on a second unchanged run. X-group historical
+calibration remains separate, with `baseline_remaining == 0` and no write command.

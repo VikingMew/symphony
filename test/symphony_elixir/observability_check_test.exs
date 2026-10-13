@@ -13,7 +13,7 @@ defmodule SymphonyElixir.ObservabilityCheckTest do
       """,
       nil,
       fn root ->
-        report = ObservabilityCheck.check(root: root)
+        report = ObservabilityCheck.check(root: root, base_baseline: :missing)
         assert report["status"] == "pass"
         assert report["baseline_remaining"] == 0
         assert ObservabilityCheck.human_output(report) == "observability baseline remaining: 0"
@@ -24,8 +24,8 @@ defmodule SymphonyElixir.ObservabilityCheckTest do
   test "fails a new violation and ignores alternate exemption files" do
     with_fixture("defmodule Fixture do\n  require Logger\n  def emit, do: Logger.info(\"free text\")\nend\n", nil, fn root ->
       File.write!(Path.join(root, "config/observability_allowlist.yml"), "allow: everything\n")
-      first = ObservabilityCheck.check(root: root)
-      second = ObservabilityCheck.check(root: root)
+      first = ObservabilityCheck.check(root: root, base_baseline: :missing)
+      second = ObservabilityCheck.check(root: root, base_baseline: :missing)
       assert first == second
       assert first["status"] == "fail"
       assert Enum.any?(first["errors"], &String.starts_with?(&1, "unbaselined finding:"))
@@ -69,11 +69,11 @@ defmodule SymphonyElixir.ObservabilityCheckTest do
     source = "defmodule Fixture do\n  require Logger\n  def emit, do: Logger.info(\"free text\")\nend\n"
 
     with_fixture(source, nil, fn root ->
-      finding = ObservabilityCheck.check(root: root)["findings"] |> List.first()
+      finding = ObservabilityCheck.check(root: root, base_baseline: :missing)["findings"] |> List.first()
       baseline = Jason.encode!(%{"schema" => "observability-baseline", "findings" => [finding]})
       File.write!(Path.join(root, "config/observability_baseline.yml"), baseline)
 
-      outputs = for _ <- 1..2, do: ObservabilityCheck.check(root: root)
+      outputs = for _ <- 1..2, do: ObservabilityCheck.check(root: root, base_baseline: [finding])
       assert Enum.uniq(outputs) |> length() == 1
       assert hd(outputs)["status"] == "pass"
       assert ObservabilityCheck.human_output(hd(outputs)) == "observability baseline remaining: 1"
@@ -99,15 +99,78 @@ defmodule SymphonyElixir.ObservabilityCheckTest do
     """
 
     with_fixture(source, nil, fn root ->
-      findings = ObservabilityCheck.check(root: root)["findings"]
+      findings = ObservabilityCheck.check(root: root, base_baseline: :missing)["findings"]
       assert Enum.any?(findings, &String.starts_with?(&1["identifier"], "silent_error_branch:"))
       assert Enum.any?(findings, &String.starts_with?(&1["identifier"], "silent_rescue:"))
     end)
   end
 
+  test "A writer refreshes a path-only move and is byte-idempotent" do
+    with_observability_git_fixture(fn root ->
+      File.rename!(Path.join(root, "lib/fixture.ex"), Path.join(root, "lib/moved.ex"))
+
+      assert ObservabilityCheck.write_observability_baseline(root: root)["baseline_write"] == "written"
+      baseline_path = Path.join(root, "config/observability_baseline.yml")
+      first = File.read!(baseline_path)
+      assert first =~ "lib/moved.ex"
+      assert ObservabilityCheck.write_observability_baseline(root: root)["baseline_write"] == "unchanged"
+      assert File.read!(baseline_path) == first
+      assert ObservabilityCheck.check(root: root)["status"] == "pass"
+    end)
+  end
+
+  test "B writer and ordinary check reject a semantic count increase without changing bytes" do
+    with_observability_git_fixture(fn root ->
+      baseline_path = Path.join(root, "config/observability_baseline.yml")
+      before = File.read!(baseline_path)
+      File.cp!(Path.join(root, "lib/fixture.ex"), Path.join(root, "lib/copy.ex"))
+
+      report = ObservabilityCheck.write_observability_baseline(root: root)
+      assert report["status"] == "fail"
+      assert report["baseline_write"] == "rejected"
+      assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.added: "))
+      assert File.read!(baseline_path) == before
+
+      write_observability_fixture_baseline(root, report["findings"])
+      bypass = ObservabilityCheck.check(root: root)
+      assert bypass["status"] == "fail"
+      assert Enum.any?(bypass["errors"], &String.starts_with?(&1, "baseline.added: "))
+    end)
+  end
+
+  test "C writer deletes the baseline when the finding is removed" do
+    with_observability_git_fixture(fn root ->
+      File.write!(
+        Path.join(root, "lib/fixture.ex"),
+        "defmodule Fixture do\n  require Logger\n  def emit, do: Logger.info(\"ready\", event: \"fixture.ready\")\nend\n"
+      )
+
+      report = ObservabilityCheck.write_observability_baseline(root: root)
+      assert report["status"] == "pass"
+      assert report["baseline_write"] == "deleted"
+      refute File.exists?(Path.join(root, "config/observability_baseline.yml"))
+      assert ObservabilityCheck.check(root: root)["status"] == "pass"
+    end)
+  end
+
+  test "writer rejects unavailable merge-base history without changing bytes" do
+    with_observability_git_fixture(fn root ->
+      path = Path.join(root, "config/observability_baseline.yml")
+      before = File.read!(path)
+      observability_git!(root, ["update-ref", "-d", "refs/remotes/origin/main"])
+
+      report = ObservabilityCheck.write_observability_baseline(root: root)
+
+      assert report["status"] == "fail"
+      assert report["baseline_write"] == "rejected"
+      assert Enum.any?(report["errors"], &String.starts_with?(&1, "baseline.merge_base:"))
+      assert File.read!(path) == before
+    end)
+  end
+
   defp error_matching?(root, prefix) do
     root
-    |> then(&ObservabilityCheck.check(root: &1))
+    |> then(&ObservabilityCheck.check(root: &1, base_baseline: :missing))
     |> Map.fetch!("errors")
     |> Enum.any?(&String.starts_with?(&1, prefix))
   end
@@ -124,5 +187,41 @@ defmodule SymphonyElixir.ObservabilityCheckTest do
     after
       File.rm_rf!(root)
     end
+  end
+
+  defp with_observability_git_fixture(fun) do
+    source = "defmodule Fixture do\n  require Logger\n  def emit, do: Logger.info(\"free text\")\nend\n"
+
+    with_fixture(source, nil, fn root ->
+      findings = ObservabilityCheck.check(root: root, base_baseline: :missing)["findings"]
+      write_observability_fixture_baseline(root, findings)
+      observability_git!(root, ["init", "-q"])
+      observability_git!(root, ["add", "."])
+
+      observability_git!(root, [
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-qm",
+        "Observability baseline fixture"
+      ])
+
+      observability_git!(root, ["update-ref", "refs/remotes/origin/main", "HEAD"])
+      observability_git!(root, ["checkout", "-qb", "topic-observability"])
+      fun.(root)
+    end)
+  end
+
+  defp write_observability_fixture_baseline(root, findings) do
+    document = %{"schema" => "observability-baseline", "findings" => findings}
+    File.write!(Path.join(root, "config/observability_baseline.yml"), Jason.encode!(document, pretty: true) <> "\n")
+  end
+
+  defp observability_git!(root, args) do
+    {output, status} = System.cmd("git", args, cd: root, stderr_to_stdout: true)
+    assert status == 0, output
+    output
   end
 end

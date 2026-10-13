@@ -4,7 +4,7 @@ genre: roadmap
 domain: [roadmap, strategy]
 status: current
 language: zh-CN
-updated: 2026-09-23
+updated: 2026-10-09
 ---
 
 # Symphony 长期开发方向与技术选型
@@ -655,7 +655,7 @@ lib/symphony_elixir_web/
 
 - 已有 `/` dashboard、`/runs`、`/events`、`/workers`、`/settings`、`/settings/projects`、`/settings/import` 和 `/diagnostics/linear`。
 - `/workers` 已提供 task cancel/requeue operator controls。
-- 已有 run detail、issue detail、events 页面、blocked session 可见性，以及历史 Analytics 页面；仍可继续增加 logs 页面和更完整分页/筛选。
+- 已有 run detail、issue detail、events 页面、blocked session 可见性，以及历史 Analytics 页面。canonical blocking decision 会显示 reason、origin state、run id 与 decision time，并可在认证边界内显式确认后清除 Symphony 持久 gate；该操作不修改 Linear 状态或 run 历史。仍可继续增加 logs 页面和更完整分页/筛选。
 
 ### Milestone 3：配置 UI（结构化 Settings 基础路径已完成）
 

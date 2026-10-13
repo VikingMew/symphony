@@ -45,6 +45,9 @@ defmodule SymphonyElixir.RunFailure do
     new("source_preparation_timeout", Map.put(json_map(evidence), "phase", to_string(phase)))
   end
 
+  def classify({:source_topology_invalid, evidence}),
+    do: new("source_preparation_timeout", evidence)
+
   def classify({:linear_api_request, %Req.TransportError{reason: :timeout}}) do
     new("external_dependency_timeout", %{
       dependency: "linear",
@@ -122,6 +125,17 @@ defmodule SymphonyElixir.RunFailure do
 
   def from_worker_summary("task.failed", %{"outcome" => "cancelled"} = summary) do
     classify({:cancelled, summary_evidence(summary)})
+  end
+
+  def from_worker_summary(
+        "task.failed",
+        %{
+          "phase" => "source_preparation",
+          "reason" => "source_topology_invalid",
+          "failure_evidence" => %{"operation" => "merge_base_exhausted"} = evidence
+        }
+      ) do
+    classify({:source_topology_invalid, evidence})
   end
 
   def from_worker_summary(

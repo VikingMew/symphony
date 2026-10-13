@@ -78,6 +78,13 @@ explicit `RunFailure.from_worker_summary/2` clauses to the existing persisted
 `source_preparation_timeout` classification. The operation-level distinction remains in bounded
 evidence; no new persisted classification or top-level phase is introduced.
 
+Complete unrelated Git histories use wire reason `source_topology_invalid`, blocked outcome, and
+`checkout_failed` evidence operation `merge_base_exhausted`. The evidence retains the default/task
+refs, captured SHAs, configured checkout depth, and `repository_shallow: false`. The explicit
+`RunFailure` mapping still uses the persisted `source_preparation_timeout` classification, while the
+blocked outcome bypasses the failure budget and preserves the topology evidence in the blocking
+decision. This adds no database vocabulary or migration.
+
 Worker terminal delivery retains the validated payload across Panel 503 responses and beyond the
 former attempt limit. When delivery later succeeds, the original failure classification and its
 delivery/summary evidence pass through `RunLifecycle`; no second run or substitute terminal write is

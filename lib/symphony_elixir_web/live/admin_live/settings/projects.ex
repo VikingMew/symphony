@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixirWeb.AdminLive.Settings.Projects do
   @moduledoc false
 

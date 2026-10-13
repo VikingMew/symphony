@@ -62,53 +62,59 @@ defmodule SymphonyElixirWeb.AdminLive.WorkflowState do
        |> assign(:workflow_form_dirty?, false)
        |> assign_validation(draft)}
     else
-      :unchanged ->
-        {:unchanged,
-         socket
-         |> put_flash(:info, "#{section_label(section)} already up to date.")
-         |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No instance changes to save.")
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, false)
-         |> assign_validation(draft)}
-
-      {:error, %{kind: kind, path: path, reason: reason}}
-      when kind in [:not_creatable, :not_writable, :unreadable] ->
-        message = workspace_rejection_message(kind, path, reason)
-
-        {:error,
-         socket
-         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-         |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_field_errors, %{})
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, true)}
-
-      {:error, message} when is_binary(message) ->
-        {:error,
-         socket
-         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-         |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, true)
-         |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
-         |> assign(:workflow_validation_error, nil)
-         |> assign(:workflow_form_valid?, false)}
-
-      {:error, reason} ->
-        message = inspect(reason)
-
-        {:error,
-         socket
-         |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
-         |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
-         |> assign(:workflow_validation_visible?, true)
-         |> assign(:workflow_field_errors, %{})
-         |> assign(:workflow_form, draft)
-         |> assign(:workflow_form_dirty?, true)}
+      result -> handle_save_result(result, socket, draft, section)
     end
+  end
+
+  defp handle_save_result(:unchanged, socket, draft, section) do
+    {:unchanged,
+     socket
+     |> put_flash(:info, "#{section_label(section)} already up to date.")
+     |> assign_save_notice(:info, "#{section_label(section)} already up to date", "No instance changes to save.")
+     |> assign(:workflow_validation_visible?, true)
+     |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, false)
+     |> assign_validation(draft)}
+  end
+
+  defp handle_save_result({:error, %{kind: kind, path: path, reason: reason}}, socket, draft, section)
+       when kind in [:not_creatable, :not_writable, :unreadable] do
+    message = workspace_rejection_message(kind, path, reason)
+
+    {:error,
+     socket
+     |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+     |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
+     |> assign(:workflow_validation_visible?, true)
+     |> assign(:workflow_field_errors, %{})
+     |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, true)}
+  end
+
+  defp handle_save_result({:error, message}, socket, draft, section) when is_binary(message) do
+    {:error,
+     socket
+     |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+     |> assign_save_notice(:error, "#{section_label(section)} save failed", "Fix highlighted fields before saving.")
+     |> assign(:workflow_validation_visible?, true)
+     |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, true)
+     |> assign(:workflow_field_errors, WorkflowForm.field_errors(draft))
+     |> assign(:workflow_validation_error, nil)
+     |> assign(:workflow_form_valid?, false)}
+  end
+
+  defp handle_save_result({:error, reason}, socket, draft, section) do
+    message = inspect(reason)
+
+    {:error,
+     socket
+     |> put_flash(:error, "#{section_label(section)} rejected: #{message}")
+     |> assign_save_notice(:error, "#{section_label(section)} save failed", message)
+     |> assign(:workflow_validation_visible?, true)
+     |> assign(:workflow_field_errors, %{})
+     |> assign(:workflow_form, draft)
+     |> assign(:workflow_form_dirty?, true)}
   end
 
   @spec assign_validation(Phoenix.LiveView.Socket.t(), map()) :: Phoenix.LiveView.Socket.t()

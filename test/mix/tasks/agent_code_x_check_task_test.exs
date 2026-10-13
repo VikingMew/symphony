@@ -17,6 +17,7 @@ defmodule Mix.Tasks.AgentCodeX.CheckTaskTest do
 
   test "arguments fail with the stable usage" do
     assert_raise Mix.Error, ~r/Usage: mix agent_code_x.check/, fn -> Check.run(["--warn"]) end
+    assert_raise Mix.Error, ~r/Usage: mix agent_code_x.check/, fn -> Check.run(["--write-baseline"]) end
   end
 
   test "mix lint owns the checker and scripts check reaches it only through lint" do
@@ -24,7 +25,7 @@ defmodule Mix.Tasks.AgentCodeX.CheckTaskTest do
     check = File.read!("scripts/check.sh")
 
     assert mix =~
-             ~s(lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "credo --strict"])
+             ~s(lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "locality.check", "credo --strict"])
 
     assert Regex.scan(~r/agent_code_x\.check/, check) == []
     assert [_once] = Regex.scan(~r/^mix lint$/m, check)

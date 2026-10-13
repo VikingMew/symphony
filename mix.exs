@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.MixProject do
   use Mix.Project
 
@@ -217,8 +218,18 @@ defmodule SymphonyElixir.MixProject do
     [
       setup: ["deps.get"],
       build: ["symphony.build"],
-      lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "credo --strict"],
+      "locality.check": ["compile", &locality_check/1],
+      lint: ["agent_code_n.check", "agent_code_x.check", "specs.check", "locality.check", "credo --strict"],
       "symphony.pg_smoke": ["symphony.postgres_smoke"]
     ]
+  end
+
+  defp locality_check(_args) do
+    result = SymphonyElixir.Locality.check_locality()
+    Mix.shell().info(SymphonyElixir.Locality.format_report(result))
+
+    if result.violations != [] do
+      Mix.raise("code locality check failed")
+    end
   end
 end

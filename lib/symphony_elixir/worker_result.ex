@@ -22,6 +22,7 @@ defmodule SymphonyElixir.WorkerResult do
     missing_handoff
     source_preparation_failed
     source_preparation_timeout
+    source_topology_invalid
     workspace_unavailable
     execution_capability_unavailable
     codex_upstream_capacity
@@ -167,7 +168,8 @@ defmodule SymphonyElixir.WorkerResult do
          "reason" => reason,
          "failure_evidence" => evidence
        })
-       when reason in ["source_preparation_timeout", "source_preparation_failed"] and is_map(evidence) do
+       when reason in ["source_preparation_timeout", "source_preparation_failed", "source_topology_invalid"] and
+              is_map(evidence) do
     evidence =
       evidence
       |> stringify_keys()
@@ -176,7 +178,7 @@ defmodule SymphonyElixir.WorkerResult do
   end
 
   defp source_failure_evidence(%{"reason" => reason})
-       when reason in ["source_preparation_timeout", "source_preparation_failed"],
+       when reason in ["source_preparation_timeout", "source_preparation_failed", "source_topology_invalid"],
        do: invalid("#{reason} requires failure_evidence")
 
   defp source_failure_evidence(_summary), do: :ok
@@ -281,6 +283,23 @@ defmodule SymphonyElixir.WorkerResult do
          :ok <- enum(evidence, "command_status", ~w(failed)),
          :ok <- bounded_text(evidence, "operation", @max_text, true),
          do: bounded_detail(evidence, "detail")
+  end
+
+  defp validate_source_failure("source_topology_invalid", evidence) do
+    with :ok <- enum(evidence, "phase", ~w(checkout_failed)),
+         :ok <- enum(evidence, "command_status", ~w(failed)),
+         :ok <- enum(evidence, "operation", ~w(merge_base_exhausted)),
+         :ok <- bounded_text(evidence, "default_ref", @max_text, true),
+         :ok <- bounded_text(evidence, "task_ref", @max_text, true),
+         :ok <- bounded_text(evidence, "base_sha", @max_text, true),
+         :ok <- bounded_text(evidence, "task_sha", @max_text, true),
+         :ok <- positive_integer(evidence, "checkout_depth"),
+         :ok <- exact_value(evidence, "repository_shallow", false),
+         do: bounded_detail(evidence, "detail")
+  end
+
+  defp exact_value(map, key, expected) do
+    if Map.get(map, key) == expected, do: :ok, else: invalid("#{key} must be #{inspect(expected)}")
   end
 
   defp invalid(message), do: {:error, {:invalid_worker_summary, message}}

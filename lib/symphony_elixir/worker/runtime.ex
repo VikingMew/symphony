@@ -352,10 +352,12 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_phase(:completed, _result), do: "complete"
   defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: :source_preparation_failed}), do: "source_preparation"
+  defp terminal_phase(_status, %{reason: :source_topology_invalid}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: reason}) when reason in [:codex_upstream_capacity, :codex_turn_failed], do: "codex"
   defp terminal_phase(_status, _result), do: "validation"
 
   defp reason_for(:cancelled, _), do: "cancelled"
+  defp reason_for(:blocked, %{reason: :source_topology_invalid}), do: "source_topology_invalid"
   defp reason_for(:blocked, _), do: "handoff_failed"
   defp reason_for(_, %{reason: {:handoff_failed, _detail}}), do: "handoff_failed"
   defp reason_for(_, %{validation: %{overall_status: :failed}}), do: "non_zero"

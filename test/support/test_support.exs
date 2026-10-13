@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.TestSupport.WorkflowFixtures do
   @moduledoc false
 

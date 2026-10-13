@@ -4,7 +4,7 @@ genre: design
 domain: [codex, linear]
 status: current
 language: zh-CN
-updated: 2026-09-14
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -61,6 +61,11 @@ Symphony 创建隔离 workspace，并在第一个 Codex turn 前校验 Linear `b
 `base_sha` 以 merge-based history 合入。完成后同时验证 `task_sha` 与 `base_sha` 是 `HEAD` 祖先，且
 remote-default ref 与 `HEAD` 的 merge base 精确等于 `base_sha`。任何准备失败都发生在 session/Codex
 启动前并终止 run。
+
+shallow history 隐藏共同祖先时，runtime 只 deepen default/task 显式 refspec，并在每次成功 deepen 后
+先检查捕获 SHA 的 merge base；全局可见 commit 数不是进展门禁。完整历史仍无共同祖先时输出
+`blocked / source_topology_invalid` 与 `merge_base_exhausted` evidence，保留两侧 ref、SHA、checkout depth
+和 non-shallow 事实，并直接进入持久 blocker；其余 source preparation error 继续走 failed/retry。
 
 每次 run 可能重建 workspace，因此有价值的进度必须 commit/push，不能只留在本地目录。
 

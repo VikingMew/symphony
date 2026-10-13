@@ -4,7 +4,7 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-10-03
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -58,9 +58,10 @@ default-branch commit 创建本地 branch。clone、两类 fetch、远端 branch
 initialize timeout，不保留 worker-local 300/120 秒预算或 full-clone fallback。已存在 branch 保留其
 pre-sync `task_sha`。若 `base_sha` 与 `task_sha` 的 common ancestor 位于 shallow boundary 之外，executor
 对 default/task 两个显式 refspec 执行 `--deepen <checkout_depth>` 并逐轮重试 merge-base；ancestor 一旦
-可见立即停止。每轮用可见 commit 数判断进展；无进展、repository 已非 shallow 仍无共同祖先、或 remote
-无法提供历史时返回 typed failure。不得使用 `--unshallow`、reclone、full-clone fallback 或
-`--allow-unrelated-histories`。
+可见立即停止。每次 deepen 成功后必须先重新检查捕获的 `base_sha` 与 `task_sha` 是否已有 merge base；
+`git rev-list --count --all` 会随 shallow boundary 汇合而非单调变化，不得作为继续求交或成功的门禁。
+repository 已非 shallow 仍无共同祖先时返回 `source_topology_invalid` blocked outcome，不得使用
+`--unshallow`、reclone、full-clone fallback 或 `--allow-unrelated-histories`。
 
 共同祖先可见后，若 task 已包含 `base_sha` 则保持 HEAD 不变，否则 merge 精确的 immutable
 `base_sha`。最后验证原 `task_sha` 和 `base_sha` 都是 HEAD 祖先，且
@@ -71,6 +72,9 @@ pre-sync `task_sha`。若 `base_sha` 与 `task_sha` 的 common ancestor 位于 s
 `command_status: timed_out`、实际 `duration_ms` 和 bounded recent output。
 非超时准备失败使用同一 evidence phase 闭集及 `command_status: failed`，并保留 bounded operation/detail；
 顶层固定为 `source_preparation` / `source_preparation_failed`。
+完整且互不相关的历史使用顶层 `source_preparation` / `source_topology_invalid`，evidence operation 为
+`merge_base_exhausted`，并包含 default/task ref、捕获的 base/task SHA、configured checkout depth 与
+`repository_shallow: false`。它是一次性 blocked terminal，不进入失败重试预算。
 
 ## 推荐默认值
 

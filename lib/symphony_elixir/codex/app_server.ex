@@ -1,3 +1,4 @@
+# Locality split index: docs/code-locality.md#temporary-clause-splits
 defmodule SymphonyElixir.Codex.AppServer do
   @moduledoc """
   Minimal client for the Codex app-server JSON-RPC 2.0 stream over stdio.
@@ -115,36 +116,19 @@ defmodule SymphonyElixir.Codex.AppServer do
         pull_request_key = {:codex_pull_request, make_ref()}
         review_key = {:codex_review, make_ref()}
 
-        tool_executor =
-          Keyword.get(opts, :tool_executor, fn tool, arguments, tool_context ->
-            core_tool_opts = [
-              issue: issue,
-              profile: tool_profile,
-              workspace: Keyword.get(opts, :workspace, workspace),
-              run_id: Keyword.get(opts, :run_id),
-              operator_kind: Keyword.get(opts, :operator_kind),
-              session_id: session_id,
-              thread_id: thread_id,
-              turn_id: turn_id,
-              tool_call_id: Keyword.get(tool_context, :tool_call_id),
-              handoff_submitter: fn payload ->
-                Process.put(handoff_key, payload)
-                :ok
-              end,
-              pull_request_observer: &Process.put(pull_request_key, &1),
-              pull_request_result: fn -> Process.get(pull_request_key) end,
-              review_submitter: fn result ->
-                if Process.get(review_key) do
-                  {:error, :review_already_submitted}
-                else
-                  Process.put(review_key, result)
-                  :ok
-                end
-              end
-            ]
+        tool_context = %{
+          handoff_key: handoff_key,
+          issue: issue,
+          profile: tool_profile,
+          pull_request_key: pull_request_key,
+          review_key: review_key,
+          session_id: session_id,
+          thread_id: thread_id,
+          turn_id: turn_id,
+          workspace: workspace
+        }
 
-            DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
-          end)
+        tool_executor = Keyword.get(opts, :tool_executor, tool_executor(opts, dynamic_tool_opts, tool_context))
 
         Logger.info("Codex session started for #{issue_context(issue)} session_id=#{session_id}")
 
@@ -200,6 +184,49 @@ defmodule SymphonyElixir.Codex.AppServer do
         Logger.error("Codex session failed for #{issue_context(issue)}: #{inspect(reason)}")
         emit_message(on_message, :startup_failed, %{reason: reason}, metadata)
         {:error, reason}
+    end
+  end
+
+  defp tool_executor(opts, dynamic_tool_opts, context) do
+    fn tool, arguments, call_context ->
+      core_tool_opts = core_tool_opts(opts, context, call_context)
+      DynamicTool.execute(tool, arguments, Keyword.merge(dynamic_tool_opts, core_tool_opts))
+    end
+  end
+
+  defp core_tool_opts(opts, context, call_context) do
+    [
+      issue: context.issue,
+      profile: context.profile,
+      workspace: Keyword.get(opts, :workspace, context.workspace),
+      run_id: Keyword.get(opts, :run_id),
+      operator_kind: Keyword.get(opts, :operator_kind),
+      session_id: context.session_id,
+      thread_id: context.thread_id,
+      turn_id: context.turn_id,
+      tool_call_id: Keyword.get(call_context, :tool_call_id),
+      handoff_submitter: process_capture(context.handoff_key),
+      pull_request_observer: &Process.put(context.pull_request_key, &1),
+      pull_request_result: fn -> Process.get(context.pull_request_key) end,
+      review_submitter: review_submitter(context.review_key)
+    ]
+  end
+
+  defp process_capture(key) do
+    fn payload ->
+      Process.put(key, payload)
+      :ok
+    end
+  end
+
+  defp review_submitter(key) do
+    fn result ->
+      if Process.get(key) do
+        {:error, :review_already_submitted}
+      else
+        Process.put(key, result)
+        :ok
+      end
     end
   end
 
@@ -859,191 +886,16 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp turn_error_detail("error", payload, current) do
-    params = Payload.get_any(payload, ["params", :params], %{})
-    error = Payload.get_any(params, ["error", :error], %{})
-    codex_error_info = Payload.get_any(error, ["codexErrorInfo", :codexErrorInfo])
-    will_retry = Payload.get_any(params, ["willRetry", :willRetry])
-
-    detail =
-      %{}
-      |> put_codex_error_info(codex_error_info)
-      |> put_will_retry(will_retry)
-
-    if map_size(detail) == 0, do: current, else: detail
-  end
-
-  defp turn_error_detail(_method, _payload, current), do: current
-
-  defp put_codex_error_info(detail, value) when is_binary(value),
-    do: Map.put(detail, "codex_error_info", String.slice(value, 0, 128))
-
-  defp put_codex_error_info(detail, _value), do: detail
-  defp put_will_retry(detail, value) when is_boolean(value), do: Map.put(detail, "will_retry", value)
-  defp put_will_retry(detail, _value), do: detail
-
-  defp normalize_failed_turn(params) do
-    case param(params, "outcome") || param(params, "status") do
-      outcome when outcome in ["blocked", :blocked] ->
-        {:blocked,
-         %{
-           reason: param(params, "reason") || "blocked",
-           detail: param(params, "detail") || params,
-           references: param(params, "references") || %{}
-         }}
-
-      outcome when outcome in [nil, "failed", :failed] ->
-        {:error, {:turn_failed, params}}
-
-      outcome ->
-        {:error, {:invalid_turn_outcome, outcome, params}}
-    end
-  end
-
-  defp blocked_outcome(reason, payload),
-    do: %{reason: reason, detail: payload, references: %{}}
-
-  defp param(params, "outcome"), do: Payload.get_any(params, ["outcome", :outcome])
-  defp param(params, "status"), do: Payload.get_any(params, ["status", :status])
-  defp param(params, "reason"), do: Payload.get_any(params, ["reason", :reason])
-  defp param(params, "detail"), do: Payload.get_any(params, ["detail", :detail])
-  defp param(params, "references"), do: Payload.get_any(params, ["references", :references])
-
-  defp await_response(port, request_id) do
-    with_timeout_response(port, request_id, Config.settings!().codex.read_timeout_ms, "")
-  end
-
-  defp with_timeout_response(port, request_id, timeout_ms, pending_line) do
-    receive do
-      {^port, {:data, {:eol, chunk}}} ->
-        complete_line = Protocol.complete_line(pending_line, chunk)
-        handle_response(port, request_id, complete_line, timeout_ms)
-
-      {^port, {:data, {:noeol, chunk}}} ->
-        with_timeout_response(port, request_id, timeout_ms, Protocol.complete_line(pending_line, chunk))
-
-      {^port, {:exit_status, status}} ->
-        {:error, {:port_exit, status}}
-
-      {:EXIT, from, :shutdown} when is_pid(from) ->
-        {:error, :cancelled}
-    after
-      timeout_ms ->
-        {:error, :response_timeout}
-    end
-  end
-
-  defp handle_response(port, request_id, data, timeout_ms) do
-    case Protocol.decode_response_line(data, request_id) do
-      {:response_error, error} ->
-        {:error, {:response_error, error}}
-
-      {:response_result, result} ->
-        {:ok, result}
-
-      {:response_payload, response_payload} ->
-        {:error, {:response_error, response_payload}}
-
-      {:other, %{} = other} ->
-        Logger.debug("Ignoring message while waiting for response: #{inspect(other)}")
-        with_timeout_response(port, request_id, timeout_ms, "")
-
-      {:other, _other} ->
-        with_timeout_response(port, request_id, timeout_ms, "")
-
-      {:malformed, payload} ->
-        log_non_json_stream_line(payload, "response stream")
-        with_timeout_response(port, request_id, timeout_ms, "")
-    end
-  end
-
-  defp log_non_json_stream_line(data, stream_label) do
-    case Protocol.stream_log_entry(data) do
-      {:warning, text} -> Logger.warning("Codex #{stream_label} output: #{text}")
-      {:debug, text} -> Logger.debug("Codex #{stream_label} output: #{text}")
-      nil -> :ok
-    end
-  end
-
-  defp issue_context(%{id: issue_id, identifier: identifier}) do
-    "issue_id=#{issue_id} issue_identifier=#{identifier}"
-  end
-
-  defp stop_port(port) when is_port(port) do
-    case :erlang.port_info(port) do
-      :undefined ->
-        :ok
-
-      _ ->
-        try do
-          Port.close(port)
-          :ok
-        rescue
-          ArgumentError ->
-            :ok
-        end
-    end
-  end
-
-  defp terminate_os_process(nil), do: :ok
-
-  defp terminate_os_process(pid) when is_binary(pid) do
-    signal_os_process(pid, "TERM")
-    await_os_process_exit(pid, @os_process_shutdown_grace_ms)
-  end
-
-  defp await_os_process_exit(pid, remaining_ms) when remaining_ms <= 0 do
-    if os_process_alive?(pid) do
-      signal_os_process(pid, "KILL")
-    end
-
-    :ok
-  end
-
-  defp await_os_process_exit(pid, remaining_ms) do
-    if os_process_alive?(pid) do
-      Process.sleep(@os_process_shutdown_poll_ms)
-      await_os_process_exit(pid, remaining_ms - @os_process_shutdown_poll_ms)
-    else
-      :ok
-    end
-  end
-
-  defp signal_os_process(pid, signal) do
-    System.cmd("sh", ["-c", "kill -#{signal} \"$1\"", "kill", pid], stderr_to_stdout: true)
-  end
-
-  defp os_process_alive?(pid) do
-    case System.cmd("sh", ["-c", "kill -0 \"$1\"", "kill", pid], stderr_to_stdout: true) do
-      {_output, 0} -> true
-      {_output, _status} -> false
-    end
-  end
-
-  defp emit_message(on_message, event, details, metadata) when is_function(on_message, 1) do
-    message = metadata |> Map.merge(details) |> Map.put(:event, event) |> Map.put(:timestamp, DateTime.utc_now())
-    on_message.(message)
-  end
-
-  defp metadata_from_message(port, payload) do
-    port |> port_metadata(nil) |> maybe_set_usage(payload)
-  end
-
-  defp maybe_set_usage(metadata, payload) when is_map(payload) do
-    usage = SymphonyElixir.Payload.get_any(payload, ["usage", :usage])
-
-    if is_map(usage) do
-      Map.put(metadata, :usage, usage)
-    else
-      metadata
-    end
-  end
-
-  defp maybe_set_usage(metadata, _payload), do: metadata
-
-  defp default_on_message(_message), do: :ok
-
-  defp send_message(port, message) do
-    Port.command(port, Protocol.encode_message(message))
-  end
+  use SymphonyElixir.Codex.AppServer.Sections.Tail
+  use SymphonyElixir.Codex.AppServer.Sections.Tail2
+  use SymphonyElixir.Codex.AppServer.Sections.Tail3
+  use SymphonyElixir.Codex.AppServer.Sections.Tail4
+  use SymphonyElixir.Codex.AppServer.Sections.Tail5
+  use SymphonyElixir.Codex.AppServer.Sections.Tail6
+  use SymphonyElixir.Codex.AppServer.Sections.Tail7
+  use SymphonyElixir.Codex.AppServer.Sections.Tail8
+  use SymphonyElixir.Codex.AppServer.Sections.Tail9
+  use SymphonyElixir.Codex.AppServer.Sections.Tail10
+  use SymphonyElixir.Codex.AppServer.Sections.Tail11
+  use SymphonyElixir.Codex.AppServer.Sections.Tail12
 end

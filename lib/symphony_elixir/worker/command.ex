@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.Worker.Command do
   @moduledoc false
 
-  alias SymphonyElixir.WorkerResult
+  alias SymphonyElixir.{RuntimeProxy, WorkerResult}
 
   @spec run(map(), Path.t()) :: map()
   def run(command, cwd), do: run(command, cwd, fn _chunk -> :ok end)
@@ -35,7 +35,8 @@ defmodule SymphonyElixir.Worker.Command do
         :exit_status,
         :stderr_to_stdout,
         {:args, args},
-        {:cd, cwd}
+        {:cd, cwd},
+        {:env, RuntimeProxy.port_env()}
       ])
 
     collect(port, System.monotonic_time(:millisecond) + timeout, <<>>, on_output)
