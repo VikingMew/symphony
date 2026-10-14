@@ -48,7 +48,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
     }
   end
 
-  @spec worker_assignment_payload(Issue.t(), map(), RunAdmission.t(), String.t(), String.t() | nil) :: map()
+  @spec worker_assignment_payload(Issue.t(), map(), RunAdmission.t(), String.t(), String.t()) :: map()
   def worker_assignment_payload(%Issue{} = issue, run, %RunAdmission{} = admission, prompt, profile)
       when is_map(run) do
     settings = Config.settings!()
@@ -64,7 +64,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
         "workflow_profile" => profile,
         "execution_mode" => admission.execution_mode,
         "source" => stringify_keys(admission.source),
-        "required_gates" => settings.project.required_gates,
+        "required_gates" => assignment_required_gates(profile, settings.project.required_gates),
         "hooks" => %{
           "after_create" => settings.hooks.after_create,
           "before_run" => settings.hooks.before_run,
@@ -87,6 +87,9 @@ defmodule SymphonyElixir.Orchestrator.Events do
   end
 
   defp stringify_keys(map), do: Map.new(map, fn {key, value} -> {Atom.to_string(key), value} end)
+
+  defp assignment_required_gates("implementation", gates), do: gates
+  defp assignment_required_gates("refinement", _gates), do: []
 
   defp codex_payload(codex) do
     %{

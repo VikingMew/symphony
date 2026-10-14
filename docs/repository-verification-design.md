@@ -4,7 +4,7 @@ genre: design
 domain: [governance, testing, verification]
 status: current
 language: zh-CN
-updated: 2026-10-08
+updated: 2026-10-09
 design_status: landed
 ---
 
@@ -38,6 +38,11 @@ Hex/Rebar、执行现有 `mix setup`。Erlang 从浮动主版本 `28` 收紧为�
 全部通过返回 0，否则返回 1；warning 是日志内容，不具有专用退出码。
 CI 执行同一初始化/完整入口，并在 `always()` 步骤上传 `_build/quality/`。
 新增 upload-artifact 固定到 v4 的 `ea165f8d65b6e75b540449e92b4886f43607fa02`，用于保留失败证据。
+
+项目 `required_gates` 仍是实现代码验证的唯一配置值，命令、顺序、超时、强度和失败条件均不变。
+Panel 在派单边界按既有 workflow profile 投影该列表：`implementation` 原样携带项目门禁，
+`refinement` 精确携带空列表。空项目门禁在两档均保持空列表。该适用范围不增加 skip、豁免、
+allowlist 或第二套验证配置；refinement 的完成合同由执行 runtime owner 负责。
 
 文件/行号和标签选择仍直接使用 ExUnit，不经过完整 runner：
 

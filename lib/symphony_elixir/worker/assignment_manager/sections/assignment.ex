@@ -675,10 +675,16 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
 
       defp record_environment_failure_circuit(_state, _assignment, _event_type, _summary), do: :ok
 
-      defp terminal_result(event_type, summary) when event_type in @terminal_events,
-        do: RunFailure.from_worker_summary(event_type, summary)
+      defp terminal_result("task.failed", summary, {:ok, assignment}) do
+        profile = Map.fetch!(assignment.payload, "workflow_profile")
+        RunFailure.from_worker_assignment_summary("task.failed", summary, profile)
+      end
 
-      defp terminal_result(event_type, _summary) when event_type not in @terminal_events, do: nil
+      defp terminal_result(event_type, summary, _admission)
+           when event_type in ["task.completed", "task.cancelled"],
+           do: RunFailure.from_worker_summary(event_type, summary)
+
+      defp terminal_result(_event_type, _summary, _admission), do: nil
 
       defp validate_correlation(payload, correlation) do
         validate_correlation_fields(Map.get(payload, "correlation", %{}), correlation)

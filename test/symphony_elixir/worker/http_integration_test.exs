@@ -369,6 +369,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       worker_id: "worker-1",
       session_id: "session-1",
       expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
+      payload: %{"workflow_profile" => "implementation"},
       correlation: correlation,
       last_terminal_rejection: nil
     }

@@ -472,7 +472,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
 
         case WorkerResult.validate_event(request.event_type, request.payload) do
           {:ok, summary} ->
-            request = Map.merge(request, %{summary: summary, terminal: terminal_result(request.event_type, summary)})
+            request = Map.merge(request, %{summary: summary, terminal: terminal_result(request.event_type, summary, admission)})
             {:noreply, start_event_write(state, request, admission, from, :event)}
 
           {:error, reason} ->
