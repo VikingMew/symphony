@@ -124,6 +124,10 @@ Run `scripts/quality.sh` before handoff; see [repository verification](docs/repo
 - `defp` specs are optional.
 - `@impl` callback implementations are exempt from local `@spec` requirement.
 - Keep changes narrowly scoped; avoid unrelated refactors.
+- Each commit has one intent; formatting, renames, and functional changes do not share a commit.
+- Public interface changes update documentation and tests in the same change.
+- Rename changes leave the old name absent across the repository and add no compatibility shim.
+- Delete dead code; do not preserve dead code in comments or commented-out code blocks.
 - Keep public interfaces narrow: make required inputs explicit, keep defaults safe, and omit parameters without current consumers.
 - Keep cross-call mutable state in an owned OTP or startup boundary; pass or inject other shared state explicitly.
 - When changing a dependency or tool/action pin, include its lock or pin update and record the upgrade reason in the same change.

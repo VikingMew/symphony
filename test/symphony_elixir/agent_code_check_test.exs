@@ -14,6 +14,13 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
     registry = YamlElixir.read_from_file!("config/agent_code_governance.yml")
     write_registry(root, registry)
     track(root)
+    System.cmd("git", ["-C", root, "config", "user.email", "fixture@example.com"])
+    System.cmd("git", ["-C", root, "config", "user.name", "Fixture"])
+    System.cmd("git", ["-C", root, "commit", "-qm", "fixture"])
+    {head, 0} = System.cmd("git", ["-C", root, "rev-parse", "HEAD"])
+    head = String.trim(head)
+    System.cmd("git", ["-C", root, "update-ref", "refs/remotes/origin/main", head])
+    System.cmd("git", ["-C", root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"])
 
     on_exit(fn -> File.rm_rf!(root) end)
     %{registry: registry, root: root}
@@ -205,6 +212,38 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
     end)
   end
 
+  test "git change lines use the resolved remote default and numeric numstat", %{registry: registry, root: root} do
+    write(root, "lib/changed.ex", "one\n")
+    System.cmd("git", ["-C", root, "add", "lib/changed.ex"])
+    System.cmd("git", ["-C", root, "commit", "-qm", "change"])
+
+    write_registry(root, registry, active: ["change_lines"], rule_limits: %{"change_lines" => {10, 0}})
+    report = AgentCodeCheck.check(root: root)
+
+    assert [%{"threshold" => "change_lines", "target" => "refs/remotes/origin/main", "value" => 1, "status" => "justified"}] =
+             Enum.filter(report["findings"], &(&1["threshold"] == "change_lines"))
+
+    assert AgentCodeCheck.human_output(report) =~
+             "change_lines:refs/remotes/origin/main value=1 default=0 redline=10"
+  end
+
+  test "git change lines fail explicitly when origin HEAD is missing", %{registry: registry, root: root} do
+    System.cmd("git", ["-C", root, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"])
+    write_registry(root, registry, active: ["change_lines"])
+    report = AgentCodeCheck.check(root: root)
+
+    assert report["status"] == "fail"
+    assert Enum.any?(report["errors"], &String.contains?(&1, "origin/HEAD is missing"))
+  end
+
+  test "threshold scopes are exact per kind", %{registry: registry, root: root} do
+    invalid = put_in(registry, ["thresholds", Access.at(5), "scope", "paths"], ["**/*"])
+    write_raw_registry(root, invalid)
+    track(root)
+
+    assert_raise ArgumentError, ~r/threshold scope requires exactly/, fn -> AgentCodeCheck.check(root: root) end
+  end
+
   test "reports and the single human waterline are stable", %{registry: registry, root: root} do
     write(root, "lib/z.ex", lines(4))
     write(root, "lib/a.ex", lines(4))
@@ -240,7 +279,14 @@ defmodule SymphonyElixir.AgentCodeCheckTest do
   end
 
   defp write_registry(root, registry, opts \\ []) do
-    active = MapSet.new(Keyword.get(opts, :active, ["file_lines"]))
+    active_ids =
+      Keyword.get_lazy(opts, :active, fn ->
+        registry["thresholds"]
+        |> Enum.filter(&(&1["status"] == "enforced"))
+        |> Enum.map(& &1["id"])
+      end)
+
+    active = MapSet.new(active_ids)
     limits = Keyword.get(opts, :rule_limits, %{})
 
     thresholds =
