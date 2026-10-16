@@ -17,6 +17,21 @@ distinct from the SSH `worker` Docker target. PostgreSQL is reachable only on th
 network. The Panel and execution worker have separate egress networks and share only an internal
 control network.
 
+## Supported file sets
+
+| Path | Files | Caller | Panel service/container | Worker service/container | Profile |
+| --- | --- | --- | --- | --- | --- |
+| Centralized local Panel | `compose.yaml` | local development | `symphony` / `symphony-symphony-1` | none | none |
+| Centralized Panel with opt-in worker | `compose.yaml` + `compose.host-override.yaml` | local operator | `symphony` / `symphony-symphony-1` | `execution-worker` / `symphony-execution-worker-1` | `execution-worker` |
+| Published worker stack | `compose.yaml` + `compose.worker-release.yaml` + `compose.host-override.yaml` | `scripts/deploy.sh` for deploy, rollback, and check | `symphony` / `symphony-symphony-1` | `execution-worker` / `symphony-execution-worker-1` | `execution-worker` |
+
+`compose.worker-release.yaml` is the release shape layer: it removes builds, requires immutable
+images, selects worker mode, and replaces only the published Panel volumes. `compose.host-override.yaml`
+is shared by both worker paths and may contain machine-specific binds, paths, or ports; this
+repository uses it only for the worker `auth.json` bind. It must not define images, builds, pull
+policy, services, profiles, execution mode, networks, or release volume replacement. The centralized
+Panel retains `codex_home` in both local paths; the published Panel does not.
+
 ## Container Control-Plane Boundary
 
 This document owns the Compose container-control-plane contract. The `migrate`, `symphony`
@@ -80,7 +95,7 @@ docker compose run --rm symphony ssh-keygen -t ed25519
 ```
 
 The published Panel is the worker-mode control plane. Publication builds the `symphony` target
-with `SYMPHONY_EMBED_CODEX=false`, and `compose.published.yaml` fixes
+with `SYMPHONY_EMBED_CODEX=false`, and `compose.worker-release.yaml` fixes
 `SYMPHONY_EXECUTION_MODE=worker` while replacing the Panel mounts without `codex_home`. That image
 contains no Node/Codex installation, `codex` link, `CODEX_HOME`, or Codex OAuth volume. The
 separately published `execution-worker` image owns execution, keeps Codex and `CODEX_HOME`, and
@@ -216,25 +231,23 @@ Symphony `latest` tag.
 Use matching immutable full-SHA tags or recorded digests from the same successful workflow run.
 Before pulling or starting services, verify that the selected full commit was reviewed and that its
 required CI checks passed. Set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that exact full commit
-SHA. The published override removes all application builds, requires both references, and always
-pulls them; the worker profile remains opt-in:
+SHA. The release shape removes all application builds and requires both references; the worker
+profile remains opt-in. Pulling, backup, migration, switching, and checking are owned by the
+deployment entry point:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env config --quiet
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d postgres
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml run --rm migrate
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d symphony
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --profile execution-worker up -d execution-worker
+scripts/deploy.sh deploy 0123456789abcdef0123456789abcdef01234567
 ```
 
-Never omit any of the three Compose files from a published-image pull, migration, start, or
-rollback command. `compose.host-override.yaml` is not loaded automatically. The published override
-requires one immutable `SYMPHONY_IMAGE` for both `migrate` and `symphony`, so there is no published
-path that can silently fall back to `symphony:local`. Panel startup compares the migrations in that
+Never bypass the deployment entry point for a published pull, migration, start, or rollback.
+It always loads `compose.yaml + compose.worker-release.yaml + compose.host-override.yaml`, the
+`execution-worker` profile, and the real services `symphony` and `execution-worker`.
+`compose.host-override.yaml` is not loaded automatically. The release shape requires one immutable
+`SYMPHONY_IMAGE` for both `migrate` and `symphony`, so there is no published path that can silently
+fall back to `symphony:local`. Panel startup compares the migrations in that
 image with the complete `schema_migrations` set before any business child starts. Pending and
 image-unknown applied versions both fail startup without writing schema changes.
 
@@ -416,14 +429,13 @@ project/run/event state. To roll application code back, restore the prior image 
 retag `symphony:rollback`), then start it only if its migration compatibility is understood. If a
 database restore is required, stop Symphony first and use the procedure below.
 
-For a published-image deployment, keep the same three Compose files and replace only the immutable
+For a published-image deployment, run the deployment entry point with the target SHA. It keeps the
+same three-file release set and replaces only the immutable
 reference. Pull before migration so Compose cannot fall back to a local build:
 
 ```bash
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:v1.2.3
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml run --rm migrate
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d symphony
+scripts/deploy.sh deploy 0123456789abcdef0123456789abcdef01234567
 ```
 
 To roll application code back, restore the previously recorded version/SHA tag or digest and run

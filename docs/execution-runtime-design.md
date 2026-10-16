@@ -35,6 +35,26 @@ the existing host `auth.json` named by the required
 deployment error. Compose does not load this non-default override automatically, so every worker
 deployment command must name it.
 
+## Published deployment shape and acceptance
+
+The release worker stack has one authoritative file set:
+`compose.yaml + compose.worker-release.yaml + compose.host-override.yaml`, with the
+`execution-worker` profile and services named `symphony` and `execution-worker`. The release shape
+removes builds, requires immutable Panel and worker images, selects `SYMPHONY_EXECUTION_MODE=worker`,
+and replaces the Panel volume list without `codex_home`. Centralized local Panel paths keep
+`codex_home`; the host override is shared by local opt-in workers and the release path and carries
+only machine-specific worker binds, currently the host `auth.json` bind. It does not define image,
+build, profile, service identity, execution mode, network, pull policy, or release-shape values.
+
+Operators provide one full lowercase commit SHA to `scripts/deploy.sh deploy` or `check`. The
+deploy command explicitly pulls the Panel and worker images before the PostgreSQL custom-format
+backup, atomically writes `SYMPHONY_IMAGE`, `SYMPHONY_EXECUTION_WORKER_IMAGE`, and
+`SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION`, runs migration, and switches both app services in one
+Compose call. Later calls use `--no-build` and never pull again. A failing stage stops immediately
+and reports the stage, target, three pins, and both actual image references. `check` is read-only.
+Success requires `images: same sha`, `migrations: current`, `worker session: online`, and
+`pins: current`; the command then only tells the operator to enable listening manually.
+
 This bind shares the host's account-level Codex login rather than a worker-scoped token. The worker
 therefore has every permission granted to that login, and compromise of the worker exposes the same
 credential boundary as compromise of the host login. Host and worker refreshes can race: one side's

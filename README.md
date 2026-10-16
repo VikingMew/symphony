@@ -295,17 +295,16 @@ equal to that full commit SHA:
 export SYMPHONY_IMAGE=ghcr.io/vikingmew/symphony:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_IMAGE=ghcr.io/vikingmew/symphony-execution-worker:sha-0123456789abcdef0123456789abcdef01234567
 export SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=0123456789abcdef0123456789abcdef01234567
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml pull
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml up -d
+scripts/deploy.sh deploy 0123456789abcdef0123456789abcdef01234567
 ```
 
-After deployment, the operator must confirm that Panel and execution-worker are running the two
-selected immutable references, that Panel readiness is healthy, and that the execution-worker is
-healthy. CI never publishes or updates a Symphony `latest` tag.
+The deploy entry point performs the pull, backup, pin update, migration, switch, and check in one
+fail-fast sequence. Repeat the same command to converge or use `scripts/deploy.sh deploy <older-sha>`
+for a rollback. CI never publishes or updates a Symphony `latest` tag.
 
-The three-file form is mandatory for every published pull, migration, start, and rollback command.
-`compose.host-override.yaml` is not loaded automatically; omitting it leaves the worker using the
-older named-volume copy of `auth.json`. Its required
+The deployment entry point owns every published pull, migration, start, and rollback command and
+always loads the three-file release set. `compose.host-override.yaml` is not loaded automatically;
+omitting it leaves the worker using the older named-volume copy of `auth.json`. Its required
 immutable `SYMPHONY_IMAGE` is shared by `migrate` and `symphony`. Before Repo, orchestration,
 worker reconciliation, or HTTP starts, the Panel release performs a read-only exact comparison
 with `schema_migrations`; mismatches terminate startup. Successful readiness includes
