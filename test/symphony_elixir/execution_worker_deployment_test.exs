@@ -8,7 +8,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
-  @published_compose Path.expand("../../compose.published.yaml", __DIR__)
+  @published_compose Path.expand("../../compose.worker-release.yaml", __DIR__)
   @quality_workflow Path.expand("../../.github/workflows/make-all.yml", __DIR__)
 
   test "shared Codex stage installs the exact supported version" do
@@ -203,6 +203,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
     assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE:-\S+:[0-9a-f]{40}/
     assert compose =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION:-[0-9a-f]{40}/
+    assert env =~ ~r/SYMPHONY_IMAGE=\S+\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_IMAGE=\S+:[0-9a-f]{40}\n/
     assert env =~ ~r/SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION=[0-9a-f]{40}\n/
   end
@@ -229,11 +230,11 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     workflow = File.read!(@publish_workflow)
 
     assert workflow =~
-             "docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --profile execution-worker config --format json"
+             "docker compose -f compose.yaml -f compose.worker-release.yaml -f compose.host-override.yaml --profile execution-worker config --format json"
 
     assert workflow =~ ~r/\.services\["execution-worker"\]\.image == env\.SYMPHONY_EXECUTION_WORKER_IMAGE/
     assert workflow =~ ~r/\.services\["execution-worker"\] \| has\("build"\)/
-    assert workflow =~ ~r/\.services\["execution-worker"\]\.pull_policy == "always"/
+    refute workflow =~ "pull_policy"
     assert workflow =~ ~r/\.services\["execution-worker"\]\.profiles == \["execution-worker"\]/
     assert workflow =~ ~s(.type == "volume" and .target == "/home/symphony/.codex")
     assert workflow =~ ~s(.source == env.SYMPHONY_EXECUTION_WORKER_CODEX_AUTH_FILE)
@@ -251,7 +252,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
     assert worker =~ "build: !reset null"
     assert worker =~ "SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE"
-    assert worker =~ "pull_policy: always"
+    refute worker =~ "pull_policy"
   end
 
   test "published migration and Panel require the same immutable image" do
@@ -263,7 +264,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       body = service_body(compose, service)
       assert body =~ "build: !reset null"
       assert body =~ "image: #{required_image}"
-      assert body =~ "pull_policy: always"
+      refute body =~ "pull_policy"
     end
 
     # docs/compose.md supply-chain boundary: published Compose uses an immutable image reference.
@@ -288,9 +289,13 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
         command_lines_between(worker_guide, "For a published rollback", "Verify the worker")
 
     for command <- readme_commands ++ guide_commands ++ rollback_commands ++ worker_commands do
-      assert command =~
-               "-f compose.yaml -f compose.published.yaml -f compose.host-override.yaml",
-             command
+      if command =~ "scripts/deploy.sh" do
+        assert command =~ "scripts/deploy.sh deploy ", command
+      else
+        if command =~ "-f compose.yaml" do
+          assert command =~ "-f compose.yaml -f compose.host-override.yaml", command
+        end
+      end
     end
   end
 

@@ -2,12 +2,10 @@ services:
   migrate:
     build: !reset null
     image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
-    pull_policy: always
 
   symphony:
     build: !reset null
     image: ${SYMPHONY_IMAGE:?set SYMPHONY_IMAGE to an immutable ghcr.io/vikingmew/symphony tag or digest}
-    pull_policy: always
     environment:
       SYMPHONY_EXECUTION_MODE: worker
     volumes: !override
@@ -18,5 +16,4 @@ services:
 
   execution-worker:
     build: !reset null
-    image: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE to an immutable ghcr.io/vikingmew/symphony-execution-worker tag or digest}
-    pull_policy: always
+    image: ${SYMPHONY_EXECUTION_WORKER_IMAGE:?set SYMPHONY_EXECUTION_WORKER_IMAGE to an immutable ghcr.io/vikingmew/symphony-execution-worker SHA tag or digest}

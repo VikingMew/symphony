@@ -109,17 +109,16 @@ environment or rendered Compose output.
 
 ## Deploy, rotate, and inspect
 
-For a published deployment, include the base, published, and host override files with matching
-immutable Panel and worker references. The published override selects worker execution for the
-Codex-free Panel; the host override supplies the live auth file; the execution-worker profile
-remains opt-in and must be started with it:
+For a published deployment, use the base, worker-release, and host override files with matching
+immutable Panel and worker references through the deployment entry point. The release shape selects worker execution for the Codex-free
+Panel; the host override supplies the live auth file; the execution-worker profile remains opt-in.
+Use the deployment entry point so it loads the complete release file set and real service names:
 
 ```bash
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env up -d postgres migrate symphony
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker up -d execution-worker
+scripts/deploy.sh deploy 0123456789abcdef0123456789abcdef01234567
 ```
 
-Start the Panel in its existing `centralized` mode, then opt in the idle worker:
+For a centralized local Panel with an opt-in worker, use only the base and host override files:
 
 ```bash
 docker compose -f compose.yaml -f compose.host-override.yaml --env-file .env up -d postgres migrate symphony
@@ -209,10 +208,9 @@ set `SYMPHONY_EXECUTION_WORKER_SOURCE_REVISION` to that worker image's full comm
 three-file form; the host override is not loaded automatically.
 
 ```bash
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env --profile execution-worker stop execution-worker
+scripts/deploy.sh deploy 0123456789abcdef0123456789abcdef01234567
 # set SYMPHONY_EXECUTION_MODE=centralized in .env
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env up -d --force-recreate symphony
-docker compose -f compose.yaml -f compose.published.yaml -f compose.host-override.yaml --env-file .env ps
+scripts/deploy.sh check 0123456789abcdef0123456789abcdef01234567
 ```
 
 Verify the worker has no new heartbeat/claim, the Panel is ready, existing history remains visible,
