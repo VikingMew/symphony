@@ -19,6 +19,7 @@ defmodule SymphonyElixir.AgentCodeCheck do
   @gate_keys ~w(id checker implementation fast_chain thresholds)
   @threshold_keys ~w(id kind scope unit redline default source_nature evidence_tier status default_exceedance_reason calibration)
   @threshold_scope_keys ~w(paths language)
+  @git_change_scope_keys ~w(base_ref head_ref)
   @calibration_keys ~w(method sample sample_value date distribution)
   @distribution_keys ~w(population points)
   @distribution_point_keys ~w(statistic value)
@@ -96,10 +97,13 @@ defmodule SymphonyElixir.AgentCodeCheck do
     details =
       report["errors"] ++
         (report["findings"]
-         |> Enum.filter(&(&1["status"] == "failure"))
+         |> Enum.filter(&(&1["status"] in ["failure", "justified"] or &1["threshold"] == "change_lines"))
          |> Enum.map(fn finding ->
+           limit = if is_nil(finding["limit"]), do: "none", else: to_string(finding["limit"])
+
            "#{finding["threshold"]}:#{finding["target"]} " <>
-             "value=#{finding["value"]} limit=#{finding["limit"]}"
+             "value=#{finding["value"]} default=#{finding["default"]} redline=#{finding["redline"]} limit=#{limit} " <>
+             "status=#{finding["status"]} reason=#{finding["reason"]}"
          end))
 
     Enum.join([header, waterline_line | details], "\n")
@@ -194,7 +198,8 @@ defmodule SymphonyElixir.AgentCodeCheck do
 
   defp validate_threshold!(threshold) when is_map(threshold) do
     exact_keys!(threshold, @threshold_keys, "threshold")
-    exact_keys!(threshold["scope"], @threshold_scope_keys, "threshold scope")
+    scope_keys = if threshold["kind"] == "git_change_lines", do: @git_change_scope_keys, else: @threshold_scope_keys
+    exact_keys!(threshold["scope"], scope_keys, "threshold scope")
 
     unless valid_threshold?(threshold),
       do: raise(ArgumentError, "invalid threshold #{inspect(threshold["id"])}")
@@ -218,7 +223,7 @@ defmodule SymphonyElixir.AgentCodeCheck do
 
   defp valid_threshold_identity?(threshold) do
     threshold["id"] in @threshold_ids and
-      threshold["kind"] in ~w(file_lines function_lines nesting_depth identifier_occurrences recorded_sample) and
+      threshold["kind"] in ~w(file_lines function_lines nesting_depth identifier_occurrences recorded_sample git_change_lines) and
       threshold["evidence_tier"] in @evidence_tiers and
       threshold["status"] in ~w(enforced record_only)
   end
@@ -229,10 +234,17 @@ defmodule SymphonyElixir.AgentCodeCheck do
   end
 
   defp valid_threshold_scope?(threshold) do
-    paths = threshold["scope"]["paths"]
+    case threshold["kind"] do
+      "git_change_lines" ->
+        threshold["scope"]["base_ref"] == "refs/remotes/origin/HEAD" and
+          threshold["scope"]["head_ref"] == "HEAD"
 
-    is_list(paths) and paths != [] and Enum.all?(paths, &nonempty_string?/1) and
-      nonempty_string?(threshold["scope"]["language"])
+      _ ->
+        paths = threshold["scope"]["paths"]
+
+        is_list(paths) and paths != [] and Enum.all?(paths, &nonempty_string?/1) and
+          nonempty_string?(threshold["scope"]["language"])
+    end
   end
 
   defp validate_calibration!(calibration, threshold_id) do
@@ -380,6 +392,86 @@ defmodule SymphonyElixir.AgentCodeCheck do
         value: threshold["calibration"]["sample_value"]
       }
     ]
+  end
+
+  defp measure_threshold(root, _scope, %{"kind" => "git_change_lines"} = threshold) do
+    case git_change_lines(root, threshold["scope"]) do
+      {:ok, target, value} -> [%{threshold: threshold, target: target, value: value}]
+      {:error, reason} -> [measurement_error(threshold, {threshold["scope"]["base_ref"], reason})]
+    end
+  end
+
+  defp git_change_lines(root, %{"base_ref" => base_ref, "head_ref" => head_ref}) do
+    with {:ok, target} <- symbolic_remote_head(root, base_ref),
+         {:ok, _target_commit} <- git_verify(root, target <> "^{commit}", "remote-default target commit"),
+         {:ok, _head_commit} <- git_verify(root, head_ref <> "^{commit}", "head commit"),
+         {:ok, merge_base} <- git_merge_base(root, target, head_ref),
+         {:ok, diff} <- git_command(root, ["diff", "--numstat", "--no-renames", "#{merge_base}..#{head_ref}"]) do
+      {:ok, target, parse_numstat(diff)}
+    end
+  end
+
+  defp symbolic_remote_head(root, base_ref) do
+    case git_command(root, ["symbolic-ref", "--quiet", base_ref]) do
+      {:ok, target} ->
+        target = String.trim(target)
+
+        if String.starts_with?(target, "refs/remotes/origin/") and target != base_ref do
+          {:ok, target}
+        else
+          {:error, "#{base_ref} must resolve to a full origin remote ref"}
+        end
+
+      {:error, reason} ->
+        {:error, "#{base_ref} is missing or not symbolic: #{reason}"}
+    end
+  end
+
+  defp git_verify(root, ref, label) do
+    case git_command(root, ["rev-parse", "--verify", ref]) do
+      {:ok, _commit} = result -> result
+      {:error, reason} -> {:error, "#{label} is unavailable: #{reason}"}
+    end
+  end
+
+  defp git_merge_base(root, target, head_ref) do
+    case git_command(root, ["merge-base", target, head_ref]) do
+      {:ok, merge_base} -> {:ok, String.trim(merge_base)}
+      {:error, reason} -> {:error, "merge-base for #{target} and #{head_ref} is unavailable: #{reason}"}
+    end
+  end
+
+  defp git_command(root, args) do
+    case System.cmd("git", ["-C", root | args], stderr_to_stdout: true) do
+      {output, 0} -> {:ok, output}
+      {output, status} -> {:error, "git #{Enum.join(args, " ")} failed with status #{status}: #{String.trim(output)}"}
+    end
+  end
+
+  defp parse_numstat(output) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.map(&parse_numstat_line/1)
+    |> Enum.sum()
+  end
+
+  defp parse_numstat_line(line) do
+    case String.split(line, "\t", parts: 3) do
+      [added, deleted, _path] ->
+        parse_numstat_pair(added, deleted)
+
+      _ ->
+        0
+    end
+  end
+
+  defp parse_numstat_pair(added, deleted) do
+    with {added, ""} <- Integer.parse(added),
+         {deleted, ""} <- Integer.parse(deleted) do
+      added + deleted
+    else
+      _ -> 0
+    end
   end
 
   defp source_measurements(root, scope, %{"kind" => "identifier_occurrences"} = threshold) do
@@ -553,6 +645,17 @@ defmodule SymphonyElixir.AgentCodeCheck do
           threshold["default_exceedance_reason"]
         )
 
+      threshold["kind"] == "git_change_lines" ->
+        threshold_finding(
+          threshold,
+          target,
+          value,
+          threshold["default"],
+          "pass",
+          "pass",
+          "within the configured default limit"
+        )
+
       true ->
         nil
     end
@@ -564,6 +667,8 @@ defmodule SymphonyElixir.AgentCodeCheck do
       "target" => target,
       "value" => value,
       "limit" => limit,
+      "default" => threshold["default"],
+      "redline" => threshold["redline"],
       "tier" => tier,
       "status" => status,
       "reason" => reason

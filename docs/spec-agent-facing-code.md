@@ -77,7 +77,22 @@ G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成�
 当前水位为零，因此治理登记表没有基线字段，检查器没有基线读取或放行分支；任何尝试加入
 旧、带日期或偏好型基线数据都会作为未知登记字段失败。
 
-## 3. 阈值与来源
+## 3. Threshold registration kinds and scope contract
+
+This section is the L4 contract added by SYM-148. The six registered threshold kinds are
+`file_lines`, `function_lines`, `nesting_depth`, `identifier_occurrences`, `recorded_sample`, and
+`git_change_lines`. The first five kinds accept exactly `paths` and `language` in their threshold
+scope. `git_change_lines` accepts exactly `base_ref` and `head_ref`; the repository registration
+uses `refs/remotes/origin/HEAD` and `HEAD`. Threshold-level `exclusions` are not part of this
+contract. Unknown or missing scope keys fail registry validation.
+
+`git_change_lines` resolves the configured remote-default symbolic reference, verifies its target and
+`HEAD`, computes their merge-base, and sums numeric additions plus deletions from `git diff --numstat`;
+binary rows are ignored. A missing symbol, target commit, or merge-base is an explicit checker error.
+The project default branch remains the checkout/PR authority and is not substituted for
+`origin/HEAD`.
+
+## 4. 阈值与来源
 
 下表只列需要数字的条款。性质标“引用”的值来自公开建议或事实；“对照”来自与本机已有件
 比对；“本规范设定”的值必须按本仓重新标定后才生效。机器使用的结构化表示是
@@ -91,15 +106,15 @@ G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成�
 | 嵌套深度 | 4 层 | 2 层 | 引用＋本规范设定：默认 2 层来自来源模板建议，红线为本规范设定 |
 | 同名标识符出现次数 | 5 处 | 1 处 | 引用：来源建议名字的检索命中数小于 5，本规范把“默认”定为唯一 |
 | 全量门禁时长 | 10 分钟 | 5 分钟 | 本规范设定 |
-| 单次变更规模 | 需按仓标定 | 需按仓标定 | 本规范设定：本仓标定前不作判定，只记录 |
+| 单次变更规模 | 1500 行 | 700 行 | 固定 policy limits，沿用 2026-10-04 快照选择，不是滚动分位数映射 |
 
-门禁时长与变更规模若本仓已有先例（例如基线检查脚本的实际耗时），以本仓实测覆盖本表
-数值，并在阈值文件中记录覆盖日期。
+门禁时长仍为 `record_only`；变更规模由 `git_change_lines` 动态测量，固定 policy limits
+为 700/1500，并在登记表记录 2026-10-04 的可复现校准窗口与分布。
 
 常驻规则保持简短、细节移入按需文档只表达取向，由人工评审；它没有行数阈值，不进入机器
 符合性判定，也不使用数值基线。
 
-## 4. 符合性等级
+## 5. 符合性等级
 
 - 完全符合：第二章全部“必须”与“不得”条款满足；“应当”条款的偏离均有书面理由。
 - 部分符合：G、N、V 三组的强制条款全部满足；L、O、D、P、C、X 组存在未满足项，且已列出补齐计划与时间点。
@@ -109,7 +124,7 @@ G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成�
 本票没有完成九组 67 条的证据，因此不填写任何仓库级“完全符合”“部分符合”或“起步阶段”
 正向声明。
 
-## 5. 符合性声明模板
+## 6. 符合性声明模板
 
 只有在相应分组票提供完整、可回链证据后才可填写本表。
 
@@ -127,7 +142,7 @@ G/N/L/V/O/D/P/C/X 分组的 67 条编号条款须由各分组证据独立完成�
 引用方式：在评审意见、issue 与 PR 描述中引用稳定条款编号，例如“本变更未满足 V-01，
 缺一条命令跑门禁”。条款编号稳定，组号不随开发阶段变化。
 
-## 6. 条款来源一览
+## 7. 条款来源一览
 
 1. 三轴分组（可检索、可局部读取、可机器验证）与 agent 四条约束，取自本机
    ~/wiki/entries/2026-09-21-clean-code-for-ai-agents.md（AkitaOnRails《Clean Code for AI Agents》，

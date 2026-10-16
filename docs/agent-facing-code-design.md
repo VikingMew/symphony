@@ -32,6 +32,12 @@ V-01 至 V-09 及初始化、runner 日志/JSON、默认测试确定性和禁外
 [仓库验证设计](repository-verification-design.md)唯一拥有。本文继续拥有检查器 JSON、阈值、
 门禁接入地位与完整门禁时长的 `record_only` 标定；runner 只报告观测，不设时长红线。
 
+SYM-148 also assigns this owner the C-group change-discipline audit, the exact threshold scope
+schema, `git_change_lines` measurement, remote-default Git-history preparation, CI complete-history
+checkout, human review evidence, and the dynamic 700/1500 gate. The C-specific baseline remains zero;
+there is no exemption path. `refs/remotes/origin/HEAD` is the measurement authority and
+`project.default_branch` remains the separate checkout/PR authority.
+
 ## 2. 数据流
 
 `mix agent_code.check` 只读取治理登记表。登记表必须恰好包含 G-01 至 G-08、六个现有阈值、
@@ -43,6 +49,10 @@ V-01 至 V-09 及初始化、runner 日志/JSON、默认测试确定性和禁外
 `generated`、`third_party`、`binary`、`data` 类别和非空理由的排除模式；无命中和多重命中都
 带路径失败。`check`、`list` 和 `stats` 复用同一解析器。阈值测量再从该手写源列表按自身路径
 范围筛选，没有第二套文件枚举或隐藏排除规则。
+
+Threshold scopes are kind-specific: `file_lines`, `function_lines`, `nesting_depth`,
+`identifier_occurrences`, and `recorded_sample` accept exactly `paths` and `language`;
+`git_change_lines` accepts exactly `base_ref` and `head_ref`.
 
 检查器按登记范围排序文件和结果。已生效阈值严格在观测值大于红线时失败；等于红线通过。
 默认值超限生成带登记理由的非阻断记录，`record_only` 阈值只产生观测，不进入符合性结论。
@@ -130,8 +140,9 @@ N-04 和 N-06 的语义部分保留为 `AGENTS.md` 的短人核规则。独立�
 `mix docs.drift` 判定。
 
 质量入口在执行 checker 或调用它的测试前运行 `scripts/prepare_navigation_git_history.sh`。
-该脚本只在 Git checkout 为 shallow 时补全历史，并要求 `origin/main` 存在，使本地与 CI 都以
-真实 merge base 执行同一棘轮比较；Git 历史不可用时门禁直接失败。
+该脚本只在 Git checkout 为 shallow 时补全历史，并要求 `origin/main` 存在；当 `origin/HEAD`
+缺失时通过 `git remote set-head origin -a` 建立符号引用，使本地与 CI 都以真实 merge base
+执行同一比较；Git 历史不可用时门禁直接失败。
 
 `mix agent_code_n.check --write-baseline` 复用同一扫描器、真实 merge base 与
 `BaselineLocations` 映射，先在内存生成排序候选并完成形状、精确匹配和单调校验，全部通过后

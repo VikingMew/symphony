@@ -8,3 +8,9 @@ if [[ "$(git rev-parse --is-shallow-repository)" == "true" ]]; then
 fi
 
 git rev-parse --verify origin/main >/dev/null
+
+if ! git rev-parse --verify --quiet refs/remotes/origin/HEAD >/dev/null; then
+  git remote set-head origin -a >/dev/null
+fi
+
+git rev-parse --verify refs/remotes/origin/HEAD >/dev/null

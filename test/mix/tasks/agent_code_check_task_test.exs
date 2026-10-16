@@ -12,7 +12,7 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
 
   test "default output is concise and JSON output is a single parseable object" do
     human = capture_io(fn -> assert nil == Check.run([]) end)
-    assert human =~ "agent_code.check: PASS (6 thresholds, 1 active"
+    assert human =~ "agent_code.check: PASS (6 thresholds, 2 active"
     assert length(Regex.scan(~r/^agent_code waterline:/m, human)) == 1
 
     Mix.Task.reenable("agent_code.check")
@@ -56,6 +56,15 @@ defmodule Mix.Tasks.AgentCode.CheckTaskTest do
     assert check =~ "mix agent_code.check"
     assert quality =~ "elixir scripts/quality.exs"
     assert File.read!("scripts/quality.exs") =~ "~w(check unit dialyzer)"
+    assert workflow =~ "fetch-depth: 0"
+  end
+
+  test "required change-discipline rules remain present verbatim" do
+    agents = File.read!("AGENTS.md")
+    assert agents =~ "Each commit has one intent"
+    assert agents =~ "Public interface changes update documentation and tests"
+    assert agents =~ "Rename changes leave the old name absent across the repository and add no compatibility shim"
+    assert agents =~ "Delete dead code; do not preserve dead code in comments or commented-out code blocks"
   end
 
   test "the checked-in registry contains G-01 through G-08 and the six thresholds" do

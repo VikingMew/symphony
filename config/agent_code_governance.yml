@@ -73,7 +73,7 @@ gates:
     checker: "mix agent_code.check"
     implementation: lib/mix/tasks/agent_code.check.ex
     fast_chain: scripts/check.sh
-    thresholds: [file_lines]
+    thresholds: [file_lines, change_lines]
 thresholds:
   - id: file_lines
     kind: file_lines
@@ -188,24 +188,28 @@ thresholds:
           - statistic: elapsed_minutes
             value: 1.1357
   - id: change_lines
-    kind: recorded_sample
+    kind: git_change_lines
     scope:
-      paths: ["git diff --numstat origin/main...HEAD"]
-      language: Git added plus deleted lines
+      base_ref: refs/remotes/origin/HEAD
+      head_ref: HEAD
     unit: added plus deleted lines
-    redline: pending
-    default: pending
-    source_nature: "本规范设定：本仓标定前不作判定，只记录。"
+    redline: 1500
+    default: 700
+    source_nature: "Fixed policy limits selected from the 2026-10-04 repository snapshot; not rolling percentile mappings."
     evidence_tier: machine
-    status: record_only
-    default_exceedance_reason: "No repository-calibrated default or redline exists, so change size cannot support a conformance conclusion."
+    status: enforced
+    default_exceedance_reason: "Current change size is above the preferred 700-line limit but remains below the 1500-line redline; split the change when practical."
     calibration:
-      method: "Sum added and deleted numeric fields from git diff --numstat origin/main...HEAD."
-      sample: "2026-09-24 SYM-140 staged implementation sample: 1176 added plus 5 deleted lines, 1181 total."
-      sample_value: 1181
-      date: "2026-09-24"
+      method: "From refs/remotes/origin/HEAD, inspect the 50 newest first-parent merges ending at 11340019ebdab219599dff29499e2ffbedba1b13; sum numeric numstat additions and deletions against each merge's first parent, ignoring binary rows, and use nearest-rank ceil(p × 50)."
+      sample: "Window 98366bd1e084386f3d3ba1ff90e7800273cfd23b to 11340019ebdab219599dff29499e2ffbedba1b13; 50 first-parent merges; 2026-10-04 snapshot."
+      sample_value: 863
+      date: "2026-10-04"
       distribution:
-        population: "Recorded repository change-size samples."
+        population: "50 first-parent merge totals from the fixed 2026-10-04 snapshot; numeric numstat rows only."
         points:
-          - statistic: added_plus_deleted_lines
-            value: 1181
+          - statistic: P75
+            value: 863
+          - statistic: P95
+            value: 1662
+          - statistic: max
+            value: 2022
