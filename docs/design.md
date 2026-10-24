@@ -16,6 +16,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | Design | Subject | Status |
 | --- | --- | --- |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary | landed |
+| [host-side-probe-design.md](host-side-probe-design.md) | Proposed host-side execution probe and dual-surface routing | proposed |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior | landed |
 | [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow | landed |
