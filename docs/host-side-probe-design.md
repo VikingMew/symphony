@@ -4,7 +4,7 @@ genre: design
 domain: [execution, workers, routing, operations]
 status: current
 language: zh-CN
-updated: 2026-10-24
+updated: 2026-10-30
 design_status: proposed
 ---
 
@@ -43,7 +43,7 @@ design_status: proposed
 | 决定 | 单一推荐 | 主要代价 | 阻塞的第一张实现票 |
 | --- | --- | --- | --- |
 | 拓扑 | 探针只从宿主向 Panel root 发起出站 HTTPS；同一协议覆盖局域网和异地网络，root 的固定 discovery relation 返回协议入口。 | 异地使用必须先提供可信 TLS 终止、DNS 与出站可达性；Panel 不主动探测宿主。 | HP-1 |
-| 隔离档位 | 首个切片只落在 `Local Worker` 的可信宿主进程档；远端是“远端宿主上的同类进程”，不把 SSH 或宿主托管容器混入首个协议。 | 探针继承真实宿主用户可见的文件、GUI 和凭据边界，风险高于容器隔离。 | HP-1 |
+| 隔离档位 | 首个切片只落在 `Local Worker` 的宿主进程档；远端是“远端宿主上的同类进程”，不把 SSH 或宿主托管容器混入首个协议。宿主身份、凭据与隔离由 operator 选择，产品不提供 sandbox 或安全认证。 | 探针继承 operator 所选宿主边界中可见的文件、会话和凭据，风险由该边界决定。 | HP-1 |
 | 路由策略 | 用唯一 Linear label `execution:host-only` 声明必须宿主执行；缺省继续走当前默认执行面。Panel 先做 project/scope gate，再以需求和已验证 capability 确定性匹配，禁止到达顺序决定执行面。 | 需要 label 治理、snapshot/run 证据扩展和旧 Panel 回滚前的停听/清标操作。 | HP-1、HP-2 |
 | 配置权威 | Panel 策略进入 installation singleton；root、探针证书路径、宿主 workspace root、Codex 启动参数属于探针部署拓扑；project context 仍只来自现有 PostgreSQL workflow/project 映射。 | 一个部署要同时管理 Panel 设置与宿主本地配置，但两者不能互相覆盖。 | HP-1 |
 | 身份与协商 | 一次性 enrollment token 绑定安装与宿主，换取每探针 mTLS 身份；注册协商一个整数 `protocol_version` 和闭集 capability，session 绑定证书、probe id 与启动实例。 | 需要证书签发、轮换、撤销与时间策略；这些运维取值必须先由维护者批准。 | HP-1、HP-3 |
@@ -78,7 +78,7 @@ host probe 延续后半条边界：宿主拥有 readiness，Panel 只消费有�
 | 工具链与依赖 | 宿主部署者 | 宿主 package/runtime 管理 | Codex 可执行文件、固定启动参数及 readiness 结果 | 不下载、不安装、不回退版本；启动失败按既有 runtime failure 映射 |
 | 镜像 | 宿主部署者；宿主进程方案无需镜像 | 外部基础设施 | 无镜像或容器引擎知识 | 不调用容器引擎；若部署者外包一层容器，仍在 Compose 外管理 |
 | 网络暴露 | Panel 部署者提供 HTTPS root；宿主提供出站连接 | TLS/DNS/防火墙各自部署层 | Panel root、CA/客户端证书位置、proxy（如需） | 断网只重试协议动作并最终服从 lease，不开入站端口 |
-| GUI/浏览器/交互授权 | 登录宿主的真人 | 宿主桌面 session 与相关账号 | 是否存在被批准的 interactive session capability；不保存真人密码 | 无人或 session 不可用时拒绝 readiness/claim，不模拟点击或绕过授权 |
+| GUI/浏览器/交互授权 | 登录宿主的真人 | 宿主桌面 session 与相关账号 | 仅当票面逐项要求时，知道 `gui_session`、`interactive_session` 或 `manual_pr_handoff` capability 是否满足；不保存真人密码 | 要求的 capability 不满足时拒绝 claim；未要求这些能力的 host-only 票可由 headless 宿主领取 |
 
 这一定义复用文件系统硬边界：agent cwd 是当前 run 的 per-issue workspace，路径必须留在配置 root 下
 （`docs/spec-reliability-security.md:157-169`）；同时扩展 `workspace_authority` 为已验证的
@@ -132,6 +132,10 @@ root 只是 discovery 起点，不携带 project context。反向代理、TLS �
 secret material。`RunAdmission` 继续只消费一份 composed workflow；HTTP worker/local path 不得反填
 Panel workflow、decision 或历史（`docs/workflow-config-authority-design.md:62-72`）。项目映射、两级监听
 范围和 fallback 继续只有现有 authority（`docs/workflow-config-authority-design.md:30-34`）。
+
+宿主身份、凭据和隔离是 operator-owned boundary，也是本产品的 non-goal。operator 可以选择日常账号、
+专用账号、专用机或 VM，并负责记录选择与运行证据；探针和 Panel 都不提供 sandbox，不认证该选择是否
+“安全”，也不把其中任一形态作为 HP-1 或 HP-5 的资格前提。
 
 ## 3. 与现有控制面契约的复用分析
 
@@ -210,7 +214,7 @@ Panel workflow、decision 或历史（`docs/workflow-config-authority-design.md:
 | Host-managed Container Worker | 由宿主外部基础设施启动，隔离较强。 | GUI、浏览器、interactive auth 和宿主 workspace 透传复杂；容易与既有 execution-worker 混淆。 | 后续可兼容部署包装，不改变 host-probe 协议 |
 | SSH Worker | 远程隔离与运维边界清楚。 | 需要入站 SSH、remote shell 与 SSH credential；不自然覆盖本机 GUI。 | 独立路线，不属于首切 |
 
-单一结论是可信宿主进程，对应长期阶梯的 Local Worker
+单一结论是 operator 管理的宿主进程，对应长期阶梯的 Local Worker
 （`docs/long_term_direction.zh-CN.md:544-550`）。它只通过应用层 HTTPS 连接 Panel，不访问 Compose service
 内的 container engine。即使维护者以后把同一探针放入宿主托管容器，启动与引擎操作也只能发生在
 Compose 外部；Compose 服务仍满足无 CLI、无 socket、无 daemon、无 privileged 的硬边界
@@ -224,14 +228,15 @@ Compose 外部；Compose 服务仍满足无 CLI、无 socket、无 daemon、无 
 
 | 用例候选 | Codex/探针动作 | 真人动作 | 代价与推荐 |
 | --- | --- | --- | --- |
-| 手动 PR | 探针启动 Codex；Codex准备变更、验证、commit/push，或等待外部 PR；随后通过受限工具 lookup open PR 并提交 handoff。 | 在 GitHub UI/企业授权页完成必须的交互、确认或 PR 创建。 | 推荐支持。真人动作是 gate；PR 仍由现有精确 repo/base/head 证据收口。 |
-| GUI 调试 | Codex 启动/驱动应用、收集日志并提出操作；探针续租并转发 progress。 | 在已登录桌面执行视觉确认、授权、复现或输入，并把结果交回 Codex。 | 推荐支持。首切验收必须真实证明一次人机交互，但不开发 GUI 应用。 |
+| 手动 PR | 票面显式要求 `manual_pr_handoff`；探针启动 Codex；Codex 准备变更、验证、commit/push，或等待外部 PR；随后通过受限工具 lookup open PR 并提交 handoff。 | 在 GitHub UI/企业授权页完成必须的交互、确认或 PR 创建。 | 推荐支持。真人动作是 gate；PR 仍由现有精确 repo/base/head 证据收口。 |
+| GUI 调试 | 票面显式要求 `gui_session`，需要同步真人时再要求 `interactive_session`；Codex 启动/驱动应用、收集日志并提出操作；探针续租并转发 progress。 | 在已登录桌面执行视觉确认、授权、复现或输入，并把结果交回 Codex。 | 推荐支持。HP-5 验收真实证明人机交互，但不把 GUI 能力绑定到所有 host-only 票，也不开发 GUI 应用。 |
 | 把任意普通自动化票都发给宿主 | 与 container worker 重复。 | 无必要人工动作。 | 淘汰；未标注票继续走默认 surface。 |
 
 ### 5.2 不应走探针的场景
 
 - 无需宿主资源、可以在 container worker 中完全自动验证的普通票。
-- 来源或操作者不可信，而宿主没有单独账号、workspace、credential 与网络边界的票。
+- 来源或操作者不在 operator 已选择并接受的宿主身份、workspace、credential 与网络边界内的票；产品
+  不会把不受信任输入自动变成可安全宿主执行的输入。
 - 要求探针自行安装 toolchain、clone source、修复 workspace、创建镜像或操作 container engine 的票。
 - 需要无人值守稳定重试，但依赖 GUI、浏览器 MFA 或真人审批且无人值守窗口没有操作者的票。
 - 只需要 SSH 隔离或远程 shell、并不需要真实桌面 session 的票；应进入 SSH Worker 设计。
@@ -248,7 +253,7 @@ Compose 外部；Compose 服务仍满足无 CLI、无 socket、无 daemon、无 
 | 轴 | 候选 | 代价 | 单一推荐与淘汰理由 |
 | --- | --- | --- | --- |
 | 拓扑 | 出站 HTTPS；Panel 回连；VPN-only | HTTPS 要求 TLS/身份；回连要求入站暴露；VPN-only 绑定基础设施。 | 出站 HTTPS。回连扩大攻击面；VPN 可承载 HTTPS 但不能替代协议认证。 |
-| 隔离档位 | 宿主进程；宿主托管容器；SSH | 宿主进程风险最大；容器 GUI 成本高；SSH 需要另一套入口。 | 宿主进程。只有它直接满足当前 GUI/interactive 目标；另外两档保留独立评审。 |
+| 隔离档位 | 宿主进程；宿主托管容器；SSH | 宿主进程继承 operator 所选边界；容器 GUI 成本高；SSH 需要另一套入口。 | 宿主进程。它能直接使用宿主准备的环境，并在票面要求时覆盖 GUI/interactive 用途；另外两档保留独立评审。 |
 | 路由策略 | label + capability；仅 project scope；先到先得 | label 需治理；project scope 无法表达 surface；先到先得不可预测。 | `execution:host-only` + capability。后两者不能保证 host-only 不被 container 领取。 |
 | 配置权威 | 全放 Panel；全放探针；按策略/拓扑拆分 | 全 Panel 泄漏本地路径；全探针形成 dispatch authority；拆分增加部署文档。 | split authority。Panel 拥有策略，宿主拥有机器事实，现有 project mapping 不变。 |
 
@@ -270,7 +275,8 @@ single-running-run（`docs/worker-panel-decoupling-design.md:43-75`、
 - Panel 回连 + NAT 后异地宿主不兼容，除非另建入站网络面；本文不推荐。
 - 只按 project scope 路由 + host-only 要求不兼容，因为同项目可同时存在两种票。
 - 先到先得 + 双执行面不兼容，因为 container 可能抢走 host-only 票。
-- 宿主进程 + 把 `danger-full-access` 当隔离层不兼容；宿主进程的安全边界是宿主账号与 operator gate。
+- 宿主进程 + 把 `danger-full-access` 当隔离层不兼容；安全边界是 operator 明示选择的宿主身份、凭据和
+  隔离方式，产品不增加 sandbox 或安全认证 gate。
 - 旧 Panel + 保留活动 `execution:host-only` label 不兼容；旧 Panel 不认识硬 gate，回滚必须先停听并清理活动标记。
 
 ### 6.2 版本与 capability 协商
@@ -284,17 +290,23 @@ single-running-run（`docs/worker-panel-decoupling-design.md:43-75`、
 | 仅 capability、无协议版本 | 字段同名异义无法被识别。 | 淘汰。 |
 
 推荐的首个协议标识是有外部含义的 `host-probe` protocol version；初始实现只接受双方完全匹配的
-一个整数，不提供旧 shape fallback。capability 的首个闭集是 `host_execution`、`interactive_session`、
-`manual_pr_handoff` 与 `codex_app_server`。其中 `execution:host-only` 要求四项全部存在；未来新增可选能力
-必须另票扩展需求表达，不能靠未知 capability 猜测。
+一个整数，不提供旧 shape fallback。capability 的首个闭集是基础能力 `host_execution`、
+`codex_app_server`，以及可选用途能力 `interactive_session`、`gui_session`、`manual_pr_handoff`。
+
+能力匹配有两个候选：A 把所有可选用途能力隐式绑定到 `execution:host-only`，实现简单但会排除合格的
+headless 宿主并把执行面与用途耦合；B 把执行面和票面 `required_capabilities` 分开，要求
+`required_capabilities` 是 session capability 的子集。推荐 B。`execution:host-only` 只选择宿主执行面，
+不自动加入任何可选用途能力；headless 探针只要具备两项基础能力，就能领取未要求 GUI、交互 session
+或手动 PR 的 host-only 票。新增 capability 必须另票扩展闭集和需求表达，不能靠未知值猜测。
 
 最低 Panel 版本判据不是产品 release 字符串，而是 root discovery 明确广告 host-probe protocol 和
 上述 capability schema。拒绝点如下：
 
-- registration：协议不在 Panel 支持集合、未知/缺少必需 capability 或证书绑定不匹配，均在创建
-  session 前拒绝；不写 run。
-- claim：session 已协商版本失效、capability 改变、credential 撤销或 execution requirement 不匹配，
-  在 candidate side effect 前返回 typed admission evidence。
+- registration：协议不在 Panel 支持集合、未知 capability、缺少两项基础 capability 或证书绑定不匹配，
+  均在创建 session 前拒绝；不写 run。缺少可选用途 capability 不拒绝注册。
+- claim：session 已协商版本失效、capability digest 改变、credential 撤销、execution requirement 不匹配，
+  或票面 `required_capabilities` 不是 session capability 的子集时，在 candidate side effect 前返回 typed
+  admission evidence。
 - heartbeat：只接受注册时冻结的 protocol/session/capability digest；不匹配不续租，现有 lease 按
   Panel 时钟到期。
 
@@ -343,13 +355,22 @@ routing authority，因此淘汰。credential 由 Panel enrollment boundary 签�
 所有预期终态均从既有闭集选择；event correlation 使用现有 issue/run/session/tool identifiers。推荐组合
 必须逐行通过，任一实现若产生第二个 running run、平行失败类或静默 Todo 滞留即失败。
 
+Codex 残留处置有两个候选：A 让 probe 进程自己清理子进程，probe 被 kill 后无人执行，淘汰；B 由部署时
+与 probe 并列启动、生命周期独立的宿主 watchdog 创建并持有每个 assignment 的独立 process group，推荐。
+watchdog 在 probe 退出、取消确认或本地保守 lease deadline 到达时停止 process group 内的新写入/push，
+再按维护者批准的 grace 发送 TERM/KILL、等待整个 process group 消失，并写入包含 run/assignment、pgid、触发原因、
+退出状态和清理完成时间的 bounded completion evidence。Panel 重连后只接受仍匹配 assignment 的证据；
+过期 event 继续被 fencing。process group 不存在的检查与 fenced assignment 共同证明旧 Codex 不会继续
+修改或 push。这一职责属于“启动/驱动 Codex”，不是宿主 sandbox；它扩展现有一个 supervised process
+group 拥有完整 assignment pipeline 的 owner（`docs/execution-runtime-design.md:152-155`）。
+
 | 故障 | 注入点 | 预期 lease/run/event/面板结果 | 对账责任 | 实现票 | 验收类型 | 推荐方案判定 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 断网 | active run 期间切断 probe→Panel | heartbeat 不达，Panel 时钟令 lease 到期；run 一次性 `worker_process_termination`，expiry event 有 correlation；面板先 stale 后等待合格探针 | AssignmentManager expiry + reconciliation | HP-1、HP-4 | 自动故障注入；WAN 恢复人工 gate | 通过 |
+| 断网 | active run 期间切断 probe→Panel | heartbeat 不达；watchdog 在本地保守 lease deadline 终止 process group 并暂存 cleanup evidence；Panel 时钟令 lease 到期，run 一次性 `worker_process_termination`，expiry event 有 correlation，面板先 stale 后等待合格探针 | host watchdog 清理；AssignmentManager expiry + reconciliation 收口并在恢复后对账 evidence | HP-1、HP-4 | 自动断网/进程清理注入；WAN 恢复人工 gate | 通过 |
 | 时钟偏移 | probe 时钟快/慢，Panel 正常 | lease 只看 Panel 时间；client timestamp 仅证据，不提前续租/过期；面板显示 server-observed age | Panel lease owner | HP-4 | 自动虚拟时钟 | 通过 |
 | 重复 claim | 两探针同时 claim 同一 host-only issue | 只有 designated probe 可进入 commit；DB 最多一条 running run，另一请求有 typed routing/active-run reason，无重复 accepted event | Orchestrator + atomic run admission | HP-1、HP-4 | 并发测试 | 通过 |
-| 探针中途崩溃 | Codex 已启动后 kill probe | 无 terminal；lease 到期后单次失败并释放 assignment；面板保留 run/session/probe id | expiry + operator 检查宿主残留进程 | HP-1、HP-4 | 进程故障注入 + 人工残留检查 | 通过 |
-| 租约过期 | 暂停 heartbeat 超过 lease 后再恢复 | 恢复 heartbeat/event 被拒；expiry 决定唯一终态；新 claim 必须重新读 Linear、建新 run | AssignmentManager | HP-1、HP-4 | 虚拟时钟/协议测试 | 通过 |
+| 探针中途崩溃 | Codex 已在独立 process group 启动后 kill probe | watchdog 立即 TERM/KILL 并等待 process group 消失，写 bounded cleanup evidence；Panel lease 到期后单次失败并释放 assignment，面板保留 run/session/probe id 并展示 cleanup evidence | host watchdog 执行清理；AssignmentManager expiry 收口 run；Panel reconciliation 对账证据 | HP-1、HP-4 | 自动进程故障注入：断言 process group 消失、旧 assignment 写/push 被 fenced、cleanup evidence 可查询 | 通过 |
+| 租约过期 | 暂停 heartbeat 超过 lease 后再恢复 | watchdog 在本地 deadline 终止 process group；恢复 heartbeat/event 被拒；expiry 决定唯一终态；新 claim 必须重新读 Linear、建新 run | host watchdog + AssignmentManager | HP-1、HP-4 | 虚拟时钟/协议/进程清理测试 | 通过 |
 | Codex 启动失败 | launcher 返回失败或 handshake 超时 | 当前 lease terminal failed；run `runtime_failure`，event evidence 有 stage，gates `not_run`；面板显示 typed failure | probe adapter + RunFailure | HP-1 | 离线 fake app-server | 通过 |
 | 交付回执丢失 | Panel 已 commit terminal，ack 响应丢失 | probe 保留同 event id 重送；Panel 返回原 ack，只存在一个 terminal event/run transition；面板不重复通知 | EventWriter/idempotent receipt | HP-1、HP-4 | transport fault test | 通过 |
 | 孤儿 run | Panel 重启丢失 assignment 或宿主残留 running row | reconciliation 只写 `run.orphaned` 并显示；operator 明确把 issue 置回可重跑状态后，admission 将旧 run 终结为 `assignment_expired` 再创建一个 run | Panel reconciliation + operator | HP-4 | persistence/restart test + 人工 gate | 通过 |
@@ -406,11 +427,14 @@ selection。任何一层失败都是硬约束。
 - 依赖票：SYM-173；其余均为本票内纵切，不能先拆配置/claim/Codex 横层。
 - 退出判据：一条 offline integration test 从 root discovery 走到 success；同一路径注入 Codex 启动失败、
   probe crash、lease expiry 和 terminal ack loss；Panel 证明一个 run/accepted/terminal、正确 correlation、
-  task tools 受限、workspace 越界 fail closed、assignment 释放/回收。
+  task tools 受限、workspace 越界 fail closed、assignment 释放/回收；probe crash 后 watchdog 证明 process
+  group 消失且旧 assignment 无法继续写/push。
 - 自动可复核：loopback protocol、原子 claim、虚拟 heartbeat/lease、fake app-server、event id retry、
-  `RunFailure` exact classification、UI/state serialization、静态无 container-engine/socket 检查。
-- 必须人工 gate：证书/secret 存放位置、真实宿主 workspace 权限、一次真实 GUI/interactive session 启动证据；
-  责任人是维护者，证据附实现票，阻塞启用 host routing。
+  process-group cleanup、`RunFailure` exact classification、UI/state serialization、静态无
+  container-engine/socket 检查。
+- 必须人工 gate：证书/secret 存放位置，以及 operator 明示其选择的宿主身份、凭据与隔离边界并提供一次
+  真实宿主运行证据；不要求 GUI、专用账号、专用机或 VM。责任人是维护者，证据附实现票，阻塞启用
+  host routing。
 - 运行时副作用：只在测试数据库、loopback Panel 和临时 workspace；不部署、不改真实 label。
 - 迁移/回滚：schema 只做前向迁移；feature 默认关闭；停听、终结 lease、关闭 feature 即回滚。
 
@@ -461,14 +485,16 @@ selection。任何一层失败都是硬约束。
 
 - 目标：用真实宿主 session 分别完成一次手动 PR lookup/handoff 和一次 GUI debug，人机责任与 evidence
   进入运维指南。
-- 进入判据：HP-1 至 HP-4 完成，安全/合规 gate 批准测试宿主和账号。
+- 进入判据：HP-1 至 HP-4 完成；operator 明示已选择的宿主身份、凭据与隔离边界并提供相应运行证据。
+  产品不要求日常账号、专用账号、专用机或 VM 中的特定一种。
 - 依赖票：HP-4。
 - 退出判据：真人交互不泄漏 credential，Codex 仍只用 task-scoped tools；中途取消、无人响应和 PR receipt
   丢失均有既有终态/恢复路径。
 - 故障场景：真人拒绝、interactive session 消失、PR 已存在、handoff evidence 缺失。
 - 自动可复核：PR lookup fixture、tool-policy/redaction、cancel/timeout contract；GUI 本身不自动化。
-- 必须人工 gate：真实 UI walkthrough 与 PR 审计，由维护者执行并保存 evidence，阻塞用途对外宣告。
-- 运行时副作用：只允许专用测试 repo/账号；具体边界由批准记录给出。
+- 必须人工 gate：真实 UI walkthrough 与 PR 审计，由维护者在 operator 已记录的宿主边界内执行并保存
+  evidence，阻塞用途对外宣告；该 gate 不评判或强制账号/机器隔离形态。
+- 运行时副作用：只使用 operator 明示批准的测试 repo、身份和宿主边界；产品不强制专用账号或机器。
 - 迁移/回滚：关闭 host-only routing；不自动删除人工创建的 PR。
 
 **HP-6（需新票）— 异地网络 rollout 与回滚演练。**
@@ -492,8 +518,9 @@ selection。任何一层失败都是硬约束。
 | key storage | OS keychain/TPM：集成成本高；权限受限文件：便携但防拷贝弱 | 优先 OS keychain/TPM，可接受路径必须书面批准 | 安全 owner；宿主检查证据 | HP-3 |
 | host-only label 权限 | 所有 issue editor：灵活但误标风险高；维护者/受限自动化：控制强 | 维护者和显式受限自动化 | 项目维护者；Linear 权限截图/规则 | HP-1、HP-2 |
 | heartbeat/lease 取值 | 短：恢复快、WAN 抖动敏感；长：稳定但故障回收慢 | 复用 worker 参数模型，具体值按 WAN 测试批准 | 运维 owner；断网/抖动报告 | HP-1、HP-4 |
+| watchdog 终止策略 | 立即 KILL：收口快但不给正常退出；TERM 后有界 grace 再 KILL：证据更完整但清理稍慢 | TERM→维护者批准的有界 grace→KILL，并等待 process group 消失 | 维护者 + 运维；故障注入与 cleanup evidence | HP-1、HP-4 |
 | 告警接收与升级 | Panel-only：简单易漏；外部告警：可靠但需集成 | Panel 字段必做，外部告警由生产 rollout gate 决定 | 运维 owner；on-call 记录 | HP-2、HP-6 |
-| 测试宿主权限 | 日常个人主机：贴近用途但凭据面大；专用宿主账号：准备成本高 | 专用宿主账号与专用测试 repo | 安全/合规 owner；资产与账号批准 | HP-5 |
+| operator-owned 宿主边界记录 | 日常账号：准备少、暴露面按现有身份；专用账号/专用机/VM：准备多、边界更窄 | 产品不替 operator 选择；要求明确记录所选身份、凭据、workspace、网络边界与一次运行证据 | operator 记录，维护者确认记录完整；不做产品安全认证 | HP-1、HP-5 |
 
 表内每项都给出完整候选、代价和推荐；实现票不得把这些值改成隐式默认。
 
@@ -509,14 +536,14 @@ selection。任何一层失败都是硬约束。
 
 | 类别 | 触发条件 | 后果 | 推荐处理 |
 | --- | --- | --- | --- |
-| 安全：宿主凭据暴露 | probe/Codex compromise，或启动环境继承过宽 | GitHub、Codex、浏览器 session 与本地文件按宿主账号权限暴露 | 专用账号、最小 env/path allowlist、secret redaction；宿主 owner 承担边界。 |
+| 安全：宿主凭据暴露 | probe/Codex compromise，或启动环境继承过宽 | GitHub、Codex、浏览器 session 与本地文件按 operator 所选宿主身份权限暴露 | operator 记录并承担所选账号/机器/VM 边界；最小 env/path allowlist 与 secret redaction；产品不提供 sandbox 或安全认证。 |
 | 安全：异地网络暴露 | Panel root 公网可达且 TLS/identity 配置错误 | 探针冒充、metadata 泄漏、claim 滥用 | 出站 HTTPS + mTLS + 单 probe revocation；不开放 probe 入站端口。 |
 | 安全：冒充与重放 | enrollment 重用、证书复制、event id 改写 | 假 session 或重复 terminal | enrollment 单次消费、key/session 绑定、固定 event UUID 幂等、撤销。 |
 | 冲突：同 slot 争用 | container 与 probe 都把同一 candidate 当合格 | host-only 被错误 surface 领取或重复 run | scope→requirement→capability→deterministic probe 顺序；DB unique index最后兜底。 |
 | 冲突：多个 probe 到达顺序 | 多个 fresh probe 同时 poll | 首到者获得工作，路由不可复核 | rendezvous winner；非 winner 返回 typed admission reason。 |
 | 可观测：探针“只报错” | readiness、Codex、gate、lease 或 handoff 失败 | 若自由文本分类会形成第二词汇 | request envelope 与 persisted RunFailure 分层；Panel 统一分类，保留 correlation。 |
 | 可观测：terminal ack 丢失 | commit 后连接断开 | probe 误以为失败并创建替代 terminal | 同 event id 无限期按现有 interval 重送，Panel返回原 ack。 |
-| 运维：断线重连 | WAN partition 或 laptop sleep | lease 到期、宿主可能留 Codex 进程 | Panel lease 负责 run truth；宿主 operator 清理残留，不让新 session接管旧 lease。 |
+| 运维：断线重连 | WAN partition 或 laptop sleep | lease 到期；若不清理，Codex 可能继续修改或 push | Panel lease 负责 run truth；独立 watchdog 在保守 lease deadline 终止并证明 process group 消失，新 session 不接管旧 lease。 |
 | 运维：升级/回滚 | Panel/probe protocol 窗口不一致 | registration/claim 停止；错误顺序可让旧 Panel误领 | Panel-first、label-last；回滚反向并在旧 Panel前清 host-only eligibility。 |
 | 运维：探针离线 | host-only issue 已可调度但无 fresh probe | issue 在原状态等待 | 显示 waiting fields，公式阈值告警，不新增 workflow state、不自动转 container。 |
 | 边界：容器控制面绕过 | 给 probe 下发 container command/socket 或由 Compose 启动宿主容器 | 破坏既有 no-DinD/no-socket contract | 协议不含 container 操作；宿主包装完全由外部基础设施管理。 |
@@ -571,10 +598,18 @@ authority。
 | issue requirement | container worker | host probe |
 | --- | --- | --- |
 | 未标注 / `default` | **可领**，继续当前 admission | **不可领** |
-| `host_only` | **不可领** | 仅 fresh session、四项必需 capability、workspace readiness 和 project/scope gate 全部通过时**可领** |
+| `host_only` | **不可领** | 仅 fresh session、两项基础 capability、票面 `required_capabilities ⊆ session.capabilities`、workspace readiness 和 project/scope gate 全部通过时**可领**；未要求可选能力时 headless 探针可领 |
 
-这张表是硬 gate，不能由 available slot 或请求到达顺序覆盖。候选方案是：按表确定性匹配，或让两个
-surface 都 claim 再依靠 lease 去重。推荐前者；lease 只能防重复 run，不能证明执行面合格。路由合同对
+票面 capability 载体另有三个候选：独立 allowlisted labels、profile 隐式推导、Linear multi-select 字段。
+首切推荐独立 labels：`capability:interactive-session`、`capability:gui-session`、
+`capability:manual-pr-handoff`；缺省得到空的可选 `required_capabilities`。它们在 snapshot 中规范化为同名
+下划线值，和 `execution:host-only` 正交。profile 隐式推导不可见且会把用途与 profile 耦合，淘汰；
+multi-select 类型更强但需要 workspace schema/admin 权限，保留为后续替代载体。capability labels 与
+execution label 使用同一授权设置者；probe 和普通 task tools 均无权修改。
+
+这张表是硬 gate，不能由 available slot 或请求到达顺序覆盖。候选方案是：按表和集合包含关系确定性
+匹配，或让两个 surface 都 claim 再依靠 lease 去重。推荐前者；lease 只能防重复 run，不能证明执行面
+或用途能力合格。路由合同对
 现有 claim 是**需扩展**，不是新建：保留 reservation、二次 Linear read、原子 run admission与 assignment，
 在副作用前增加 requirement/capability/designated-probe gate。规范 admission 也相应扩展
 `docs/spec-orchestration.md`；当前序列化 authority 和 claim 前检查见
