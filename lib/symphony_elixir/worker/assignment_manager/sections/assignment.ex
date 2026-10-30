@@ -531,9 +531,19 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         do: %{"status" => status, "reason" => "http_status"}
 
       defp linear_failure_payload({:linear_api_request, reason}),
-        do: %{"reason" => "transport:#{reason}"}
+        do: %{"reason" => "transport:" <> linear_transport_failure_reason(reason)}
 
-      defp linear_failure_payload(reason), do: %{"reason" => inspect(reason, limit: 20, printable_limit: 500)}
+      defp linear_failure_payload(reason), do: %{"reason" => bounded_failure_reason(reason)}
+
+      defp linear_transport_failure_reason(%Req.TransportError{reason: reason}),
+        do: linear_transport_failure_reason(reason)
+
+      defp linear_transport_failure_reason(reason) when reason in [:closed, :timeout],
+        do: Atom.to_string(reason)
+
+      defp linear_transport_failure_reason(reason), do: bounded_failure_reason(reason)
+
+      defp bounded_failure_reason(reason), do: inspect(reason, limit: 20, printable_limit: 500)
 
       defp distinct_slug_workflows(workflows),
         do: Enum.uniq_by(workflows, &get_in(&1.config, ["tracker", "project_slug"]))

@@ -148,7 +148,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 894,
+      lines: 904,
       identifier: "__using__/1@6"
     },
     %{

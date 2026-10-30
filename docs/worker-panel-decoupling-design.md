@@ -252,7 +252,10 @@ Symphony Project；无 Linear project 的候选只接受显式 internal fallback
 失败只结束当前轮，下一次仍由固定
 `polling.interval_ms` 触发，不新增 retry、backoff、circuit 或 cooldown。Linear 400、429、5xx 和
 typed transport failure 会写入 project-associated `linear.request_failed`，payload 包含 operation、
-status/reason 与 project slug。
+status/reason 与 project slug。reconciliation transport reason 把 `Req.TransportError` 的 `:closed`
+与 `:timeout`（以及独立的 timeout atom）稳定写为 `transport:closed` / `transport:timeout`；其它 term
+使用 `limit: 20, printable_limit: 500` 的 bounded inspect。该 payload 格式化不得抛异常、终止
+AssignmentManager 或移除当前 assignment；下一轮 reconciliation 仍可继续。
 
 Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。每轮 reconciliation 先按
 enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 supervised task 中对每个 slug
