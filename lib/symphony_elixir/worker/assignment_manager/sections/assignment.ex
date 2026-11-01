@@ -23,7 +23,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       }
 
       alias SymphonyElixir.AgentRunner.Policy
-      alias SymphonyElixir.Linear.{DispatchScope, Issue}
+      alias SymphonyElixir.Linear.{DispatchScope, FailurePayload, Issue}
       alias SymphonyElixir.Orchestrator.DispatchPolicy
       alias SymphonyElixir.Worker.{ClaimCommit, ClaimStage, EventWriter, HeartbeatHistory}
 
@@ -519,21 +519,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
           event_type: "linear.request_failed",
           payload:
             reason
-            |> linear_failure_payload()
+            |> FailurePayload.base()
             |> Map.merge(%{
               "operation" => operation,
               "project_slug" => get_in(workflow.config, ["tracker", "project_slug"])
             })
         })
       end
-
-      defp linear_failure_payload({:linear_api_status, status, _body}) when is_integer(status),
-        do: %{"status" => status, "reason" => "http_status"}
-
-      defp linear_failure_payload({:linear_api_request, reason}),
-        do: %{"reason" => "transport:#{reason}"}
-
-      defp linear_failure_payload(reason), do: %{"reason" => inspect(reason, limit: 20, printable_limit: 500)}
 
       defp distinct_slug_workflows(workflows),
         do: Enum.uniq_by(workflows, &get_in(&1.config, ["tracker", "project_slug"]))

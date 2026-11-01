@@ -233,6 +233,67 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     assert_receive {:candidate_fetch, "linear-failure"}, 2_000
   end
 
+  test "transport poll failures preserve the Orchestrator and the next poll" do
+    raw = sample_workflow_markdown()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@github.com:VikingMew/project.git",
+      linear_project_slug: "transport-failure"
+    })
+
+    {:ok, _} = FakePersistence.import_package(project, raw, "test")
+    assert :ok = WorkflowStore.force_reload()
+
+    failures = [
+      {%Req.TransportError{reason: :closed}, "transport:closed"},
+      {%Req.TransportError{reason: :timeout}, "transport:timeout"},
+      {:timeout, "transport:timeout"}
+    ]
+
+    {first_reason, _expected_payload} = hd(failures)
+    Application.put_env(:symphony_elixir, :multi_project_candidate_error, {:linear_api_request, first_reason})
+
+    orchestrator_name = Module.concat(__MODULE__, :TransportFailurePollOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+
+    assert %{listening?: true} = GenServer.call(pid, :start_listening)
+
+    failures
+    |> Enum.with_index(1)
+    |> Enum.each(fn {{reason, expected_reason}, expected_count} ->
+      if expected_count > 1 do
+        Application.put_env(:symphony_elixir, :multi_project_candidate_error, {:linear_api_request, reason})
+        send(pid, :run_poll_cycle)
+      end
+
+      assert_receive {:candidate_fetch, "transport-failure"}, 2_000
+
+      eventually(fn ->
+        length(FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed")) ==
+          expected_count
+      end)
+
+      assert Process.alive?(pid)
+
+      assert Enum.any?(
+               FakePersistence.list_events(project_id: project.id, event_type: "linear.request_failed"),
+               &(&1.payload == %{
+                   "operation" => "orchestrator_poll",
+                   "project_slug" => "transport-failure",
+                   "reason" => expected_reason
+                 })
+             )
+    end)
+
+    Application.delete_env(:symphony_elixir, :multi_project_candidate_error)
+    send(pid, :run_poll_cycle)
+    assert_receive {:candidate_fetch, "transport-failure"}, 2_000
+    assert %{listening_mode: :listening_all} = :sys.get_state(pid)
+    assert Process.alive?(pid)
+  end
+
   test "disabled project is not polled" do
     raw = sample_workflow_markdown()
     {:ok, project_a} = FakePersistence.default_project()

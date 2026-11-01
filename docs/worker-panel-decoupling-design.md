@@ -252,7 +252,16 @@ Symphony Project；无 Linear project 的候选只接受显式 internal fallback
 失败只结束当前轮，下一次仍由固定
 `polling.interval_ms` 触发，不新增 retry、backoff、circuit 或 cooldown。Linear 400、429、5xx 和
 typed transport failure 会写入 project-associated `linear.request_failed`，payload 包含 operation、
-status/reason 与 project slug。
+status/reason 与 project slug。本设计是共享 base payload 的 canonical owner：
+`SymphonyElixir.Linear.FailurePayload.base/1` 保持 HTTP status 为
+`%{"status" => status, "reason" => "http_status"}`；对 `{:linear_api_request, reason}`，
+`Req.TransportError` 的 `:closed` 与 `:timeout`（以及独立的 timeout atom）分别写为
+`transport:closed` / `transport:timeout`。其它 wrapped transport reason 与 generic failure term 使用
+`inspect(limit: 20, printable_limit: 500)`；这两个选项限制容器元素数量和可打印字符串长度，并不构成
+整个 payload 的硬字节上限。裸 `Req.TransportError` 属于 generic failure term，不增加 `transport:`
+前缀。AssignmentManager 与 Orchestrator 只在该 base payload 上合并各自的 operation、project slug
+与 project association。格式化失败事件不得终止任一进程；AssignmentManager 必须保留当前
+assignment 并继续下一轮 reconciliation，Orchestrator 必须继续下一轮 normal poll。
 
 Panel 重启不会恢复 assignment、旧 payload 或 worker/session liveness map。每轮 reconciliation 先按
 enabled workflow 的 distinct `tracker.project_slug` 去重，再在单个 supervised task 中对每个 slug
