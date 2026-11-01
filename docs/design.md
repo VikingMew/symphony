@@ -223,6 +223,7 @@ lib/symphony_elixir/linear/
 | `SymphonyElixir.Linear.Client` | `linear/client.ex` | Low-level Linear API calls. |
 | `SymphonyElixir.Linear.Diagnostics` | `linear/diagnostics.ex` | Read-only validation for active Linear runtime configuration. |
 | `SymphonyElixir.Linear.Discovery` | `linear/discovery.ex` | Read-only Linear metadata used by Settings while configuring projects and workflow states. |
+| `SymphonyElixir.Linear.FailurePayload` | `linear/failure_payload.ex` | Shared base payload formatting for persisted Linear request failures. |
 | `SymphonyElixir.Linear.Issue` | `linear/issue.ex` | Normalized issue struct/model. |
 | `SymphonyElixir.Linear.WorkflowBootstrap` | `linear/workflow_bootstrap.ex` | Explicit creation of missing Linear workflow states from diagnostics. |
 | `SymphonyElixir.Linear.WorkflowStateValidator` | `linear/workflow_state_validator.ex` | Compares configured Symphony states with Linear team states. |

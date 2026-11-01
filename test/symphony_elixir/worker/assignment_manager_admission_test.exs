@@ -162,6 +162,47 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
     assert length(FakePersistence.list_events(event_type: "linear.request_failed")) == 3
   end
 
+  test "reconciliation records bounded transport failures without losing the assignment", context do
+    Tracker.put([issue()])
+    assert {:ok, assignment} = claim(context, context.manager)
+
+    unknown = {:unexpected, Enum.to_list(1..100)}
+
+    failures = [
+      {%Req.TransportError{reason: :closed}, "transport:closed"},
+      {%Req.TransportError{reason: :timeout}, "transport:timeout"},
+      {:timeout, "transport:timeout"},
+      {unknown, "transport:" <> inspect(unknown, limit: 20, printable_limit: 500)}
+    ]
+
+    Enum.with_index(failures, 1)
+    |> Enum.each(fn {{reason, expected_reason}, expected_count} ->
+      Tracker.fail_reconcile({:linear_api_request, reason})
+      AssignmentManager.reconcile(context.manager)
+      eventually(fn -> Tracker.reconcile_fetches() == expected_count end)
+      eventually(fn -> length(FakePersistence.list_events(event_type: "linear.request_failed")) == expected_count end)
+      eventually(fn -> :sys.get_state(context.manager).reconcile_task == nil end)
+
+      assert Process.alive?(context.manager)
+      assert AssignmentManager.current_assignment(context.manager) == assignment
+
+      assert [event | _rest] = FakePersistence.list_events(event_type: "linear.request_failed")
+      assert event.project_id == "fake-project-id"
+      assert event.payload["operation"] == "worker_reconcile"
+      assert event.payload["project_slug"] == issue().project_slug
+      assert event.payload["reason"] == expected_reason
+    end)
+
+    Tracker.fail_reconcile(nil)
+    AssignmentManager.reconcile(context.manager)
+    eventually(fn -> Tracker.reconcile_fetches() == 5 end)
+    eventually(fn -> :sys.get_state(context.manager).reconcile_task == nil end)
+
+    assert Process.alive?(context.manager)
+    assert AssignmentManager.current_assignment(context.manager) == assignment
+    assert length(FakePersistence.list_events(event_type: "linear.request_failed")) == 4
+  end
+
   defp start_manager(now, circuit) do
     name = Module.concat(__MODULE__, "Manager#{System.unique_integer([:positive])}")
 
