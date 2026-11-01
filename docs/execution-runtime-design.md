@@ -423,14 +423,13 @@ Progress` fetch per distinct slug. The whole task has a 5000 ms budget; timeout 
 no later round overlaps it, and the manager accepts only the current round-reference result cast.
 Linear 400, 429, 5xx, and typed transport failures persist a project-associated
 `linear.request_failed` event and end that round. Reconciliation combines those Linear results with
-latest persisted run/event time. Transport reasons use stable `transport:closed` and
-`transport:timeout` values for the corresponding `Req.TransportError` reasons and the standalone
-timeout atom; all other terms use bounded inspection with `limit: 20` and `printable_limit: 500`.
-Formatting that event must preserve the AssignmentManager process and its current assignment so a
-later reconciliation round can run. When a run remains running beyond the lease window but no current
-assignment exists, it records one `run.orphaned` operator signal. It does not move the Linear issue,
-terminate the run, or dispatch a replacement. Worker heartbeat absence is supporting evidence only.
-Late events remain fenced by assignment identity.
+latest persisted run/event time. Reconciliation consumes the shared `linear.request_failed` base
+payload contract owned by [Panel / Worker 执行设计](worker-panel-decoupling-design.md); event formatting
+must preserve the AssignmentManager process and its current assignment so a later reconciliation
+round can run. When a run remains running beyond the lease window but no current assignment exists,
+it records one `run.orphaned` operator signal. It does not move the Linear issue, terminate the run,
+or dispatch a replacement. Worker heartbeat absence is supporting evidence only. Late events remain
+fenced by assignment identity.
 PostgreSQL stores worker/session identity and run/event history, never queued work or active leases.
 
 Centralized mode remains the default. Worker mode is opt-in. Multi-worker scheduling, distributed

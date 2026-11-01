@@ -120,7 +120,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex",
-      lines: 402,
+      lines: 393,
       identifier: "__using__/1@6"
     },
     %{
@@ -148,7 +148,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 904,
+      lines: 886,
       identifier: "__using__/1@6"
     },
     %{
