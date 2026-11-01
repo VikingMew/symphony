@@ -247,6 +247,7 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
 
     failures = [
       {%Req.TransportError{reason: :closed}, "transport:closed"},
+      {%Req.TransportError{reason: :timeout}, "transport:timeout"},
       {:timeout, "transport:timeout"}
     ]
 
