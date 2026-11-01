@@ -4,7 +4,7 @@ genre: design
 domain: [execution, workers, routing, operations]
 status: current
 language: zh-CN
-updated: 2026-10-30
+updated: 2026-11-01
 design_status: proposed
 ---
 
@@ -355,22 +355,19 @@ routing authority，因此淘汰。credential 由 Panel enrollment boundary 签�
 所有预期终态均从既有闭集选择；event correlation 使用现有 issue/run/session/tool identifiers。推荐组合
 必须逐行通过，任一实现若产生第二个 running run、平行失败类或静默 Todo 滞留即失败。
 
-Codex 残留处置有两个候选：A 让 probe 进程自己清理子进程，probe 被 kill 后无人执行，淘汰；B 由部署时
-与 probe 并列启动、生命周期独立的宿主 watchdog 创建并持有每个 assignment 的独立 process group，推荐。
-watchdog 在 probe 退出、取消确认或本地保守 lease deadline 到达时停止 process group 内的新写入/push，
-再按维护者批准的 grace 发送 TERM/KILL、等待整个 process group 消失，并写入包含 run/assignment、pgid、触发原因、
-退出状态和清理完成时间的 bounded completion evidence。Panel 重连后只接受仍匹配 assignment 的证据；
-过期 event 继续被 fencing。process group 不存在的检查与 fenced assignment 共同证明旧 Codex 不会继续
-修改或 push。这一职责属于“启动/驱动 Codex”，不是宿主 sandbox；它扩展现有一个 supervised process
-group 拥有完整 assignment pipeline 的 owner（`docs/execution-runtime-design.md:152-155`）。
+崩溃后的收口有两个候选：A 由产品承诺处置宿主残留进程，代价是把宿主进程卫生扩进探针契约，淘汰；
+B 仅由控制面以 lease 到期、run 单次终结、旧 assignment event fencing、single-running-run 和面板末态
+收口，推荐。探针正常退出时可以尝试 best-effort cleanup；崩溃或宿主异常后的残留进程由 operator
+runbook 处置，不属于产品保证或产品验收。现有执行 runtime 仍以一个 supervised owner 持有完整 assignment
+pipeline（`docs/execution-runtime-design.md:152-155`），本设计不扩展该事实为宿主安全或进程清理保证。
 
 | 故障 | 注入点 | 预期 lease/run/event/面板结果 | 对账责任 | 实现票 | 验收类型 | 推荐方案判定 |
 | --- | --- | --- | --- | --- | --- | --- |
-| 断网 | active run 期间切断 probe→Panel | heartbeat 不达；watchdog 在本地保守 lease deadline 终止 process group 并暂存 cleanup evidence；Panel 时钟令 lease 到期，run 一次性 `worker_process_termination`，expiry event 有 correlation，面板先 stale 后等待合格探针 | host watchdog 清理；AssignmentManager expiry + reconciliation 收口并在恢复后对账 evidence | HP-1、HP-4 | 自动断网/进程清理注入；WAN 恢复人工 gate | 通过 |
+| 断网 | active run 期间切断 probe→Panel | heartbeat 不达；Panel 时钟令 lease 到期，run 一次性 `worker_process_termination`，旧 assignment event 被 fencing，面板先 stale 后等待合格探针 | AssignmentManager expiry + reconciliation 收口；operator 按宿主 runbook 处理可能残留的进程 | HP-1、HP-4 | 自动断网/lease/event 注入；WAN 恢复人工 gate | 通过 |
 | 时钟偏移 | probe 时钟快/慢，Panel 正常 | lease 只看 Panel 时间；client timestamp 仅证据，不提前续租/过期；面板显示 server-observed age | Panel lease owner | HP-4 | 自动虚拟时钟 | 通过 |
 | 重复 claim | 两探针同时 claim 同一 host-only issue | 只有 designated probe 可进入 commit；DB 最多一条 running run，另一请求有 typed routing/active-run reason，无重复 accepted event | Orchestrator + atomic run admission | HP-1、HP-4 | 并发测试 | 通过 |
-| 探针中途崩溃 | Codex 已在独立 process group 启动后 kill probe | watchdog 立即 TERM/KILL 并等待 process group 消失，写 bounded cleanup evidence；Panel lease 到期后单次失败并释放 assignment，面板保留 run/session/probe id 并展示 cleanup evidence | host watchdog 执行清理；AssignmentManager expiry 收口 run；Panel reconciliation 对账证据 | HP-1、HP-4 | 自动进程故障注入：断言 process group 消失、旧 assignment 写/push 被 fenced、cleanup evidence 可查询 | 通过 |
-| 租约过期 | 暂停 heartbeat 超过 lease 后再恢复 | watchdog 在本地 deadline 终止 process group；恢复 heartbeat/event 被拒；expiry 决定唯一终态；新 claim 必须重新读 Linear、建新 run | host watchdog + AssignmentManager | HP-1、HP-4 | 虚拟时钟/协议/进程清理测试 | 通过 |
+| 探针中途崩溃 | Codex 启动后 kill probe | Panel lease 到期，run 只终结一次，旧 assignment event 被 fencing，不产生重复 running run，面板保留 run/session/probe id 与最后状态 | AssignmentManager expiry 收口 run；Panel reconciliation 对账；operator 按宿主 runbook 处理可能残留的进程 | HP-1、HP-4 | 自动故障注入：断言 lease 到期、单次终态、旧 event 被拒、无重复 running run、面板末态可见 | 通过 |
+| 租约过期 | 暂停 heartbeat 超过 lease 后再恢复 | Panel expiry 决定唯一终态；恢复的 heartbeat/event 被拒；新 claim 必须重新读 Linear、建新 run；面板保留最后状态 | AssignmentManager + Panel reconciliation；operator 按宿主 runbook 处理可能残留的进程 | HP-1、HP-4 | 虚拟时钟/协议/fencing 测试 | 通过 |
 | Codex 启动失败 | launcher 返回失败或 handshake 超时 | 当前 lease terminal failed；run `runtime_failure`，event evidence 有 stage，gates `not_run`；面板显示 typed failure | probe adapter + RunFailure | HP-1 | 离线 fake app-server | 通过 |
 | 交付回执丢失 | Panel 已 commit terminal，ack 响应丢失 | probe 保留同 event id 重送；Panel 返回原 ack，只存在一个 terminal event/run transition；面板不重复通知 | EventWriter/idempotent receipt | HP-1、HP-4 | transport fault test | 通过 |
 | 孤儿 run | Panel 重启丢失 assignment 或宿主残留 running row | reconciliation 只写 `run.orphaned` 并显示；operator 明确把 issue 置回可重跑状态后，admission 将旧 run 终结为 `assignment_expired` 再创建一个 run | Panel reconciliation + operator | HP-4 | persistence/restart test + 人工 gate | 通过 |
@@ -427,11 +424,11 @@ selection。任何一层失败都是硬约束。
 - 依赖票：SYM-173；其余均为本票内纵切，不能先拆配置/claim/Codex 横层。
 - 退出判据：一条 offline integration test 从 root discovery 走到 success；同一路径注入 Codex 启动失败、
   probe crash、lease expiry 和 terminal ack loss；Panel 证明一个 run/accepted/terminal、正确 correlation、
-  task tools 受限、workspace 越界 fail closed、assignment 释放/回收；probe crash 后 watchdog 证明 process
-  group 消失且旧 assignment 无法继续写/push。
+  task tools 受限、workspace 越界 fail closed、assignment 释放/回收；probe crash 后 lease 到期、run 只终结
+  一次、旧 assignment event 被 fencing、没有重复 running run，且面板可见最后状态。
 - 自动可复核：loopback protocol、原子 claim、虚拟 heartbeat/lease、fake app-server、event id retry、
-  process-group cleanup、`RunFailure` exact classification、UI/state serialization、静态无
-  container-engine/socket 检查。
+  crash/expiry fencing、`RunFailure` exact classification、UI/state serialization、静态无 container-engine/socket
+  检查。
 - 必须人工 gate：证书/secret 存放位置，以及 operator 明示其选择的宿主身份、凭据与隔离边界并提供一次
   真实宿主运行证据；不要求 GUI、专用账号、专用机或 VM。责任人是维护者，证据附实现票，阻塞启用
   host routing。
@@ -518,7 +515,7 @@ selection。任何一层失败都是硬约束。
 | key storage | OS keychain/TPM：集成成本高；权限受限文件：便携但防拷贝弱 | 优先 OS keychain/TPM，可接受路径必须书面批准 | 安全 owner；宿主检查证据 | HP-3 |
 | host-only label 权限 | 所有 issue editor：灵活但误标风险高；维护者/受限自动化：控制强 | 维护者和显式受限自动化 | 项目维护者；Linear 权限截图/规则 | HP-1、HP-2 |
 | heartbeat/lease 取值 | 短：恢复快、WAN 抖动敏感；长：稳定但故障回收慢 | 复用 worker 参数模型，具体值按 WAN 测试批准 | 运维 owner；断网/抖动报告 | HP-1、HP-4 |
-| watchdog 终止策略 | 立即 KILL：收口快但不给正常退出；TERM 后有界 grace 再 KILL：证据更完整但清理稍慢 | TERM→维护者批准的有界 grace→KILL，并等待 process group 消失 | 维护者 + 运维；故障注入与 cleanup evidence | HP-1、HP-4 |
+| 宿主残留进程 runbook | 临时人工处置：准备少但责任与证据易遗漏；书面 operator runbook：运维成本较高但责任明确 | 书面 runbook 记录发现、处置与升级责任；不作为产品保证或探针准入条件 | operator 编写，维护者确认责任人与演练记录 | HP-5 |
 | 告警接收与升级 | Panel-only：简单易漏；外部告警：可靠但需集成 | Panel 字段必做，外部告警由生产 rollout gate 决定 | 运维 owner；on-call 记录 | HP-2、HP-6 |
 | operator-owned 宿主边界记录 | 日常账号：准备少、暴露面按现有身份；专用账号/专用机/VM：准备多、边界更窄 | 产品不替 operator 选择；要求明确记录所选身份、凭据、workspace、网络边界与一次运行证据 | operator 记录，维护者确认记录完整；不做产品安全认证 | HP-1、HP-5 |
 
@@ -543,7 +540,7 @@ selection。任何一层失败都是硬约束。
 | 冲突：多个 probe 到达顺序 | 多个 fresh probe 同时 poll | 首到者获得工作，路由不可复核 | rendezvous winner；非 winner 返回 typed admission reason。 |
 | 可观测：探针“只报错” | readiness、Codex、gate、lease 或 handoff 失败 | 若自由文本分类会形成第二词汇 | request envelope 与 persisted RunFailure 分层；Panel 统一分类，保留 correlation。 |
 | 可观测：terminal ack 丢失 | commit 后连接断开 | probe 误以为失败并创建替代 terminal | 同 event id 无限期按现有 interval 重送，Panel返回原 ack。 |
-| 运维：断线重连 | WAN partition 或 laptop sleep | lease 到期；若不清理，Codex 可能继续修改或 push | Panel lease 负责 run truth；独立 watchdog 在保守 lease deadline 终止并证明 process group 消失，新 session 不接管旧 lease。 |
+| 运维：断线重连 | WAN partition 或 laptop sleep | lease 到期；宿主可能留下仍运行的 Codex 或子进程 | Panel lease 负责 run truth，新 session 不接管旧 lease；正常退出只尝试 best-effort cleanup，异常残留由 operator runbook 处理。 |
 | 运维：升级/回滚 | Panel/probe protocol 窗口不一致 | registration/claim 停止；错误顺序可让旧 Panel误领 | Panel-first、label-last；回滚反向并在旧 Panel前清 host-only eligibility。 |
 | 运维：探针离线 | host-only issue 已可调度但无 fresh probe | issue 在原状态等待 | 显示 waiting fields，公式阈值告警，不新增 workflow state、不自动转 container。 |
 | 边界：容器控制面绕过 | 给 probe 下发 container command/socket 或由 Compose 启动宿主容器 | 破坏既有 no-DinD/no-socket contract | 协议不含 container 操作；宿主包装完全由外部基础设施管理。 |
