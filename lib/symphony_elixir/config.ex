@@ -111,6 +111,9 @@ defmodule SymphonyElixir.Config do
   @spec analytics_thresholds() :: SymphonyElixir.Config.Schema.Analytics.t()
   def analytics_thresholds, do: settings!().analytics
 
+  @spec host_probe_policy() :: SymphonyElixir.Config.Schema.HostProbe.t()
+  def host_probe_policy, do: settings!().host_probe
+
   @spec workflow_profile_for_state(String.t() | nil) :: String.t() | nil
   def workflow_profile_for_state(state_name) do
     Schema.workflow_profile_for_state(settings!(), state_name)

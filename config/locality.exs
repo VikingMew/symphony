@@ -16,14 +16,14 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/codex/app_server.ex",
       lines: 89,
-      identifier: "handle_incoming/7@631"
+      identifier: "handle_incoming/7@642"
     },
     %{
       owner: "Symphony maintainers",
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/codex/app_server.ex",
       lines: 77,
-      identifier: "handle_turn_method/7@799"
+      identifier: "handle_turn_method/7@810"
     },
     %{
       owner: "Symphony maintainers",
@@ -64,14 +64,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/parsing.ex",
-      lines: 275,
+      lines: 278,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/types.ex",
-      lines: 553,
+      lines: 596,
       identifier: "__using__/1@6"
     },
     %{
@@ -141,22 +141,15 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/api.ex",
-      lines: 845,
+      lines: 871,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 886,
+      lines: 908,
       identifier: "__using__/1@6"
-    },
-    %{
-      owner: "Symphony maintainers",
-      split: "Extract named helpers or view components at the existing control-flow boundaries.",
-      path: "lib/symphony_elixir/worker/executor.ex",
-      lines: 71,
-      identifier: "run_codex/5@106"
     },
     %{
       owner: "Symphony maintainers",
@@ -281,7 +274,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_2.exs",
-      lines: 660,
+      lines: 666,
       identifier: "__using__/1@6"
     },
     %{

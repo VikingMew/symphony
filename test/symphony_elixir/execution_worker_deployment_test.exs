@@ -5,6 +5,12 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
 
   @compose Path.expand("../../compose.yaml", __DIR__)
   @host_override Path.expand("../../compose.host-override.yaml", __DIR__)
+  @host_probe_sources [
+    Path.expand("../../lib/symphony_elixir/host_probe/token.ex", __DIR__),
+    Path.expand("../../lib/symphony_elixir/host_probe/prepared_workspace.ex", __DIR__),
+    Path.expand("../../lib/symphony_elixir/worker/config.ex", __DIR__),
+    Path.expand("../../lib/symphony_elixir/worker/runtime.ex", __DIR__)
+  ]
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)
@@ -195,6 +201,17 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
       refute body =~ ~r/^\s*(?:docker(?:-\S+)?|buildx|podman(?:-\S+)?|nerdctl)\s*\\?\s*$/mi
       refute body =~ ~r/^\s*(?:COPY|ADD)\s+.*(?:docker|buildx|podman|nerdctl)/mi
     end
+  end
+
+  test "host probe remains an external process without a container control plane" do
+    compose = File.read!(@compose) <> File.read!(@host_override)
+    probe_source = Enum.map_join(@host_probe_sources, "\n", &File.read!/1)
+
+    assert String.contains?(compose, "host-probe:") == false
+    assert String.contains?(compose, "HOST_PROBE_") == false
+    assert Regex.match?(~r/System\.cmd\(\s*\"(?:docker|podman|nerdctl|buildx)\"/, probe_source) == false
+    assert String.contains?(probe_source, "docker.sock") == false
+    assert String.contains?(probe_source, "containerd.sock") == false
   end
 
   test "image and source identity are required and example values are exact" do

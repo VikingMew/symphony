@@ -370,6 +370,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
           worker_id: worker_id,
           status: "online",
           total_slots: Map.fetch!(attrs, "total_slots"),
+          execution_surface: "container_worker",
+          probe_id: nil,
+          capabilities: %{"values" => []},
+          capability_digest: nil,
+          heartbeat_interval_seconds: 10,
+          lease_duration_seconds: 60,
           last_heartbeat_at: now
         }
 

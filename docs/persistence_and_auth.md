@@ -4,7 +4,7 @@ genre: reference
 domain: [persistence, auth]
 status: current
 language: en
-updated: 2026-10-03
+updated: 2026-11-02
 owner: SymphonyElixir.Persistence
 ---
 
@@ -128,12 +128,22 @@ The worker API uses its own protocol authentication. Registration requires
 `x-symphony-worker-id`, `x-symphony-worker-session`, and optionally
 `x-symphony-worker-protocol`.
 
+The `host_probe` surface instead uses the installation workflow's `host_probe.auth_token` as a
+bearer on registration and every later worker-v1 request. Registration freezes `local-host`, the
+process session, capabilities/digest, and timing policy; later calls must match that identity.
+Probe-local startup reads the same secret from an exact-mode `0600` file. Neither token form is
+stored in a run/event payload or returned by the API.
+
 ## Worker State
 
 PostgreSQL also stores Panel-side worker state:
 
 - workers and worker sessions;
 - run and event audit history.
+
+Host-probe session rows add immutable surface, probe, capability, and heartbeat/lease policy.
+Accepted host runs/events add only requirement, actual surface, probe/session correlation, and
+bounded terminal evidence; they do not store host paths or bearer material.
 
 `SYMPHONY_EXECUTION_MODE=worker` enables live Linear-backed claims. The Panel owns at most one
 ephemeral assignment in memory; PostgreSQL does not store queued tasks, leases, or assignment

@@ -6,6 +6,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Orchestrator
   alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixir.Worker.{AssignmentManager, ExecutionPayload, HeartbeatMetrics}
@@ -13,21 +14,27 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   @spec register(Conn.t(), map()) :: Conn.t()
   def register(conn, params) do
-    with :ok <- verify_registration_token(conn),
+    with :ok <- verify_registration_token(conn, params),
          {:ok, %{worker: worker, session: session}} <- persistence().register_worker(params) do
       :ok = AssignmentManager.observe_session(worker, session)
 
       json(conn, %{
         worker_id: worker.id,
         session_id: session.id,
-        heartbeat_interval_seconds: persistence().worker_heartbeat_interval_seconds(),
-        lease_duration_seconds: persistence().worker_lease_duration_seconds(),
+        heartbeat_interval_seconds: session.heartbeat_interval_seconds,
+        lease_duration_seconds: session.lease_duration_seconds,
+        execution_surface: session.execution_surface,
+        probe_id: session.probe_id,
+        capability_digest: session.capability_digest,
         server_time: DateTime.utc_now(),
         accepted_protocol_version: persistence().worker_protocol_version()
       })
     else
       {:error, :unauthorized} ->
         error_response(conn, 401, "worker_unauthorized", "Worker registration token is invalid")
+
+      {:error, :host_probe_unauthorized} ->
+        error_response(conn, 401, "host_probe_unauthorized", "Host probe bearer token is invalid")
 
       {:error, :unsupported_protocol_version} ->
         error_response(conn, 426, "unsupported_worker_protocol", "Worker protocol version is not supported")
@@ -40,6 +47,7 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec claim(Conn.t(), map()) :: Conn.t()
   def claim(conn, params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
+         :ok <- authorize_worker_request(conn, worker_id, session_id, params),
          {:ok, result, evidence} <- Orchestrator.claim_worker(worker_id, session_id, params) do
       case result do
         {:empty, poll_after_seconds} ->
@@ -58,6 +66,9 @@ defmodule SymphonyElixirWeb.WorkerApiController do
             run_attempt: assignment.correlation["run_attempt"],
             lease_attempt: 1,
             worker_session_id: assignment.session_id,
+            execution_surface: Map.get(assignment, :execution_surface, "container_worker"),
+            probe_id: Map.get(assignment, :probe_id),
+            required_capabilities: Map.get(assignment, :required_capabilities, []),
             execution: ExecutionPayload.from_task_payload(assignment.payload)
           })
       end
@@ -71,13 +82,9 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   def heartbeat(conn, params) do
     case worker_identity(conn, params) do
       {:ok, worker_id, session_id} ->
-        case AssignmentManager.heartbeat(worker_id, session_id, params) do
-          {:ok, payload} ->
-            json(conn, payload)
-
-          {:error, reason} ->
-            HeartbeatMetrics.record_failure(reason)
-            worker_error(conn, reason)
+        case authorize_worker_request(conn, worker_id, session_id, params) do
+          :ok -> heartbeat_response(conn, worker_id, session_id, params)
+          {:error, reason} -> worker_error(conn, reason)
         end
 
       {:error, reason} ->
@@ -85,9 +92,21 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     end
   end
 
+  defp heartbeat_response(conn, worker_id, session_id, params) do
+    case AssignmentManager.heartbeat(worker_id, session_id, params) do
+      {:ok, payload} ->
+        json(conn, payload)
+
+      {:error, reason} ->
+        HeartbeatMetrics.record_failure(reason)
+        worker_error(conn, reason)
+    end
+  end
+
   @spec task_event(Conn.t(), map()) :: Conn.t()
   def task_event(conn, %{"task_id" => task_id, "event_type" => event_type} = params) do
     with {:ok, worker_id, session_id} <- worker_identity(conn, params),
+         :ok <- authorize_worker_request(conn, worker_id, session_id, params),
          :ok <- validate_event_id(event_payload(params)),
          {:ok, event} <-
            AssignmentManager.record_event_with_liveness(
@@ -114,14 +133,53 @@ defmodule SymphonyElixirWeb.WorkerApiController do
   @spec terminal_outcome(String.t(), map()) :: Orchestrator.worker_terminal_outcome()
   def terminal_outcome(event_type, summary), do: WorkerResult.terminal_outcome(event_type, summary)
 
-  defp verify_registration_token(conn) do
-    token =
-      case get_req_header(conn, "authorization") do
-        ["Bearer " <> token | _] -> token
-        _ -> conn |> get_req_header("x-symphony-worker-token") |> List.first()
-      end
+  defp verify_registration_token(conn, params) do
+    if Map.get(params, "execution_surface") == "host_probe" do
+      verify_host_probe_bearer(conn)
+    else
+      if persistence().valid_worker_registration_token?(bearer_token(conn)), do: :ok, else: {:error, :unauthorized}
+    end
+  end
 
-    if persistence().valid_worker_registration_token?(token), do: :ok, else: {:error, :unauthorized}
+  defp authorize_worker_request(conn, worker_id, session_id, params) do
+    if Map.get(params, "execution_surface") == "host_probe" do
+      authorize_host_probe_request(conn, worker_id, session_id, params)
+    else
+      case AssignmentManager.registered_session(worker_id, session_id) do
+        {:ok, %{execution_surface: "host_probe"}} -> authorize_host_probe_request(conn, worker_id, session_id, params)
+        _container_or_missing -> :ok
+      end
+    end
+  end
+
+  defp authorize_host_probe_request(conn, worker_id, session_id, params) do
+    with :ok <- verify_host_probe_bearer(conn),
+         {:ok, session} <- AssignmentManager.registered_session(worker_id, session_id),
+         true <- frozen_probe_fields_match?(session, params) || {:error, :host_probe_identity_mismatch} do
+      :ok
+    end
+  end
+
+  defp verify_host_probe_bearer(conn) do
+    policy = Config.host_probe_policy()
+    token = bearer_token(conn)
+
+    if policy.enabled and is_binary(token) and Plug.Crypto.secure_compare(policy.auth_token, token),
+      do: :ok,
+      else: {:error, :host_probe_unauthorized}
+  end
+
+  defp frozen_probe_fields_match?(session, params) do
+    session.execution_surface == "host_probe" and session.execution_surface == Map.get(params, "execution_surface") and
+      session.probe_id == Map.get(params, "probe_id") and
+      session.capability_digest == Map.get(params, "capability_digest")
+  end
+
+  defp bearer_token(conn) do
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token | _] -> token
+      _ -> conn |> get_req_header("x-symphony-worker-token") |> List.first()
+    end
   end
 
   defp worker_identity(conn, params) do
@@ -153,6 +211,14 @@ defmodule SymphonyElixirWeb.WorkerApiController do
 
   defp worker_error(conn, :worker_session_not_found) do
     error_response(conn, 401, "worker_session_not_found", "Worker session is not active")
+  end
+
+  defp worker_error(conn, :host_probe_unauthorized) do
+    error_response(conn, 401, "host_probe_unauthorized", "Host probe bearer token is invalid")
+  end
+
+  defp worker_error(conn, :host_probe_identity_mismatch) do
+    error_response(conn, 401, "host_probe_identity_mismatch", "Host probe session identity does not match registration")
   end
 
   defp worker_error(conn, :lease_conflict) do

@@ -4,7 +4,7 @@ genre: design
 domain: [observability, logging, errors]
 status: current
 language: en
-updated: 2026-10-10
+updated: 2026-11-02
 design_status: landed
 ---
 
@@ -17,6 +17,21 @@ the three canonical operator commands, and the O-specific deletion-only source g
 It does not own persisted run terminal classification. The closed terminal vocabulary, evidence
 contract, runtime mapping, and terminal write boundary remain solely owned by
 [Run Failure Classification Design](run-failure-classification-design.md).
+
+## Host-probe correlation and errors
+
+Host-probe request correlation uses the frozen `execution_surface`, `probe_id`, `session_id`, and
+capability digest. Accepted assignment/run evidence also carries the normalized execution
+requirement and required capabilities. Missing or mismatched bearer credentials return the typed
+`host_probe_unauthorized` request error; frozen identity or capability mismatch returns
+`host_probe_identity_mismatch`. These errors occur before run or assignment side effects and do
+not create terminal run evidence.
+
+Local missing, empty, or non-`0600` token files fail before any HTTP request. Workspace containment,
+missing, and writability failures produce bounded `environment_unavailable` evidence without an
+absolute host path; launcher/handshake failures produce `runtime_failure`. Authorization headers
+and token contents are excluded from request bodies, logs, task events, run evidence, and API
+responses.
 
 ## Structured log boundary
 

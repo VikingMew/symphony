@@ -1,6 +1,7 @@
 import Config
 
-worker_role = System.get_env("SYMPHONY_ROLE") == "worker"
+runtime_role = System.get_env("SYMPHONY_ROLE")
+worker_role = runtime_role in ["worker", "host_probe"]
 config :symphony_elixir, :runtime_role, if(worker_role, do: :worker, else: :panel)
 
 positive_panel_integer = fn name, default ->
@@ -30,18 +31,26 @@ if worker_role do
     end
   end
 
+  host_probe = runtime_role == "host_probe"
+
   config :symphony_elixir, :worker,
-    panel_url: required.("SYMPHONY_PANEL_URL"),
-    registration_token: required.("SYMPHONY_WORKER_TOKEN"),
-    worker_name: System.get_env("SYMPHONY_WORKER_NAME") || "symphony-worker",
-    workspace_root: System.get_env("SYMPHONY_WORKER_WORKSPACE_ROOT") || "/worker/workspaces",
+    panel_url: if(host_probe, do: System.get_env("HOST_PROBE_PANEL_ROOT") || "http://127.0.0.1:4001", else: required.("SYMPHONY_PANEL_URL")),
+    registration_token: if(host_probe, do: nil, else: required.("SYMPHONY_WORKER_TOKEN")),
+    worker_name: if(host_probe, do: "local-host", else: System.get_env("SYMPHONY_WORKER_NAME") || "symphony-worker"),
+    workspace_root: if(host_probe, do: required.("HOST_PROBE_WORKSPACE_ROOT"), else: System.get_env("SYMPHONY_WORKER_WORKSPACE_ROOT") || "/worker/workspaces"),
     cache_root: System.get_env("SYMPHONY_WORKER_CACHE_ROOT") || "/worker/cache",
     log_root: System.get_env("SYMPHONY_WORKER_LOG_ROOT") || "/worker/logs",
     slots: positive_integer.("SYMPHONY_WORKER_SLOTS", "1"),
     retention_seconds: positive_integer.("SYMPHONY_WORKER_RETENTION_SECONDS", "86400"),
     cache_max_bytes: positive_integer.("SYMPHONY_WORKER_CACHE_MAX_BYTES", "10737418240"),
     image_reference: System.get_env("SYMPHONY_WORKER_IMAGE") || "unknown",
-    source_revision: System.get_env("SYMPHONY_WORKER_SOURCE_REVISION") || "unknown"
+    source_revision: System.get_env("SYMPHONY_WORKER_SOURCE_REVISION") || "unknown",
+    execution_surface: if(host_probe, do: "host_probe", else: "container_worker"),
+    probe_id: if(host_probe, do: "local-host", else: nil),
+    capabilities: if(host_probe, do: String.split(System.get_env("HOST_PROBE_CAPABILITIES") || "", ",", trim: true), else: []),
+    token_file: if(host_probe, do: System.get_env("HOST_PROBE_TOKEN_FILE") || Path.expand("~/.symphony/probe-token"), else: nil),
+    codex_launcher: if(host_probe, do: required.("HOST_PROBE_CODEX_LAUNCHER"), else: nil),
+    local_deadline_seconds: 30
 end
 
 database_pool_size =

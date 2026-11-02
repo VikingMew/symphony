@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         BlockingDecision,
         Config,
         EnvironmentFailureCircuit,
+        ExecutionRequirement,
         Orchestrator,
         PersistenceProvider,
         Redaction,
@@ -265,13 +266,31 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
 
       defp prepare_assignment(state, worker, session, workflow, issue) do
         context = Map.put(state.claim_context, :issue, issue)
+        authority = workspace_authority(worker, session)
 
         ClaimStage.measure(context, :execution_admission, fn ->
-          with {:ok, admission} <- state.run_admission.resolve(workflow, {:issue, issue}, %{workspace_authority: {:http_worker, worker.id, session.id}, readiness: :ready}) do
-            {:ok, %{workflow: workflow, issue: issue, admission: admission, worker: worker, session: session, profile: Config.workflow_profile_for_state(issue.state)}}
+          with {:ok, admission} <-
+                 state.run_admission.resolve(workflow, {:issue, issue}, %{
+                   workspace_authority: authority,
+                   readiness: :ready
+                 }) do
+            {:ok,
+             %{
+               workflow: workflow,
+               issue: issue,
+               admission: admission,
+               worker: worker,
+               session: session,
+               profile: Config.workflow_profile_for_state(issue.state)
+             }}
           end
         end)
       end
+
+      defp workspace_authority(_worker, %{execution_surface: "host_probe", probe_id: probe_id, id: session_id}),
+        do: {:host_probe, probe_id, session_id}
+
+      defp workspace_authority(worker, session), do: {:http_worker, worker.id, session.id}
 
       defp worker_started_state?(state) when is_binary(state) do
         started_states = Policy.worker_started_states() |> DispatchPolicy.normalized_state_set()
@@ -302,7 +321,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       end
 
       defp heartbeat_active_assignment(assignment, state) do
-        expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
+        expires_at = DateTime.add(state.now.(), assignment.lease_duration_seconds, :second)
         renewal = %{lease_id: assignment.lease_id, lease_expires_at: expires_at}
         {%{assignment | expires_at: expires_at}, %{lease_renewals: [renewal], commands: []}}
       end
@@ -481,7 +500,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       end
 
       defp maybe_requeue_zombie(state, issue, %{status: "running", started_at: %DateTime{} = started_at} = run) do
-        cutoff = DateTime.add(state.now.(), -state.persistence.worker_lease_duration_seconds(), :second)
+        cutoff = DateTime.add(state.now.(), -run_lease_duration_seconds(run, state.persistence), :second)
 
         if DateTime.compare(started_at, cutoff) == :lt do
           record_orphan_signal(state.persistence, issue, run, started_at)
@@ -489,6 +508,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
       end
 
       defp maybe_requeue_zombie(_state, _issue, _run), do: :ok
+
+      defp run_lease_duration_seconds(%{execution_surface: "host_probe"}, _persistence), do: 30
+      defp run_lease_duration_seconds(_run, persistence), do: persistence.worker_lease_duration_seconds()
 
       defp record_orphan_signal(persistence, issue, run, started_at) do
         case persistence.list_events(run_id: run.id, event_type: "run.orphaned", limit: 1) do

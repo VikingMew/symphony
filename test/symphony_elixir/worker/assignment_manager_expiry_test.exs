@@ -114,6 +114,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerExpiryTest do
       run_id: run_id,
       worker_id: "worker-1",
       session_id: "session-1",
+      lease_duration_seconds: 60,
       expires_at: DateTime.add(context.now, 60, :second),
       correlation: correlation,
       last_terminal_rejection: nil

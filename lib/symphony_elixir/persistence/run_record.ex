@@ -23,6 +23,10 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     field(:workspace_path, :string)
     field(:status, :string)
     field(:execution_mode, :string, default: "centralized")
+    field(:execution_requirement, :string, default: "default")
+    field(:execution_surface, :string, default: "panel")
+    field(:probe_id, :string)
+    field(:worker_session_id, :binary_id)
     field(:attempt, :integer, default: 0)
     field(:failure_reason, :string)
     field(:failure_evidence, :map)
@@ -45,6 +49,10 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :workspace_path,
       :status,
       :execution_mode,
+      :execution_requirement,
+      :execution_surface,
+      :probe_id,
+      :worker_session_id,
       :attempt,
       :failure_reason,
       :failure_evidence,
@@ -57,6 +65,8 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     |> validate_inclusion(:status, ["running", "completed", "failed", "blocked", "cancelled", "stopped"])
     |> validate_issue_identifier_for_issue_run()
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
+    |> validate_inclusion(:execution_requirement, ["default", "host_only"])
+    |> validate_inclusion(:execution_surface, ["panel", "container_worker", "host_probe"])
     |> validate_terminal_failure()
     |> unique_constraint(:issue_id, name: :runs_one_running_issue)
   end

@@ -21,6 +21,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
         BlockingDecision,
         Config,
         EnvironmentFailureCircuit,
+        ExecutionRequirement,
         Orchestrator,
         PersistenceProvider,
         Redaction,
@@ -116,7 +117,14 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       @spec observe_session(map(), map(), GenServer.server()) :: :ok
       def observe_session(%{id: worker_id} = worker, %{id: session_id} = session, server \\ __MODULE__)
           when is_binary(worker_id) and is_binary(session_id) do
-        if process_alive?(server), do: GenServer.call(server, {:observe_session, worker, session}, :infinity), else: :ok
+        if process_alive?(server), do: GenServer.call(server, {:session, :observe, worker, session}, :infinity), else: :ok
+      end
+
+      @spec registered_session(String.t(), String.t(), GenServer.server()) :: {:ok, map()} | {:error, :worker_session_not_found}
+      def registered_session(worker_id, session_id, server \\ __MODULE__) do
+        if process_alive?(server),
+          do: GenServer.call(server, {:session, :lookup, worker_id, session_id}),
+          else: {:error, :worker_session_not_found}
       end
 
       @spec observe_liveness(String.t(), String.t(), map(), GenServer.server()) :: :ok
@@ -318,8 +326,18 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
         {:reply, fresh_liveness_capacity(state), state}
       end
 
-      def handle_call({:observe_session, worker, session}, _from, state) do
-        {:reply, :ok, observe_session_liveness(state, worker, session)}
+      def handle_call({:session, operation, left, right}, _from, state) do
+        case operation do
+          :observe -> {:reply, :ok, observe_session_liveness(state, left, right)}
+          :lookup -> {:reply, lookup_registered_session(state, left, right), state}
+        end
+      end
+
+      defp lookup_registered_session(state, worker_id, session_id) do
+        case Map.get(state.liveness, {worker_id, session_id}) do
+          %{session: session} -> {:ok, session}
+          nil -> {:error, :worker_session_not_found}
+        end
       end
 
       def handle_call({:cancel_current, _reason, nil}, _from, %{claim_task: %{phase: :prepare} = task} = state) do
@@ -678,7 +696,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       end
 
       defp claim_result({:ok, %{} = assignment}, listening_mode, state) do
-        expires_at = DateTime.add(state.now.(), state.persistence.worker_lease_duration_seconds(), :second)
+        expires_at = DateTime.add(state.now.(), assignment.lease_duration_seconds, :second)
         assignment = %{assignment | expires_at: expires_at}
         Orchestrator.worker_task_started(assignment, state.orchestrator)
         evidence = admission_evidence(:assigned, listening_mode)
@@ -769,6 +787,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
            ) do
         with {:ok, %Issue{} = issue} <-
                revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings),
+             :ok <- admit_execution_requirement(issue, session),
              {:ok, assignment} <- prepare_assignment(state, worker, session, workflow, issue) do
           {:ok, assignment}
         else
@@ -778,6 +797,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
 
           {:error, reason} ->
             {:error, reason}
+        end
+      end
+
+      defp admit_execution_requirement(issue, session) do
+        case ExecutionRequirement.admit(issue, session) do
+          :ok -> :ok
+          {:skip, reason} -> {:skip, reason, %{reason: reason, execution: ExecutionRequirement.from_issue(issue)}}
         end
       end
 

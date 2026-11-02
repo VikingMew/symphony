@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-10-09
+updated: 2026-11-02
 ---
 
 # Orchestration Specification
@@ -181,6 +181,21 @@ HTTP caller times out and after stop is acknowledged; ordinary stop does not rev
 or cancel an existing assignment.
 
 ### Worker claim preparation and commit
+
+Host-only execution uses the same claim transaction and applies these gates after project,
+listening, state, and second-read revalidation but before run, accepted-event, or assignment writes:
+
+- The exact `execution:host-only` label normalizes to `host_only`; its absence normalizes to
+  `default`. Exact allowlisted capability labels normalize to a sorted required-capability set.
+- A container session admits only `default`. A `host_probe` session admits only `host_only` when
+  every required capability is in the immutable registered session capability set.
+- Host-probe registration and every later request require the installation bearer token. The
+  Panel also verifies the frozen `probe_id`, process `session_id`, surface, and capability digest.
+- Host-probe assignments freeze a 30-second lease and renew it through 5-second heartbeats. The
+  probe enforces a 30-second local deadline. Container defaults remain 10/60 seconds.
+- Rejected auth, surface, or capability admission creates no run, accepted event, alternate
+  assignment, or terminal event. Cross-surface duplicate admission remains guarded by the same
+  issue lock and partial unique running-run index.
 
 - One in-memory reservation MUST cover both preparation and commit; concurrent claim requests
   MUST NOT start another claim while that reservation exists.

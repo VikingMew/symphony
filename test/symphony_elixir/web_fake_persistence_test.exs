@@ -360,6 +360,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
         lease_id: lease_id,
         worker_id: worker_id,
         session_id: session_id,
+        lease_duration_seconds: 60,
         expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
       }
 

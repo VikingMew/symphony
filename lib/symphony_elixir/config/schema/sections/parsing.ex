@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         Codex,
         DispatchScopeConfig,
         Hooks,
+        HostProbe,
         Observability,
         Polling,
         Project,
@@ -50,6 +51,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         embeds_one(:workspace, Workspace, on_replace: :update, defaults_to_struct: true)
         embeds_one(:project, Project, on_replace: :update, defaults_to_struct: true)
         embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
+        embeds_one(:host_probe, HostProbe, on_replace: :update, defaults_to_struct: true)
         embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
         embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
         embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
@@ -232,6 +234,7 @@ defmodule SymphonyElixir.Config.Schema.Sections.Parsing do
         |> cast_embed(:workspace, with: &Workspace.changeset/2)
         |> cast_embed(:project, with: &Project.changeset/2)
         |> cast_embed(:worker, with: &Worker.changeset/2)
+        |> cast_embed(:host_probe, with: &HostProbe.changeset/2)
         |> cast_embed(:agent, with: &Agent.changeset/2)
         |> cast_embed(:codex, with: &Codex.changeset/2)
         |> cast_embed(:hooks, with: &Hooks.changeset/2)

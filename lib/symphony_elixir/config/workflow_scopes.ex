@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
   alias SymphonyElixir.Config.{ProjectAuthority, Schema}
   alias SymphonyElixir.Linear.DispatchScope
 
-  @instance_sections ~w(dispatch_scope polling workspace hooks agent codex observability analytics server worker profiles)
+  @instance_sections ~w(dispatch_scope polling workspace hooks agent codex observability analytics server worker host_probe profiles)
   @project_sections ~w(tracker project)
   @instance_value_keys ~w(config prompt_body)
   @project_fields %{
@@ -27,7 +27,8 @@ defmodule SymphonyElixir.Config.WorkflowScopes do
     "observability" => Schema.Observability,
     "analytics" => Schema.Analytics,
     "server" => Schema.Server,
-    "worker" => Schema.Worker
+    "worker" => Schema.Worker,
+    "host_probe" => Schema.HostProbe
   }
 
   @type scope :: :instance | :project

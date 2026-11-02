@@ -4,15 +4,34 @@ genre: design
 domain: [execution, workers, routing, operations]
 status: current
 language: zh-CN
-updated: 2026-11-01
-design_status: proposed
+updated: 2026-11-02
+design_status: partial
 ---
 
 # 宿主侧执行探针设计
 
-本文是 SYM-173 的调研交付，描述一个由宿主预先准备执行环境、探针只负责领活、维持租约、
-启动 Codex、交活或如实报错的目标设计。本文不声明能力已经落地，也不修改现有 worker 协议、
-工作流状态、配置或部署。后续实现必须按本文 roadmap 另开实现票。
+本文最初是 SYM-173 的调研交付；SYM-175 已交付 HP-1 单探针纵向切片。当前实现由宿主预先准备
+执行环境，探针只负责领活、维持租约、启动 Codex、交活或如实报错。多探针、远程传输、完整
+离线可见性、告警和 UI 投影仍按 roadmap 另开实现票，因此状态为 `partial`。
+
+## HP-1 已交付边界
+
+HP-1 复用 worker-v1 的 registration、claim、heartbeat、task event 和单 running run 事务。Panel 的
+installation singleton 提供默认关闭的 `host_probe` 策略及 bearer token；探针本地配置固定
+`http://127.0.0.1:4001`、`local-host`、token 文件、workspace root 和 Codex launcher。注册冻结
+`execution_surface=host_probe`、每进程 `session_id`、capability 闭集及其摘要，并固定 5 秒 heartbeat、
+30 秒 lease 和 30 秒本地 deadline。每次请求重新校验 bearer 与冻结身份，认证失败在 run、accepted
+event 或 assignment 副作用前返回 typed request error。
+
+Linear labels 被规范化为 `default` / `host_only` 和 allowlisted required capabilities。project/listening
+gate 先执行；container 只接收 default，host probe 只接收 host-only 且 requirement 是 session
+capabilities 子集的票。拒绝不创建 run、accepted event 或替代 assignment。
+
+探针只接受配置 root 下按 issue identifier 命名的既有可写 workspace，不执行 clone、fetch、install、
+hook repair 或 cleanup。workspace/readiness 失败映射 `environment_unavailable`，Codex launcher/handshake
+失败映射 `runtime_failure`，租约和 terminal UUID 幂等继续使用既有语义。HP-1 只持久化冻结 session
+surface/capability/timing，以及 run/accepted-event 的 requirement、实际 surface、probe/session correlation
+和有界终态证据；完整 projection 属于 HP-2。
 
 ## 状态、证据基线与约束
 

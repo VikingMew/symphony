@@ -17,6 +17,7 @@ defmodule SymphonyElixir.RunAdmission do
           {:panel_local}
           | {:centralized_ssh, String.t()}
           | {:http_worker, String.t(), String.t()}
+          | {:host_probe, String.t(), String.t()}
   @type cleanup_authority :: {:panel_local} | {:centralized_ssh, String.t()}
   @type run_subject :: {:issue, Issue.t()} | {:operator, map()}
   @type readiness_result :: :ready | :ok | {:error, map()}
@@ -96,6 +97,7 @@ defmodule SymphonyElixir.RunAdmission do
        do: :ok
 
   defp validate_surface("worker", {:http_worker, _worker_id, _session_id}), do: :ok
+  defp validate_surface("worker", {:host_probe, _probe_id, _session_id}), do: :ok
 
   defp validate_surface(mode, authority) do
     unavailable(authority, %{kind: :execution_mode_unavailable, execution_mode: mode})
@@ -126,6 +128,13 @@ defmodule SymphonyElixir.RunAdmission do
     end
   end
 
+  defp check_readiness({:host_probe, _probe_id, _session_id} = authority, _settings, context) do
+    case Map.fetch!(context, :readiness) do
+      :ready -> :ok
+      {:error, rejection} -> unavailable(authority, rejection)
+    end
+  end
+
   defp unavailable(authority, rejection) do
     evidence =
       rejection
@@ -138,6 +147,7 @@ defmodule SymphonyElixir.RunAdmission do
   defp surface({:panel_local}), do: :panel_local
   defp surface({:centralized_ssh, _host}), do: :centralized_ssh
   defp surface({:http_worker, _worker_id, _session_id}), do: :http_worker
+  defp surface({:host_probe, _probe_id, _session_id}), do: :host_probe
 
   defp source(settings, subject) do
     %{

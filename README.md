@@ -19,6 +19,7 @@ It watches configured Linear workflow states, prepares an isolated workspace for
 - Local centralized Codex execution by default.
 - Optional remote execution through configured SSH worker hosts.
 - Optional HTTP worker mode with live Linear-backed claims and ephemeral Panel assignments.
+- Optional single host probe for maintainer-labeled host-only work in an operator-prepared workspace.
 - Per-issue workspaces and Git worktrees.
 - PostgreSQL-backed projects, current workflows, runtime settings, runs, events, agent turns, workers, sessions, and workspace records.
 - Settings pages for Projects, Agents, Runtime, and package import.
@@ -79,6 +80,7 @@ admission can reconsider it.
 | Run | One persisted attempt to work an issue, including status, attempt, timing, failure reason, events, agent turns, and bounded worker validation/runtime/handoff evidence. Runs, issues, events, worker sessions, blocking decisions, and worker assignment payloads carry the originating `project_id`. |
 | Workspace | The per-issue filesystem location where Codex works, isolated per repository so multiple projects stay separate. |
 | Worker mode | Optional HTTP mode where claims read and revalidate Linear, refuse uncleared persisted blockers, and return one ephemeral current-workflow assignment. |
+| Host probe | One authenticated local-host worker-v1 process that accepts only `execution:host-only` issues whose required capabilities match its frozen session. |
 
 Symphony maintains multiple projects concurrently: one Linear project + one repository each,
 sharing a single Linear user and installation runtime/profile policy. Settings and the
@@ -122,6 +124,17 @@ never derives a missing required gate. A claim is only a lease: accepted/executo
 is emitted when each fact occurs, terminal delivery retains heartbeat ownership through bounded
 retries. Panel reconciliation fails expired runs and returns eligible zombie issues to Linear Ready;
 it never requeues a database task.
+
+### Host probe
+
+The HP-1 host probe runs outside Compose against `http://127.0.0.1:4001`. Its installation policy
+is disabled by default. It reads a per-install bearer from an exact-mode `0600` token file, registers
+as `local-host` with one process session, and uses a 5-second heartbeat, 30-second lease, and
+30-second local deadline. The operator supplies an existing issue workspace below
+`HOST_PROBE_WORKSPACE_ROOT` and an allowlisted `HOST_PROBE_CODEX_LAUNCHER`; the probe does not clone,
+fetch, install, repair, or clean the workspace. See the
+[worker operations guide](docs/execution-worker-operations.md#host-probe-preflight-and-enablement-record)
+for the enablement record and rollback procedure.
 
 ## Quick Start
 
@@ -216,6 +229,9 @@ Common environment variables:
 | `SECRET_KEY_BASE` | Release session-signing secret; Compose requires at least 64 bytes. |
 | `SYMPHONY_EXECUTION_MODE=worker` | Let external workers claim live Linear work instead of local Codex execution. |
 | `SYMPHONY_WORKER_REGISTRATION_TOKEN` | Shared token used by worker API clients. |
+| `HOST_PROBE_TOKEN_FILE` | Host-probe bearer file; defaults to `~/.symphony/probe-token` and must be exactly `0600`. |
+| `HOST_PROBE_WORKSPACE_ROOT` | Existing operator-prepared host workspace root. |
+| `HOST_PROBE_CODEX_LAUNCHER` | Allowlisted local `codex app-server` launcher. |
 | `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY` | Used for Linear/Codex subprocess network access. |
 | `SYMPHONY_TRUST_X_FORWARDED_HEADERS=true` | Trust reverse-proxy forwarded scheme/host/prefix headers. |
 | `SYMPHONY_PUBLIC_URL` | Optional fixed public base URL behind a proxy. |

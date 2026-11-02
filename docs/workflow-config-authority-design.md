@@ -4,7 +4,7 @@ genre: design
 domain: [workflow, config]
 status: current
 language: zh-CN
-updated: 2026-10-09
+updated: 2026-11-02
 design_status: landed
 ---
 
@@ -16,6 +16,13 @@ design_status: landed
 [default-project-bootstrap-and-remove-design.md](default-project-bootstrap-and-remove-design.md)）。
 
 ## 契约
+
+HP-1 在 installation singleton 增加默认关闭的 `host_probe` policy。Panel 只拥有 `enabled`、静态
+`auth_token` 以及固定 5 秒 heartbeat、30 秒 lease、30 秒 deadline；运行时通过
+`SymphonyElixir.Config.host_probe_policy/0` 读取。Panel root、token 文件路径、host workspace root、
+allowlisted Codex launcher 和本进程 capability 声明只属于 probe-local deployment configuration，
+不得写回 workflow/project row。Linear project 映射和 listening/dispatch scope 仍按既有 authority 先于
+execution-surface admission 执行。
 
 - PostgreSQL 持久化两个互斥配置 scope。固定的 `app_settings["instance_workflow"]` 保存一份
   installation-wide runtime/profile slice；每个 enabled project 的唯一 `workflows` 记录只保存
