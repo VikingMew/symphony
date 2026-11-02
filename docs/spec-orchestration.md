@@ -182,20 +182,13 @@ or cancel an existing assignment.
 
 ### Worker claim preparation and commit
 
-Host-only execution uses the same claim transaction and applies these gates after project,
-listening, state, and second-read revalidation but before run, accepted-event, or assignment writes:
+Host-only execution uses the same claim transaction after project/listening/state/revalidation and before any run, event, or assignment write:
 
-- The exact `execution:host-only` label normalizes to `host_only`; its absence normalizes to
-  `default`. Exact allowlisted capability labels normalize to a sorted required-capability set.
-- A container session admits only `default`. A `host_probe` session admits only `host_only` when
-  every required capability is in the immutable registered session capability set.
-- Host-probe registration and every later request require the installation bearer token. The
-  Panel also verifies the frozen `probe_id`, process `session_id`, surface, and capability digest.
-- Host-probe assignments freeze a 30-second lease and renew it through 5-second heartbeats. The
-  probe enforces a 30-second local deadline. Container defaults remain 10/60 seconds.
-- Rejected auth, surface, or capability admission creates no run, accepted event, alternate
-  assignment, or terminal event. Cross-surface duplicate admission remains guarded by the same
-  issue lock and partial unique running-run index.
+- Exact `execution:host-only` normalizes to `host_only`; absence is `default`; allowlisted capability labels form a sorted requirement set.
+- Containers admit only `default`; `host_probe` admits only `host_only` with requirements contained in its frozen capabilities.
+- Registration and every request require the installation bearer plus frozen probe, process session, surface, and capability digest.
+- Host assignments use 5-second heartbeat, 30-second lease/local deadline; container defaults remain 10/60 seconds.
+- Rejection creates no run, accepted/terminal event, or alternate assignment; the existing issue lock and running-run index guard duplicates.
 
 - One in-memory reservation MUST cover both preparation and commit; concurrent claim requests
   MUST NOT start another claim while that reservation exists.

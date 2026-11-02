@@ -127,14 +127,11 @@ it never requeues a database task.
 
 ### Host probe
 
-The HP-1 host probe runs outside Compose against `http://127.0.0.1:4001`. Its installation policy
-is disabled by default. It reads a per-install bearer from an exact-mode `0600` token file, registers
-as `local-host` with one process session, and uses a 5-second heartbeat, 30-second lease, and
-30-second local deadline. The operator supplies an existing issue workspace below
-`HOST_PROBE_WORKSPACE_ROOT` and an allowlisted `HOST_PROBE_CODEX_LAUNCHER`; the probe does not clone,
-fetch, install, repair, or clean the workspace. See the
-[worker operations guide](docs/execution-worker-operations.md#host-probe-preflight-and-enablement-record)
-for the enablement record and rollback procedure.
+The HP-1 host probe runs outside Compose against `http://127.0.0.1:4001`, reads a `0600` bearer
+file, registers one `local-host` session, and uses 5-second heartbeat plus 30-second lease/deadline.
+The operator supplies an existing issue workspace below `HOST_PROBE_WORKSPACE_ROOT` and an allowlisted
+`HOST_PROBE_CODEX_LAUNCHER`; the probe never prepares or cleans it. See the
+[worker operations guide](docs/execution-worker-operations.md#host-probe-preflight-and-enablement-record).
 
 ## Quick Start
 

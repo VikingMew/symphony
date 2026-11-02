@@ -16,17 +16,12 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 
 ## Host probe 协议扩展
 
-同一 worker-v1 API 支持 `execution_surface=host_probe`，没有第二套 queue、lease 或 terminal API。
-注册必须通过 installation `host_probe.auth_token` bearer 认证，并冻结 `probe_id=local-host`、每进程
-`session_id`、allowlisted capabilities、capability digest、5 秒 heartbeat 与 30 秒 lease。claim、heartbeat
-和 task event 都携带 bearer，并与当前 session 的冻结 surface、probe、session 和 digest 比对；缺失、
-错误或旧 session 在 assignment/run/event 副作用前得到 typed request auth/identity error。
+同一 worker-v1 API 支持 `execution_surface=host_probe`，不增加 queue、lease 或 terminal API。注册使用 installation
+`host_probe.auth_token`，冻结 `local-host`、进程 session、capabilities/digest、5 秒 heartbeat 和 30 秒 lease。
+后续请求携带 bearer 并匹配冻结身份；缺失、错误或旧 session 在副作用前返回 typed auth/identity error。
 
-candidate 先通过既有 project、listening、state 和 revalidation gate，再规范化
-`execution:host-only` 与 capability labels。container session 只允许 `default`；host probe 只允许
-`host_only` 且 required capabilities 是 frozen session capabilities 的子集。租约期限从 assignment 的
-session policy 冻结，host heartbeat 续约 30 秒，container 默认仍为 10 秒 heartbeat / 60 秒 lease。
-旧 session、过期 lease 和重复 terminal event 继续沿用现有 fencing 与 UUID 幂等。
+candidate 先过 project/listening/state/revalidation，再规范化 execution/capability labels。container 只允许 `default`；
+probe 只允许 capability 子集匹配的 `host_only`。assignment 冻结 session lease policy；旧 session、过期 lease 和重复 terminal 沿用现有 fencing/UUID 幂等。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。

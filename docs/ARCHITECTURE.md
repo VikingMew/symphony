@@ -334,9 +334,8 @@ Important configuration areas:
 - `agent`: concurrency and turn limits.
 - `codex`: app-server command, approval policy, sandbox settings.
 - `worker`: SSH host routing for centralized remote execution.
-- `host_probe`: disabled-by-default installation policy for one authenticated local-host execution
-  surface; its root, token file, prepared workspace root, launcher, and capabilities remain
-  probe-local deployment configuration.
+- `host_probe`: disabled installation policy for one authenticated local-host surface; root,
+  token file, prepared workspace, launcher, and capabilities remain probe-local.
 - `server`: optional dashboard/API port.
 
 ## 8. State and Ownership Boundaries

@@ -21,19 +21,13 @@ to implementation or refinement completion evidence.
 
 ## Host-probe runtime
 
-The `host_probe` execution surface reuses this runtime after claim, with a narrower preparation
-boundary. The operator supplies an existing writable workspace at
-`HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>` and an allowlisted
-`HOST_PROBE_CODEX_LAUNCHER`. The probe verifies containment and readiness, then runs Codex, required
-gates, restricted task tools, handoff, and terminal delivery. It never clones, fetches, installs,
-repairs, runs setup/cleanup hooks, or deletes the operator-owned workspace.
+The `host_probe` surface reuses this runtime with a narrower preparation boundary. The operator supplies an existing writable
+`HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>` and allowlisted `HOST_PROBE_CODEX_LAUNCHER`. The probe verifies
+containment/readiness, then runs Codex, gates, restricted tools, handoff, and terminal delivery; it never prepares, repairs, hooks, or deletes the workspace.
 
-Probe-local startup requires the fixed root `http://127.0.0.1:4001`, `probe_id=local-host`, a new
-process session, a regular non-empty token file with exact `0600` permissions, one slot, and a
-30-second local deadline. The Panel returns the frozen 5-second heartbeat and 30-second lease
-policy. Workspace failures become bounded `environment_unavailable` evidence; launcher or app-server
-handshake failures remain `runtime_failure`. The existing gate, restricted-tool, stable terminal
-event ID, retry, fencing, and handoff contracts are unchanged.
+Startup fixes root `http://127.0.0.1:4001`, `probe_id=local-host`, one process session/slot, a non-empty `0600` token file,
+and a 30-second local deadline. Panel freezes a 5-second heartbeat and 30-second lease. Workspace failures are bounded
+`environment_unavailable`; launcher/handshake failures remain `runtime_failure`. Existing gate, retry, fencing, event-ID, and handoff contracts remain.
 
 In the current containerized worker deployment, the worker container is the execution isolation
 boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the

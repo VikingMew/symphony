@@ -43,26 +43,16 @@ second readiness or cleanup rule.
 
 ## Host-probe preflight and enablement record
 
-The host probe is a process on the Panel's Docker host, outside Compose. Publish the Panel only on
-host loopback `127.0.0.1:4001`, configure the installation `host_probe` policy in Settings with the
-feature disabled, and place the same token in `HOST_PROBE_TOKEN_FILE` (default
-`~/.symphony/probe-token`). The file must be regular, non-empty, owned within the operator's chosen
-host boundary, and exactly mode `0600`.
+The host probe runs on the Panel's Docker host, outside Compose. Publish Panel only at `127.0.0.1:4001`, leave installation
+`host_probe` disabled, and place its token in `HOST_PROBE_TOKEN_FILE` (default `~/.symphony/probe-token`). The file must be regular, non-empty, and exactly `0600`.
 
-Prepare one existing writable directory per issue at
-`HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>`. Set `HOST_PROBE_CODEX_LAUNCHER` to the
-allowlisted local command that starts `codex app-server`; optional comma-separated
-`HOST_PROBE_CAPABILITIES` may contain only `interactive-session`, `gui-session`, or
-`manual-pr-handoff`. Start the same release with `SYMPHONY_ROLE=host_probe`; do not set a database
-URL, Linear credential, source-preparation command, or container-engine access for this process.
+Prepare `HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>` as an existing writable directory. Set
+`HOST_PROBE_CODEX_LAUNCHER` to the allowlisted `codex app-server` command; `HOST_PROBE_CAPABILITIES` may contain only
+`interactive-session`, `gui-session`, or `manual-pr-handoff`. Start with `SYMPHONY_ROLE=host_probe`; give it no database, Linear, source-preparation, or engine access.
 
-Before enabling routing, retain an operator record with the token-file location and mode, chosen
-host identity and credential boundary, workspace root, loopback network boundary, launcher, and
-one real successful host run. Then enable the installation policy and add `execution:host-only`
-only to maintainer-approved issues. A healthy session reports `local-host`, a new session id,
-5-second heartbeat, 30-second lease, and the configured capabilities. Roll back by removing or
-clearing host-only labels, allowing or terminating the active lease, stopping the probe, and
-disabling the installation policy. Crash residue remains operator-owned.
+Before enabling, record token location/mode, host identity and credential boundary, workspace root, loopback boundary, launcher,
+and one real successful host run. Then enable policy and label only maintainer-approved issues. Healthy registration reports
+`local-host`, a new session, 5-second heartbeat, 30-second lease, and configured capabilities. Roll back labels/lease/probe/policy in that order; crash residue stays operator-owned.
 
 ## Preflight and credentials
 

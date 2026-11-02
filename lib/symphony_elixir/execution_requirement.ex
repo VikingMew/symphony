@@ -4,12 +4,7 @@ defmodule SymphonyElixir.ExecutionRequirement do
   alias SymphonyElixir.Linear.Issue
 
   @host_only_label "execution:host-only"
-  @capability_labels %{
-    "capability:interactive-session" => "interactive-session",
-    "capability:gui-session" => "gui-session",
-    "capability:manual-pr-handoff" => "manual-pr-handoff"
-  }
-  @allowed_capabilities @capability_labels |> Map.values() |> Enum.sort()
+  @allowed_capabilities ~w(gui-session interactive-session manual-pr-handoff)
 
   @type requirement :: String.t()
   @type evidence :: %{
@@ -26,10 +21,7 @@ defmodule SymphonyElixir.ExecutionRequirement do
 
     %{
       execution_requirement: if(MapSet.member?(normalized, @host_only_label), do: "host_only", else: "default"),
-      required_capabilities:
-        @capability_labels
-        |> Enum.flat_map(fn {label, capability} -> if MapSet.member?(normalized, label), do: [capability], else: [] end)
-        |> Enum.sort()
+      required_capabilities: Enum.filter(@allowed_capabilities, &MapSet.member?(normalized, "capability:" <> &1))
     }
   end
 

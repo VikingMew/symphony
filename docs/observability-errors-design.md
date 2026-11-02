@@ -20,18 +20,12 @@ contract, runtime mapping, and terminal write boundary remain solely owned by
 
 ## Host-probe correlation and errors
 
-Host-probe request correlation uses the frozen `execution_surface`, `probe_id`, `session_id`, and
-capability digest. Accepted assignment/run evidence also carries the normalized execution
-requirement and required capabilities. Missing or mismatched bearer credentials return the typed
-`host_probe_unauthorized` request error; frozen identity or capability mismatch returns
-`host_probe_identity_mismatch`. These errors occur before run or assignment side effects and do
-not create terminal run evidence.
+Requests correlate frozen `execution_surface`, `probe_id`, `session_id`, and capability digest; accepted evidence also
+carries normalized requirement/capabilities. Bad bearer credentials return `host_probe_unauthorized`; frozen identity or
+capability mismatch returns `host_probe_identity_mismatch`, before run/assignment side effects or terminal evidence.
 
-Local missing, empty, or non-`0600` token files fail before any HTTP request. Workspace containment,
-missing, and writability failures produce bounded `environment_unavailable` evidence without an
-absolute host path; launcher/handshake failures produce `runtime_failure`. Authorization headers
-and token contents are excluded from request bodies, logs, task events, run evidence, and API
-responses.
+Missing, empty, or non-`0600` local tokens fail before HTTP. Workspace containment/readiness produces bounded
+`environment_unavailable` without host paths; launcher/handshake produces `runtime_failure`. Headers and token contents are excluded from bodies, logs, events, evidence, and responses.
 
 ## Structured log boundary
 

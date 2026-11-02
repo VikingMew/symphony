@@ -30,14 +30,9 @@ copies the same evidence. Issue Detail reads the snapshot and Run Detail reads t
 so an operator can trace scope and context from either page. Rejected candidates are logged and
 diagnosed with a typed reason but do not create an issue run merely to persist the rejection.
 
-HP-1 adds only the immutable evidence required to reconstruct an accepted host claim. A worker
-session freezes `execution_surface`, nullable `probe_id`, normalized capabilities and digest, and
-its heartbeat/lease policy. An accepted run freezes normalized `execution_requirement`, actual
-surface, nullable probe id, and worker session id; the accepted event copies requirement,
-capabilities, surface, probe, and session correlation. Rejected surface/capability/auth admission
-does not create a run or accepted event. Host paths and bearer tokens are never persisted. Full
-snapshot/API/UI/offline projections and alerting remain outside this boundary for HP-2; the existing
-partial unique index remains the only cross-surface one-running-run guard.
+HP-1 stores only immutable accepted-claim evidence. Sessions freeze surface, probe, capabilities/digest, and timing; runs freeze
+requirement, actual surface, probe, and session; accepted events copy requirement/capability/correlation. Rejection creates no
+run/event, and host paths/tokens are never persisted. Full projections, offline visibility, and alerts remain HP-2; the existing partial index is the sole running-run guard.
 
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.

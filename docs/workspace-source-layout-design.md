@@ -14,12 +14,9 @@ design_status: landed
 
 ## Host-prepared workspace
 
-`host_probe` 使用独立的 probe-local workspace root，并只解析
-`<root>/<normalized-issue-identifier>`。解析后的 canonical path 必须仍在 canonical root 下、已经存在且
-可写；missing、unwritable 或 escaping path 返回不含绝对路径的有界 `environment_unavailable` 证据。
-该 surface 的 workspace authority 是 `host_probe`：执行器不 clone、fetch、install、创建 workspace、
-运行准备/清理 hooks 或尝试修复 toolchain。Panel 不接收、显示或持久化 host root/path，正常或异常退出
-后的 workspace ownership 都留给 operator。
+`host_probe` 只解析独立 probe-local root 下的 `<normalized-issue-identifier>`。canonical path 必须仍在 root 下、
+已存在且可写；missing、unwritable、escaping 返回不含绝对路径的 `environment_unavailable`。其 workspace authority
+是 `host_probe`：不 prepare、hook、repair 或 cleanup；Panel 不接收或持久化 host path，workspace ownership 始终属于 operator。
 
 ## 目标
 
