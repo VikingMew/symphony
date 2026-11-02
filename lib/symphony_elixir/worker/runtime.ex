@@ -92,9 +92,9 @@ defmodule SymphonyElixir.Worker.Runtime do
              active_leases: leases,
              available_slots: max(state.config.slots - map_size(state.active), 0)
            }) do
-        {:ok, %{"commands" => commands}} when is_list(commands) ->
+        {:ok, %{"commands" => commands} = response} when is_list(commands) ->
           state
-          |> renew_local_deadlines()
+          |> renew_local_deadlines(Map.get(response, "lease_renewals", []))
           |> then(fn renewed ->
             commands
             |> Enum.filter(&(&1["type"] == "cancel_task"))
@@ -221,12 +221,20 @@ defmodule SymphonyElixir.Worker.Runtime do
     schedule(:cleanup, 300)
   end
 
-  defp renew_local_deadlines(%{config: %{execution_surface: "host_probe"}} = state) do
-    active = Map.new(state.active, fn {task_id, entry} -> {task_id, schedule_local_deadline(state.config, task_id, entry)} end)
+  defp renew_local_deadlines(%{config: %{execution_surface: "host_probe"}} = state, lease_renewals) do
+    renewed_lease_ids = MapSet.new(lease_renewals, &Map.fetch!(&1, "lease_id"))
+
+    active =
+      Map.new(state.active, fn {task_id, entry} ->
+        if MapSet.member?(renewed_lease_ids, entry.claim["lease_id"]),
+          do: {task_id, schedule_local_deadline(state.config, task_id, entry)},
+          else: {task_id, entry}
+      end)
+
     %{state | active: active}
   end
 
-  defp renew_local_deadlines(state), do: state
+  defp renew_local_deadlines(state, _lease_renewals), do: state
 
   defp enforce_local_deadline(%{config: %{execution_surface: "host_probe"}} = state, task_id, active) do
     Process.exit(active.pid, :shutdown)

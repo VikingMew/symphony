@@ -15,7 +15,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
     def heartbeat(_config, _identity, payload) do
       Agent.get_and_update(__MODULE__, fn state ->
-        response = {:ok, %{"commands" => state.commands}}
+        response = {:ok, %{"commands" => state.commands, "lease_renewals" => state.lease_renewals}}
         state = %{state | commands: [], heartbeats: [payload | state.heartbeats]}
         {response, state}
       end)
@@ -192,7 +192,16 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     test_pid = self()
 
     initial = fn ->
-      %{test: test_pid, claims: [], claims_seen: [], commands: [], events: [], heartbeats: [], outcomes: %{}}
+      %{
+        test: test_pid,
+        claims: [],
+        claims_seen: [],
+        commands: [],
+        events: [],
+        heartbeats: [],
+        lease_renewals: [],
+        outcomes: %{}
+      }
     end
 
     start_supervised!(%{id: FakeClient, start: {Agent, :start_link, [initial, [name: FakeClient]]}})
@@ -318,6 +327,21 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
     eventually(fn -> terminal_count("task-1") == 2 end)
     send(runtime, :heartbeat)
     eventually(fn -> Enum.any?(state().heartbeats, &(&1.active_leases == [])) end)
+  end
+
+  test "host probe refreshes its local deadline only for a renewed lease", %{config: config} do
+    put_claims([claim("task-1", true)])
+    runtime = start_runtime(%{config | execution_surface: "host_probe", local_deadline_seconds: 60})
+
+    assert_receive {:executing, "task-1", _executor}, 1_000
+    original_timer = :sys.get_state(runtime).active["task-1"].deadline_timer
+
+    send(runtime, :heartbeat)
+    assert :sys.get_state(runtime).active["task-1"].deadline_timer == original_timer
+
+    put_lease_renewals([%{"lease_id" => "lease-task-1"}])
+    send(runtime, :heartbeat)
+    refute :sys.get_state(runtime).active["task-1"].deadline_timer == original_timer
   end
 
   test "terminal delivery remains pending after the configured attempt limit and recovers", %{config: config} do
@@ -773,6 +797,7 @@ defmodule SymphonyElixir.Worker.RuntimeTest do
 
   defp put_claims(claims), do: Agent.update(FakeClient, &%{&1 | claims: claims})
   defp put_commands(commands), do: Agent.update(FakeClient, &%{&1 | commands: commands})
+  defp put_lease_renewals(renewals), do: Agent.update(FakeClient, &%{&1 | lease_renewals: renewals})
 
   defp state, do: Agent.get(FakeClient, & &1)
   defp terminal_count(task_id), do: terminal_count(task_id, "task.completed")
