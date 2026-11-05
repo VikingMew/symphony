@@ -499,6 +499,15 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       EventWithoutCorrelationPersistence
     )
 
+    manager = start_assignment_manager(EventWithoutCorrelationPersistence)
+
+    :ok =
+      AssignmentManager.observe_session(
+        %{id: "worker"},
+        %{id: "session", total_slots: 1, execution_surface: "container_worker"},
+        manager
+      )
+
     start_test_endpoint()
 
     assert %{"error" => %{"code" => "lease_not_active"}} =

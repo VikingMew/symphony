@@ -14,8 +14,6 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
   @worker_protocol_version "worker-api-v1"
   @worker_heartbeat_interval_seconds 10
   @worker_lease_duration_seconds 60
-  @host_probe_heartbeat_interval_seconds 5
-  @host_probe_lease_duration_seconds 30
   @host_probe_id "local-host"
 
   @spec worker_protocol_version() :: String.t()
@@ -43,10 +41,11 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
 
   @spec register_worker(map()) :: {:ok, %{worker: Worker.t(), session: WorkerSession.t()}} | {:error, term()}
   def register_worker(attrs) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)),
-         :ok <- validate_total_slots(map_get(attrs, "total_slots", :total_slots)) do
-      Repo.transaction(fn -> register_worker!(attrs) end)
+    with :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)),
+         :ok <- validate_total_slots(map_get(attrs, "total_slots", :total_slots)),
+         {:ok, registration} <- registration(attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
+      Repo.transaction(fn -> register_worker!(attrs, registration) end)
     end
   end
 
@@ -156,11 +155,10 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
     end
   end
 
-  defp register_worker!(attrs) do
+  defp register_worker!(attrs, registration) do
     now = DateTime.utc_now()
     name = map_get(attrs, "worker_name", :worker_name) || map_get(attrs, "name", :name)
     labels = normalize_labels(map_get(attrs, "labels", :labels))
-    registration = registration!(attrs)
     capabilities = %{"values" => registration.capabilities}
 
     worker =
@@ -209,13 +207,6 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
   defp worker_api_config(key, default), do: Application.get_env(:symphony_elixir, :worker_api, []) |> Keyword.get(key, default)
   defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
 
-  defp registration!(attrs) do
-    case registration(attrs) do
-      {:ok, registration} -> registration
-      {:error, reason} -> Repo.rollback(reason)
-    end
-  end
-
   defp registration(attrs) do
     case map_get(attrs, "execution_surface", :execution_surface) || "container_worker" do
       "container_worker" ->
@@ -251,8 +242,8 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
          probe_id: probe_id,
          capabilities: capabilities,
          capability_digest: ExecutionRequirement.capability_digest(capabilities),
-         heartbeat_interval_seconds: @host_probe_heartbeat_interval_seconds,
-         lease_duration_seconds: @host_probe_lease_duration_seconds
+         heartbeat_interval_seconds: policy.heartbeat_interval_seconds,
+         lease_duration_seconds: policy.lease_duration_seconds
        }}
     else
       {:error, reason} -> {:error, reason}

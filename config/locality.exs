@@ -16,14 +16,14 @@
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/codex/app_server.ex",
       lines: 89,
-      identifier: "handle_incoming/7@642"
+      identifier: "handle_incoming/7@631"
     },
     %{
       owner: "Symphony maintainers",
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir/codex/app_server.ex",
       lines: 77,
-      identifier: "handle_turn_method/7@810"
+      identifier: "handle_turn_method/7@799"
     },
     %{
       owner: "Symphony maintainers",
@@ -153,6 +153,13 @@
     },
     %{
       owner: "Symphony maintainers",
+      split: "Extract named helpers or view components at the existing control-flow boundaries.",
+      path: "lib/symphony_elixir/worker/executor.ex",
+      lines: 71,
+      identifier: "run_codex/5@106"
+    },
+    %{
+      owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/workspace/sections/hooks.ex",
       lines: 573,
@@ -274,7 +281,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_2.exs",
-      lines: 666,
+      lines: 684,
       identifier: "__using__/1@6"
     },
     %{

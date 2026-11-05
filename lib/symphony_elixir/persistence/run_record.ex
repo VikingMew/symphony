@@ -67,8 +67,26 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     |> validate_inclusion(:execution_mode, ["centralized", "worker"])
     |> validate_inclusion(:execution_requirement, ["default", "host_only"])
     |> validate_inclusion(:execution_surface, ["panel", "container_worker", "host_probe"])
+    |> validate_host_probe_evidence()
     |> validate_terminal_failure()
     |> unique_constraint(:issue_id, name: :runs_one_running_issue)
+  end
+
+  defp validate_host_probe_evidence(changeset) do
+    if get_field(changeset, :execution_surface) == "host_probe" do
+      changeset
+      |> require_host_only_requirement()
+      |> validate_required([:probe_id, :worker_session_id])
+      |> validate_inclusion(:probe_id, ["local-host"])
+    else
+      changeset
+    end
+  end
+
+  defp require_host_only_requirement(changeset) do
+    if get_field(changeset, :execution_requirement) == "host_only",
+      do: changeset,
+      else: add_error(changeset, :execution_requirement, "must be host_only for host_probe")
   end
 
   defp validate_issue_identifier_for_issue_run(changeset) do

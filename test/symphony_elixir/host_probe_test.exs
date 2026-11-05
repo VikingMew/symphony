@@ -1,10 +1,9 @@
 defmodule SymphonyElixir.HostProbeTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.{Config.Schema, ExecutionRequirement}
-  alias SymphonyElixir.HostProbe.{PreparedWorkspace, Token}
+  alias SymphonyElixir.{Config, Config.Schema, ExecutionRequirement}
   alias SymphonyElixir.Linear.Issue
-  alias SymphonyElixir.Worker.{Client, Config}
+  alias SymphonyElixir.Persistence.WorkerRegistry
 
   test "normalizes host-only and capability labels and enforces the routing matrix" do
     assert ExecutionRequirement.from_labels([" execution:HOST-only ", "capability:gui-session", "capability:manual-pr-handoff"]) == %{
@@ -49,6 +48,16 @@ defmodule SymphonyElixir.HostProbeTest do
              local_deadline_seconds: 30
            } = settings.host_probe
 
+    workflow = %{setup_required: false, config: %{"host_probe" => %{"enabled" => true, "auth_token" => "secret"}}}
+
+    assert %{enabled: true, auth_token: "secret", local_deadline_seconds: 30} =
+             Config.with_workflow_context(workflow, &Config.host_probe_policy/0)
+
+    assert {:error, {:invalid_workflow_config, blank_message}} =
+             Schema.parse(%{"host_probe" => %{"enabled" => true, "auth_token" => ""}})
+
+    assert blank_message =~ "auth_token"
+
     assert {:error, {:invalid_workflow_config, message}} =
              Schema.parse(%{
                "host_probe" => %{
@@ -61,54 +70,37 @@ defmodule SymphonyElixir.HostProbeTest do
     assert message =~ "heartbeat_interval_seconds"
   end
 
-  test "token loader requires a non-empty owner-only regular file" do
-    path = Path.join(tmp_dir("token"), "probe-token")
-    assert {:error, :missing_token_file} = Token.load_bearer(path)
-    File.write!(path, "probe-secret\n")
-    File.chmod!(path, 0o644)
-    assert {:error, :invalid_token_file_mode} = Token.load_bearer(path)
-    File.chmod!(path, 0o600)
-    assert {:ok, "probe-secret"} = Token.load_bearer(path)
-  end
+  test "worker registry accepts only the fixed host-probe registration shape" do
+    registration = %{
+      "execution_surface" => "host_probe",
+      "probe_id" => "local-host",
+      "worker_name" => "local-host",
+      "protocol_version" => "worker-api-v1",
+      "total_slots" => 1,
+      "capabilities" => %{"values" => ["gui-session"]}
+    }
 
-  test "prepared workspace accepts only the writable issue directory below its root" do
-    root = tmp_dir("workspace")
-    workspace = Path.join(root, "sym-175")
-    File.mkdir_p!(workspace)
-    assert {:ok, Path.expand(workspace)} == PreparedWorkspace.locate(root, "SYM-175")
+    assert {:error, :host_probe_disabled} =
+             Config.with_workflow_context(%{setup_required: false, config: %{}}, fn ->
+               WorkerRegistry.register_worker(registration)
+             end)
 
-    assert {:error, :workspace_unavailable, %{reason: "missing", workspace_key: "sym-176"}} =
-             PreparedWorkspace.locate(root, "SYM-176")
+    workflow = %{setup_required: false, config: %{"host_probe" => %{"enabled" => true, "auth_token" => "secret"}}}
 
-    File.chmod!(workspace, 0o500)
+    Config.with_workflow_context(workflow, fn ->
+      assert {:error, :invalid_host_probe_id} =
+               registration |> Map.put("probe_id", "other") |> WorkerRegistry.register_worker()
 
-    assert {:error, :workspace_unavailable, %{reason: "unwritable", workspace_key: "sym-175"}} =
-             PreparedWorkspace.locate(root, "SYM-175")
-  end
+      assert {:error, :invalid_total_slots} =
+               registration |> Map.put("total_slots", 2) |> WorkerRegistry.register_worker()
 
-  test "worker client authenticates endpoints, redacts its token, and types transport failure" do
-    owner = self()
+      assert {:error, :invalid_host_probe_capabilities} =
+               registration
+               |> Map.put("capabilities", %{"values" => ["shell"]})
+               |> WorkerRegistry.register_worker()
 
-    plug = fn conn ->
-      {:ok, body, conn} = Plug.Conn.read_body(conn)
-      send(owner, {conn.request_path, Plug.Conn.get_req_header(conn, "authorization"), Jason.decode!(body)})
-      conn |> Plug.Conn.put_resp_content_type("application/json") |> Plug.Conn.send_resp(200, "{}")
-    end
-
-    config = host_probe_config(plug)
-    identity = %{"worker_id" => "worker", "session_id" => "session"}
-    assert {:ok, %{}} = Client.register(config)
-    assert {:ok, %{}} = Client.claim(config, identity)
-    assert {:ok, %{}} = Client.heartbeat(config, identity, %{})
-    assert {:ok, %{}} = Client.event(config, identity, "task", "task.progress", %{})
-
-    for path <- ["/api/worker/v1/register", "/api/worker/v1/tasks/claim", "/api/worker/v1/heartbeat", "/api/worker/v1/tasks/task/events"] do
-      assert_receive {^path, ["Bearer probe-secret"], body}
-      refute inspect(body) =~ "probe-secret"
-    end
-
-    unreachable = %{host_probe_config(nil) | panel_url: "http://127.0.0.1:1", request_options: [retry: false]}
-    assert {:error, {:transport_error, _reason}} = Client.claim(unreachable, %{})
+      assert {:error, :repo_unavailable} = WorkerRegistry.register_worker(registration)
+    end)
   end
 
   defp host_probe_issue(labels),
@@ -116,26 +108,4 @@ defmodule SymphonyElixir.HostProbeTest do
 
   defp session(surface, capabilities),
     do: %{execution_surface: surface, capabilities: %{"values" => capabilities}}
-
-  defp host_probe_config(plug) do
-    %Config{
-      registration_token: "probe-secret",
-      worker_name: "local-host",
-      workspace_root: "/unused/workspace",
-      cache_root: "/unused/cache",
-      log_root: "/unused/log",
-      panel_url: "http://127.0.0.1:4001",
-      execution_surface: "host_probe",
-      probe_id: "local-host",
-      capabilities: ["gui-session"],
-      request_options: if(plug, do: [plug: plug], else: [])
-    }
-  end
-
-  defp tmp_dir(suffix) do
-    path = Path.join(File.cwd!(), ".host-probe-#{suffix}-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(path)
-    on_exit(fn -> File.rm_rf!(path) end)
-    path
-  end
 end

@@ -14,10 +14,9 @@ defmodule SymphonyElixir.Worker.Client do
         worker_version: config.source_revision,
         instance_id: config.worker_name,
         total_slots: config.slots,
-        capabilities: %{"values" => config.capabilities},
-        execution_surface: config.execution_surface,
-        probe_id: config.probe_id
-      }
+        capabilities: %{"execution" => ["v1"]}
+      },
+      headers: [{"authorization", "Bearer #{config.registration_token}"}]
     )
   end
 
@@ -37,13 +36,10 @@ defmodule SymphonyElixir.Worker.Client do
   def protocol_version, do: @protocol
 
   defp request(config, method, path, options) do
-    headers = [{"authorization", "Bearer #{config.registration_token}"} | Keyword.get(options, :headers, [])]
-
     options =
       [method: method, url: config.panel_url <> path, retry: :transient, max_retries: 3]
       |> Keyword.merge(config.request_options)
       |> Keyword.merge(options)
-      |> Keyword.put(:headers, headers)
 
     case Req.request(options) do
       {:ok, %{status: status, body: body}} when status in 200..299 -> {:ok, body}

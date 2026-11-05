@@ -5,10 +5,6 @@ defmodule SymphonyElixir.Worker.Paths do
   alias SymphonyElixir.Worker.Config
 
   @spec prepare_roots(Config.t()) :: :ok | {:error, term()}
-  def prepare_roots(%Config{execution_surface: "host_probe", workspace_root: root, log_root: log_root}) do
-    if File.dir?(root), do: File.mkdir_p(log_root), else: {:error, :host_workspace_root_unavailable}
-  end
-
   def prepare_roots(config) do
     Enum.reduce_while([config.workspace_root, config.cache_root, config.log_root], :ok, fn root, :ok ->
       case File.mkdir_p(root) do

@@ -62,4 +62,27 @@ defmodule SymphonyElixir.MigrationCheckTest do
     assert source =~ "runs_one_running_issue"
     refute source =~ "def down"
   end
+
+  test "host-probe migration is additive and leaves the running-run guard unchanged" do
+    migration =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261102010000_add_host_probe_execution_evidence.exs")
+      |> File.read!()
+
+    running_guard =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261006000000_enforce_one_running_issue_run.exs")
+      |> File.read!()
+
+    for field <- ~w(execution_surface probe_id capabilities capability_digest heartbeat_interval_seconds lease_duration_seconds execution_requirement worker_session_id) do
+      assert migration =~ "add(:#{field}"
+    end
+
+    assert migration =~ ~s(default: "container_worker")
+    assert migration =~ ~s(default: "default")
+    assert migration =~ ~s(default: 10)
+    assert migration =~ ~s(default: 60)
+    refute migration =~ "drop"
+    assert running_guard =~ "runs_one_running_issue"
+  end
 end

@@ -24,8 +24,9 @@ Requests correlate frozen `execution_surface`, `probe_id`, `session_id`, and cap
 carries normalized requirement/capabilities. Bad bearer credentials return `host_probe_unauthorized`; frozen identity or
 capability mismatch returns `host_probe_identity_mismatch`, before run/assignment side effects or terminal evidence.
 
-Missing, empty, or non-`0600` local tokens fail before HTTP. Workspace containment/readiness produces bounded
-`environment_unavailable` without host paths; launcher/handshake produces `runtime_failure`. Headers and token contents are excluded from bodies, logs, events, evidence, and responses.
+Authorization headers and token contents are excluded from bodies, logs, task payloads, persisted evidence, and
+responses. Probe-local token-file, transport, workspace, launcher, and runtime failure evidence belongs to SYM-182;
+HP-1a neither implements nor projects it.
 
 ## Structured log boundary
 

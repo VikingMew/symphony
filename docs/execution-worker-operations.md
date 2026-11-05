@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-11-02
+updated: 2026-10-07
 owner: compose.yaml
 ---
 
@@ -40,19 +40,6 @@ The immutable admission and worker/session authority boundary is owned by
 [External execution runtime](execution-runtime-design.md) and
 [Panel / Worker 执行设计](worker-panel-decoupling-design.md); this operations guide does not define a
 second readiness or cleanup rule.
-
-## Host-probe preflight and enablement record
-
-The host probe runs on the Panel's Docker host, outside Compose. Publish Panel only at `127.0.0.1:4001`, leave installation
-`host_probe` disabled, and place its token in `HOST_PROBE_TOKEN_FILE` (default `~/.symphony/probe-token`). The file must be regular, non-empty, and exactly `0600`.
-
-Prepare `HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>` as an existing writable directory. Set
-`HOST_PROBE_CODEX_LAUNCHER` to the allowlisted `codex app-server` command; `HOST_PROBE_CAPABILITIES` may contain only
-`interactive-session`, `gui-session`, or `manual-pr-handoff`. Start with `SYMPHONY_ROLE=host_probe`; give it no database, Linear, source-preparation, or engine access.
-
-Before enabling, record token location/mode, host identity and credential boundary, workspace root, loopback boundary, launcher,
-and one real successful host run. Then enable policy and label only maintainer-approved issues. Healthy registration reports
-`local-host`, a new session, 5-second heartbeat, 30-second lease, and configured capabilities. Roll back labels/lease/probe/policy in that order; crash residue stays operator-owned.
 
 ## Preflight and credentials
 

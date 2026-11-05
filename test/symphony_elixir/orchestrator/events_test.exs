@@ -34,8 +34,6 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
                "state" => "Ready",
                "url" => "https://linear.example/MT-1",
                "labels" => ["bug"],
-               "execution_requirement" => "default",
-               "required_capabilities" => [],
                "linear_team_key" => "KRN",
                "linear_project_slug" => "koroni",
                "dispatch_scope" => %{

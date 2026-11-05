@@ -4,7 +4,7 @@ genre: design
 domain: [worker, execution, validation]
 status: current
 language: en
-updated: 2026-11-02
+updated: 2026-10-11
 design_status: landed
 ---
 
@@ -18,16 +18,6 @@ PR handoff, bounded evidence, and cleanup.
 `Worker.Executor` owns that pipeline and keeps its existing public evidence functions;
 `Worker.Executor.DeliveryEvidence` owns the pure projection from successful restricted-tool audits
 to implementation or refinement completion evidence.
-
-## Host-probe runtime
-
-The `host_probe` surface reuses this runtime with a narrower preparation boundary. The operator supplies an existing writable
-`HOST_PROBE_WORKSPACE_ROOT/<normalized-issue-identifier>` and allowlisted `HOST_PROBE_CODEX_LAUNCHER`. The probe verifies
-containment/readiness, then runs Codex, gates, restricted tools, handoff, and terminal delivery; it never prepares, repairs, hooks, or deletes the workspace.
-
-Startup fixes root `http://127.0.0.1:4001`, `probe_id=local-host`, one process session/slot, a non-empty `0600` token file,
-and a 30-second local deadline. Panel freezes a 5-second heartbeat and 30-second lease. Workspace failures are bounded
-`environment_unavailable`; launcher/handshake failures remain `runtime_failure`. Existing gate, retry, fencing, event-ID, and handoff contracts remain.
 
 In the current containerized worker deployment, the worker container is the execution isolation
 boundary. Worker-internal Codex turns do not depend on a nested bubblewrap user namespace; the

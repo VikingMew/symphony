@@ -187,7 +187,8 @@ Host-only execution uses the same claim transaction after project/listening/stat
 - Exact `execution:host-only` normalizes to `host_only`; absence is `default`; allowlisted capability labels form a sorted requirement set.
 - Containers admit only `default`; `host_probe` admits only `host_only` with requirements contained in its frozen capabilities.
 - Registration and every request require the installation bearer plus frozen probe, process session, surface, and capability digest.
-- Host assignments use 5-second heartbeat, 30-second lease/local deadline; container defaults remain 10/60 seconds.
+- Host sessions use a 5-second heartbeat and 30-second lease; container defaults remain 10/60 seconds. Installation policy
+  also publishes the 30-second local-deadline contract that SYM-182 will enforce in the probe runtime.
 - Rejection creates no run, accepted/terminal event, or alternate assignment; the existing issue lock and running-run index guard duplicates.
 
 - One in-memory reservation MUST cover both preparation and commit; concurrent claim requests

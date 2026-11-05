@@ -53,13 +53,13 @@ The gate also runs through `scripts/check.sh` via `mix lint`.
 | Rule | Initial verdict and evidence | Remediation | Final verdict and evidence |
 | --- | --- | --- | --- |
 | L-01 | Not compliant. The baseline command found 12 handwritten files over 1,000 lines; `lib/symphony_elixir/orchestrator.ex` was 4,239 and `priv/static/dashboard.css` was 1,397. | Split runtime/test responsibilities and CSS; add the tracked-file gate with no handwritten grandfather entry. | Compliant. The baseline command and `mix locality.check` report no oversized handwritten file. |
-| L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 55-entry dateless baseline with all five required fields and a nearby index marker; four starting entries were removed after their clauses fell below the limit. |
+| L-02 | Partially compliant. No clause gate or exact debt register existed. | Add token-metadata AST measurement and a 59-entry temporary register. | Compliant. Every clause is at most 60 lines or belongs to the current 56-entry dateless baseline with all five required fields and a nearby index marker; three starting entries were removed after their clauses fell below the limit. |
 | L-03 | Compliant baseline: `mix credo --strict --format json` reported zero issues with Credo 1.7.16 default depth 2. | Pin `max_nesting: 2`, add an AST-focused test, and extract four newly surfaced nested control paths. | Compliant. Credo and `mix locality.check` report no nesting issue and no nesting suppression was added; responsibility fragments suppress only the `LongQuoteBlocks` advisory at their compile-time `quote` boundary. |
 | L-04 | Not compliant. No reproducible conceptual-locality sample existed. | Define the sorted/even sample and review all 53 rows below. | Compliant. 53 of 521 code files (10.2%) pass the no-navigation concept review; the shared baseline module and refreshed sample remain focused by path. |
 | L-05 | Partially compliant. No AST gate or explicit pipeline ruling existed. | Check receiver-call AST, distinguish field access, document pipelines, and inspect module-boundary matches. | Compliant. The final AST scan has zero implicit three-call chain; focused tests cover a failing chain and allowed pipeline. |
 | L-06 | Partially compliant. Policy literals had no single disposition record. | Review the literal inventory by category and retain runtime policy in `SymphonyElixir.Config` or named attributes. | Compliant. The classification below has no unexplained literal or new runtime config source. |
 | L-07 | Not compliant. The generated/data inventory was absent and `.gitattributes` named a snapshot directory with no current tracked files. | Add the canonical manifest/header check, classify data, retain main's future snapshot marker, and delete unrelated `.DS_Store` metadata. | Compliant. Generated inventory is empty, all data entries exist, the snapshot marker has no current tracked match, and focused tests cover headers, data, and stale entries. |
-| L-08 | Not compliant because oversized files remained and long clauses had no nearby index. | Complete L-01 and add the index marker to every registered clause file. | Compliant. No long handwritten file remains; all 55 remaining temporary L-02 entries are indexed below and beside the code. |
+| L-08 | Not compliant because oversized files remained and long clauses had no nearby index. | Complete L-01 and add the index marker to every registered clause file. | Compliant. No long handwritten file remains; all 56 remaining temporary L-02 entries are indexed below and beside the code. |
 
 Final totals: **compliant 8; non-compliant 0; not applicable 0; total 8**.
 
@@ -142,7 +142,7 @@ named attribute/config accessor. No unexplained policy literal remains.
 ## Temporary clause splits
 
 The manifest is authoritative and the table below is its review projection. The baseline started at
-59 and now contains 55 exact, dateless entries after four clauses fell below the limit. It has no date
+59 and now contains 56 exact, dateless entries after three clauses fell below the limit. It has no date
 or expiry semantics. `mix locality.check` rejects changed
 paths, identifiers, measurements, missing fields, missing nearby markers, and every unregistered
 overlong clause. The baseline may only decrease; when it reaches zero, a separate change removes the
@@ -151,8 +151,8 @@ mechanism.
 | Path | Clause identifier | Lines | Split cut | Owner |
 | --- | --- | ---: | --- | --- |
 | `lib/symphony_elixir/analytics.ex` | `quality/6@83` | 61 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/codex/app_server.ex` | `handle_incoming/7@642` | 89 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/codex/app_server.ex` | `handle_turn_method/7@810` | 77 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/codex/app_server.ex` | `handle_incoming/7@631` | 89 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/codex/app_server.ex` | `handle_turn_method/7@799` | 77 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/codex/app_server.ex` | `run_turn/4@87` | 102 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/codex/dynamic_tool/sections/request_execution.ex` | `__using__/1@6` | 575 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/codex/dynamic_tool/sections/dynamic_tool_updates.ex` | `__using__/1@6` | 662 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
@@ -171,6 +171,7 @@ mechanism.
 | `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 889 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 871 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 908 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@106` | 71 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 573 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `__using__/1@6` | 564 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/workspace_lifecycle.ex` | `prepare_worktree_source/4@272` | 66 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
@@ -188,7 +189,7 @@ mechanism.
 | `priv/repo/migrations/20260501000000_create_symphony_persistence.exs` | `change/0@5` | 132 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `priv/repo/migrations/20260501001000_create_worker_control_plane.exs` | `change/0@5` | 72 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `test/support/fake_persistence_sections/fake_persistence_1.exs` | `__using__/1@6` | 621 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `test/support/fake_persistence_sections/fake_persistence_2.exs` | `__using__/1@6` | 666 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `test/support/fake_persistence_sections/fake_persistence_2.exs` | `__using__/1@6` | 684 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/agent_runner_1.exs` | `__using__/1@11` | 614 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/agent_runner_2.exs` | `__using__/1@11` | 471 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `test/support/locality_sections/assignment_manager_1.exs` | `__using__/1@16` | 722 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |

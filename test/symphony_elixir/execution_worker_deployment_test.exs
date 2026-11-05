@@ -6,10 +6,9 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @compose Path.expand("../../compose.yaml", __DIR__)
   @host_override Path.expand("../../compose.host-override.yaml", __DIR__)
   @host_probe_sources [
-    Path.expand("../../lib/symphony_elixir/host_probe/token.ex", __DIR__),
-    Path.expand("../../lib/symphony_elixir/host_probe/prepared_workspace.ex", __DIR__),
-    Path.expand("../../lib/symphony_elixir/worker/config.ex", __DIR__),
-    Path.expand("../../lib/symphony_elixir/worker/runtime.ex", __DIR__)
+    Path.expand("../../lib/symphony_elixir/execution_requirement.ex", __DIR__),
+    Path.expand("../../lib/symphony_elixir/persistence/worker_registry.ex", __DIR__),
+    Path.expand("../../lib/symphony_elixir_web/controllers/worker_api_controller.ex", __DIR__)
   ]
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
@@ -203,7 +202,7 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
     end
   end
 
-  test "host probe remains an external process without a container control plane" do
+  test "host-probe control-plane support adds no service or container control plane" do
     compose = File.read!(@compose) <> File.read!(@host_override)
     probe_source = Enum.map_join(@host_probe_sources, "\n", &File.read!/1)
 

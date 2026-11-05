@@ -21,7 +21,9 @@ register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/sessi
 后续请求携带 bearer 并匹配冻结身份；缺失、错误或旧 session 在副作用前返回 typed auth/identity error。
 
 candidate 先过 project/listening/state/revalidation，再规范化 execution/capability labels。container 只允许 `default`；
-probe 只允许 capability 子集匹配的 `host_only`。assignment 冻结 session lease policy；旧 session、过期 lease 和重复 terminal 沿用现有 fencing/UUID 幂等。
+probe 只允许 capability 子集匹配的 `host_only`。assignment 使用冻结的 session lease policy，accepted event
+复制同一 requirement、capability 和 correlation。probe runtime、local deadline 和 terminal delivery 由
+SYM-182 实现，不属于本协议扩展。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。

@@ -20,7 +20,6 @@ defmodule SymphonyElixir.Orchestrator.Events do
       "labels" => issue.labels || []
     }
     |> Map.merge(DispatchScope.context_evidence(issue))
-    |> Map.merge(stringify_keys(ExecutionRequirement.from_issue(issue)))
   end
 
   @spec event_dispatch_context(Issue.t()) :: map()

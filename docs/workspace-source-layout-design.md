@@ -4,19 +4,13 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-11-02
+updated: 2026-10-09
 design_status: landed
 ---
 
 # Workspace Source Layout 设计
 
 本文维护 Symphony 在本地准备代码目录时的长期设计。它只讨论 repository cache、issue worktree、clone workspace 和 sandbox root 的路径模型，不承载通用产品方向。
-
-## Host-prepared workspace
-
-`host_probe` 只解析独立 probe-local root 下的 `<normalized-issue-identifier>`。canonical path 必须仍在 root 下、
-已存在且可写；missing、unwritable、escaping 返回不含绝对路径的 `environment_unavailable`。其 workspace authority
-是 `host_probe`：不 prepare、hook、repair 或 cleanup；Panel 不接收或持久化 host path，workspace ownership 始终属于 operator。
 
 ## 目标
 

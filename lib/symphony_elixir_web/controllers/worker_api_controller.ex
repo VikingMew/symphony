@@ -125,8 +125,13 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     end
   end
 
-  def task_event(conn, _params) do
-    error_response(conn, 422, "invalid_worker_event", "event_type is required")
+  def task_event(conn, params) do
+    with {:ok, worker_id, session_id} <- worker_identity(conn, params),
+         :ok <- authorize_worker_request(conn, worker_id, session_id, params) do
+      error_response(conn, 422, "invalid_worker_event", "event_type is required")
+    else
+      {:error, reason} -> worker_error(conn, reason)
+    end
   end
 
   @doc false
@@ -145,24 +150,45 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     if Map.get(params, "execution_surface") == "host_probe" do
       authorize_host_probe_request(conn, worker_id, session_id, params)
     else
-      case AssignmentManager.registered_session(worker_id, session_id) do
+      case registered_session(worker_id, session_id) do
         {:ok, %{execution_surface: "host_probe"}} -> authorize_host_probe_request(conn, worker_id, session_id, params)
         _container_or_missing -> :ok
       end
     end
   end
 
+  defp registered_session(worker_id, session_id) do
+    case AssignmentManager.registered_session(worker_id, session_id) do
+      {:ok, session} -> {:ok, session}
+      {:error, :worker_session_not_found} -> persisted_session(worker_id, session_id)
+    end
+  end
+
+  defp persisted_session(worker_id, session_id) do
+    case persistence().worker_session_identity(worker_id, session_id) do
+      {:ok, _worker, session} -> {:ok, session}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp authorize_host_probe_request(conn, worker_id, session_id, params) do
     with :ok <- verify_host_probe_bearer(conn),
-         {:ok, session} <- AssignmentManager.registered_session(worker_id, session_id),
+         {:ok, session} <- host_probe_session(worker_id, session_id),
          true <- frozen_probe_fields_match?(session, params) || {:error, :host_probe_identity_mismatch} do
       :ok
     end
   end
 
+  defp host_probe_session(worker_id, session_id) do
+    case registered_session(worker_id, session_id) do
+      {:error, :worker_session_not_found} -> {:error, :host_probe_identity_mismatch}
+      result -> result
+    end
+  end
+
   defp verify_host_probe_bearer(conn) do
     policy = Config.host_probe_policy()
-    token = bearer_token(conn)
+    token = host_probe_bearer_token(conn)
 
     if policy.enabled and is_binary(token) and Plug.Crypto.secure_compare(policy.auth_token, token),
       do: :ok,
@@ -179,6 +205,13 @@ defmodule SymphonyElixirWeb.WorkerApiController do
     case get_req_header(conn, "authorization") do
       ["Bearer " <> token | _] -> token
       _ -> conn |> get_req_header("x-symphony-worker-token") |> List.first()
+    end
+  end
+
+  defp host_probe_bearer_token(conn) do
+    case get_req_header(conn, "authorization") do
+      ["Bearer " <> token] -> token
+      _other -> nil
     end
   end
 

@@ -30,17 +30,11 @@ defmodule SymphonyElixir.Worker.Runtime do
   def handle_info(:register, state) do
     case client(state).register(state.config) do
       {:ok, response} ->
-        identity =
-          %{
-            "worker_id" => response["worker_id"],
-            "session_id" => response["session_id"],
-            "protocol_version" => client(state).protocol_version(),
-            "execution_surface" => response["execution_surface"],
-            "probe_id" => response["probe_id"],
-            "capability_digest" => response["capability_digest"]
-          }
-          |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-          |> Map.new()
+        identity = %{
+          "worker_id" => response["worker_id"],
+          "session_id" => response["session_id"],
+          "protocol_version" => client(state).protocol_version()
+        }
 
         schedule(:poll, 0)
         heartbeat_seconds = response["heartbeat_interval_seconds"] || 10
@@ -92,14 +86,10 @@ defmodule SymphonyElixir.Worker.Runtime do
              active_leases: leases,
              available_slots: max(state.config.slots - map_size(state.active), 0)
            }) do
-        {:ok, %{"commands" => commands} = response} when is_list(commands) ->
-          state
-          |> renew_local_deadlines(Map.get(response, "lease_renewals", []))
-          |> then(fn renewed ->
-            commands
-            |> Enum.filter(&(&1["type"] == "cancel_task"))
-            |> Enum.reduce(renewed, &cancel/2)
-          end)
+        {:ok, %{"commands" => commands}} when is_list(commands) ->
+          commands
+          |> Enum.filter(&(&1["type"] == "cancel_task"))
+          |> Enum.reduce(state, &cancel/2)
 
         {:error, {:http_error, 401, _body}} ->
           recover_session(state)
@@ -146,8 +136,7 @@ defmodule SymphonyElixir.Worker.Runtime do
         with {:ok, _} <- event(state, task_id, "task.accepted", %{phase: "accepted"}),
              {:ok, _} <- event(state, task_id, "task.progress", %{phase: "execution_started"}) do
           send(pid, :execute)
-          executing = schedule_local_deadline(state.config, task_id, %{active | phase: :executing, watchdog: nil})
-          {:noreply, put_active(state, task_id, executing)}
+          {:noreply, put_active(state, task_id, %{active | phase: :executing, watchdog: nil})}
         else
           {:error, reason} ->
             Process.exit(pid, :shutdown)
@@ -178,9 +167,6 @@ defmodule SymphonyElixir.Worker.Runtime do
         result = %{status: :failed, reason: :executor_start_timeout}
         {:noreply, begin_terminal_delivery(state, task_id, "task.failed", result)}
 
-      %{pid: ^pid, phase: phase} = active when phase != :delivering_terminal ->
-        {:noreply, enforce_local_deadline(state, task_id, active)}
-
       _ ->
         {:noreply, state}
     end
@@ -194,16 +180,10 @@ defmodule SymphonyElixir.Worker.Runtime do
   end
 
   def handle_info(:cleanup, state) do
-    if state.config.execution_surface != "host_probe", do: clean_container_workspaces(state)
-    {:noreply, state}
-  end
-
-  defp clean_container_workspaces(state) do
     active =
       state.active
       |> Enum.flat_map(fn {_task_id, %{claim: claim}} ->
-        with {:ok, workspace} <-
-               Paths.lease_dir(state.config, claim["project_id"], claim["task_id"], claim["lease_id"]),
+        with {:ok, workspace} <- Paths.lease_dir(state.config, claim["project_id"], claim["task_id"], claim["lease_id"]),
              {:ok, log_dir} <- Paths.log_dir(state.config, claim["task_id"], claim["lease_id"]) do
           [workspace, log_dir]
         else
@@ -219,30 +199,8 @@ defmodule SymphonyElixir.Worker.Runtime do
     _ = Cleanup.sweep(state.config.log_root, log_targets, active, state.config.retention_seconds, now)
     _ = Cleanup.evict_cache(state.config.cache_root, state.config.cache_max_bytes, state.config.retention_seconds, now)
     schedule(:cleanup, 300)
+    {:noreply, state}
   end
-
-  defp renew_local_deadlines(%{config: %{execution_surface: "host_probe"}} = state, lease_renewals) do
-    renewed_lease_ids = MapSet.new(lease_renewals, &Map.fetch!(&1, "lease_id"))
-
-    active =
-      Map.new(state.active, fn {task_id, entry} ->
-        if MapSet.member?(renewed_lease_ids, entry.claim["lease_id"]),
-          do: {task_id, schedule_local_deadline(state.config, task_id, entry)},
-          else: {task_id, entry}
-      end)
-
-    %{state | active: active}
-  end
-
-  defp renew_local_deadlines(state, _lease_renewals), do: state
-
-  defp enforce_local_deadline(%{config: %{execution_surface: "host_probe"}} = state, task_id, active) do
-    Process.exit(active.pid, :shutdown)
-    result = %{status: :failed, reason: :lease_lost, detail: "host probe local lease deadline elapsed"}
-    begin_terminal_delivery(put_active(state, task_id, active), task_id, "task.failed", result)
-  end
-
-  defp enforce_local_deadline(state, _task_id, _active), do: state
 
   defp start_claim(state, task_id, claim) do
     if map_size(state.active) < state.config.slots and not Map.has_key?(state.active, task_id) do
@@ -299,7 +257,6 @@ defmodule SymphonyElixir.Worker.Runtime do
 
       active ->
         if active.watchdog, do: Process.cancel_timer(active.watchdog)
-        if Map.get(active, :deadline_timer), do: Process.cancel_timer(active.deadline_timer)
 
         active =
           Map.merge(active, %{
@@ -396,7 +353,6 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: :source_preparation_failed}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: :source_topology_invalid}), do: "source_preparation"
-  defp terminal_phase(_status, %{reason: :workspace_unavailable}), do: "checkout"
   defp terminal_phase(_status, %{reason: reason}) when reason in [:codex_upstream_capacity, :codex_turn_failed], do: "codex"
   defp terminal_phase(_status, _result), do: "validation"
 
@@ -411,7 +367,6 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp reason_for(_, %{reason: reason})
        when reason in [
               :timed_out,
-              :workspace_unavailable,
               :handoff_failed,
               :execution_capability_unavailable,
               :codex_upstream_capacity,
@@ -534,12 +489,4 @@ defmodule SymphonyElixir.Worker.Runtime do
   end
 
   defp schedule(message, seconds), do: Process.send_after(self(), message, seconds * 1_000)
-
-  defp schedule_local_deadline(%{execution_surface: "host_probe"} = config, task_id, active) do
-    if Map.get(active, :deadline_timer), do: Process.cancel_timer(active.deadline_timer)
-    timer = Process.send_after(self(), {:executor_start_timeout, task_id, active.pid}, config.local_deadline_seconds * 1_000)
-    Map.put(active, :deadline_timer, timer)
-  end
-
-  defp schedule_local_deadline(_config, _task_id, active), do: active
 end

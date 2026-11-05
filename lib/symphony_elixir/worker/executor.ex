@@ -9,10 +9,8 @@ defmodule SymphonyElixir.Worker.Executor do
   alias SymphonyElixir.Linear.{Client, Issue}
 
   alias SymphonyElixir.Worker.{
-    CodexOptions,
     Command,
     Config,
-    ExecutionWorkspace,
     Executor.DeliveryEvidence,
     LinearToolAuditRecorder,
     Paths,
@@ -33,11 +31,12 @@ defmodule SymphonyElixir.Worker.Executor do
     Process.flag(:trap_exit, true)
 
     with {:ok, payload} <- Payload.parse(claim["execution"]),
-         {:ok, workspace, source, hooks} <- ExecutionWorkspace.resolve_for_execution(config, claim, payload, progress),
+         {:ok, workspace} <- Paths.lease_dir(config, claim["project_id"], claim["task_id"], claim["lease_id"]),
          {:ok, log_dir} <- Paths.log_dir(config, claim["task_id"], claim["lease_id"]),
-         :ok <- File.mkdir_p(log_dir),
+         :ok <- File.mkdir_p(workspace),
          :ok <- not_cancelled(),
-         :ok <- run_steps(hooks, workspace, :hook_failed),
+         {:ok, source} <- prepare(payload, workspace, progress),
+         :ok <- run_steps(payload.hooks, workspace, :hook_failed),
          :ok <- not_cancelled(),
          %{status: :passed} = codex <- run_codex(config, claim, payload, workspace, progress),
          {:ok, handoff_requirement} <- handoff_requirement(payload, codex, workspace),
@@ -89,10 +88,6 @@ defmodule SymphonyElixir.Worker.Executor do
     }
   end
 
-  defp execution_result({:error, :workspace_unavailable, evidence}) do
-    %{status: :failed, reason: :workspace_unavailable, detail: evidence.reason, failure_evidence: evidence}
-  end
-
   defp execution_result({:error, reason, detail}), do: execution_failure(reason, detail)
   defp execution_result({:error, reason}), do: execution_failure(reason, nil)
 
@@ -116,7 +111,14 @@ defmodule SymphonyElixir.Worker.Executor do
     execution_result =
       run_cancellable_codex(fn session_observer ->
         RuntimeConfig.with_workflow_context(codex_workflow(config, codex, payload), fn ->
-          issue = execution_issue(claim, payload, codex)
+          issue = %Issue{
+            id: Map.fetch!(claim, "issue_id"),
+            identifier: codex.issue.identifier,
+            title: codex.issue.title,
+            description: codex.issue.description,
+            branch_name: payload.branch,
+            url: Map.get(payload.handoff, "issue_url")
+          }
 
           progress.("codex_starting", %{})
 
@@ -124,14 +126,19 @@ defmodule SymphonyElixir.Worker.Executor do
           Process.put(audit_key, [])
           audit_recorder = recording_audit_recorder(config, claim, audit_key)
 
-          app_server_opts =
-            CodexOptions.for_run(config, claim, payload, codex,
+          app_server_opts = [
+            profile: codex.profile,
+            run_id: Map.fetch!(claim, "run_id"),
+            on_message: &forward_codex_progress(&1, progress),
+            dynamic_tool_opts: [
+              allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
               audit_recorder: audit_recorder,
-              on_message: &forward_codex_progress(&1, progress),
+              task_id: Map.fetch!(claim, "task_id"),
               graphql: &worker_graphql/2,
-              proof_secret: proof_secret,
+              pull_request_proof_secret: proof_secret,
               pull_request_creator: project_pull_request_creator(RuntimeConfig.settings!().project)
-            )
+            ]
+          ]
 
           result = run_app_server(workspace, codex.prompt, issue, app_server_opts, session_observer)
           {result, completion_evidence(codex.profile, Process.delete(audit_key))}
@@ -170,17 +177,6 @@ defmodule SymphonyElixir.Worker.Executor do
 
   defp project_pull_request_creator(project) do
     fn issue, rendered, _opts -> PullRequest.ensure_open(issue, project, rendered, []) end
-  end
-
-  defp execution_issue(claim, payload, codex) do
-    %Issue{
-      id: Map.fetch!(claim, "issue_id"),
-      identifier: codex.issue.identifier,
-      title: codex.issue.title,
-      description: codex.issue.description,
-      branch_name: payload.branch,
-      url: Map.get(payload.handoff, "issue_url")
-    }
   end
 
   defp run_app_server(workspace, prompt, issue, opts, session_observer) do
@@ -604,7 +600,7 @@ defmodule SymphonyElixir.Worker.Executor do
     context = %{
       client: config.client_module,
       config: config,
-      identity: Map.take(claim, ~w(worker_id session_id protocol_version execution_surface probe_id capability_digest)),
+      identity: Map.take(claim, ["worker_id", "session_id", "protocol_version"]),
       task_id: Map.fetch!(claim, "task_id"),
       correlation: %{
         "project_id" => Map.fetch!(claim, "project_id"),

@@ -229,6 +229,7 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
 
     %{
       execution_requirement: requirement.execution_requirement,
+      required_capabilities: requirement.required_capabilities,
       execution_surface: session.execution_surface,
       probe_id: session.probe_id,
       worker_session_id: session.id

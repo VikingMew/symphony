@@ -30,9 +30,10 @@ copies the same evidence. Issue Detail reads the snapshot and Run Detail reads t
 so an operator can trace scope and context from either page. Rejected candidates are logged and
 diagnosed with a typed reason but do not create an issue run merely to persist the rejection.
 
-HP-1 stores only immutable accepted-claim evidence. Sessions freeze surface, probe, capabilities/digest, and timing; runs freeze
+HP-1a stores only immutable accepted-claim evidence. Sessions freeze surface, probe, capabilities/digest, and timing; runs freeze
 requirement, actual surface, probe, and session; accepted events copy requirement/capability/correlation. Rejection creates no
-run/event, and host paths/tokens are never persisted. Full projections, offline visibility, and alerts remain HP-2; the existing partial index is the sole running-run guard.
+run/event, and host paths/tokens are never persisted. The issue snapshot retains raw labels and gains no normalized execution
+projection in HP-1a. Full projections, offline visibility, and alerts remain HP-2; the existing partial index is the sole running-run guard.
 
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.

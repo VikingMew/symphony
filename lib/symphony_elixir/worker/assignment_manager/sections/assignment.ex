@@ -509,7 +509,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
 
       defp maybe_requeue_zombie(_state, _issue, _run), do: :ok
 
-      defp run_lease_duration_seconds(%{execution_surface: "host_probe"}, _persistence), do: 30
+      defp run_lease_duration_seconds(%{execution_surface: "host_probe"}, _persistence),
+        do: Config.host_probe_policy().lease_duration_seconds
+
       defp run_lease_duration_seconds(_run, persistence), do: persistence.worker_lease_duration_seconds()
 
       defp record_orphan_signal(persistence, issue, run, started_at) do
@@ -599,14 +601,12 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         |> Enum.sum_by(& &1.total_slots)
       end
 
-      defp fresh_liveness?(state, %{last_seen_at: last_seen_at}) do
-        cutoff = DateTime.add(state.now.(), -liveness_timeout_seconds(state), :second)
+      defp fresh_liveness?(state, %{last_seen_at: last_seen_at, session: session}) do
+        cutoff = DateTime.add(state.now.(), -liveness_timeout_seconds(session), :second)
         DateTime.compare(last_seen_at, cutoff) in [:eq, :gt]
       end
 
-      defp liveness_timeout_seconds(state) do
-        state.persistence.worker_heartbeat_interval_seconds() * 3
-      end
+      defp liveness_timeout_seconds(session), do: Map.fetch!(session, :heartbeat_interval_seconds) * 3
 
       defp admission_evidence(reason, listening_mode) do
         %{capacity: if(reason == :assigned, do: 1, else: 0), reason: reason, listening_mode: listening_mode}

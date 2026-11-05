@@ -42,18 +42,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     def valid_worker_registration_token?(token), do: token == "integration-token"
 
     def register_worker(_attrs) do
-      {:ok,
-       %{
-         worker: %{id: "worker-1"},
-         session: %{
-           id: "session-1",
-           execution_surface: "container_worker",
-           probe_id: nil,
-           capability_digest: nil,
-           heartbeat_interval_seconds: 1,
-           lease_duration_seconds: 60
-         }
-       }}
+      {:ok, %{worker: %{id: "worker-1"}, session: integration_worker_session("session-1")}}
     end
 
     def claim_task(_worker_id, _session_id, _params) do
@@ -85,6 +74,18 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     end
 
     def events, do: Agent.get(__MODULE__, &Enum.reverse(&1.events))
+
+    defp integration_worker_session(id) do
+      %{
+        id: id,
+        total_slots: 1,
+        execution_surface: "container_worker",
+        probe_id: nil,
+        capability_digest: nil,
+        heartbeat_interval_seconds: 1,
+        lease_duration_seconds: 60
+      }
+    end
   end
 
   setup do
@@ -137,6 +138,8 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     revision: revision,
     codex_trace: codex_trace
   } do
+    start_supervised!({AssignmentManager, name: AssignmentManager, persistence: Persistence, reconcile_interval_ms: :timer.hours(1)})
+
     config = config(root)
     assert {:ok, registration} = Client.register(config)
 
@@ -175,76 +178,18 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
              "Linear issue SYM-12: Integration test"
   end
 
-  test "host probe executes only the prepared issue workspace with the local launcher", %{
-    root: root,
-    codex_binary: codex_binary
-  } do
-    host_root = Path.join(root, "host-workspaces")
-    workspace = Path.join(host_root, "sym-12")
-    File.mkdir_p!(workspace)
-    git!(workspace, ["init", "--initial-branch=main"])
-    git!(workspace, ["config", "user.email", "probe@example.test"])
-    git!(workspace, ["config", "user.name", "Host Probe"])
-    File.write!(Path.join(workspace, "README.md"), "prepared\n")
-    git!(workspace, ["add", "README.md"])
-    git!(workspace, ["commit", "-m", "prepared"])
-
-    config = %{
-      config(root)
-      | execution_surface: "host_probe",
-        probe_id: "local-host",
-        workspace_root: host_root,
-        codex_launcher: "#{codex_binary} app-server",
-        image_reference: "host-process"
-    }
-
-    claim =
-      host_claim_payload()
-      |> put_in(["execution", "hooks"], [
-        %{"command" => "touch should-not-run", "timeout_seconds" => 10}
-      ])
-
-    result = Executor.execute(config, claim)
-
-    assert result.status == :completed
-    assert result.source.workspace_authority == "host_probe"
-    assert result.source.issue_identifier == "SYM-12"
-    assert File.exists?(Path.join(workspace, "should-not-run")) == false
-  end
-
-  test "host probe classifies missing workspace and launcher failure without source preparation", %{
-    root: root,
-    codex_binary: codex_binary
-  } do
-    host_root = Path.join(root, "missing-host-workspaces")
-    File.mkdir_p!(host_root)
-
-    config = %{
-      config(root)
-      | execution_surface: "host_probe",
-        probe_id: "local-host",
-        workspace_root: host_root,
-        codex_launcher: "#{codex_binary} app-server",
-        image_reference: "host-process"
-    }
-
-    missing = Executor.execute(config, host_claim_payload())
-    assert missing.status == :failed
-    assert missing.reason == :workspace_unavailable
-    assert missing.failure_evidence == %{kind: "host_workspace_unavailable", reason: "missing", workspace_key: "sym-12"}
-
-    workspace = Path.join(host_root, "sym-12")
-    File.mkdir_p!(workspace)
-    failed_launch = Executor.execute(%{config | codex_launcher: "/missing/codex app-server"}, host_claim_payload())
-    assert failed_launch.status == :failed
-    assert failed_launch.reason == :failed
-  end
-
   test "worker HTTP accepts normalized path and oversized gate evidence while rejecting raw summaries", %{root: root} do
     FakePersistence.reset!()
 
     manager =
       start_supervised!({AssignmentManager, name: AssignmentManager, persistence: FakePersistence, reconcile_interval_ms: :timer.hours(1)})
+
+    :ok =
+      AssignmentManager.observe_session(
+        %{id: "worker-1"},
+        %{id: "session-1", total_slots: 1, execution_surface: "container_worker"},
+        manager
+      )
 
     identity = %{
       "worker_id" => "worker-1",
@@ -410,17 +355,6 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     }
   end
 
-  defp host_claim_payload do
-    Map.merge(claim_payload(), %{
-      "worker_id" => "worker-1",
-      "session_id" => "session-1",
-      "protocol_version" => Client.protocol_version(),
-      "execution_surface" => "host_probe",
-      "probe_id" => "local-host",
-      "capability_digest" => SymphonyElixir.ExecutionRequirement.capability_digest([])
-    })
-  end
-
   defp seed_http_assignment(manager, task_id, run_id) do
     {:ok, _run} =
       FakePersistence.create_run(%{
@@ -455,7 +389,6 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
       run_id: run_id,
       worker_id: "worker-1",
       session_id: "session-1",
-      lease_duration_seconds: 60,
       expires_at: DateTime.add(DateTime.utc_now(), 60, :second),
       payload: %{"workflow_profile" => "implementation"},
       correlation: correlation,
