@@ -56,6 +56,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerEventTest do
       issue_identifier: "SYM-WRITE",
       worker_id: registration.worker.id,
       session_id: registration.session.id,
+      lease_duration_seconds: FakePersistence.worker_lease_duration_seconds(),
       expires_at: DateTime.add(now, 60, :second),
       last_terminal_rejection: nil,
       correlation: %{"assignment_id" => id, "worker_id" => registration.worker.id, "worker_session_id" => registration.session.id}

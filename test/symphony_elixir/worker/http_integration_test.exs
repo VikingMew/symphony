@@ -42,7 +42,7 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     def valid_worker_registration_token?(token), do: token == "integration-token"
 
     def register_worker(_attrs) do
-      {:ok, %{worker: %{id: "worker-1"}, session: %{id: "session-1"}}}
+      {:ok, %{worker: %{id: "worker-1"}, session: integration_worker_session("session-1")}}
     end
 
     def claim_task(_worker_id, _session_id, _params) do
@@ -74,6 +74,18 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     end
 
     def events, do: Agent.get(__MODULE__, &Enum.reverse(&1.events))
+
+    defp integration_worker_session(id) do
+      %{
+        id: id,
+        total_slots: 1,
+        execution_surface: "container_worker",
+        probe_id: nil,
+        capability_digest: nil,
+        heartbeat_interval_seconds: 1,
+        lease_duration_seconds: 60
+      }
+    end
   end
 
   setup do
@@ -126,6 +138,8 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
     revision: revision,
     codex_trace: codex_trace
   } do
+    start_supervised!({AssignmentManager, name: AssignmentManager, persistence: Persistence, reconcile_interval_ms: :timer.hours(1)})
+
     config = config(root)
     assert {:ok, registration} = Client.register(config)
 
@@ -169,6 +183,13 @@ defmodule SymphonyElixir.Worker.HttpIntegrationTest do
 
     manager =
       start_supervised!({AssignmentManager, name: AssignmentManager, persistence: FakePersistence, reconcile_interval_ms: :timer.hours(1)})
+
+    :ok =
+      AssignmentManager.observe_session(
+        %{id: "worker-1"},
+        %{id: "session-1", total_slots: 1, execution_surface: "container_worker"},
+        manager
+      )
 
     identity = %{
       "worker_id" => "worker-1",

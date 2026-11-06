@@ -36,6 +36,15 @@ defmodule SymphonyElixir.Config.WorkflowScopesTest do
            }
 
     assert instance.prompt_body == loaded.prompt
+
+    assert instance.config["host_probe"] == %{
+             "enabled" => false,
+             "heartbeat_interval_seconds" => 5,
+             "lease_duration_seconds" => 30,
+             "local_deadline_seconds" => 30
+           }
+
+    refute Map.has_key?(project, "host_probe")
     assert Map.has_key?(instance.config, "workflow") == false
     assert Map.has_key?(project, "workflow") == false
 

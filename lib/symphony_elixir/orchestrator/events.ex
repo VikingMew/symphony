@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
   Persistence payload shaping for orchestrator events.
   """
 
-  alias SymphonyElixir.{Config, RunAdmission, RunFailure}
+  alias SymphonyElixir.{Config, ExecutionRequirement, RunAdmission, RunFailure}
   alias SymphonyElixir.Linear.{DispatchScope, Issue}
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
@@ -57,7 +57,7 @@ defmodule SymphonyElixir.Orchestrator.Events do
       project_id: run.project_id,
       run_id: run.id,
       issue_identifier: issue.identifier,
-      required_capabilities: %{},
+      required_capabilities: %{"values" => ExecutionRequirement.from_issue(issue).required_capabilities},
       payload: %{
         "issue" => issue_snapshot(issue),
         "prompt" => prompt,

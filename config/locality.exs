@@ -64,14 +64,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/parsing.ex",
-      lines: 275,
+      lines: 278,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/config/schema/sections/types.ex",
-      lines: 553,
+      lines: 596,
       identifier: "__using__/1@6"
     },
     %{
@@ -141,14 +141,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/api.ex",
-      lines: 845,
+      lines: 871,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 886,
+      lines: 908,
       identifier: "__using__/1@6"
     },
     %{
@@ -281,7 +281,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_2.exs",
-      lines: 660,
+      lines: 684,
       identifier: "__using__/1@6"
     },
     %{

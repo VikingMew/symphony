@@ -1,10 +1,11 @@
 defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
-  alias SymphonyElixir.{EnvironmentFailureCircuit, Workflow}
+  alias SymphonyElixir.{Config, EnvironmentFailureCircuit, Orchestrator, Workflow}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
   alias SymphonyElixir.Worker.AssignmentManager
+  alias SymphonyElixirWeb.WorkerApiController
 
   defmodule Tracker do
     use Agent
@@ -339,6 +340,206 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert payload["dispatch_context"]["context_source"] == "linear_project"
   end
 
+  test "host-only claim persists matching run, assignment, and accepted-event evidence", context do
+    issue =
+      Tracker
+      |> Agent.get(& &1.issue)
+      |> Map.put(:labels, ["execution:host-only", "capability:gui-session"])
+
+    Tracker.put_issue(issue)
+    context = observe_host_session(context, ["gui-session"])
+
+    assert {:ok, assignment} = claim(context)
+    assert assignment.execution_surface == "host_probe"
+    assert assignment.probe_id == "local-host"
+    assert assignment.session_id == context.session.id
+    assert assignment.required_capabilities == ["gui-session"]
+    assert assignment.expires_at == DateTime.add(context.now, 30, :second)
+
+    assert [run] = FakePersistence.list_runs_for_issue(issue.identifier)
+    assert run.execution_requirement == "host_only"
+    assert run.execution_surface == "host_probe"
+    assert run.probe_id == "local-host"
+    assert run.worker_session_id == context.session.id
+
+    assert [%{run_id: run_id, payload: %{"correlation" => correlation, "execution" => execution}}] =
+             FakePersistence.list_events(event_type: "task.accepted")
+
+    assert run_id == run.id
+    assert correlation == assignment.correlation
+
+    assert execution == %{
+             execution_requirement: "host_only",
+             required_capabilities: ["gui-session"],
+             execution_surface: "host_probe",
+             probe_id: "local-host",
+             worker_session_id: context.session.id
+           }
+  end
+
+  test "authenticated host-probe registration claims one issue without starting a runtime", context do
+    workflow =
+      Workflows.list_enabled()
+      |> hd()
+      |> Map.update!(:config, &Map.put(&1, "host_probe", %{"enabled" => true, "auth_token" => "panel-secret"}))
+
+    Application.put_env(:symphony_elixir, :claim_test_workflows, [workflow])
+
+    issue =
+      Tracker
+      |> Agent.get(& &1.issue)
+      |> Map.put(:labels, ["execution:host-only", "capability:gui-session"])
+
+    Tracker.put_issue(issue)
+
+    {manager, previous_manager_state} =
+      case Process.whereis(AssignmentManager) do
+        nil ->
+          manager =
+            start_supervised!(%{
+              id: :host_control_plane_manager,
+              start:
+                {AssignmentManager, :start_link,
+                 [
+                   [
+                     name: AssignmentManager,
+                     tracker: Tracker,
+                     persistence: FakePersistence,
+                     workflows: Workflows,
+                     failure_circuit: context.circuit,
+                     orchestrator: Orchestrator,
+                     now: fn -> context.now end,
+                     reconcile_interval_ms: :timer.hours(1)
+                   ]
+                 ]}
+            })
+
+          {manager, nil}
+
+        manager ->
+          {manager, :sys.get_state(manager)}
+      end
+
+    :sys.replace_state(manager, fn state ->
+      %{
+        state
+        | assignment: nil,
+          tracker: Tracker,
+          persistence: FakePersistence,
+          workflows: Workflows,
+          failure_circuit: context.circuit,
+          orchestrator: Orchestrator,
+          now: fn -> context.now end,
+          claim_task: nil,
+          reconcile_task: nil,
+          event_task: nil,
+          empty_claim_streak: 0,
+          tracker_error_streak: 0,
+          liveness: %{}
+      }
+    end)
+
+    :sys.replace_state(Orchestrator, &%{&1 | listening_mode: :listening_all})
+
+    on_exit(fn ->
+      if previous_manager_state,
+        do: :sys.replace_state(manager, fn _state -> previous_manager_state end)
+
+      :sys.replace_state(Orchestrator, &%{&1 | listening_mode: :not_listening})
+    end)
+
+    registration_conn =
+      Config.with_workflow_context(workflow, fn ->
+        conn =
+          :post
+          |> Plug.Test.conn("/register")
+          |> Plug.Conn.put_req_header("authorization", "Bearer panel-secret")
+
+        WorkerApiController.register(conn, %{
+          "execution_surface" => "host_probe",
+          "probe_id" => "local-host",
+          "worker_name" => "local-host",
+          "protocol_version" => "worker-api-v1",
+          "total_slots" => 1,
+          "capabilities" => %{"values" => ["gui-session"]}
+        })
+      end)
+
+    assert registration_conn.status == 200
+    registration = Jason.decode!(registration_conn.resp_body)
+
+    identity = %{
+      "worker_id" => registration["worker_id"],
+      "session_id" => registration["session_id"],
+      "protocol_version" => "worker-api-v1",
+      "execution_surface" => "host_probe",
+      "probe_id" => "local-host",
+      "capability_digest" => registration["capability_digest"],
+      "available_slots" => 1
+    }
+
+    claim_conn =
+      Config.with_workflow_context(workflow, fn ->
+        conn =
+          :post
+          |> Plug.Test.conn("/claim")
+          |> Plug.Conn.put_req_header("authorization", "Bearer panel-secret")
+
+        WorkerApiController.claim(conn, identity)
+      end)
+
+    assert claim_conn.status == 200
+    assignment = Jason.decode!(claim_conn.resp_body)
+    assert assignment["execution_surface"] == "host_probe"
+    assert assignment["probe_id"] == "local-host"
+    assert assignment["worker_session_id"] == registration["session_id"]
+    assert assignment["required_capabilities"] == ["gui-session"]
+
+    assert [run] = FakePersistence.list_runs_for_issue(issue.identifier)
+    assert run.execution_requirement == "host_only"
+    assert run.execution_surface == "host_probe"
+    assert run.probe_id == "local-host"
+    assert run.worker_session_id == registration["session_id"]
+
+    assert [%{run_id: run_id, payload: payload}] = FakePersistence.list_events(event_type: "task.accepted")
+    assert run_id == run.id
+    assert payload["correlation"] == assignment["correlation"]
+    assert payload["execution"].required_capabilities == ["gui-session"]
+    assert FakePersistence.list_events(event_type: "task.completed") == []
+    assert FakePersistence.list_events(event_type: "task.failed") == []
+  end
+
+  test "execution-surface and capability rejection creates no admission side effects", context do
+    host_only = Tracker |> Agent.get(& &1.issue) |> Map.put(:labels, ["execution:host-only"])
+    Tracker.put_issue(host_only)
+    assert {:ok, {:empty, _seconds}} = claim(context)
+    assert_no_claim_side_effects(host_only.identifier)
+
+    unmarked = %{host_only | labels: []}
+    Tracker.put_issue(unmarked)
+    host_context = observe_host_session(context, [])
+    assert {:ok, {:empty, _seconds}} = claim(host_context)
+    assert_no_claim_side_effects(unmarked.identifier)
+
+    capability_issue = %{host_only | labels: ["execution:host-only", "capability:gui-session"]}
+    Tracker.put_issue(capability_issue)
+    assert {:ok, {:empty, _seconds}} = claim(host_context)
+    assert_no_claim_side_effects(capability_issue.identifier)
+  end
+
+  test "host session freshness uses its frozen five-second heartbeat", context do
+    host_context = observe_host_session(context, [])
+    assert AssignmentManager.available_worker_slots(context.manager) == 2
+
+    key = {host_context.worker.id, host_context.session.id}
+
+    :sys.replace_state(context.manager, fn state ->
+      put_in(state.liveness[key].last_seen_at, DateTime.add(context.now, -16, :second))
+    end)
+
+    assert AssignmentManager.available_worker_slots(context.manager) == 1
+  end
+
   test "active assignment profile controls validation failure without discarding evidence", context do
     manager =
       start_supervised!(%{
@@ -399,6 +600,28 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
 
   defp claim(context) do
     AssignmentManager.claim_with_policy(context.worker.id, context.session.id, %{"available_slots" => 1}, :listening_all, 1, context.manager)
+  end
+
+  defp observe_host_session(context, capabilities) do
+    session = %{
+      context.session
+      | id: "host-session-#{System.unique_integer([:positive])}",
+        execution_surface: "host_probe",
+        probe_id: "local-host",
+        capabilities: %{"values" => capabilities},
+        capability_digest: SymphonyElixir.ExecutionRequirement.capability_digest(capabilities),
+        heartbeat_interval_seconds: 5,
+        lease_duration_seconds: 30
+    }
+
+    :ok = AssignmentManager.observe_session(context.worker, session, context.manager)
+    %{context | session: session}
+  end
+
+  defp assert_no_claim_side_effects(identifier) do
+    assert FakePersistence.list_runs_for_issue(identifier) == []
+    assert FakePersistence.list_events(event_type: "task.accepted") == []
+    assert Tracker.updates() == 0
   end
 
   defp record_validation_failure(context, assignment, summary) do

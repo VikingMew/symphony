@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Worker.ClaimCommit do
   @moduledoc "Commits one prepared claim using stable run, assignment, and event identities."
-  alias SymphonyElixir.{Config, PromptBuilder, RunFailure}
+  alias SymphonyElixir.{Config, ExecutionRequirement, PromptBuilder, RunFailure}
 
   alias SymphonyElixir.AgentRunner.Policy
   alias SymphonyElixir.Linear.Issue
@@ -46,9 +46,10 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
 
     run_attrs =
       Events.run_attrs(issue, prepared.admission, nil)
+      |> Map.merge(execution_evidence(issue, prepared.session))
       |> Map.merge(%{id: prepared.run_id, project_id: prepared.workflow.project_id, status: "running", started_at: now})
 
-    opts = [manual_rerun?: same_issue_state?(issue.state, "Todo"), orphan_cutoff: DateTime.add(now, -deps.persistence.worker_lease_duration_seconds(), :second), now: now]
+    opts = [manual_rerun?: same_issue_state?(issue.state, "Todo"), orphan_cutoff: DateTime.add(now, -prepared.session.lease_duration_seconds, :second), now: now]
 
     result =
       ClaimStage.measure(context, :run_admission, fn ->
@@ -140,7 +141,8 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
               event_type: "task.accepted",
               payload: %{
                 "correlation" => assignment.correlation,
-                "dispatch_context" => Events.event_dispatch_context(issue)
+                "dispatch_context" => Events.event_dispatch_context(issue),
+                "execution" => execution_evidence(issue, prepared.session)
               }
             })
 
@@ -209,12 +211,28 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
       worker_id: worker.id,
       worker_name: Map.get(worker, :name),
       session_id: session.id,
+      execution_surface: session.execution_surface,
+      probe_id: session.probe_id,
+      required_capabilities: ExecutionRequirement.from_issue(issue).required_capabilities,
+      lease_duration_seconds: session.lease_duration_seconds,
       admission: admission,
       started_at: Map.get(run, :started_at),
       expires_at: opts[:expires_at],
       payload: payload,
       correlation: correlation,
       last_terminal_rejection: nil
+    }
+  end
+
+  defp execution_evidence(issue, session) do
+    requirement = ExecutionRequirement.from_issue(issue)
+
+    %{
+      execution_requirement: requirement.execution_requirement,
+      required_capabilities: requirement.required_capabilities,
+      execution_surface: session.execution_surface,
+      probe_id: session.probe_id,
+      worker_session_id: session.id
     }
   end
 

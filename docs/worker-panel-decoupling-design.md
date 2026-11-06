@@ -4,7 +4,7 @@ genre: design
 domain: [worker, architecture]
 status: current
 language: zh-CN
-updated: 2026-10-09
+updated: 2026-11-02
 design_status: landed
 ---
 
@@ -13,6 +13,17 @@ design_status: landed
 Linear 是“当前是否有工作”的唯一事实源。Panel 是唯一访问 Linear 的组件；worker 仅使用
 register、claim、heartbeat 和 task event API。PostgreSQL 保存 worker/session 身份以及 run/event
 历史，但不保存待执行工作。
+
+## Host probe 协议扩展
+
+同一 worker-v1 API 支持 `execution_surface=host_probe`，不增加 queue、lease 或 terminal API。注册使用 installation
+`host_probe.auth_token`，冻结 `local-host`、进程 session、capabilities/digest、5 秒 heartbeat 和 30 秒 lease。
+后续请求携带 bearer 并匹配冻结身份；缺失、错误或旧 session 在副作用前返回 typed auth/identity error。
+
+candidate 先过 project/listening/state/revalidation，再规范化 execution/capability labels。container 只允许 `default`；
+probe 只允许 capability 子集匹配的 `host_only`。assignment 使用冻结的 session lease policy，accepted event
+复制同一 requirement、capability 和 correlation。probe runtime、local deadline 和 terminal delivery 由
+SYM-182 实现，不属于本协议扩展。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。

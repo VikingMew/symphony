@@ -282,6 +282,49 @@ defmodule SymphonyElixir.Config.Schema.Sections.Types do
         end
       end
 
+      defmodule HostProbe do
+        @moduledoc false
+        use Ecto.Schema
+        import Ecto.Changeset
+
+        @primary_key false
+        @type t :: %__MODULE__{}
+
+        embedded_schema do
+          field(:enabled, :boolean, default: false)
+          field(:auth_token, :string)
+          field(:heartbeat_interval_seconds, :integer, default: 5)
+          field(:lease_duration_seconds, :integer, default: 30)
+          field(:local_deadline_seconds, :integer, default: 30)
+        end
+
+        @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+        def changeset(schema, attrs) do
+          schema
+          |> cast(
+            attrs,
+            [
+              :enabled,
+              :auth_token,
+              :heartbeat_interval_seconds,
+              :lease_duration_seconds,
+              :local_deadline_seconds
+            ],
+            empty_values: []
+          )
+          |> validate_number(:heartbeat_interval_seconds, equal_to: 5)
+          |> validate_number(:lease_duration_seconds, equal_to: 30)
+          |> validate_number(:local_deadline_seconds, equal_to: 30)
+          |> validate_enabled_token()
+        end
+
+        defp validate_enabled_token(changeset) do
+          if get_field(changeset, :enabled),
+            do: validate_required(changeset, [:auth_token]),
+            else: changeset
+        end
+      end
+
       defmodule Agent do
         @moduledoc false
         use Ecto.Schema

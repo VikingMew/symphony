@@ -20,6 +20,11 @@ dispatch_scope:
   fallback_project_slug: null
   linear_project_slug: null
   linear_team_key: null
+host_probe:
+  enabled: false
+  heartbeat_interval_seconds: 5
+  lease_duration_seconds: 30
+  local_deadline_seconds: 30
 polling:
   interval_ms: 30000
 project:

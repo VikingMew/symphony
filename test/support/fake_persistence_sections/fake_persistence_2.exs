@@ -356,6 +356,8 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
         now = DateTime.utc_now()
         worker_id = "fake-worker-#{System.unique_integer([:positive])}"
         session_id = "fake-session-#{System.unique_integer([:positive])}"
+        execution_surface = Map.get(attrs, "execution_surface", "container_worker")
+        capabilities = fake_session_capabilities(execution_surface, attrs)
 
         worker = %{
           id: worker_id,
@@ -370,6 +372,12 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
           worker_id: worker_id,
           status: "online",
           total_slots: Map.fetch!(attrs, "total_slots"),
+          execution_surface: execution_surface,
+          probe_id: if(execution_surface == "host_probe", do: Map.get(attrs, "probe_id"), else: nil),
+          capabilities: %{"values" => capabilities},
+          capability_digest: fake_capability_digest(execution_surface, capabilities),
+          heartbeat_interval_seconds: if(execution_surface == "host_probe", do: 5, else: 10),
+          lease_duration_seconds: if(execution_surface == "host_probe", do: 30, else: 60),
           last_heartbeat_at: now
         }
 
@@ -382,6 +390,22 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
 
         {:ok, %{worker: worker, session: session}}
       end
+
+      defp fake_session_capabilities("host_probe", attrs) do
+        {:ok, capabilities} =
+          attrs
+          |> Map.get("capabilities", [])
+          |> SymphonyElixir.ExecutionRequirement.normalize_capabilities()
+
+        capabilities
+      end
+
+      defp fake_session_capabilities(_surface, _attrs), do: []
+
+      defp fake_capability_digest("host_probe", capabilities),
+        do: SymphonyElixir.ExecutionRequirement.capability_digest(capabilities)
+
+      defp fake_capability_digest(_surface, _capabilities), do: nil
 
       def claim_task(worker_id, session_id, params) do
         ensure_started()

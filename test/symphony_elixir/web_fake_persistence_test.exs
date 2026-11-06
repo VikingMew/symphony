@@ -360,6 +360,7 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
         lease_id: lease_id,
         worker_id: worker_id,
         session_id: session_id,
+        lease_duration_seconds: 60,
         expires_at: DateTime.add(DateTime.utc_now(), 60, :second)
       }
 
@@ -497,6 +498,15 @@ defmodule SymphonyElixir.WebFakePersistenceTest do
       :persistence_module,
       EventWithoutCorrelationPersistence
     )
+
+    manager = start_assignment_manager(EventWithoutCorrelationPersistence)
+
+    :ok =
+      AssignmentManager.observe_session(
+        %{id: "worker"},
+        %{id: "session", total_slots: 1, execution_surface: "container_worker"},
+        manager
+      )
 
     start_test_endpoint()
 

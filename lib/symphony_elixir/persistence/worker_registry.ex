@@ -7,12 +7,14 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
 
   import Ecto.Query
 
+  alias SymphonyElixir.{Config, ExecutionRequirement}
   alias SymphonyElixir.Persistence.{Worker, WorkerSession}
   alias SymphonyElixir.Repo
 
   @worker_protocol_version "worker-api-v1"
   @worker_heartbeat_interval_seconds 10
   @worker_lease_duration_seconds 60
+  @host_probe_id "local-host"
 
   @spec worker_protocol_version() :: String.t()
   def worker_protocol_version, do: @worker_protocol_version
@@ -39,10 +41,11 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
 
   @spec register_worker(map()) :: {:ok, %{worker: Worker.t(), session: WorkerSession.t()}} | {:error, term()}
   def register_worker(attrs) do
-    with true <- repo_available?() || {:error, :repo_unavailable},
-         :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)),
-         :ok <- validate_total_slots(map_get(attrs, "total_slots", :total_slots)) do
-      Repo.transaction(fn -> register_worker!(attrs) end)
+    with :ok <- validate_worker_protocol(map_get(attrs, "protocol_version", :protocol_version)),
+         :ok <- validate_total_slots(map_get(attrs, "total_slots", :total_slots)),
+         {:ok, registration} <- registration(attrs),
+         true <- repo_available?() || {:error, :repo_unavailable} do
+      Repo.transaction(fn -> register_worker!(attrs, registration) end)
     end
   end
 
@@ -152,11 +155,11 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
     end
   end
 
-  defp register_worker!(attrs) do
+  defp register_worker!(attrs, registration) do
     now = DateTime.utc_now()
     name = map_get(attrs, "worker_name", :worker_name) || map_get(attrs, "name", :name)
     labels = normalize_labels(map_get(attrs, "labels", :labels))
-    capabilities = map_get(attrs, "capabilities", :capabilities) || %{}
+    capabilities = %{"values" => registration.capabilities}
 
     worker =
       (Repo.get_by(Worker, name: name) || %Worker{})
@@ -178,6 +181,12 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
         worker_version: map_get(attrs, "worker_version", :worker_version),
         instance_id: map_get(attrs, "instance_id", :instance_id),
         total_slots: map_get(attrs, "total_slots", :total_slots),
+        execution_surface: registration.execution_surface,
+        probe_id: registration.probe_id,
+        capabilities: capabilities,
+        capability_digest: registration.capability_digest,
+        heartbeat_interval_seconds: registration.heartbeat_interval_seconds,
+        lease_duration_seconds: registration.lease_duration_seconds,
         connected_at: now,
         last_heartbeat_at: now,
         status: "online"
@@ -197,6 +206,50 @@ defmodule SymphonyElixir.Persistence.WorkerRegistry do
   defp repo_available?, do: Process.whereis(Repo) != nil
   defp worker_api_config(key, default), do: Application.get_env(:symphony_elixir, :worker_api, []) |> Keyword.get(key, default)
   defp map_get(map, string_key, atom_key), do: Map.get(map, string_key) || Map.get(map, atom_key)
+
+  defp registration(attrs) do
+    case map_get(attrs, "execution_surface", :execution_surface) || "container_worker" do
+      "container_worker" ->
+        {:ok,
+         %{
+           execution_surface: "container_worker",
+           probe_id: nil,
+           capabilities: [],
+           capability_digest: nil,
+           heartbeat_interval_seconds: worker_heartbeat_interval_seconds(),
+           lease_duration_seconds: worker_lease_duration_seconds()
+         }}
+
+      "host_probe" ->
+        host_probe_registration(attrs)
+
+      _surface ->
+        {:error, :invalid_execution_surface}
+    end
+  end
+
+  defp host_probe_registration(attrs) do
+    policy = Config.host_probe_policy()
+    probe_id = map_get(attrs, "probe_id", :probe_id)
+
+    with true <- policy.enabled || {:error, :host_probe_disabled},
+         true <- probe_id == @host_probe_id || {:error, :invalid_host_probe_id},
+         1 <- map_get(attrs, "total_slots", :total_slots) || {:error, :invalid_total_slots},
+         {:ok, capabilities} <- ExecutionRequirement.normalize_capabilities(map_get(attrs, "capabilities", :capabilities) || []) do
+      {:ok,
+       %{
+         execution_surface: "host_probe",
+         probe_id: probe_id,
+         capabilities: capabilities,
+         capability_digest: ExecutionRequirement.capability_digest(capabilities),
+         heartbeat_interval_seconds: policy.heartbeat_interval_seconds,
+         lease_duration_seconds: policy.lease_duration_seconds
+       }}
+    else
+      {:error, reason} -> {:error, reason}
+      _value -> {:error, :invalid_total_slots}
+    end
+  end
 
   defp credential_ref(name) when is_binary(name) do
     digest = :crypto.hash(:sha256, name) |> Base.encode16(case: :lower)

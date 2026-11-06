@@ -4,7 +4,7 @@ genre: design
 domain: [observability, logging, errors]
 status: current
 language: en
-updated: 2026-10-10
+updated: 2026-11-02
 design_status: landed
 ---
 
@@ -17,6 +17,16 @@ the three canonical operator commands, and the O-specific deletion-only source g
 It does not own persisted run terminal classification. The closed terminal vocabulary, evidence
 contract, runtime mapping, and terminal write boundary remain solely owned by
 [Run Failure Classification Design](run-failure-classification-design.md).
+
+## Host-probe correlation and errors
+
+Requests correlate frozen `execution_surface`, `probe_id`, `session_id`, and capability digest; accepted evidence also
+carries normalized requirement/capabilities. Bad bearer credentials return `host_probe_unauthorized`; frozen identity or
+capability mismatch returns `host_probe_identity_mismatch`, before run/assignment side effects or terminal evidence.
+
+Authorization headers and token contents are excluded from bodies, logs, task payloads, persisted evidence, and
+responses. Probe-local token-file, transport, workspace, launcher, and runtime failure evidence belongs to SYM-182;
+HP-1a neither implements nor projects it.
 
 ## Structured log boundary
 

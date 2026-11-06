@@ -1,7 +1,8 @@
 defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.Persistence.{IssueRecord, RunRecord, Worker, WorkflowRecord, WorkspaceRecord}
+  alias SymphonyElixir.ExecutionRequirement
+  alias SymphonyElixir.Persistence.{IssueRecord, RunRecord, Worker, WorkerSession, WorkflowRecord, WorkspaceRecord}
 
   test "workflow changeset accepts the canonical empty project prompt" do
     attrs = %{
@@ -53,6 +54,46 @@ defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
     }
 
     assert RunRecord.changeset(%RunRecord{}, remote_issue).valid? == false
+  end
+
+  test "host-probe session and run changesets require immutable correlation evidence" do
+    now = DateTime.utc_now()
+    worker_id = Ecto.UUID.generate()
+    session_id = Ecto.UUID.generate()
+    capabilities = ["gui-session"]
+
+    session_attrs = %{
+      worker_id: worker_id,
+      protocol_version: "worker-api-v1",
+      total_slots: 1,
+      execution_surface: "host_probe",
+      probe_id: "local-host",
+      capabilities: %{"values" => capabilities},
+      capability_digest: ExecutionRequirement.capability_digest(capabilities),
+      heartbeat_interval_seconds: 5,
+      lease_duration_seconds: 30,
+      connected_at: now,
+      status: "online"
+    }
+
+    assert WorkerSession.changeset(%WorkerSession{}, session_attrs).valid?
+    refute WorkerSession.changeset(%WorkerSession{}, Map.put(session_attrs, :total_slots, 2)).valid?
+    refute WorkerSession.changeset(%WorkerSession{}, Map.put(session_attrs, :capability_digest, "changed")).valid?
+
+    run_attrs = %{
+      kind: "issue",
+      issue_identifier: "SYM-175",
+      status: "running",
+      execution_mode: "worker",
+      execution_requirement: "host_only",
+      execution_surface: "host_probe",
+      probe_id: "local-host",
+      worker_session_id: session_id
+    }
+
+    assert RunRecord.changeset(%RunRecord{}, run_attrs).valid?
+    refute RunRecord.changeset(%RunRecord{}, Map.delete(run_attrs, :worker_session_id)).valid?
+    refute RunRecord.changeset(%RunRecord{}, Map.put(run_attrs, :execution_requirement, "default")).valid?
   end
 
   test "run changeset enforces the terminal failure matrix and rejects historical unknown" do
