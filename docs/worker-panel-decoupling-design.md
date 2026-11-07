@@ -59,6 +59,12 @@ revalidation 共用同一检查：`transition_status = completed` 时预期实�
 `origin_state`；decision 的非空 `run_id` 还必须等于最新持久 run id。缺少任一 scope 返回 typed
 `missing_scope` stale，state/run 不匹配也为陈旧。三种 mode 的规则为：
 
+claim dependency admission 与 Orchestrator 的 Ready blocker gate 共用
+`DispatchPolicy.blocked_by_non_terminal?/2`。该判据把 blocker state 按当前 workflow 的
+`tracker.terminal_states` 规范化集合判断：只有所有 blocker 都有字符串 state 且属于该集合时才放行；
+state 缺失、非字符串或不在集合中仍视为非终态 blocker。Orchestrator 仍只对 Ready issue 应用该
+dispatch gate，worker claim 则在 candidate selection 与 tracker revalidation 中应用同一判据。
+
 - `not_listening` 在 Linear candidate read、run 创建、issue 迁移和 `task.accepted` 写入前返回空 claim。
 - `listening_refine_only` 在排序后的逐候选 admission 中只接受 refinement state；过滤靠前的
   implementation candidate 后继续检查同批次后续候选。

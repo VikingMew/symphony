@@ -142,6 +142,54 @@ defmodule SymphonyElixir.Worker.AssignmentManagerAdmissionTest do
     assert AssignmentManager.current_assignment(context.manager) == nil
   end
 
+  test "terminal blockers allow claim admission", context do
+    Tracker.put([
+      %{
+        issue()
+        | blocked_by: [
+            %{id: "blocker-done", identifier: "SYM-DONE", state: "Done"},
+            %{id: "blocker-canceled", identifier: "SYM-CANCELED", state: "Canceled"}
+          ]
+      }
+    ])
+
+    assert {:ok, %{}, %{reason: :assigned}} = claim_with_evidence(context, context.manager)
+  end
+
+  test "non-terminal and mixed blockers preserve dependency admission evidence", context do
+    for blockers <- [
+          [%{id: "blocker-open", identifier: "SYM-OPEN", state: "In Progress"}],
+          [
+            %{id: "blocker-done", identifier: "SYM-DONE", state: "Done"},
+            %{id: "blocker-open", identifier: "SYM-OPEN", state: "In Progress"}
+          ]
+        ] do
+      Tracker.put([%{issue() | blocked_by: blockers}])
+
+      assert {:ok, {:empty, _poll_seconds}, evidence} = claim_with_evidence(context, context.manager)
+
+      assert evidence == %{
+               reason: :dependency,
+               capacity: 0,
+               listening_mode: :listening_all
+             }
+    end
+  end
+
+  test "missing, non-string, and unknown blocker states remain dependencies", context do
+    for blocker <- [
+          %{id: "blocker-missing", identifier: "SYM-MISSING"},
+          %{id: "blocker-nil", identifier: "SYM-NIL", state: nil},
+          %{id: "blocker-number", identifier: "SYM-NUMBER", state: 1},
+          %{id: "blocker-unknown", identifier: "SYM-UNKNOWN", state: "Unknown"}
+        ] do
+      Tracker.put([%{issue() | blocked_by: [blocker]}])
+
+      assert {:ok, {:empty, _poll_seconds}, %{reason: :dependency}} =
+               claim_with_evidence(context, context.manager)
+    end
+  end
+
   test "reconciliation persists each Linear failure and resumes on the next round", context do
     Enum.with_index([400, 429, 503], 1)
     |> Enum.each(fn {status, expected_count} ->
