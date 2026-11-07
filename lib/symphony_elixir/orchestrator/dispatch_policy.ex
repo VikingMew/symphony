@@ -197,6 +197,19 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
       !ready_issue_blocked_by_non_terminal?(issue, terminal_states)
   end
 
+  @spec blocked_by_non_terminal?([term()], MapSet.t() | dispatch_settings()) :: boolean()
+  def blocked_by_non_terminal?(blockers, %MapSet{} = terminal_states) when is_list(blockers) do
+    Enum.any?(blockers, fn
+      %{state: blocker_state} -> !terminal_issue_state?(blocker_state, terminal_states)
+      _blocker -> true
+    end)
+  end
+
+  def blocked_by_non_terminal?(blockers, dispatch_settings)
+      when is_list(blockers) and is_map(dispatch_settings) do
+    blocked_by_non_terminal?(blockers, Map.fetch!(dispatch_settings, :terminal_states))
+  end
+
   @spec ready_issue_blocked_by_non_terminal?(term(), MapSet.t()) :: boolean()
   def ready_issue_blocked_by_non_terminal?(
         %Issue{state: issue_state, blocked_by: blockers},
@@ -204,13 +217,7 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
       )
       when is_binary(issue_state) and is_list(blockers) do
     normalize_issue_state(issue_state) == "ready" and
-      Enum.any?(blockers, fn
-        %{state: blocker_state} when is_binary(blocker_state) ->
-          !terminal_issue_state?(blocker_state, terminal_states)
-
-        _ ->
-          true
-      end)
+      blocked_by_non_terminal?(blockers, terminal_states)
   end
 
   def ready_issue_blocked_by_non_terminal?(_issue, _terminal_states), do: false
@@ -221,6 +228,11 @@ defmodule SymphonyElixir.Orchestrator.DispatchPolicy do
   end
 
   def terminal_issue_state?(_state_name, _terminal_states), do: false
+
+  @spec configured_active_issue_state?(term(), dispatch_settings()) :: boolean()
+  def configured_active_issue_state?(state_name, dispatch_settings) when is_map(dispatch_settings) do
+    active_issue_state?(state_name, Map.fetch!(dispatch_settings, :active_states))
+  end
 
   @spec active_issue_state?(term(), MapSet.t()) :: boolean()
   def active_issue_state?(state_name, active_states) when is_binary(state_name) do
