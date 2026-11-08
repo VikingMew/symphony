@@ -158,6 +158,13 @@ An issue is dispatch-eligible only if all are true:
   refinement and implementation states.
 - Blocker rule for `Ready` state passes:
   - If the issue state is `Ready`, do not dispatch when any blocker is non-terminal.
+  - A blocker is terminal only when its state is a string whose normalized value belongs to the
+    configured `tracker.terminal_states`; a missing, non-string, or unknown state is non-terminal.
+
+Worker claim dependency admission MUST use the same non-terminal-blocker predicate and configured
+terminal-state set. No blockers or only terminal blockers pass this gate; any non-terminal blocker
+returns the existing dependency skip. The Orchestrator dispatch blocker gate remains limited to
+`Ready` issues.
 
 The default active states are `Todo`, `Ready`, and `In Progress`. `Todo` is the refinement
 candidate; the runner transitions it to `Refining` and refreshes the issue before starting Codex.

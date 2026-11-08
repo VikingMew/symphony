@@ -32,7 +32,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         listening_mode = DispatchPolicy.listening_mode(dispatch_settings)
 
         with true <- DispatchPolicy.allowed_by_listening_mode?(issue.state, dispatch_settings),
-             :ok <- live_issue_admission(issue, listening_mode),
+             :ok <- live_issue_admission(issue, listening_mode, dispatch_settings),
              {:ok, record, runs} <- admission_history(issue, persistence),
              :ok <-
                check_blocking_decision(
@@ -85,13 +85,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         end
       end
 
-      defp live_issue_admission(%Issue{} = issue, listening_mode) do
-        normalized = SymphonyElixir.StateName.normalize(issue.state)
-        active = Config.settings!().tracker.active_states |> DispatchPolicy.normalized_state_set()
+      defp live_issue_admission(%Issue{} = issue, listening_mode, dispatch_settings) do
+        active? = DispatchPolicy.configured_active_issue_state?(issue.state, dispatch_settings)
+        blocked? = DispatchPolicy.blocked_by_non_terminal?(issue.blocked_by, dispatch_settings)
 
         cond do
-          not MapSet.member?(active, normalized) -> {:skip, :stale, admission_evidence(:stale, listening_mode)}
-          issue.blocked_by != [] -> {:skip, :dependency, admission_evidence(:dependency, listening_mode)}
+          not active? -> {:skip, :stale, admission_evidence(:stale, listening_mode)}
+          blocked? -> {:skip, :dependency, admission_evidence(:dependency, listening_mode)}
           Config.human_review_state?(issue.state) -> {:skip, :human_review, admission_evidence(:human_review, listening_mode)}
           true -> :ok
         end
