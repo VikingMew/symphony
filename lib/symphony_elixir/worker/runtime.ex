@@ -324,6 +324,10 @@ defmodule SymphonyElixir.Worker.Runtime do
   defp terminal_type(%{status: :cancelled}), do: "task.cancelled"
   defp terminal_type(_), do: "task.failed"
 
+  @doc false
+  @spec host_terminal_summary(map(), map(), map()) :: map()
+  def host_terminal_summary(result, config, claim), do: terminal_summary(result, config, claim)
+
   defp terminal_summary(result, config, claim) do
     status = Map.get(result, :status, :failed)
     outcome = if status == :completed, do: "succeeded", else: Atom.to_string(status)
@@ -350,6 +354,9 @@ defmodule SymphonyElixir.Worker.Runtime do
   end
 
   defp terminal_phase(:completed, _result), do: "complete"
+  defp terminal_phase(_status, %{phase: :workspace}), do: "checkout"
+  defp terminal_phase(_status, %{phase: :codex}), do: "codex"
+  defp terminal_phase(_status, %{phase: :lease}), do: "codex"
   defp terminal_phase(_status, %{reason: :source_preparation_timeout}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: :source_preparation_failed}), do: "source_preparation"
   defp terminal_phase(_status, %{reason: :source_topology_invalid}), do: "source_preparation"
@@ -376,6 +383,8 @@ defmodule SymphonyElixir.Worker.Runtime do
 
   defp reason_for(_, %{reason: :source_preparation_timeout}), do: "source_preparation_timeout"
   defp reason_for(_, %{reason: :source_preparation_failed}), do: "source_preparation_failed"
+  defp reason_for(_, %{reason: :workspace_unavailable}), do: "workspace_unavailable"
+  defp reason_for(_, %{reason: :lease_lost}), do: "lease_lost"
   defp reason_for(_, _), do: "worker_error"
 
   defp validation_evidence(%{validation: %{overall_status: status, gates: results}}, required_gates) do

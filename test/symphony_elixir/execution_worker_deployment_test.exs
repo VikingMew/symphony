@@ -6,10 +6,10 @@ defmodule SymphonyElixir.ExecutionWorkerDeploymentTest do
   @compose Path.expand("../../compose.yaml", __DIR__)
   @host_override Path.expand("../../compose.host-override.yaml", __DIR__)
   @host_probe_sources [
-    Path.expand("../../lib/symphony_elixir/execution_requirement.ex", __DIR__),
-    Path.expand("../../lib/symphony_elixir/persistence/worker_registry.ex", __DIR__),
-    Path.expand("../../lib/symphony_elixir_web/controllers/worker_api_controller.ex", __DIR__)
-  ]
+                        Path.expand("../../lib/symphony_elixir/execution_requirement.ex", __DIR__),
+                        Path.expand("../../lib/symphony_elixir/persistence/worker_registry.ex", __DIR__),
+                        Path.expand("../../lib/symphony_elixir_web/controllers/worker_api_controller.ex", __DIR__)
+                      ] ++ Path.wildcard(Path.expand("../../lib/symphony_elixir/host_probe/*.ex", __DIR__))
   @dockerfile Path.expand("../../Dockerfile", __DIR__)
   @mise Path.expand("../../mise.toml", __DIR__)
   @publish_workflow Path.expand("../../.github/workflows/publish-image.yml", __DIR__)

@@ -14,6 +14,7 @@ defmodule SymphonyElixir.DependencyBoundaryGovernanceTest do
     "lib/mix/tasks/",
     "lib/symphony_elixir/database_setup.ex",
     "lib/symphony_elixir/github/",
+    "lib/symphony_elixir/host_probe/host_client.ex",
     "lib/symphony_elixir/linear/",
     "lib/symphony_elixir/migration_check.ex",
     "lib/symphony_elixir/persistence.ex",

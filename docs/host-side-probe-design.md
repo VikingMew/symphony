@@ -10,7 +10,7 @@ design_status: partial
 
 # 宿主侧执行探针设计
 
-本文最初是 SYM-173 的调研交付；SYM-175 交付 HP-1a Panel/control-plane，SYM-182 拥有仍未落地的
+本文最初是 SYM-173 的调研交付；SYM-175 交付 HP-1a Panel/control-plane，SYM-182 交付 HP-1b
 probe 进程与执行 runtime。多探针、远程传输、完整离线可见性、告警和 UI 投影仍按 roadmap
 另开实现票，因此状态为 `partial`。
 
@@ -29,9 +29,29 @@ capabilities 子集的票。拒绝不创建 run、accepted event 或替代 assig
 
 HP-1a 只持久化冻结 session surface/capability/timing，以及 accepted run/event 的 requirement、实际
 surface、probe/session correlation；不写 token、Authorization header 或 host path。issue requirement
-projection、完整历史/API/UI、离线可见性和告警属于 HP-2。token 文件、loopback transport、prepared
-workspace、allowlisted Codex launcher、runtime loop、本地 deadline enforcement 和 terminal retry 属于
-SYM-182；HP-1a 不启动 Codex 或宿主进程，也不把这些 probe-local 值加入 Panel policy。
+projection、完整历史/API/UI、离线可见性和告警属于 HP-2。HP-1b 从 operator 配置路径读取 token，使用
+固定 loopback root，校验 prepared workspace 与 allowlisted Codex launcher，并负责 runtime loop、本地
+deadline enforcement 和 terminal retry；这些 probe-local 值不进入 Panel policy。
+
+## HP-1b 已交付 runtime
+
+`SymphonyElixir.HostProbe.HostApplication` 在 `SYMPHONY_ROLE=host_probe` 时启动单 assignment runtime。
+`HostProbe.HostConfig` 从 `HOST_PROBE_TOKEN_FILE`、`HOST_PROBE_WORKSPACE_ROOT` 和
+`HOST_PROBE_CODEX_LAUNCHER` 消费 operator-owned 配置；固定 Panel root 是
+`http://127.0.0.1:4001`，不可由 assignment 改写。token 只进入 bearer header，探针不检查文件 mode，
+也不为 environment 或 PATH 添加产品 allowlist。
+
+`HostProbe.HostClient` 复用 worker-v1 registration、claim、heartbeat 和 task-event API。
+`HostProbe.HostWorkspace` 只接受 `host_workspace_root / issue_identifier` 这个已经存在、可读、可写且解析后仍在
+root 内的目录。`HostProbe.HostExecutor` 先做 workspace 与 launcher preflight，再把已验证 cwd 和 operator
+launcher 交给现有 `Worker.Executor` 的 prepared 执行入口；该入口跳过 source preparation 和 setup hooks，
+但保留 Codex app-server handshake、restricted task tools、required gates、handoff 与 terminal summary。
+
+runtime 每 5 秒 heartbeat，Panel lease 为 30 秒，本地保守 deadline 为 30 秒。只有 response 中包含当前
+assignment/session 的明确 renewal 才重置本地 deadline；成功但空的 renewal list 不延长执行。terminal
+payload 在首次完成时生成一个 event UUID，未确认的 transport/overload response 只重送同一 payload；
+明确 fencing response 释放本地 assignment，不能创建第二个 run、accepted event 或 terminal truth。
+本地 deadline 到期停止 executor 并按既有 lease-loss 映射交付；进程崩溃后的宿主残留仍由 operator 负责。
 
 ## 状态、证据基线与约束
 

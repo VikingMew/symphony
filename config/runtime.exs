@@ -1,7 +1,15 @@
 import Config
 
-worker_role = System.get_env("SYMPHONY_ROLE") == "worker"
-config :symphony_elixir, :runtime_role, if(worker_role, do: :worker, else: :panel)
+runtime_role =
+  case System.get_env("SYMPHONY_ROLE") do
+    "worker" -> :worker
+    "host_probe" -> :host_probe
+    _other -> :panel
+  end
+
+worker_role = runtime_role == :worker
+host_probe_role = runtime_role == :host_probe
+config :symphony_elixir, :runtime_role, runtime_role
 
 positive_panel_integer = fn name, default ->
   case Integer.parse(System.get_env(name) || default) do
@@ -42,6 +50,28 @@ if worker_role do
     cache_max_bytes: positive_integer.("SYMPHONY_WORKER_CACHE_MAX_BYTES", "10737418240"),
     image_reference: System.get_env("SYMPHONY_WORKER_IMAGE") || "unknown",
     source_revision: System.get_env("SYMPHONY_WORKER_SOURCE_REVISION") || "unknown"
+end
+
+if host_probe_role do
+  required = fn name ->
+    case System.get_env(name) do
+      value when is_binary(value) and value != "" -> value
+      _ -> raise "#{name} is required for the host_probe role"
+    end
+  end
+
+  capabilities =
+    System.get_env("HOST_PROBE_CAPABILITIES", "")
+    |> String.split(",", trim: true)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+
+  config :symphony_elixir, :host_probe,
+    token_file: required.("HOST_PROBE_TOKEN_FILE"),
+    workspace_root: required.("HOST_PROBE_WORKSPACE_ROOT"),
+    launcher: required.("HOST_PROBE_CODEX_LAUNCHER"),
+    capabilities: capabilities,
+    source_revision: System.get_env("HOST_PROBE_SOURCE_REVISION") || "unknown"
 end
 
 database_pool_size =

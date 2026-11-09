@@ -19,10 +19,13 @@ defmodule SymphonyElixir.Application do
 
   use Application
 
+  alias SymphonyElixir.HostProbe.HostApplication
+
   @impl true
   def start(_type, _args) do
     case Application.get_env(:symphony_elixir, :runtime_role, :panel) do
       :worker -> SymphonyElixir.Worker.Application.start_link()
+      :host_probe -> HostApplication.start_host_probe_link()
       :panel -> start_panel()
     end
   end

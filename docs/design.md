@@ -5,7 +5,7 @@ domain: [backend, layout, conventions]
 status: current
 language: en
 owner: SymphonyElixir
-updated: 2026-10-08
+updated: 2026-11-09
 ---
 
 ## Feature Design Index
@@ -16,7 +16,7 @@ Feature designs live one concern per document (L3); each owns its contracts. Sta
 | Design | Subject | Status |
 | --- | --- | --- |
 | [worker-panel-decoupling-design.md](worker-panel-decoupling-design.md) | Panel / worker execution boundary | landed |
-| [host-side-probe-design.md](host-side-probe-design.md) | Proposed host-side execution probe and dual-surface routing | proposed |
+| [host-side-probe-design.md](host-side-probe-design.md) | Host-side execution probe and dual-surface routing | partial |
 | [workspace-source-layout-design.md](workspace-source-layout-design.md) | Workspace source layout | landed |
 | [codex-linear-interaction-design.md](codex-linear-interaction-design.md) | Codex/Linear interaction behavior | landed |
 | [codex-linear-implementation-workflow-design.md](codex-linear-implementation-workflow-design.md) | Codex/Linear implementation workflow | landed |
@@ -155,6 +155,7 @@ lib/symphony_elixir/
 ├── config.ex
 ├── config/schema.ex
 ├── http_server.ex
+├── host_probe/
 ├── locality.ex
 ├── log_file.ex
 ├── orchestrator.ex
@@ -191,6 +192,13 @@ lib/symphony_elixir/
 | `SymphonyElixir.AgentRunner` | `agent_runner.ex` | Creates prompts and runs Codex App Server sessions for issues. |
 | `SymphonyElixir.PromptBuilder` | `prompt_builder.ex` | Renders issue data into the workflow prompt template. |
 | `SymphonyElixir.HttpServer` | `http_server.ex` | Starts optional Phoenix/Bandit observability HTTP server. |
+| `SymphonyElixir.HostProbe.HostApplication` | `host_probe/host_application.ex` | Starts the operator-managed host-probe supervision tree. |
+| `SymphonyElixir.HostProbe.HostConfig` | `host_probe/host_config.ex` | Loads fixed protocol values and operator-owned token, workspace, launcher, and capability configuration. |
+| `SymphonyElixir.HostProbe.HostClient` | `host_probe/host_client.ex` | Calls the fixed-loopback worker-v1 registration, claim, heartbeat, and task-event endpoints. |
+| `SymphonyElixir.HostProbe.HostWorkspace` | `host_probe/host_workspace.ex` | Resolves and verifies the contained operator-prepared issue workspace. |
+| `SymphonyElixir.HostProbe.HostLauncher` | `host_probe/host_launcher.ex` | Checks the operator-selected Codex launcher before a child process exists. |
+| `SymphonyElixir.HostProbe.HostExecutor` | `host_probe/host_executor.ex` | Preflights the launcher and enters the existing prepared execution pipeline. |
+| `SymphonyElixir.HostProbe.HostRuntime` | `host_probe/host_runtime.ex` | Owns one assignment, heartbeat renewal, local deadline, and stable terminal replay. |
 | `SymphonyElixir.StatusDashboard` | `status_dashboard.ex` | Terminal/operator status rendering. |
 | `SymphonyElixir.LogFile` | `log_file.ex` | Runtime log file configuration and writing. |
 | `SymphonyElixir.Locality` | `locality.ex` | Deterministic tracked-file, AST, manifest, generated-header, and waterline checks. |
@@ -414,6 +422,7 @@ SymphonyElixir.Orchestrator
 | Change JSON observability API | `symphony_elixir_web/controllers/observability_api_controller.ex` |
 | Change JSON runtime control API | `symphony_elixir_web/controllers/control_api_controller.ex` |
 | Change worker API behavior | `symphony_elixir_web/controllers/worker_api_controller.ex`, `persistence.ex` |
+| Change host-probe configuration or runtime behavior | `host_probe/host_config.ex`, `host_probe/host_client.ex`, `host_probe/host_workspace.ex`, `host_probe/host_launcher.ex`, `host_probe/host_executor.ex`, `host_probe/host_runtime.ex` |
 | Change persistence schema | `persistence/*.ex`, `priv/repo/migrations/*` |
 | Change auth behavior | `symphony_elixir_web/auth_plug.ex`, `controllers/session_controller.ex` |
 | Change terminal status display | `status_dashboard.ex` |

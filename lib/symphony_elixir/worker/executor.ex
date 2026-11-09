@@ -23,6 +23,8 @@ defmodule SymphonyElixir.Worker.Executor do
   @linear_endpoint "https://api.linear.app/graphql"
   @codex_shutdown_grace_ms 5_000
 
+  use SymphonyElixir.Worker.Executor.Sections.PreparedExecution
+
   @spec execute(Config.t(), map()) :: map()
   def execute(config, claim), do: execute(config, claim, fn _phase, _payload -> :ok end)
 
@@ -129,6 +131,7 @@ defmodule SymphonyElixir.Worker.Executor do
           app_server_opts = [
             profile: codex.profile,
             run_id: Map.fetch!(claim, "run_id"),
+            bounded_startup_context: Map.get(config, :probe_id) == "local-host",
             on_message: &forward_codex_progress(&1, progress),
             dynamic_tool_opts: [
               allowed_updates: Map.get(payload.handoff, "allowed_updates", %{}),
@@ -487,7 +490,7 @@ defmodule SymphonyElixir.Worker.Executor do
   defp validate(config, claim, source, codex, gates, workspace, log_dir) do
     validation = Validation.run(gates, workspace, &run_gate/2)
     summary = summary(config, claim, source, codex, validation)
-    Validation.write!(Path.join(log_dir, "validation.json"), summary)
+    if log_dir, do: Validation.write!(Path.join(log_dir, "validation.json"), summary)
 
     case validation.overall_status do
       :passed -> {:ok, validation}

@@ -5,7 +5,7 @@ domain: [spec, orchestration]
 status: current
 language: en
 owner: SymphonyElixir.Orchestrator
-updated: 2026-11-02
+updated: 2026-11-09
 ---
 
 # Orchestration Specification
@@ -194,8 +194,19 @@ Host-only execution uses the same claim transaction after project/listening/stat
 - Exact `execution:host-only` normalizes to `host_only`; absence is `default`; allowlisted capability labels form a sorted requirement set.
 - Containers admit only `default`; `host_probe` admits only `host_only` with requirements contained in its frozen capabilities.
 - Registration and every request require the installation bearer plus frozen probe, process session, surface, and capability digest.
-- Host sessions use a 5-second heartbeat and 30-second lease; container defaults remain 10/60 seconds. Installation policy
-  also publishes the 30-second local-deadline contract that SYM-182 will enforce in the probe runtime.
+- Host sessions use a 5-second heartbeat and 30-second lease; container defaults remain 10/60 seconds. The host probe
+  enforces the corresponding 30-second conservative local deadline. Only an explicit renewal for
+  the active assignment and session extends that deadline; an empty successful heartbeat does not.
+- The host probe resolves only the existing readable and writable
+  `host_workspace_root / issue_identifier` directory after canonical containment checks. It does no
+  source or toolchain preparation and launches only the operator-configured Codex app-server from
+  that cwd.
+- A pre-spawn workspace or launcher failure is `environment_unavailable`; a spawned launcher exit
+  or Codex startup-handshake failure is `runtime_failure`. Local deadline and Panel lease closure use
+  the existing lease-expiry mappings.
+- A host terminal delivery retains one event UUID and the same assignment/session correlation until
+  acknowledged. Retry cannot create another run, accepted event, terminal event, or terminal truth;
+  a definitive old-session or expired-assignment response fences and releases the local assignment.
 - Rejection creates no run, accepted/terminal event, or alternate assignment; the existing issue lock and running-run index guard duplicates.
 
 - One in-memory reservation MUST cover both preparation and commit; concurrent claim requests
