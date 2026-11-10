@@ -604,8 +604,24 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence2 d
               Map.get(issue, :identifier) == Map.fetch!(attrs, :identifier)
           end)
 
-        Map.merge(existing || %{id: "fake-issue-#{System.unique_integer([:positive])}"}, attrs)
+        (existing || %{id: "fake-issue-#{System.unique_integer([:positive])}"})
+        |> Map.merge(attrs)
+        |> preserve_fake_routing_since(existing)
       end
+
+      defp preserve_fake_routing_since(issue, nil), do: issue
+
+      defp preserve_fake_routing_since(%{snapshot: snapshot} = issue, existing) when is_map(snapshot) do
+        previous = Map.get(existing, :snapshot) || %{}
+
+        Map.put(
+          issue,
+          :snapshot,
+          SymphonyElixir.RoutingProjection.preserve_wait_since(previous, snapshot)
+        )
+      end
+
+      defp preserve_fake_routing_since(issue, _existing), do: issue
 
       defp replaceable_orphan?(%{started_at: %DateTime{} = started_at}, %DateTime{} = cutoff, opts) do
         Keyword.get(opts, :manual_rerun?, false) and DateTime.compare(started_at, cutoff) == :lt

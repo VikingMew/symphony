@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Persistence do
   import Ecto.Query
 
   alias SymphonyElixir.Config.WorkflowScopes
-  alias SymphonyElixir.{PersistenceProvider, Repo, RunFailure, RunLifecycle, Workflow}
+  alias SymphonyElixir.{PersistenceProvider, Repo, RoutingProjection, RunFailure, RunLifecycle, Workflow}
   alias SymphonyElixir.PRReview.Store, as: ReviewStore
   alias SymphonyElixir.WorkflowStore, as: RuntimeWorkflowStore
 
@@ -178,6 +178,7 @@ defmodule SymphonyElixir.Persistence do
          true <- repo_available?() || {:error, :repo_unavailable} do
       identifier = Map.fetch!(attrs, :identifier)
       existing = Repo.get_by(IssueRecord, project_id: attrs.project_id, identifier: identifier)
+      attrs = preserve_routing_since(existing, attrs)
       (existing || %IssueRecord{}) |> IssueRecord.changeset(attrs) |> Repo.insert_or_update()
     end
   end
@@ -411,6 +412,9 @@ defmodule SymphonyElixir.Persistence do
   defp upsert_admission_issue!(attrs) do
     fields = [:tracker_issue_id, :title, :url, :labels, :snapshot, :updated_at]
 
+    existing = Repo.get_by(IssueRecord, project_id: attrs.project_id, identifier: attrs.identifier)
+    attrs = preserve_routing_since(existing, attrs)
+
     %IssueRecord{}
     |> IssueRecord.changeset(attrs)
     |> Repo.insert!(
@@ -419,6 +423,15 @@ defmodule SymphonyElixir.Persistence do
       returning: true
     )
   end
+
+  defp preserve_routing_since(nil, attrs), do: attrs
+
+  defp preserve_routing_since(existing, %{snapshot: snapshot} = attrs) when is_map(snapshot) do
+    previous = Map.get(existing, :snapshot) || %{}
+    Map.put(attrs, :snapshot, RoutingProjection.preserve_wait_since(previous, snapshot))
+  end
+
+  defp preserve_routing_since(_existing, attrs), do: attrs
 
   defp replace_or_reject_active_run!(nil, _issue, _opts), do: nil
 

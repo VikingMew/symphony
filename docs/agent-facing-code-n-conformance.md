@@ -33,7 +33,7 @@ new or expanded findings while exact stock remains in the initial baseline.
 | N-09 | partially_satisfied | satisfied | `AGENTS.md` Navigation section | The checker verifies only the `docs/design.md` module-map link and executable `rg` entry; `mix docs.drift` owns validity and freshness. | `mix agent_code_n.check --format json`; `mix docs.drift` | None. |
 
 Final totals are 4 satisfied, 5 partially satisfied, 0 not satisfied, and 0 not applicable. The
-initial baseline waterline was 563 exact findings and the current waterline is 410; the N group is not fully compliant while that
+initial baseline waterline was 563 exact findings and the current waterline is 409; the N group is not fully compliant while that
 value is nonzero.
 
 ## Deterministic rule definitions
@@ -89,5 +89,6 @@ heads, including function arity, remain a non-expanding multiset. A rewritten `s
 cannot authorize `shared/1`, and an added same-head collision exceeds the merge-base multiset. Git diff
 failures remain hard failures. The locality responsibility split reduced the repository-verification waterline from 559 to 411
 findings; the G-group checker then replaced its ambiguous private `finding` declaration with `threshold_finding`, reducing the
-current waterline to 410 without adding an exemption or relaxing the ratchet. Existing comments remain unchanged;
+waterline to 410. HP-2 renamed the history-specific issue payload helper, removing one cross-module collision and reducing the
+current waterline to 409 without adding an exemption or relaxing the ratchet. Existing comments remain unchanged;
 the mapper has no explanatory inline comments to reconcile.

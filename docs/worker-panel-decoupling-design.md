@@ -25,6 +25,13 @@ probe 只允许 capability 子集匹配的 `host_only`。assignment 使用冻结
 复制同一 requirement、capability 和 correlation。probe runtime、local deadline 和 terminal delivery 由
 SYM-182 实现，不属于本协议扩展。
 
+HP-2 在上述 project/listening/state/revalidation gate 完成后，使用同一个 AssignmentManager fresh
+liveness map 生成 issue routing snapshot。`default + container_worker` 与
+`host_only + eligible host_probe` 进入既有原子 admission；`default + host_probe` 和
+`host_only + container_worker` 被拒绝，后两者只允许更新 issue routing snapshot，不创建 run 或
+`task.accepted` event。capability mismatch 也遵循同一无 admission 副作用规则。该查询投影没有新
+queue、session store 或 dispatch owner。
+
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。
 claim 分为准备与提交两个 supervised task 阶段，始终保留单个 in-flight ownership，其他领取请求

@@ -28,6 +28,17 @@ Authorization headers and token contents are excluded from bodies, logs, task pa
 responses. Probe-local token-file, transport, workspace, launcher, and runtime failure evidence belongs to SYM-182;
 HP-1a neither implements nor projects it.
 
+Persisted issue history serializes the normalized requirement/capabilities, routing status/reason, eligible count,
+selected probe, continuous wait timestamp, wait seconds, the fixed 30-second threshold, and its boolean alert result.
+Historical snapshots without normalized evidence return `unrecorded`. Run history serializes the immutable requirement,
+actual surface, probe, and worker session only when `execution_evidence_recorded=true`; the forward migration sets that bit for
+matching HP-1 `task.accepted` evidence, while legacy defaults without such evidence return `unrecorded`.
+
+Issue Detail renders the persisted routing fields and threshold state. Runs and Run Detail render the recorded actual
+surface or `unrecorded`. Dashboard lists persisted host-only waits and shows the fixed display copy at 30 seconds. These
+are first-party API/UI projections only. External production notification delivery remains disabled until a maintainer
+records an approved recipient and copy.
+
 ## Structured log boundary
 
 The default console handler and rotating disk handler use `SymphonyElixir.LogFormatter`. Every

@@ -21,6 +21,12 @@ HP-1a 的 installation `host_probe` policy 默认关闭，Panel 只拥有 `enabl
 并通过 `SymphonyElixir.Config.host_probe_policy/0` 读取。Panel root、token 文件、workspace root、launcher 和 capabilities
 只属于 SYM-182 的 probe-local deployment configuration；project 映射和 listening/dispatch scope 仍先于 surface admission。
 
+HP-2 的 `waiting_for_probe` 只是持久化 routing projection，不属于 `workflow.states`、
+`allowed_transitions` 或 Linear workflow state。projection 只在 installation scope、project resolution、listening、
+state admission 和 live revalidation 全部通过后计算；它复用当前 workflow snapshot 与 AssignmentManager fresh
+session authority。它不写 project mapping，不读取持久 worker heartbeat 作为 admission 输入，不改变
+single-running-run owner，也不允许 host-only work fallback 到 container。
+
 - PostgreSQL 持久化两个互斥配置 scope。固定的 `app_settings["instance_workflow"]` 保存一份
   installation-wide runtime/profile slice；每个 enabled project 的唯一 `workflows` 记录只保存
   最小 tracker/project slice。`projects` 行是 `tracker.project_slug` 与 repository URL、default branch、

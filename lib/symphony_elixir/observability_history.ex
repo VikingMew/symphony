@@ -6,7 +6,7 @@ defmodule SymphonyElixir.ObservabilityHistory do
   runtime snapshot owners through the configured persistence module.
   """
 
-  alias SymphonyElixir.{EventPresenter, PersistenceProvider}
+  alias SymphonyElixir.{EventPresenter, ExecutionEvidence, PersistenceProvider, RoutingProjection}
 
   @default_run_limit 20
   @max_run_limit 50
@@ -41,10 +41,11 @@ defmodule SymphonyElixir.ObservabilityHistory do
   def fetch(issue_identifier, opts \\ []) when is_binary(issue_identifier) do
     timeout = Keyword.get(opts, :timeout, @history_timeout_ms)
     limit = Keyword.get(opts, :limit, @default_run_limit) |> min(@max_run_limit) |> max(1)
+    now = Keyword.get(opts, :now, DateTime.utc_now())
 
     task =
       Task.Supervisor.async_nolink(SymphonyElixir.TaskSupervisor, fn ->
-        read_history(issue_identifier, limit)
+        read_history(issue_identifier, limit, now)
       end)
 
     case Task.yield(task, timeout) do
@@ -60,7 +61,7 @@ defmodule SymphonyElixir.ObservabilityHistory do
     end
   end
 
-  defp read_history(issue_identifier, limit) do
+  defp read_history(issue_identifier, limit, now) do
     persistence = PersistenceProvider.module()
 
     with {:ok, issue} <- read_one(fn -> persistence.get_issue_by_identifier(issue_identifier) end),
@@ -79,7 +80,7 @@ defmodule SymphonyElixir.ObservabilityHistory do
       {:ok,
        %{
          issue_identifier: issue_identifier,
-         issue: issue_payload(issue),
+         issue: history_issue_payload(issue, now),
          latest_run: List.first(run_payloads),
          runs: run_payloads,
          events: event_payloads,
@@ -105,12 +106,13 @@ defmodule SymphonyElixir.ObservabilityHistory do
     end
   end
 
-  defp issue_payload(nil), do: nil
+  defp history_issue_payload(nil, _now), do: nil
 
-  defp issue_payload(issue) do
-    snapshot = value(issue, :snapshot)
+  defp history_issue_payload(issue, now) do
+    snapshot = value(issue, :snapshot) || %{}
 
-    %{
+    RoutingProjection.history_fields(snapshot, now)
+    |> Map.merge(%{
       id: value(issue, :id),
       tracker_issue_id: value(issue, :tracker_issue_id),
       identifier: value(issue, :identifier),
@@ -119,11 +121,12 @@ defmodule SymphonyElixir.ObservabilityHistory do
       url: value(issue, :url),
       project_id: value(issue, :project_id),
       updated_at: iso8601(value(issue, :updated_at))
-    }
+    })
   end
 
   defp run_payload(run) do
-    %{
+    ExecutionEvidence.observable_fields(run)
+    |> Map.merge(%{
       id: value(run, :id),
       kind: value(run, :kind),
       profile: value(run, :profile),
@@ -133,7 +136,7 @@ defmodule SymphonyElixir.ObservabilityHistory do
       finished_at: iso8601(value(run, :finished_at)),
       failure_reason: value(run, :failure_reason),
       failure_evidence: value(run, :failure_evidence)
-    }
+    })
   end
 
   defp event_payload(event) do

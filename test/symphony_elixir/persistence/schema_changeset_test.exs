@@ -92,6 +92,7 @@ defmodule SymphonyElixir.Persistence.SchemaChangesetTest do
     }
 
     assert RunRecord.changeset(%RunRecord{}, run_attrs).valid?
+    assert Ecto.Changeset.get_field(RunRecord.changeset(%RunRecord{}, run_attrs), :execution_evidence_recorded) == false
     refute RunRecord.changeset(%RunRecord{}, Map.delete(run_attrs, :worker_session_id)).valid?
     refute RunRecord.changeset(%RunRecord{}, Map.put(run_attrs, :execution_requirement, "default")).valid?
   end

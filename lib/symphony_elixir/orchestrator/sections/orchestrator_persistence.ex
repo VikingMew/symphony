@@ -68,8 +68,15 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp persist_polled_issue(%Issue{} = issue, project_id) do
+        routing_sessions = AssignmentManager.routing_sessions()
+
         case persist_write(:upsert_polled_issue, persistence_context(issue), fn ->
-               persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+               attrs =
+                 issue
+                 |> Events.issue_attrs_with_routing(routing_sessions: routing_sessions)
+                 |> Map.put(:project_id, project_id)
+
+               persistence().upsert_issue(attrs)
              end) do
           {:ok, _issue_record} -> :ok
           {:degraded, :repo_unavailable} -> :ok
@@ -141,7 +148,12 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp upsert_issue!(issue, project_id) do
-        persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+        attrs =
+          issue
+          |> Events.issue_attrs_with_routing(routing_sessions: AssignmentManager.routing_sessions())
+          |> Map.put(:project_id, project_id)
+
+        persistence().upsert_issue(attrs)
       end
 
       defp create_run!(run_attrs) do
@@ -182,7 +194,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp create_operator_run!(task, admission) do
-        persistence().create_run(%{
+        attrs = %{
           kind: to_string(task.kind),
           profile: to_string(task.kind),
           label: operator_task_label(task.kind),
@@ -191,8 +203,18 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           execution_mode: admission.execution_mode,
           attempt: 0,
           started_at: task.started_at
-        })
+        }
+
+        persistence().create_run(Map.merge(attrs, operator_execution_evidence(admission.workspace_authority)))
       end
+
+      defp operator_execution_evidence({:panel_local}),
+        do: %{execution_requirement: "default", execution_surface: "panel", execution_evidence_recorded: true}
+
+      defp operator_execution_evidence({:http_worker, _worker_id, _session_id}),
+        do: %{execution_requirement: "default", execution_surface: "container_worker", execution_evidence_recorded: true}
+
+      defp operator_execution_evidence(_authority), do: %{}
 
       defp persist_run_finished(running_entry, status, terminal) when is_map(running_entry) do
         if persistence_enabled?() do

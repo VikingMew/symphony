@@ -34,6 +34,13 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
                "state" => "Ready",
                "url" => "https://linear.example/MT-1",
                "labels" => ["bug"],
+               "execution_requirement" => "default",
+               "required_capabilities" => [],
+               "routing_status" => "eligible_default",
+               "routing_reason" => nil,
+               "eligible_probe_count" => 0,
+               "selected_probe_id" => nil,
+               "routing_since_at" => nil,
                "linear_team_key" => "KRN",
                "linear_project_slug" => "koroni",
                "dispatch_scope" => %{
@@ -58,6 +65,9 @@ defmodule SymphonyElixir.Orchestrator.EventsTest do
     assert run_attrs.issue_identifier == "MT-1"
     assert run_attrs.status == "running"
     assert run_attrs.execution_mode == "worker"
+    assert run_attrs.execution_requirement == "default"
+    assert run_attrs.execution_surface == "container_worker"
+    assert run_attrs.execution_evidence_recorded
     assert run_attrs.attempt == 2
 
     assignment_attrs =

@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.HostProbeTest do
   use ExUnit.Case, async: true
 
-  alias SymphonyElixir.{Config, Config.Schema, ExecutionRequirement}
+  alias SymphonyElixir.{Config, Config.Schema, ExecutionRequirement, RoutingProjection}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Persistence.WorkerRegistry
 
@@ -23,6 +23,49 @@ defmodule SymphonyElixir.HostProbeTest do
     assert :ok = ExecutionRequirement.admit(host_only, host)
     assert {:skip, :required_capabilities_unavailable} = ExecutionRequirement.admit(gui, host)
     assert :ok = ExecutionRequirement.admit(gui, session("host_probe", ["gui-session"]))
+  end
+
+  test "projects both waiting reasons, the exact threshold, and recovery" do
+    issue = host_probe_issue(["execution:host-only", "capability:gui-session"])
+    started_at = ~U[2026-11-10 05:00:00Z]
+
+    offline = RoutingProjection.build_issue_projection(issue, [], started_at)
+    assert offline["routing_status"] == "waiting_for_probe"
+    assert offline["routing_reason"] == "no_online_eligible_probe"
+    assert offline["eligible_probe_count"] == 0
+    refute RoutingProjection.alert?(offline, DateTime.add(started_at, 29, :second))
+    assert RoutingProjection.alert?(offline, DateTime.add(started_at, 30, :second))
+
+    mismatch = RoutingProjection.build_issue_projection(issue, [session("host_probe", [])], DateTime.add(started_at, 10, :second))
+    assert mismatch["routing_reason"] == "capability_mismatch"
+    assert mismatch["routing_since_at"] != offline["routing_since_at"]
+    assert RoutingProjection.preserve_wait_since(offline, mismatch) == mismatch
+
+    repeated = RoutingProjection.build_issue_projection(issue, [], DateTime.add(started_at, 20, :second))
+    assert RoutingProjection.preserve_wait_since(offline, repeated)["routing_since_at"] == offline["routing_since_at"]
+
+    ready =
+      RoutingProjection.build_issue_projection(
+        issue,
+        [session("host_probe", ["gui-session"])],
+        DateTime.add(started_at, 30, :second)
+      )
+
+    assert ready["routing_status"] == "ready_host_probe"
+    assert ready["routing_reason"] == nil
+    assert ready["eligible_probe_count"] == 1
+    assert ready["routing_since_at"] == nil
+  end
+
+  test "waiting_for_probe is only a routing status" do
+    workflow_policy = Schema.default_workflow_policy()
+    states = workflow_policy["states"] || workflow_policy[:states]
+
+    refute Map.has_key?(states, "waiting_for_probe")
+
+    source = File.read!("lib/symphony_elixir/execution_requirement.ex")
+    assert source =~ ~s({"host_only", _surface, _matches} -> {:skip, :host_only_surface_required})
+    refute source =~ "container_fallback"
   end
 
   test "freezes one stable allowlisted capability digest and fixed installation policy" do

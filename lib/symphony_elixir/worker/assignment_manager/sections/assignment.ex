@@ -601,6 +601,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Assignment do
         |> Enum.sum_by(& &1.total_slots)
       end
 
+      defp fresh_routing_sessions(state) do
+        state.liveness
+        |> Map.values()
+        |> Enum.filter(&fresh_liveness?(state, &1))
+        |> Enum.map(& &1.session)
+      end
+
       defp fresh_liveness?(state, %{last_seen_at: last_seen_at, session: session}) do
         cutoff = DateTime.add(state.now.(), -liveness_timeout_seconds(session), :second)
         DateTime.compare(last_seen_at, cutoff) in [:eq, :gt]

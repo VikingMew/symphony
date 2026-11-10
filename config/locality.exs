@@ -120,7 +120,7 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex",
-      lines: 393,
+      lines: 415,
       identifier: "__using__/1@6"
     },
     %{
@@ -141,14 +141,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/api.ex",
-      lines: 871,
+      lines: 905,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex",
-      lines: 908,
+      lines: 915,
       identifier: "__using__/1@6"
     },
     %{
@@ -190,7 +190,7 @@
       owner: "Symphony maintainers",
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir_web/live/admin_live/run_detail.ex",
-      lines: 120,
+      lines: 121,
       identifier: "render/1@13"
     },
     %{
@@ -232,7 +232,7 @@
       owner: "Symphony maintainers",
       split: "Extract named helpers or view components at the existing control-flow boundaries.",
       path: "lib/symphony_elixir_web/live/dashboard_live.ex",
-      lines: 460,
+      lines: 490,
       identifier: "render/1@123"
     },
     %{
@@ -274,14 +274,14 @@
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_1.exs",
-      lines: 621,
+      lines: 631,
       identifier: "__using__/1@6"
     },
     %{
       owner: "Symphony maintainers",
       split: "Replace the compile-time section with cohesive helper modules after behavior-locking extraction.",
       path: "test/support/fake_persistence_sections/fake_persistence_2.exs",
-      lines: 684,
+      lines: 700,
       identifier: "__using__/1@6"
     },
     %{
