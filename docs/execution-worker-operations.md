@@ -4,7 +4,7 @@ genre: guide
 domain: [worker, deployment, operations]
 status: current
 language: en
-updated: 2026-10-07
+updated: 2026-11-09
 owner: compose.yaml
 ---
 
@@ -40,6 +40,30 @@ The immutable admission and worker/session authority boundary is owned by
 [External execution runtime](execution-runtime-design.md) and
 [Panel / Worker 执行设计](worker-panel-decoupling-design.md); this operations guide does not define a
 second readiness or cleanup rule.
+
+## Host-probe process
+
+The host probe is a separate operator-started host process and is not a Compose service. Start the
+same release with `SYMPHONY_ROLE=host_probe` and provide `HOST_PROBE_TOKEN_FILE`,
+`HOST_PROBE_WORKSPACE_ROOT`, and `HOST_PROBE_CODEX_LAUNCHER`. Optional
+`HOST_PROBE_CAPABILITIES` is a comma-separated subset of the Panel allowlist, and
+`HOST_PROBE_SOURCE_REVISION` is registration evidence. The process always connects to
+`http://127.0.0.1:4001`; there is no configurable LAN or public endpoint.
+
+The operator owns the host account, token path and permissions, process environment, launcher,
+workspace contents, credentials, and isolation. The probe reads the token contents without a file
+mode check and never includes them in task payloads, events, or evidence. Before starting Codex it
+requires the exact existing `<HOST_PROBE_WORKSPACE_ROOT>/<issue identifier>` directory to remain
+inside the configured root and be readable and writable. It does not prepare or repair that
+directory or its toolchain.
+
+The process registers one `local-host` session, claims one host-only assignment, and runs the
+operator launcher from the verified workspace. It heartbeats every 5 seconds against the Panel's
+30-second lease and maintains its own 30-second conservative deadline. Only a matching renewal in
+the heartbeat response extends that deadline. If terminal acknowledgement is lost, it retains the
+assignment and retries the same event ID until the Panel acknowledges it or definitively fences the
+session. Stop the process or rotate its token only when no host assignment is active; crash cleanup
+of any remaining host process is an operator responsibility.
 
 ## Preflight and credentials
 

@@ -4,13 +4,13 @@ genre: design
 domain: [execution, workers, routing, operations]
 status: current
 language: zh-CN
-updated: 2026-11-02
+updated: 2026-11-09
 design_status: partial
 ---
 
 # 宿主侧执行探针设计
 
-本文最初是 SYM-173 的调研交付；SYM-175 交付 HP-1a Panel/control-plane，SYM-182 拥有仍未落地的
+本文最初是 SYM-173 的调研交付；SYM-175 交付 HP-1a Panel/control-plane，SYM-182 交付 HP-1b
 probe 进程与执行 runtime。多探针、远程传输、完整离线可见性、告警和 UI 投影仍按 roadmap
 另开实现票，因此状态为 `partial`。
 
@@ -29,9 +29,29 @@ capabilities 子集的票。拒绝不创建 run、accepted event 或替代 assig
 
 HP-1a 只持久化冻结 session surface/capability/timing，以及 accepted run/event 的 requirement、实际
 surface、probe/session correlation；不写 token、Authorization header 或 host path。issue requirement
-projection、完整历史/API/UI、离线可见性和告警属于 HP-2。token 文件、loopback transport、prepared
-workspace、allowlisted Codex launcher、runtime loop、本地 deadline enforcement 和 terminal retry 属于
-SYM-182；HP-1a 不启动 Codex 或宿主进程，也不把这些 probe-local 值加入 Panel policy。
+projection、完整历史/API/UI、离线可见性和告警属于 HP-2。HP-1b 从 operator 配置路径读取 token，使用
+固定 loopback root，校验 prepared workspace 与 allowlisted Codex launcher，并负责 runtime loop、本地
+deadline enforcement 和 terminal retry；这些 probe-local 值不进入 Panel policy。
+
+## HP-1b 已交付 runtime
+
+`SymphonyElixir.HostProbe.HostApplication` 在 `SYMPHONY_ROLE=host_probe` 时启动单 assignment runtime。
+`HostProbe.HostConfig` 从 `HOST_PROBE_TOKEN_FILE`、`HOST_PROBE_WORKSPACE_ROOT` 和
+`HOST_PROBE_CODEX_LAUNCHER` 消费 operator-owned 配置；固定 Panel root 是
+`http://127.0.0.1:4001`，不可由 assignment 改写。token 只进入 bearer header，探针不检查文件 mode，
+也不为 environment 或 PATH 添加产品 allowlist。
+
+`HostProbe.HostClient` 复用 worker-v1 registration、claim、heartbeat 和 task-event API。
+`HostProbe.HostWorkspace` 只接受 `host_workspace_root / issue_identifier` 这个已经存在、可读、可写且解析后仍在
+root 内的目录。`HostProbe.HostExecutor` 先做 workspace 与 launcher preflight，再把已验证 cwd 和 operator
+launcher 交给现有 `Worker.Executor` 的 prepared 执行入口；该入口跳过 source preparation 和 setup hooks，
+但保留 Codex app-server handshake、restricted task tools、required gates、handoff 与 terminal summary。
+
+runtime 每 5 秒 heartbeat，Panel lease 为 30 秒，本地保守 deadline 为 30 秒。只有 response 中包含当前
+assignment/session 的明确 renewal 才重置本地 deadline；成功但空的 renewal list 不延长执行。terminal
+payload 在首次完成时生成一个 event UUID，未确认的 transport/overload response 只重送同一 payload；
+明确 fencing response 释放本地 assignment，不能创建第二个 run、accepted event 或 terminal truth。
+本地 deadline 到期停止 executor 并按既有 lease-loss 映射交付；进程崩溃后的宿主残留仍由 operator 负责。
 
 ## 状态、证据基线与约束
 
@@ -65,7 +85,7 @@ SYM-182；HP-1a 不启动 Codex 或宿主进程，也不把这些 probe-local �
 | 隔离档位 | 首个切片只落在 `Local Worker` 的宿主进程档；不把 SSH、远端宿主或宿主托管容器混入首个协议。宿主身份、凭据与隔离由 operator 选择，产品不提供 sandbox 或安全认证。 | 探针继承 operator 所选宿主边界中可见的文件、会话和凭据，风险由该边界决定。 | HP-1 |
 | 路由策略 | 用唯一 Linear label `execution:host-only` 声明必须宿主执行；缺省继续走当前默认执行面。Panel 先做 project/scope gate，再以需求和已验证 capability 确定性匹配，禁止到达顺序决定执行面。 | 需要 label 治理、snapshot/run 证据扩展和旧 Panel 回滚前的停听/清标操作。 | HP-1、HP-2 |
 | 配置权威 | Panel 策略进入 installation singleton；root、bearer token 文件路径、宿主 workspace root、Codex 启动参数属于探针部署拓扑；project context 仍只来自现有 PostgreSQL workflow/project 映射。 | 一个部署要同时管理 Panel 设置与宿主本地配置，但两者不能互相覆盖。 | HP-1 |
-| 身份与认证 | 每个安装使用一个静态 bearer token，存于宿主 `0600` 文件；静态 `probe_id` 与每进程 `session_id` 只用于路由和可观测。 | token 与宿主已有身份处于同一 operator-owned 边界；当前不提供 enrollment、CA、证书轮换或撤销生命周期。 | HP-1 |
+| 身份与认证 | 每个安装使用一个静态 bearer token；operator 选择宿主 token 路径与文件权限，探针只读取配置路径且不校验 mode。静态 `probe_id` 与每进程 `session_id` 只用于路由和可观测。 | token 与宿主已有身份处于同一 operator-owned 边界；当前不提供 enrollment、CA、证书轮换或撤销生命周期。 | HP-1 |
 
 五项决定共同定义当前 local-only 切片；后续实现票不得把远端传输、每探针身份生命周期或多探针路由
 隐式加入 HP-1。
@@ -140,7 +160,7 @@ mTLS。公网边缘仍属于外部基础设施且不在本设计当前范围；�
 | 配置 | 候选 | 推荐归属 | 代价/理由 |
 | --- | --- | --- | --- |
 | Panel root | instance setting / 探针部署拓扑 | 探针部署拓扑 | root 是如何连到本安装，不是业务 routing authority。 |
-| 探针身份与认证来源 | 每安装静态 bearer token | Panel 安装 + 宿主 `0600` secret 文件 | 单机部署只需一个 token；当前不增加 enrollment、CA、证书或撤销状态。 |
+| 探针身份与认证来源 | 每安装静态 bearer token | Panel 安装 + operator 选择的宿主 token 路径 | 单机部署只需一个 token；探针不校验文件 mode，当前不增加 enrollment、CA、证书或撤销状态。 |
 | heartbeat、lease 与本地 deadline | 探针自定 / Panel 下发 | Panel instance singleton 固定 5 秒 heartbeat、30 秒 lease；探针使用 30 秒保守 deadline | 单一调度时钟和阈值；探针不能放宽 lease。 |
 | workspace root | Panel project setting / 宿主本地配置 | 探针部署拓扑 | Panel 不认识宿主 path；宿主必须证明 cwd 在本地 root 下。 |
 | Codex 启动参数 | assignment 任意命令 / 宿主 allowlisted launcher | 宿主本地配置，assignment 只选既有 profile | 降低灵活性，但不允许票面注入任意 launcher。 |
@@ -320,8 +340,8 @@ readiness，再由维护者启用 label 解释，最后允许 host-only claim。
 
 ### 6.3 探针身份生命周期
 
-HP-1 每个安装只配置一个静态 bearer token。Panel 生成或保存该值；operator 把它写入宿主 `0600`
-文件；探针从该文件读取并在 registration、claim、heartbeat 和 task event 请求中发送。token 不进入日志、
+HP-1 每个安装只配置一个静态 bearer token。Panel 生成或保存该值；operator 选择宿主 token 路径与
+文件权限；探针从配置路径读取且不校验 mode，并在 registration、claim、heartbeat 和 task event 请求中发送。token 不进入日志、
 run evidence 或 task payload。当前设计没有 enrollment token、CA、客户端证书、按探针轮换、撤销列表或
 换机生命周期；token 更换是安装级运维动作，必须在没有 active assignment 时同时更新 Panel 与文件。
 
@@ -413,8 +433,7 @@ installation/project scope，再通过 execution requirement，最后才做 capa
 - 自动可复核：loopback protocol、原子 claim、虚拟 heartbeat/lease、fake app-server、event id retry、
   crash/expiry fencing、`RunFailure` exact classification、UI/state serialization、静态无 container-engine/socket
   检查。
-- 必须人工 gate：静态 bearer token 写入宿主 `0600` 文件，以及 operator 明示其选择的宿主身份、凭据与
-  隔离边界并提供一次
+- 必须人工 gate：operator 提供其选择的宿主 token 路径并明示宿主身份、凭据与隔离边界，且提供一次
   真实宿主运行证据；不要求 GUI、专用账号、专用机或 VM。责任人是维护者，证据附实现票，阻塞启用
   host routing。
 - 运行时副作用：只在测试数据库、loopback Panel 和临时 workspace；不部署、不改真实 label。
@@ -482,7 +501,7 @@ roadmap。HP-1 的静态 per-install bearer token 与 `probe_id`/`session_id` �
 | 决策 | 当前合同 | 责任/证据 | 适用票 |
 | --- | --- | --- | --- |
 | 传输与 root | Panel 容器 `:4000` 发布为宿主 `127.0.0.1:4001`；探针使用 `http://127.0.0.1:4001` plain HTTP。无 TLS 或 mTLS。 | 部署静态配置与 loopback contract test | HP-1 |
-| 认证与身份 | 每安装一个静态 bearer token，存于宿主 `0600` 文件；静态 `probe_id` + 每进程 `session_id` 只用于路由和可观测。无 enrollment、CA、证书或撤销生命周期。 | secret 文件权限检查与 redaction test | HP-1 |
+| 认证与身份 | 每安装一个静态 bearer token；operator 选择宿主 token 路径与文件权限，探针不校验 mode。静态 `probe_id` + 每进程 `session_id` 只用于路由和可观测。无 enrollment、CA、证书或撤销生命周期。 | token 路径读取与 redaction test | HP-1 |
 | label 权限 | 只有维护者可以设置 `execution:host-only` 和三个可选 capability labels；缺省 capability 集为空。 | 项目维护者维护 Linear 权限 | HP-1、HP-2 |
 | heartbeat/lease/deadline | 5 秒 heartbeat、30 秒 lease、30 秒本地保守 deadline。 | 虚拟时钟与 expiry test | HP-1 |
 | 宿主边界 | 使用 operator 现有宿主身份、凭据、workspace 和网络；产品不要求专用账号、机器或 VM。 | operator 记录实际选择；产品不做安全认证 | HP-1、HP-5 |
@@ -503,8 +522,8 @@ roadmap。HP-1 的静态 per-install bearer token 与 `probe_id`/`session_id` �
 
 | 类别 | 触发条件 | 后果 | 推荐处理 |
 | --- | --- | --- | --- |
-| 安全：宿主凭据暴露 | probe/Codex compromise，或启动环境继承过宽 | GitHub、Codex、浏览器 session 与本地文件按 operator 所选宿主身份权限暴露 | operator 记录并承担所选账号/机器/VM 边界；最小 env/path allowlist 与 secret redaction；产品不提供 sandbox 或安全认证。 |
-| 安全：loopback 或 token 边界扩大 | Panel 端口发布到非 loopback，或静态 token 文件权限宽于 `0600` | 本机外访问或 bearer token 泄漏可导致未授权 claim | root 固定为 `127.0.0.1:4001`；token 文件权限固定为 `0600`；认证失败拒绝请求并 redaction。 |
+| 安全：宿主凭据暴露 | probe/Codex compromise，或启动环境继承过宽 | GitHub、Codex、浏览器 session 与本地文件按 operator 所选宿主身份权限暴露 | operator 记录并承担所选账号/机器/VM、process environment 与 path 边界；探针只做 secret redaction，不增加 env/path allowlist、sandbox 或安全认证。 |
+| 安全：loopback 或 token 边界扩大 | Panel 端口发布到非 loopback，或 operator 所选 token 文件边界泄漏 | 本机外访问或 bearer token 泄漏可导致未授权 claim | root 固定为 `127.0.0.1:4001`；token 路径与文件权限由 operator 管理，探针不校验 mode；认证失败拒绝请求并 redaction。 |
 | 安全：session/event 重放 | 旧 `session_id` 或 event id 被重用 | 过期 session 或重复 terminal | 当前 session/lease fencing + 固定 event UUID 幂等；`probe_id` 不充当认证。 |
 | 冲突：同 slot 争用 | container 与 probe 都把同一 candidate 当合格 | host-only 被错误 surface 领取或重复 run | scope→requirement→capability→单探针 session 顺序；DB unique index最后兜底。 |
 | 冲突：意外启动多个 probe | 多个 fresh probe 同时 poll | 超出当前单探针合同 | 拒绝额外 session；只有明确启动 HP-4 后才设计 deterministic selection。 |

@@ -4,7 +4,7 @@ genre: design
 domain: [agents, dependencies, boundaries, testing]
 status: current
 language: zh-CN
-updated: 2026-09-24
+updated: 2026-11-09
 design_status: landed
 ---
 
@@ -30,7 +30,8 @@ design_status: landed
 核心是 `lib/` 中除以下边界外的生产模块。边界模块按当前消费者声明为：
 
 - 远程服务：`SymphonyElixir.Linear.*`、`SymphonyElixir.GitHub.*`、
-  `SymphonyElixir.Worker.Client` 和执行文档漂移远程读取的 `Mix.Tasks.Docs.Drift`。
+  `SymphonyElixir.Worker.Client`、`SymphonyElixir.HostProbe.HostClient` 和执行文档漂移远程读取的
+  `Mix.Tasks.Docs.Drift`。
 - 存储：`SymphonyElixir.Repo`、`SymphonyElixir.Persistence` 及其子模块、
   `SymphonyElixir.PRReview.Store`、数据库启动/迁移/release/import 模块。
 - 启动与共享状态：`SymphonyElixir.CLI`、`SymphonyElixir.HttpServer`、
@@ -98,7 +99,7 @@ AST 检查禁止未声明模块调用 `Application.put_env/delete_env`、`:persi
 | --- | --- | --- |
 | Linear GraphQL 分页、错误 body 和 proxy options | `test/symphony_elixir/linear_client_test.exs` | 注入 request function，断言 query/variables、非 2xx typed error 和连接选项。 |
 | GitHub CLI/REST lookup、create、mergeability 和失败类型 | `test/symphony_elixir/github_pull_request_test.exs` | 注入 command runner/HTTP function，断言精确请求与响应分类。 |
-| worker-v1 Req transport 与 Panel HTTP contract | `test/symphony_elixir/worker/client_test.exs`, `test/symphony_elixir/worker/http_integration_test.exs` | 断言协议 id，并仅对进程内本地 endpoint 验证注册、claim、heartbeat 和 event。 |
+| worker-v1 Req transport 与 Panel HTTP contract | `test/symphony_elixir/worker/client_test.exs`, `test/symphony_elixir/worker/http_integration_test.exs`, `test/symphony_elixir/host_probe_executor_test.exs` | 断言协议 id，并仅对进程内本地 endpoint 验证 container/host registration、claim、heartbeat 和 event。 |
 
 PostgreSQL 存储集成由显式 `mix symphony.pg_smoke` 管理，不属于上述默认/离线核心入口；P-06 表中的
 不确定远程协议测试均不访问 live 服务。

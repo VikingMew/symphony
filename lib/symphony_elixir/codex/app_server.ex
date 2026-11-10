@@ -59,7 +59,7 @@ defmodule SymphonyElixir.Codex.AppServer do
          {:ok, port} <- start_port(expanded_workspace, worker_host) do
       metadata = port_metadata(port, worker_host)
 
-      startup_context = startup_context(expanded_workspace, worker_host)
+      startup_context = startup_context(expanded_workspace, worker_host, opts)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host, opts),
            {:ok, thread_id} <- do_start_session(port, expanded_workspace, session_policies, startup_context, opts) do
@@ -384,12 +384,16 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp startup_context(workspace, worker_host) do
-    %{
-      command: Config.settings!().codex.command,
-      workspace: workspace,
-      worker_host: worker_host
-    }
+  defp startup_context(workspace, worker_host, opts) do
+    if Keyword.get(opts, :bounded_startup_context, false) do
+      %{command: "operator-configured launcher", workspace: "operator-prepared workspace", worker_host: worker_host}
+    else
+      %{
+        command: Config.settings!().codex.command,
+        workspace: workspace,
+        worker_host: worker_host
+      }
+    end
   end
 
   defp send_initialize(port, startup_context) do

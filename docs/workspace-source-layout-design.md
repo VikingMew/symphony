@@ -4,13 +4,13 @@ genre: design
 domain: [workspace]
 status: current
 language: zh-CN
-updated: 2026-10-09
+updated: 2026-11-09
 design_status: landed
 ---
 
 # Workspace Source Layout 设计
 
-本文维护 Symphony 在本地准备代码目录时的长期设计。它只讨论 repository cache、issue worktree、clone workspace 和 sandbox root 的路径模型，不承载通用产品方向。
+本文维护 Symphony 在本地解析代码目录时的长期设计。它只讨论 repository cache、issue worktree、clone workspace、operator-prepared host workspace 和 sandbox root 的路径模型，不承载通用产品方向。
 
 ## 目标
 
@@ -48,6 +48,23 @@ clone_workspace_root / issue_identifier
 ```
 
 其中 `clone_workspace_root` 可以继续来自 workflow workspace root。它也必须参与同一套 sandbox allowed roots 校验。
+
+Host probe 使用独立的 operator-prepared 路径规则：
+
+```text
+host_workspace_root / issue_identifier
+```
+
+`host_workspace_root` 属于宿主部署配置，Panel 不读取或持久化其绝对路径。探针规范化 assignment 的
+`issue_identifier`，派生唯一预期目录，并要求展开后的目录仍包含在展开后的 root 内。root 或最终目录的
+符号链接解析若逃逸 root，判定为路径逃逸。探针只接受已经存在、可读且可写的目录；它不得创建目录、
+clone、fetch、install、切换 branch、运行 setup hook 或修复工具链。缺失、非目录、不可读、不可写或逃逸
+分别返回 `workspace_missing`、`workspace_not_directory`、`workspace_unreadable`、
+`workspace_not_writable` 或 `workspace_escape` 的有界 evidence，顶层统一为
+`environment_unavailable`，并且不会尝试其它目录。可读检查列出目录，可写检查只创建并删除一个唯一
+临时文件；两者不改变源码或工具链。该规则由 `SymphonyElixir.HostProbe.HostWorkspace` 实现。该 host 规则是
+`docs/host-side-probe-design.md` 中宿主 readiness 边界的路径 owner；Panel-local 和 execution-worker
+preparation 规则保持不变。
 
 Execution worker 的 clone strategy 每轮都从空 lease workspace 开始，并消费 assignment 已冻结的
 repository、default branch、implementation branch、checkout depth 与 initialize timeout。clone 命令为
