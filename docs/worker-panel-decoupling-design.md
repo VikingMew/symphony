@@ -31,6 +31,9 @@ liveness map 生成 issue routing snapshot。`default + container_worker` 与
 `host_only + container_worker` 被拒绝，后两者只允许更新 issue routing snapshot，不创建 run 或
 `task.accepted` event。capability mismatch 也遵循同一无 admission 副作用规则。该查询投影没有新
 queue、session store 或 dispatch owner。
+中央 poll 每轮只读取一次该内存 routing snapshot，并把同一结果传给本轮所有 issue persistence；读取有界，
+manager 忙或不可达时以空 session 列表生成确定性等待投影，不能终止 Orchestrator 或 run-start persistence，
+也不能复用持久 heartbeat 或旧 snapshot。
 
 `Worker.AssignmentManager` 是单 worker deployment 的 assignment/lease 所有者。HTTP claim 先同步进入
 Orchestrator mailbox，使用当下的 `listening_mode` 准入；manager 不保存第二份 mode。

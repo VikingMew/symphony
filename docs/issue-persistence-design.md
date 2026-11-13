@@ -39,6 +39,9 @@ clears the timestamp.
 
 The projection is calculated only after the existing scope, listening, state, and revalidation gates. It consumes the fresh
 AssignmentManager liveness snapshot; persisted worker-session heartbeat rows are history and never become admission authority.
+The centralized poll takes one bounded liveness snapshot and shares it across that poll's issue writes. If the manager is busy
+or unreachable, the projection uses an empty session list without terminating the poll or run-start persistence path and does
+not reuse persisted heartbeat state or a previous snapshot.
 Rejected surface/capability combinations may update the issue snapshot while still creating neither a run nor a `task.accepted`
 event.
 

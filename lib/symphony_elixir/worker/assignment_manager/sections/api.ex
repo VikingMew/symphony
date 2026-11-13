@@ -44,6 +44,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       @max_poll_seconds 60
       @heartbeat_timeout_ms 1_000
       @heartbeat_retry_after_seconds 1
+      @routing_snapshot_timeout_ms 100
       @tracker_io_timeout_ms 5_000
       @claim_call_timeout_ms @tracker_io_timeout_ms + 1_000
       @cancel_timeout_ms 30_000
@@ -140,7 +141,9 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
 
       @spec routing_sessions(GenServer.server()) :: [map()]
       def routing_sessions(server \\ __MODULE__) do
-        if process_alive?(server), do: GenServer.call(server, :routing_sessions), else: []
+        if process_alive?(server), do: GenServer.call(server, :routing_sessions, @routing_snapshot_timeout_ms), else: []
+      catch
+        :exit, _reason -> []
       end
 
       @spec heartbeat(String.t(), String.t(), map(), GenServer.server(), module()) :: {:ok, map()} | {:error, term()}

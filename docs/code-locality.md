@@ -163,13 +163,13 @@ mechanism.
 | `lib/symphony_elixir/orchestrator/sections/completion.ex` | `__using__/1@6` | 340 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/orchestrator/sections/control.ex` | `__using__/1@6` | 944 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/orchestrator/sections/control.ex` | `handle_call/3@265` | 100 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `__using__/1@6` | 743 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `dispatch_issue_agent/8@196` | 86 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `__using__/1@6` | 761 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/dispatch.ex` | `dispatch_issue_agent/8@214` | 86 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/orchestrator/sections/lifecycle.ex` | `__using__/1@6` | 738 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex` | `__using__/1@6` | 415 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/orchestrator/sections/orchestrator_persistence.ex` | `__using__/1@6` | 414 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/orchestrator/sections/reconciliation.ex` | `__using__/1@6` | 851 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/orchestrator/sections/runtime_status.ex` | `__using__/1@6` | 889 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
-| `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 905 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
+| `lib/symphony_elixir/worker/assignment_manager/sections/api.ex` | `__using__/1@6` | 908 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/assignment_manager/sections/assignment.ex` | `__using__/1@6` | 915 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
 | `lib/symphony_elixir/worker/executor.ex` | `run_codex/5@108` | 72 | Extract named helpers or view components at the existing control-flow boundaries. | Symphony maintainers |
 | `lib/symphony_elixir/workspace/sections/hooks.ex` | `__using__/1@6` | 573 | Replace the compile-time section with cohesive helper modules after behavior-locking extraction. | Symphony maintainers |
