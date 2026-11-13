@@ -630,12 +630,24 @@ project mapping或创建第二 context（`docs/workflow-config-authority-design.
 | `execution_surface` 作为 run admission事实，并复制到 accepted dispatch evidence | 要扩 schema/event serializer，但在 run 建立时已确定，不依赖 terminal 自报。 | 推荐。 |
 | 从 workspace path/worker name 推断 | 无 schema，但命名变化会改历史含义。 | 淘汰。 |
 
-字段名是 `execution_surface`，值域是 `panel_local`、`container`、`host_probe`、`ssh`。它由
+字段名是 `execution_surface`，当前值域是 `panel`、`container_worker`、`host_probe`。SSH 不在当前
+协议和持久化值域内。它由
 `RunAdmission` 在创建 run 前一次确定，持久化到 run 查询面，并复制到
 `task.accepted.payload.dispatch_context` 作为当次不可变派发证据；Issue Detail 显示 requirement/current
 routing，Run list/Run Detail 显示 actual surface。issue snapshot 记录 `execution_requirement`，不记录“将来
 一定在哪执行”。这显式扩展现有 snapshot/run association/accepted evidence
 （`docs/issue-persistence-design.md:25-31`），不改变 failure vocabulary。
+
+HP-2 已将该投影接到现有 issue snapshot。投影只消费 AssignmentManager 当前 fresh session snapshot：
+无 fresh host probe 是 `no_online_eligible_probe`，有 fresh probe 但 capability 子集不满足是
+`capability_mismatch`，匹配时是 `ready_host_probe`。相同 waiting reason 的替换写保留
+`routing_since_at`；reason 改变或恢复会重置或清除它。API/UI 以
+`routing_wait_seconds >= max(3 × 5, 30)`，即 30 秒，计算阈值状态，不写回 Linear state，也不 fallback
+到 container。
+
+Dashboard 的确定性阈值提示文案为 “Host-only issue has waited 30 seconds for an eligible host probe.”。
+production 外部通知 recipient 尚未获 maintainer 批准，因此 delivery 保持 disabled；本切片没有通知
+发送器或外部告警集成。
 
 ### 9.6 lease、heartbeat、duplicate-run 与同 slot
 

@@ -67,7 +67,9 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
         }
       end
 
-      defp dispatch_issue(%State{} = state, issue, attempt \\ nil, preferred_worker_host \\ nil) do
+      defp dispatch_issue(state, issue, attempt \\ nil, preferred_worker_host \\ nil, routing_sessions \\ nil)
+
+      defp dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host, routing_sessions) do
         case DispatchPolicy.revalidate_issue_for_dispatch(
                issue,
                &Tracker.fetch_issue_states_by_ids/1,
@@ -76,7 +78,13 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
           {:ok, %Issue{} = refreshed_issue} ->
             case resolve_refreshed_context(refreshed_issue) do
               {:ok, resolved_issue} ->
-                do_dispatch_issue(state, resolved_issue, attempt, preferred_worker_host)
+                do_dispatch_issue(
+                  state,
+                  resolved_issue,
+                  attempt,
+                  preferred_worker_host,
+                  routing_sessions || AssignmentManager.routing_sessions()
+                )
 
               {:error, reason, rejected_issue} ->
                 log_poll_context_rejection(rejected_issue, reason)
@@ -121,10 +129,10 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
         end
       end
 
-      defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host),
-        do: dispatch_issue_centrally(state, issue, attempt, preferred_worker_host)
+      defp do_dispatch_issue(%State{} = state, issue, attempt, preferred_worker_host, routing_sessions),
+        do: dispatch_issue_centrally(state, issue, attempt, preferred_worker_host, routing_sessions)
 
-      defp dispatch_issue_centrally(%State{} = state, issue, attempt, preferred_worker_host) do
+      defp dispatch_issue_centrally(%State{} = state, issue, attempt, preferred_worker_host, routing_sessions) do
         recipient = self()
 
         case select_worker_host(state, preferred_worker_host) do
@@ -134,11 +142,11 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
             state
 
           worker_host ->
-            admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host)
+            admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host, routing_sessions)
         end
       end
 
-      defp admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host) do
+      defp admit_issue_on_worker_host(state, issue, attempt, recipient, worker_host, routing_sessions) do
         case current_workflow_context() do
           {:ok, workflow} ->
             case RunAdmission.resolve(
@@ -154,7 +162,8 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
                   recipient,
                   worker_host,
                   workflow,
-                  admission
+                  admission,
+                  routing_sessions
                 )
 
               {:error, {:environment_unavailable, evidence}} ->
@@ -166,8 +175,17 @@ defmodule SymphonyElixir.Orchestrator.Sections.Dispatch do
         end
       end
 
-      defp persist_and_dispatch_issue(state, issue, attempt, recipient, worker_host, workflow, admission) do
-        case persist_run_started(issue, attempt, worker_host, admission) do
+      defp persist_and_dispatch_issue(
+             state,
+             issue,
+             attempt,
+             recipient,
+             worker_host,
+             workflow,
+             admission,
+             routing_sessions
+           ) do
+        case persist_run_started(issue, attempt, worker_host, admission, routing_sessions) do
           {:ok, run_record} ->
             dispatch_issue_agent(
               state,

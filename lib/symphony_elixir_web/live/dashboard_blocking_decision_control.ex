@@ -23,6 +23,7 @@ defmodule SymphonyElixirWeb.DashboardBlockingDecisionControl do
       |> Phoenix.Component.assign(
         :payload,
         Presenter.state_payload(WebRuntime.orchestrator(), WebRuntime.snapshot_timeout_ms())
+        |> Map.put(:host_probe_waiting, Map.get(socket.assigns.payload, :host_probe_waiting, []))
       )
       |> Phoenix.Component.assign(:now, DateTime.utc_now())
 

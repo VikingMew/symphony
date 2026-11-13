@@ -22,6 +22,7 @@ defmodule SymphonyElixirWeb.AdminLive.RunDetail do
             <tr><th>Label</th><td><%= run_label(@run_detail.run) %></td></tr>
             <tr :if={Map.get(@run_detail.run, :issue_identifier)}><th>Issue</th><td><a class="issue-link" href={"/issues/#{@run_detail.run.issue_identifier}"}><%= @run_detail.run.issue_identifier %></a></td></tr>
             <tr><th>Status</th><td><span class={ObservabilityPresenter.status_class(@run_detail.run.status)}><%= @run_detail.run.status %></span></td></tr>
+            <tr><th>Execution surface</th><td><%= ObservabilityPresenter.run_execution_surface(@run_detail.run) %></td></tr>
             <tr><th>Attempt</th><td><%= @run_detail.run.attempt %></td></tr>
             <tr><th>Worker</th><td><%= Map.get(@run_detail.run, :worker_host) || "local" %></td></tr>
             <tr :if={Map.get(@run_detail.run, :execution_mode) != "worker"}><th>Workspace</th><td class="mono"><%= Map.get(@run_detail.run, :workspace_path) || "n/a" %></td></tr>

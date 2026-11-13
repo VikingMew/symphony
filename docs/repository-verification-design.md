@@ -161,7 +161,7 @@ fixture 保留同一入口；最终 repository verification 文件单独复核�
 - 没有新增 skip/exemption；覆盖率配置、六项总纲阈值、G 组零水位、observability 基线与 main
   相同。原有两个手动验证 skip 保留，指定的 multi-project 测试无 diff。
 - 本次验证工作完成时 N 基线为 559 条。后续 locality 职责拆分将水位降低为 411 条，G 组 checker
-  的明确私有命名继续缩至 410 条；N owner
+  的明确私有命名继续缩至 410 条，HP-2 history helper 命名继续缩至 409 条；N owner
   以精确 finding 行和 Git 位置映射比较 merge-base，其中跨文件移动还要求含 arity 的规范化声明头
   多重集不扩张，并继续阻断新 identity、聚合位置增加、陈旧记录和缺失历史。
 

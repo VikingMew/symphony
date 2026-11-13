@@ -138,18 +138,18 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
           if RunAdmission.execution_mode() == "worker" do
             state
           else
-            dispatch_workflows_centrally(state, workflows)
+            dispatch_workflows_centrally(state, workflows, AssignmentManager.routing_sessions())
           end
         end)
       end
 
-      defp dispatch_workflows_centrally(%State{} = state, workflows) do
+      defp dispatch_workflows_centrally(%State{} = state, workflows, routing_sessions) do
         with :ok <- Config.validate!(),
-             state = reconcile_ready_to_merge_issues(state),
+             state = reconcile_ready_to_merge_issues(state, routing_sessions),
              :allow <- environment_failure_circuit_allows_dispatch(),
              :allow <- rate_limit_gate_allows_dispatch(state),
              {:ok, issues} <- Tracker.fetch_candidate_issues() do
-          dispatch_scoped_issues(workflows, issues, %{state | last_config_error: nil})
+          dispatch_scoped_issues(workflows, issues, %{state | last_config_error: nil}, routing_sessions)
         else
           {:error, reason} ->
             Enum.each(workflows, &persist_linear_request_failure(&1, "orchestrator_poll", reason))
@@ -174,14 +174,14 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp dispatch_scoped_issues(workflows, issues, state) do
+      defp dispatch_scoped_issues(workflows, issues, state, routing_sessions) do
         scope = Config.settings!().dispatch_scope
 
         grouped = Enum.reduce(issues, %{}, &group_scoped_issue(&1, &2, workflows, scope))
 
         Enum.reduce(grouped, state, fn {_project_id, {workflow, workflow_issues}}, state_acc ->
           Config.with_workflow_context(workflow, fn ->
-            dispatch_fetched_workflow(state_acc, workflow, Enum.reverse(workflow_issues))
+            dispatch_fetched_workflow(state_acc, workflow, Enum.reverse(workflow_issues), routing_sessions)
           end)
         end)
       end
@@ -217,14 +217,14 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         )
       end
 
-      defp dispatch_fetched_workflow(state, workflow, issues) do
+      defp dispatch_fetched_workflow(state, workflow, issues, routing_sessions) do
         if available_slots(state) > 0 and workflow_slots_available?(state, workflow) do
           Logger.info(
             "event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared candidate_count=#{length(issues)} dispatch=attempted"
           )
 
-          persist_polled_issues(issues)
-          choose_issues(issues, state)
+          persist_polled_issues(issues, routing_sessions)
+          choose_issues(issues, state, routing_sessions)
         else
           Logger.info("event=poll_workflow_decision listening_mode=#{listening_mode(state)} workflow=#{workflow_name(workflow)} candidate_fetch=shared dispatch=skipped reason=capacity")
 
@@ -232,10 +232,10 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
         end
       end
 
-      defp reconcile_ready_to_merge_issues(%State{} = state) do
+      defp reconcile_ready_to_merge_issues(%State{} = state, routing_sessions) do
         case Tracker.fetch_issues_by_states(["Ready to Merge"]) do
           {:ok, issues} ->
-            persist_polled_issues(issues)
+            persist_polled_issues(issues, routing_sessions)
 
             issues
             |> Enum.take(@mergeability_checks_per_poll)
@@ -789,7 +789,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
 
       defp terminate_task(_pid), do: :ok
 
-      defp choose_issues(issues, state) do
+      defp choose_issues(issues, state, routing_sessions) do
         dispatch_settings = dispatch_policy_settings(state)
         worker_settings = worker_policy_settings()
 
@@ -802,7 +802,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.Reconciliation do
                dispatch_settings,
                worker_settings
              ) do
-            dispatch_issue(state_acc, issue)
+            dispatch_issue(state_acc, issue, nil, nil, routing_sessions)
           else
             reasons = DispatchPolicy.skip_reasons(issue, state_acc, dispatch_settings, worker_settings)
             Logger.info("event=dispatch_skip issue_id=#{issue.id} issue_identifier=#{issue.identifier} skip_reason=#{Enum.join(reasons, ",")}")
