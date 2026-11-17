@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.OrchestratorMultiProjectTest do
   use SymphonyElixir.TestSupport
 
-  alias SymphonyElixir.{Config, Orchestrator, Workflow, WorkflowStore}
+  alias SymphonyElixir.{Config, Orchestrator, RoutingProjection, Workflow, WorkflowStore}
   alias SymphonyElixir.Config.ProjectAuthority
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.TestSupport.FakePersistence
@@ -161,11 +161,62 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
     end)
 
     assert %{listening?: true} = GenServer.call(pid, :start_listening)
-    send(pid, :run_poll_cycle)
 
     assert_receive {:candidate_fetch, query_context}, 2_000
     assert query_context in ["project", "linear-b"]
     refute_receive {:candidate_fetch, _other_context}, 200
+  end
+
+  test "non-responsive routing snapshot degrades one poll without crashing the orchestrator" do
+    {:ok, base} = Workflow.load()
+    {:ok, project} = FakePersistence.default_project()
+
+    FakePersistence.put_default_project_attrs!(%{
+      repository_url: "git@example.test:project.git",
+      linear_project_slug: "project"
+    })
+
+    {:ok, _workflow} =
+      FakePersistence.import_package(
+        project,
+        workflow_markdown(base, "Prompt {{ issue.identifier }}", 5.0),
+        "test"
+      )
+
+    issue = %Issue{
+      id: "issue-routing-timeout",
+      identifier: "SYM-ROUTING-TIMEOUT",
+      title: "Routing timeout",
+      state: "Ready",
+      project_slug: "project",
+      labels: ["execution:host-only"],
+      blocked_by: [%{id: "blocker", identifier: "SYM-BLOCKER", state: "In Progress"}]
+    }
+
+    Application.put_env(:symphony_elixir, :multi_project_candidates, %{"project" => [issue]})
+    assert :ok = WorkflowStore.force_reload()
+
+    manager = start_nonresponsive_routing_manager(self())
+    on_exit(fn -> Process.exit(manager, :kill) end)
+    assert_receive :routing_manager_ready, 1_000
+
+    orchestrator_name =
+      Module.concat(__MODULE__, "RoutingTimeoutOrchestrator#{System.unique_integer([:positive])}")
+
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+    on_exit(fn -> if Process.alive?(pid), do: Process.exit(pid, :normal) end)
+    assert %{listening?: true} = Orchestrator.start_listening(orchestrator_name)
+
+    assert_receive :routing_sessions_requested, 2_000
+    assert_receive {:candidate_fetch, "project"}, 2_000
+
+    assert Process.alive?(pid)
+    refute_receive :routing_sessions_requested, 200
+
+    snapshot = RoutingProjection.build_issue_projection(issue, [], DateTime.utc_now())
+    assert snapshot["routing_status"] == "waiting_for_probe"
+    assert snapshot["routing_reason"] == "no_online_eligible_probe"
+    assert FakePersistence.list_runs(project_id: project.id) == []
   end
 
   test "poll cycle shares one candidate fetch across workflows with the same Linear slug" do
@@ -699,6 +750,22 @@ defmodule SymphonyElixir.OrchestratorMultiProjectTest do
       {:available_worker_slots, _opts} -> true
       _call -> false
     end)
+  end
+
+  defp start_nonresponsive_routing_manager(test_pid) do
+    spawn(fn ->
+      Process.register(self(), AssignmentManager)
+      send(test_pid, :routing_manager_ready)
+      nonresponsive_routing_manager_loop(test_pid)
+    end)
+  end
+
+  defp nonresponsive_routing_manager_loop(test_pid) do
+    receive do
+      {:"$gen_call", _from, :routing_sessions} ->
+        send(test_pid, :routing_sessions_requested)
+        nonresponsive_routing_manager_loop(test_pid)
+    end
   end
 
   defp eventually(fun, attempts \\ 50)

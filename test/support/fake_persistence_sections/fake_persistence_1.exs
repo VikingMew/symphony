@@ -50,9 +50,19 @@ defmodule SymphonyElixir.TestSupport.FakePersistence.Sections.FakePersistence1 d
 
       def upsert_issue(attrs) when is_map(attrs) do
         ensure_started()
-        issue = Map.put_new(attrs, :id, "fake-issue-#{System.unique_integer([:positive])}")
 
         Agent.get_and_update(@name, fn state ->
+          existing =
+            Enum.find(state.issues, fn issue ->
+              Map.get(issue, :project_id) == Map.get(attrs, :project_id) and
+                Map.get(issue, :identifier) == Map.get(attrs, :identifier)
+            end)
+
+          issue =
+            (existing || %{id: "fake-issue-#{System.unique_integer([:positive])}"})
+            |> Map.merge(attrs)
+            |> preserve_fake_routing_since(existing)
+
           issues =
             state.issues
             |> Enum.reject(

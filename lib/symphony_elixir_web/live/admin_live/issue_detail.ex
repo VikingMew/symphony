@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
 
   use Phoenix.Component
 
-  import SymphonyElixirWeb.AdminLive.ObservabilityComponents, only: [event_table: 1]
+  import SymphonyElixirWeb.AdminLive.ObservabilityComponents, only: [event_table: 1, execution_routing: 1]
 
   alias SymphonyElixir.PersistenceProvider
   alias SymphonyElixirWeb.Admin.ObservabilityPresenter
@@ -14,6 +14,7 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
     <section class="section-card">
       <h1 class="section-title">Issue Detail</h1>
       <%= if @issue_detail.issue do %>
+        <.execution_routing issue={@issue_detail.issue} />
         <h2 class="section-title">Dispatch Context</h2>
         <table class="data-table dispatch-context-table">
           <tbody>
@@ -37,11 +38,12 @@ defmodule SymphonyElixirWeb.AdminLive.IssueDetail do
         <p class="empty-state">No persisted runs for this issue.</p>
       <% else %>
         <table class="data-table">
-          <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Finished</th></tr></thead>
+          <thead><tr><th>Run</th><th>Status</th><th>Surface</th><th>Started</th><th>Finished</th></tr></thead>
           <tbody>
             <tr :for={run <- @issue_detail.runs}>
               <td><a class="issue-link" href={"/runs/#{run.id}"}><%= run.id %></a></td>
               <td><%= run.status %></td>
+              <td><%= ObservabilityPresenter.run_execution_surface(run) %></td>
               <td class="mono"><%= ObservabilityPresenter.fmt_dt(run.started_at) %></td>
               <td class="mono"><%= ObservabilityPresenter.fmt_dt(run.finished_at) %></td>
             </tr>

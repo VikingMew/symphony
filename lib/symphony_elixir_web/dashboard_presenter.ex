@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
   Pure presentation helpers for the operations dashboard LiveView.
   """
 
-  alias SymphonyElixir.Payload
+  alias SymphonyElixir.{Payload, RoutingProjection}
 
   @spec total_runtime_seconds(map(), DateTime.t()) :: non_neg_integer()
   def total_runtime_seconds(payload, _now) do
@@ -153,6 +153,19 @@ defmodule SymphonyElixirWeb.DashboardPresenter do
   @spec history_source_label(term()) :: String.t()
   def history_source_label(nil), do: "agent"
   def history_source_label(source), do: source |> to_string() |> String.replace("_", " ")
+
+  @spec routing_wait_seconds(map(), DateTime.t()) :: non_neg_integer()
+  def routing_wait_seconds(%{snapshot: snapshot}, %DateTime{} = now) do
+    snapshot
+    |> RoutingProjection.history_fields(now)
+    |> Map.fetch!(:routing_wait_seconds)
+    |> Kernel.||(0)
+  end
+
+  @spec routing_alert?(map(), DateTime.t()) :: boolean()
+  def routing_alert?(%{snapshot: snapshot}, %DateTime{} = now) do
+    RoutingProjection.alert?(snapshot, now)
+  end
 
   @spec session_history_key(map()) :: String.t()
   def session_history_key(entry) do

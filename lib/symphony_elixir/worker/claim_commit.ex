@@ -42,7 +42,11 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
   defp create_run(deps, prepared, context) do
     now = deps.now.()
     issue = prepared.issue
-    issue_attrs = Map.put(Events.issue_attrs(issue), :project_id, prepared.workflow.project_id)
+
+    issue_attrs =
+      issue
+      |> Events.issue_attrs_with_routing(routing_sessions: [prepared.session], now: now)
+      |> Map.put(:project_id, prepared.workflow.project_id)
 
     run_attrs =
       Events.run_attrs(issue, prepared.admission, nil)
@@ -231,6 +235,7 @@ defmodule SymphonyElixir.Worker.ClaimCommit do
       execution_requirement: requirement.execution_requirement,
       required_capabilities: requirement.required_capabilities,
       execution_surface: session.execution_surface,
+      execution_evidence_recorded: true,
       probe_id: session.probe_id,
       worker_session_id: session.id
     }

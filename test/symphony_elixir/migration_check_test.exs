@@ -85,4 +85,19 @@ defmodule SymphonyElixir.MigrationCheckTest do
     refute migration =~ "drop"
     assert running_guard =~ "runs_one_running_issue"
   end
+
+  test "execution evidence migration marks only runs corroborated by accepted events" do
+    source =
+      __DIR__
+      |> Path.join("../../priv/repo/migrations/20261110050000_mark_recorded_run_execution_evidence.exs")
+      |> File.read!()
+
+    assert source =~ "add(:execution_evidence_recorded, :boolean, null: false, default: false)"
+    assert source =~ "SET execution_evidence_recorded = TRUE"
+    assert source =~ "events.event_type = 'task.accepted'"
+    assert source =~ "events.payload -> 'execution' ->> 'execution_requirement' = runs.execution_requirement"
+    assert source =~ "events.payload -> 'execution' ->> 'execution_surface' = runs.execution_surface"
+    refute source =~ "SET execution_requirement"
+    refute source =~ "SET execution_surface"
+  end
 end

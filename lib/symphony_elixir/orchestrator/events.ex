@@ -3,12 +3,22 @@ defmodule SymphonyElixir.Orchestrator.Events do
   Persistence payload shaping for orchestrator events.
   """
 
-  alias SymphonyElixir.{Config, ExecutionRequirement, RunAdmission, RunFailure}
+  alias SymphonyElixir.{Config, ExecutionRequirement, RoutingProjection, RunAdmission, RunFailure}
   alias SymphonyElixir.Linear.{DispatchScope, Issue}
   alias SymphonyElixir.Orchestrator.RetryPolicy
 
   @spec issue_snapshot(Issue.t()) :: map()
-  def issue_snapshot(%Issue{} = issue) do
+  def issue_snapshot(%Issue{} = issue), do: issue_snapshot_with_routing(issue, [])
+
+  @spec issue_snapshot_with_routing(Issue.t(), keyword()) :: map()
+  def issue_snapshot_with_routing(%Issue{} = issue, opts) when is_list(opts) do
+    routing =
+      RoutingProjection.build_issue_projection(
+        issue,
+        Keyword.get(opts, :routing_sessions, []),
+        Keyword.get(opts, :now, DateTime.utc_now())
+      )
+
     %{
       "id" => issue.id,
       "identifier" => issue.identifier,
@@ -17,34 +27,62 @@ defmodule SymphonyElixir.Orchestrator.Events do
       "priority" => issue.priority,
       "state" => issue.state,
       "url" => issue.url,
-      "labels" => issue.labels || []
+      "labels" => issue.labels
     }
     |> Map.merge(DispatchScope.context_evidence(issue))
+    |> Map.merge(routing)
   end
 
   @spec event_dispatch_context(Issue.t()) :: map()
   def event_dispatch_context(%Issue{} = issue), do: DispatchScope.context_evidence(issue)
 
   @spec issue_attrs(Issue.t()) :: map()
-  def issue_attrs(%Issue{} = issue) do
+  def issue_attrs(%Issue{} = issue), do: issue_attrs_with_routing(issue, [])
+
+  @spec issue_attrs_with_routing(Issue.t(), keyword()) :: map()
+  def issue_attrs_with_routing(%Issue{} = issue, opts) when is_list(opts) do
     %{
       tracker_issue_id: issue.id,
       identifier: issue.identifier,
       title: issue.title,
       url: issue.url,
-      labels: %{"values" => issue.labels || []},
-      snapshot: issue_snapshot(issue)
+      labels: %{"values" => issue.labels},
+      snapshot: issue_snapshot_with_routing(issue, opts)
     }
   end
 
   @spec run_attrs(Issue.t(), RunAdmission.t(), integer() | nil) :: map()
   def run_attrs(%Issue{} = issue, %RunAdmission{} = admission, attempt) do
+    Map.merge(
+      %{
+        issue_identifier: issue.identifier,
+        status: "running",
+        execution_mode: admission.execution_mode,
+        attempt: RetryPolicy.normalize_attempt(attempt),
+        started_at: DateTime.utc_now()
+      },
+      run_execution_evidence(issue, admission.workspace_authority)
+    )
+  end
+
+  defp run_execution_evidence(issue, authority) do
+    requirement = ExecutionRequirement.from_issue(issue)
+
+    case authority do
+      {:panel_local} -> recorded_execution(requirement, "panel")
+      {:http_worker, _worker_id, _session_id} -> recorded_execution(requirement, "container_worker")
+      {:host_probe, probe_id, session_id} -> recorded_execution(requirement, "host_probe", probe_id, session_id)
+      {:centralized_ssh, _host} -> %{}
+    end
+  end
+
+  defp recorded_execution(requirement, surface, probe_id \\ nil, session_id \\ nil) do
     %{
-      issue_identifier: issue.identifier,
-      status: "running",
-      execution_mode: admission.execution_mode,
-      attempt: RetryPolicy.normalize_attempt(attempt),
-      started_at: DateTime.utc_now()
+      execution_requirement: requirement.execution_requirement,
+      execution_surface: surface,
+      execution_evidence_recorded: true,
+      probe_id: probe_id,
+      worker_session_id: session_id
     }
   end
 

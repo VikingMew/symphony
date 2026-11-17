@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
   Presentation helpers for AdminLive observability pages.
   """
 
-  alias SymphonyElixir.Redaction
+  alias SymphonyElixir.{ExecutionEvidence, Redaction, RoutingProjection}
 
   @spec fmt_dt(term()) :: String.t()
   def fmt_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
@@ -34,6 +34,20 @@ defmodule SymphonyElixirWeb.Admin.ObservabilityPresenter do
   @spec labels_text(term()) :: String.t()
   def labels_text(%{"values" => labels}) when is_list(labels), do: Enum.join(labels, ", ")
   def labels_text(_), do: ""
+
+  @spec run_execution_surface(map()) :: String.t()
+  def run_execution_surface(run), do: ExecutionEvidence.observable_surface(run)
+
+  @spec issue_routing(map()) :: map()
+  def issue_routing(issue) when is_map(issue) do
+    issue
+    |> Map.get(:snapshot, %{})
+    |> RoutingProjection.history_fields(DateTime.utc_now())
+  end
+
+  @spec capabilities_text(term()) :: String.t()
+  def capabilities_text(capabilities) when is_list(capabilities), do: Enum.join(capabilities, ", ")
+  def capabilities_text(value), do: to_string(value)
 
   @spec worker_empty_message(term()) :: String.t()
   def worker_empty_message(:centralized), do: "Worker-backed mode is inactive. Centralized execution does not require registered workers."

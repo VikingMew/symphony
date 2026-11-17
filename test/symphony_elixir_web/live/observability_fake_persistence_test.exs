@@ -168,6 +168,7 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     {:ok, view, html} = live(build_conn(), "/runs")
 
     assert html =~ "MT-PAGE-1"
+    assert html =~ "unrecorded"
 
     html =
       view
@@ -251,6 +252,11 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
       status: "failed",
       attempt: 2,
       failure_reason: "boom",
+      execution_evidence_recorded: true,
+      execution_requirement: "host_only",
+      execution_surface: "host_probe",
+      probe_id: "local-host",
+      worker_session_id: "session-1",
       started_at: now,
       finished_at: now
     }
@@ -274,7 +280,14 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
           "linear_project_slug" => "koroni",
           "symphony_project_slug" => "fake",
           "context_source" => "linear_project",
-          "dispatch_scope" => %{"linear_team_key" => "KRN", "linear_project_slug" => nil}
+          "dispatch_scope" => %{"linear_team_key" => "KRN", "linear_project_slug" => nil},
+          "execution_requirement" => "host_only",
+          "required_capabilities" => ["gui-session"],
+          "routing_status" => "waiting_for_probe",
+          "routing_reason" => "capability_mismatch",
+          "eligible_probe_count" => 0,
+          "selected_probe_id" => nil,
+          "routing_since_at" => DateTime.add(now, -30, :second) |> DateTime.to_iso8601()
         },
         title: "Issue detail"
       }
@@ -324,6 +337,8 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert run_html =~ "koroni"
     assert run_html =~ "linear_project"
     assert run_html =~ "MT-1"
+    assert run_html =~ "Execution surface"
+    assert run_html =~ "host_probe"
     assert run_html =~ "Agent Summary"
     assert run_html =~ "Final message"
     assert run_html =~ "Work performed"
@@ -345,6 +360,11 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
     assert issue_html =~ "Issue detail"
     assert issue_html =~ "In Progress"
     assert issue_html =~ "run-1"
+    assert issue_html =~ "Execution Routing"
+    assert issue_html =~ "host_only"
+    assert issue_html =~ "gui-session"
+    assert issue_html =~ "capability_mismatch"
+    assert issue_html =~ "alert"
 
     {:ok, _view, events_html} = live(build_conn(), "/events")
     assert events_html =~ "Events"
@@ -352,6 +372,35 @@ defmodule SymphonyElixirWeb.Live.ObservabilityFakePersistenceTest do
 
     {:ok, _view, filtered_events_html} = live(build_conn(), "/events?issue_identifier=MT-MISSING")
     assert filtered_events_html =~ "No events recorded"
+  end
+
+  test "dashboard shows persisted host-only waits and the 30-second alert copy" do
+    assert Process.whereis(SymphonyElixir.Repo) == nil
+    start_test_endpoint()
+    now = DateTime.utc_now()
+
+    FakePersistence.put_issues([
+      %{
+        identifier: "SYM-WAIT",
+        title: "Waiting host work",
+        snapshot: %{
+          "state" => "Ready",
+          "execution_requirement" => "host_only",
+          "required_capabilities" => [],
+          "routing_status" => "waiting_for_probe",
+          "routing_reason" => "no_online_eligible_probe",
+          "eligible_probe_count" => 0,
+          "selected_probe_id" => nil,
+          "routing_since_at" => DateTime.add(now, -31, :second) |> DateTime.to_iso8601()
+        }
+      }
+    ])
+
+    {:ok, _view, html} = live(build_conn(), "/")
+    assert html =~ "Host probe routing"
+    assert html =~ "SYM-WAIT"
+    assert html =~ "no_online_eligible_probe"
+    assert html =~ "Host-only issue has waited 30 seconds for an eligible host probe."
   end
 
   test "events page normalizes filters and hides low-signal codex notifications" do

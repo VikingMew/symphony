@@ -8,7 +8,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   import SymphonyElixirWeb.DashboardPresenter
 
-  alias SymphonyElixir.PersistenceProvider
+  alias SymphonyElixir.{PersistenceProvider, RoutingProjection}
   alias SymphonyElixirWeb.{DashboardBlockingDecisionControl, ObservabilityPubSub, Presenter, WebRuntime}
   @runtime_tick_ms 1_000
 
@@ -277,6 +277,36 @@ defmodule SymphonyElixirWeb.DashboardLive do
               <% end %>
             </p>
           </a>
+        </section>
+
+        <section class="section-card">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">Host probe routing</h2>
+              <p class="section-copy">Persisted host-only issues waiting for an eligible probe.</p>
+            </div>
+          </div>
+          <p :if={@payload.host_probe_waiting == []} class="empty-state">No host-only issues are waiting for a probe.</p>
+          <div :if={@payload.host_probe_waiting != []} class="table-wrap">
+            <table class="data-table host-probe-routing-table">
+              <thead><tr><th>Issue</th><th>Reason</th><th>Eligible probes</th><th>Waiting since</th><th>Wait</th><th>Threshold</th></tr></thead>
+              <tbody>
+                <tr :for={entry <- @payload.host_probe_waiting}>
+                  <td><a class="issue-link" href={"/issues/#{entry.issue_identifier}"}><%= entry.issue_identifier %></a></td>
+                  <td><%= entry.snapshot["routing_reason"] %></td>
+                  <td><%= entry.snapshot["eligible_probe_count"] %></td>
+                  <td class="mono"><%= entry.snapshot["routing_since_at"] %></td>
+                  <td><%= routing_wait_seconds(entry, @now) %>s</td>
+                  <td>
+                    <span :if={routing_alert?(entry, @now)} class="status-badge status-danger" role="alert">
+                      Host-only issue has waited 30 seconds for an eligible host probe.
+                    </span>
+                    <span :if={!routing_alert?(entry, @now)} class="status-badge">below 30s</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </section>
 
         <section class="section-card">
@@ -644,7 +674,28 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp load_payload do
-    Presenter.state_payload(WebRuntime.orchestrator(), WebRuntime.snapshot_timeout_ms())
+    WebRuntime.orchestrator()
+    |> Presenter.state_payload(WebRuntime.snapshot_timeout_ms())
+    |> Map.put(:host_probe_waiting, load_host_probe_waiting())
+  end
+
+  defp load_host_probe_waiting do
+    case PersistenceProvider.read(fn -> PersistenceProvider.module().list_analytics_issues() end) do
+      issues when is_list(issues) ->
+        issues
+        |> Enum.filter(&RoutingProjection.waiting?(Map.get(&1, :snapshot, %{})))
+        |> Enum.map(fn issue ->
+          %{
+            issue_identifier: Map.get(issue, :identifier),
+            title: Map.get(issue, :title),
+            snapshot: Map.get(issue, :snapshot)
+          }
+        end)
+        |> Enum.sort_by(& &1.issue_identifier)
+
+      {:error, _reason} ->
+        []
+    end
   end
 
   defp refresh_payload(socket) do

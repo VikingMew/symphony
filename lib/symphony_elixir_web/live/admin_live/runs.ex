@@ -26,7 +26,7 @@ defmodule SymphonyElixirWeb.AdminLive.Runs do
         <p class="empty-state">No persisted runs yet.</p>
       <% else %>
         <table class="data-table">
-          <thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Attempt</th><th>Started</th><th>Finished</th></tr></thead>
+          <thead><tr><th>Run</th><th>Kind</th><th>Status</th><th>Surface</th><th>Attempt</th><th>Started</th><th>Finished</th></tr></thead>
           <tbody>
             <tr :for={run <- @runs}>
               <td class="issue-id">
@@ -35,6 +35,7 @@ defmodule SymphonyElixirWeb.AdminLive.Runs do
               </td>
               <td><%= Map.get(run, :kind) || "issue" %></td>
               <td><%= Map.get(run, :status) %></td>
+              <td><%= ObservabilityPresenter.run_execution_surface(run) %></td>
               <td><%= Map.get(run, :attempt) || 0 %></td>
               <td class="mono"><%= ObservabilityPresenter.fmt_dt(Map.get(run, :started_at)) %></td>
               <td class="mono"><%= ObservabilityPresenter.fmt_dt(Map.get(run, :finished_at)) %></td>

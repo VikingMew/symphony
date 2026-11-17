@@ -37,7 +37,6 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       alias SymphonyElixir.Orchestrator.RetryPolicy
       alias SymphonyElixir.Orchestrator.{RunningIssue, RunningOperator, State}
       alias SymphonyElixir.Orchestrator.SessionHistory
-      alias SymphonyElixir.Worker.AssignmentManager
       alias SymphonyElixir.Workspace.{Remote, SourcePreparation}
 
       defp running_seconds(%DateTime{} = started_at, %DateTime{} = now) do
@@ -52,12 +51,12 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       defp running_entry_kind(%RunningIssue{kind: kind}), do: Atom.to_string(kind)
       defp running_entry_kind(%RunningOperator{kind: kind}), do: Atom.to_string(kind)
 
-      defp persist_polled_issues(issues) do
+      defp persist_polled_issues(issues, routing_sessions) do
         if persistence_enabled?() do
           case current_workflow_context() do
             {:ok, workflow} ->
               project_id = Map.get(workflow, :project_id)
-              Enum.each(issues, &persist_polled_issue(&1, project_id))
+              Enum.each(issues, &persist_polled_issue(&1, project_id, routing_sessions))
 
             {:error, reason} ->
               Logger.warning("Skipping polled issue persistence; workflow context unavailable: #{inspect(reason)}")
@@ -67,16 +66,21 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         :ok
       end
 
-      defp persist_polled_issue(%Issue{} = issue, project_id) do
+      defp persist_polled_issue(%Issue{} = issue, project_id, routing_sessions) do
         case persist_write(:upsert_polled_issue, persistence_context(issue), fn ->
-               persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+               attrs =
+                 issue
+                 |> Events.issue_attrs_with_routing(routing_sessions: routing_sessions)
+                 |> Map.put(:project_id, project_id)
+
+               persistence().upsert_issue(attrs)
              end) do
           {:ok, _issue_record} -> :ok
           {:degraded, :repo_unavailable} -> :ok
         end
       end
 
-      defp persist_polled_issue(_issue, _project_id), do: :ok
+      defp persist_polled_issue(_issue, _project_id, _routing_sessions), do: :ok
 
       # The workflow context is set by Config.with_workflow_context/2 while the
       # orchestrator iterates enabled projects.
@@ -98,9 +102,9 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         end
       end
 
-      defp persist_run_started(%Issue{} = issue, attempt, worker_host, admission) do
+      defp persist_run_started(%Issue{} = issue, attempt, worker_host, admission, routing_sessions) do
         if persistence_enabled?() do
-          run_started_persist(issue, attempt, worker_host, admission)
+          run_started_persist(issue, attempt, worker_host, admission, routing_sessions)
         else
           {:ok, nil}
         end
@@ -111,13 +115,13 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           {:error, {:start_run, {:exception, error}}}
       end
 
-      defp run_started_persist(issue, attempt, worker_host, admission) do
+      defp run_started_persist(issue, attempt, worker_host, admission, routing_sessions) do
         case current_workflow_context() do
           {:ok, workflow} ->
             project_id = Map.get(workflow, :project_id)
             context = persistence_context(issue)
 
-            with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id),
+            with {:ok, issue_record} <- persist_upsert_issue(context, issue, project_id, routing_sessions),
                  run_attrs =
                    issue
                    |> Events.run_attrs(admission, attempt)
@@ -132,16 +136,23 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
         end
       end
 
-      defp persist_upsert_issue(context, issue, project_id) do
-        required_persistence_write(:upsert_issue, context, fn -> upsert_issue!(issue, project_id) end)
+      defp persist_upsert_issue(context, issue, project_id, routing_sessions) do
+        required_persistence_write(:upsert_issue, context, fn ->
+          upsert_issue!(issue, project_id, routing_sessions)
+        end)
       end
 
       defp persist_create_run(context, run_attrs) do
         required_persistence_write(:create_run, context, fn -> create_run!(run_attrs) end)
       end
 
-      defp upsert_issue!(issue, project_id) do
-        persistence().upsert_issue(Map.put(Events.issue_attrs(issue), :project_id, project_id))
+      defp upsert_issue!(issue, project_id, routing_sessions) do
+        attrs =
+          issue
+          |> Events.issue_attrs_with_routing(routing_sessions: routing_sessions)
+          |> Map.put(:project_id, project_id)
+
+        persistence().upsert_issue(attrs)
       end
 
       defp create_run!(run_attrs) do
@@ -182,7 +193,7 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
       end
 
       defp create_operator_run!(task, admission) do
-        persistence().create_run(%{
+        attrs = %{
           kind: to_string(task.kind),
           profile: to_string(task.kind),
           label: operator_task_label(task.kind),
@@ -191,8 +202,18 @@ defmodule SymphonyElixir.Orchestrator.Sections.OrchestratorPersistence do
           execution_mode: admission.execution_mode,
           attempt: 0,
           started_at: task.started_at
-        })
+        }
+
+        persistence().create_run(Map.merge(attrs, operator_execution_evidence(admission.workspace_authority)))
       end
+
+      defp operator_execution_evidence({:panel_local}),
+        do: %{execution_requirement: "default", execution_surface: "panel", execution_evidence_recorded: true}
+
+      defp operator_execution_evidence({:http_worker, _worker_id, _session_id}),
+        do: %{execution_requirement: "default", execution_surface: "container_worker", execution_evidence_recorded: true}
+
+      defp operator_execution_evidence(_authority), do: %{}
 
       defp persist_run_finished(running_entry, status, terminal) when is_map(running_entry) do
         if persistence_enabled?() do

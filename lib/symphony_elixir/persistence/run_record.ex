@@ -25,6 +25,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
     field(:execution_mode, :string, default: "centralized")
     field(:execution_requirement, :string, default: "default")
     field(:execution_surface, :string, default: "panel")
+    field(:execution_evidence_recorded, :boolean, default: false)
     field(:probe_id, :string)
     field(:worker_session_id, :binary_id)
     field(:attempt, :integer, default: 0)
@@ -51,6 +52,7 @@ defmodule SymphonyElixir.Persistence.RunRecord do
       :execution_mode,
       :execution_requirement,
       :execution_surface,
+      :execution_evidence_recorded,
       :probe_id,
       :worker_session_id,
       :attempt,

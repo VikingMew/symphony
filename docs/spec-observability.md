@@ -340,6 +340,11 @@ Minimum endpoints:
   - An inactive persisted issue returns `200` with its last poll-time Linear state projected from
     the persisted issue snapshot and its latest outcome. This state is historical evidence, not a
     current Linear lookup.
+  - Persisted issue history also returns `execution_requirement`, `required_capabilities`,
+    `routing_status`, `routing_reason`, `eligible_probe_count`, `selected_probe_id`,
+    `routing_since_at`, `routing_wait_seconds`, `routing_alert_threshold_seconds`, and
+    `routing_alert`. The alert threshold is exactly 30 seconds. Snapshots without normalized
+    execution evidence return `unrecorded` rather than deriving values from raw labels.
   - Return `404 issue_not_found` only after successful history lookup finds neither live nor
     persisted issue/run data. If persistence is required but unavailable, failed, or timed out,
     return a typed `503` error instead of collapsing the condition to `404`.
@@ -348,7 +353,10 @@ Minimum endpoints:
   - `issue_identifier` is required. Returns bounded newest-first run projections with `id`, `kind`,
     `profile`, `status`, `attempt`, `started_at`, `finished_at`, `failure_reason`, and bounded
     `failure_evidence`, plus a compact bounded event timeline. Terminal `run.*` events expose the
-    same reason/evidence pair as the row. Classification and evidence ownership is defined by
+    same reason/evidence pair as the row. Run projections also expose persisted
+    `execution_evidence_recorded`, `execution_requirement`, `execution_surface`, `probe_id`, and
+    `worker_session_id` fields. When the presence field is false or absent, requirement and surface
+    serialize as `unrecorded`; readers do not trust legacy schema defaults. Classification and evidence ownership is defined by
     [Run Failure Classification Design](run-failure-classification-design.md).
   - Caller limits are clamped to an implementation-owned maximum. Unknown history, invalid input,
     Repo unavailability, query failure, and bounded timeout remain distinct JSON errors.

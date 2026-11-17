@@ -652,6 +652,13 @@ mise exec -- ./bin/symphony \
 
 `--database-path` 和 `SYMPHONY_DATABASE_PATH` 已移除；运行时只接受 `DATABASE_URL`。
 
+### Host-only issue 等待 probe
+
+Dashboard 的 **Host probe routing** 表显示已持久化的 host-only 等待项。`no_online_eligible_probe`
+表示没有 fresh host probe；`capability_mismatch` 表示 probe 在线但缺少 issue 要求的 capability。连续等待
+达到 30 秒时页面显示阈值提示。恢复 probe 或修正 capability 后投影会清除等待；系统不会改变 Linear state，
+也不会把 host-only work 转给 container。production 外部通知尚未启用。
+
 ### Linear 拉不到 issue
 
 检查：

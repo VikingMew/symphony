@@ -35,6 +35,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       alias SymphonyElixir.AgentRunner.Policy
       alias SymphonyElixir.Linear.{DispatchScope, Issue}
       alias SymphonyElixir.Orchestrator.DispatchPolicy
+      alias SymphonyElixir.Orchestrator.Events
       alias SymphonyElixir.Worker.{ClaimCommit, ClaimStage, EventWriter, HeartbeatHistory}
 
       @terminal_events ["task.completed", "task.failed", "task.cancelled"]
@@ -43,6 +44,7 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       @max_poll_seconds 60
       @heartbeat_timeout_ms 1_000
       @heartbeat_retry_after_seconds 1
+      @routing_snapshot_timeout_ms 100
       @tracker_io_timeout_ms 5_000
       @claim_call_timeout_ms @tracker_io_timeout_ms + 1_000
       @cancel_timeout_ms 30_000
@@ -135,6 +137,13 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
       @spec available_worker_slots(GenServer.server()) :: non_neg_integer()
       def available_worker_slots(server \\ __MODULE__) do
         if process_alive?(server), do: GenServer.call(server, :available_worker_slots), else: 0
+      end
+
+      @spec routing_sessions(GenServer.server()) :: [map()]
+      def routing_sessions(server \\ __MODULE__) do
+        if process_alive?(server), do: GenServer.call(server, :routing_sessions, @routing_snapshot_timeout_ms), else: []
+      catch
+        :exit, _reason -> []
       end
 
       @spec heartbeat(String.t(), String.t(), map(), GenServer.server(), module()) :: {:ok, map()} | {:error, term()}
@@ -324,6 +333,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
 
       def handle_call(:available_worker_slots, _from, state) do
         {:reply, fresh_liveness_capacity(state), state}
+      end
+
+      def handle_call(:routing_sessions, _from, state) do
+        {:reply, fresh_routing_sessions(state), state}
       end
 
       def handle_call({:session, operation, left, right}, _from, state) do
@@ -785,12 +798,10 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
              workflows,
              dispatch_settings
            ) do
-        with {:ok, %Issue{} = issue} <-
-               revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings),
-             :ok <- admit_execution_requirement(issue, session),
-             {:ok, assignment} <- prepare_assignment(state, worker, session, workflow, issue) do
-          {:ok, assignment}
-        else
+        case revalidate_scoped(candidate, workflow, workflows, state, dispatch_settings) do
+          {:ok, %Issue{} = issue} ->
+            admit_scoped_issue(state, worker, session, workflow, issue)
+
           {:skip, reason, evidence} ->
             log_admission_skip(reason, worker.id, session.id, evidence)
             {:ok, nil, evidence}
@@ -798,6 +809,32 @@ defmodule SymphonyElixir.Worker.AssignmentManager.Sections.Api do
           {:error, reason} ->
             {:error, reason}
         end
+      end
+
+      defp admit_scoped_issue(state, worker, session, workflow, issue) do
+        case admit_execution_requirement(issue, session) do
+          :ok ->
+            prepare_assignment(state, worker, session, workflow, issue)
+
+          {:skip, reason, evidence} ->
+            case persist_routing_issue(state, workflow, issue) do
+              {:ok, _issue} ->
+                log_admission_skip(reason, worker.id, session.id, evidence)
+                {:ok, nil, evidence}
+
+              {:error, persist_reason} ->
+                {:error, {:routing_persistence_failed, persist_reason}}
+            end
+        end
+      end
+
+      defp persist_routing_issue(state, workflow, issue) do
+        attrs =
+          issue
+          |> Events.issue_attrs_with_routing(routing_sessions: fresh_routing_sessions(state), now: state.now.())
+          |> Map.put(:project_id, workflow.project_id)
+
+        state.persistence.upsert_issue(attrs)
       end
 
       defp admit_execution_requirement(issue, session) do

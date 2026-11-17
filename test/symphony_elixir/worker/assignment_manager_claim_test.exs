@@ -90,6 +90,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     defdelegate get_run(id), to: FakePersistence
     defdelegate get_event(id), to: FakePersistence
     defdelegate finish_run(id, status, attrs), to: FakePersistence
+    defdelegate upsert_issue(attrs), to: FakePersistence
 
     def record_event(attrs) do
       result = FakePersistence.record_event(attrs)
@@ -359,6 +360,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert [run] = FakePersistence.list_runs_for_issue(issue.identifier)
     assert run.execution_requirement == "host_only"
     assert run.execution_surface == "host_probe"
+    assert run.execution_evidence_recorded
     assert run.probe_id == "local-host"
     assert run.worker_session_id == context.session.id
 
@@ -372,6 +374,7 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
              execution_requirement: "host_only",
              required_capabilities: ["gui-session"],
              execution_surface: "host_probe",
+             execution_evidence_recorded: true,
              probe_id: "local-host",
              worker_session_id: context.session.id
            }
@@ -515,16 +518,27 @@ defmodule SymphonyElixir.Worker.AssignmentManagerClaimTest do
     assert {:ok, {:empty, _seconds}} = claim(context)
     assert_no_claim_side_effects(host_only.identifier)
 
+    assert FakePersistence.get_issue_by_identifier(host_only.identifier).snapshot["routing_reason"] ==
+             "no_online_eligible_probe"
+
     unmarked = %{host_only | labels: []}
     Tracker.put_issue(unmarked)
     host_context = observe_host_session(context, [])
     assert {:ok, {:empty, _seconds}} = claim(host_context)
     assert_no_claim_side_effects(unmarked.identifier)
 
+    assert FakePersistence.get_issue_by_identifier(unmarked.identifier).snapshot["routing_status"] ==
+             "eligible_default"
+
     capability_issue = %{host_only | labels: ["execution:host-only", "capability:gui-session"]}
     Tracker.put_issue(capability_issue)
     assert {:ok, {:empty, _seconds}} = claim(host_context)
     assert_no_claim_side_effects(capability_issue.identifier)
+
+    persisted = FakePersistence.get_issue_by_identifier(capability_issue.identifier)
+    assert persisted.snapshot["routing_status"] == "waiting_for_probe"
+    assert persisted.snapshot["routing_reason"] == "capability_mismatch"
+    assert persisted.snapshot["eligible_probe_count"] == 0
   end
 
   test "host session freshness uses its frozen five-second heartbeat", context do

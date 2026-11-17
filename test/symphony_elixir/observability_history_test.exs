@@ -83,6 +83,68 @@ defmodule SymphonyElixir.ObservabilityHistoryTest do
     assert Enum.find(history.runs, &(&1.id == "absent")).started_at == nil
   end
 
+  test "serializes recorded routing and run evidence without trusting legacy defaults" do
+    Application.put_env(:symphony_elixir, :persistence_module, EdgePersistence)
+    now = ~U[2026-11-10 05:00:30Z]
+
+    snapshot = %{
+      "state" => "Ready",
+      "execution_requirement" => "host_only",
+      "required_capabilities" => ["gui-session"],
+      "routing_status" => "waiting_for_probe",
+      "routing_reason" => "capability_mismatch",
+      "eligible_probe_count" => 0,
+      "selected_probe_id" => nil,
+      "routing_since_at" => "2026-11-10T05:00:00Z"
+    }
+
+    Application.put_env(:symphony_elixir, :history_issue_response, Map.put(issue(), :snapshot, snapshot))
+
+    recorded =
+      run("recorded", now)
+      |> Map.merge(%{
+        execution_evidence_recorded: true,
+        execution_requirement: "host_only",
+        execution_surface: "host_probe",
+        probe_id: "local-host",
+        worker_session_id: "session-1"
+      })
+
+    legacy =
+      run("legacy", DateTime.add(now, -1, :second))
+      |> Map.merge(%{execution_requirement: "default", execution_surface: "panel"})
+
+    Application.put_env(:symphony_elixir, :history_runs_response, [legacy, recorded])
+    Application.put_env(:symphony_elixir, :history_events_response, [])
+
+    assert {:ok, history} = ObservabilityHistory.fetch("SYM-DATES", now: now)
+    assert history.issue.execution_requirement == "host_only"
+    assert history.issue.required_capabilities == ["gui-session"]
+    assert history.issue.routing_wait_seconds == 30
+    assert history.issue.routing_alert
+
+    assert history.latest_run.execution_surface == "host_probe"
+    assert history.latest_run.execution_evidence_recorded
+
+    projected_legacy = Enum.find(history.runs, &(&1.id == "legacy"))
+    assert projected_legacy.execution_surface == "unrecorded"
+    assert projected_legacy.execution_requirement == "unrecorded"
+    refute projected_legacy.execution_evidence_recorded
+  end
+
+  test "serializes historical issue routing as unrecorded" do
+    Application.put_env(:symphony_elixir, :persistence_module, EdgePersistence)
+    Application.put_env(:symphony_elixir, :history_issue_response, Map.put(issue(), :snapshot, %{"state" => "Ready"}))
+    Application.put_env(:symphony_elixir, :history_runs_response, [])
+    Application.put_env(:symphony_elixir, :history_events_response, [])
+
+    assert {:ok, history} = ObservabilityHistory.fetch("SYM-DATES", now: ~U[2026-11-10 05:00:00Z])
+    assert history.issue.execution_requirement == "unrecorded"
+    assert history.issue.required_capabilities == "unrecorded"
+    assert history.issue.routing_status == "unrecorded"
+    refute history.issue.routing_alert
+  end
+
   defp issue do
     %{id: "issue-dates", identifier: "SYM-DATES", updated_at: ~N[2026-08-27 08:00:00]}
   end

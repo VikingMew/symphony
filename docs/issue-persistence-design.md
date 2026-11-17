@@ -30,10 +30,20 @@ copies the same evidence. Issue Detail reads the snapshot and Run Detail reads t
 so an operator can trace scope and context from either page. Rejected candidates are logged and
 diagnosed with a typed reason but do not create an issue run merely to persist the rejection.
 
-HP-1a stores only immutable accepted-claim evidence. Sessions freeze surface, probe, capabilities/digest, and timing; runs freeze
-requirement, actual surface, probe, and session; accepted events copy requirement/capability/correlation. Rejection creates no
-run/event, and host paths/tokens are never persisted. The issue snapshot retains raw labels and gains no normalized execution
-projection in HP-1a. Full projections, offline visibility, and alerts remain HP-2; the existing partial index is the sole running-run guard.
+Sessions freeze surface, probe, capabilities/digest, and timing; runs freeze requirement, actual surface, probe, and session;
+accepted events copy requirement/capability/correlation. Rejection creates no run or accepted event, and host paths/tokens are
+never persisted. HP-2 extends the same issue snapshot with `execution_requirement`, `required_capabilities`, `routing_status`,
+`routing_reason`, `eligible_probe_count`, `selected_probe_id`, and `routing_since_at`. Snapshot replacement preserves the prior
+`routing_since_at` only when `waiting_for_probe` continues with the same reason. A reason change starts a new wait and recovery
+clears the timestamp.
+
+The projection is calculated only after the existing scope, listening, state, and revalidation gates. It consumes the fresh
+AssignmentManager liveness snapshot; persisted worker-session heartbeat rows are history and never become admission authority.
+The centralized poll takes one bounded liveness snapshot and shares it across that poll's issue writes. If the manager is busy
+or unreachable, the projection uses an empty session list without terminating the poll or run-start persistence path and does
+not reuse persisted heartbeat state or a previous snapshot.
+Rejected surface/capability combinations may update the issue snapshot while still creating neither a run nor a `task.accepted`
+event.
 
 Linear transition delivery records delivery evidence in worker-owned fields. Blocking delivery
 updates the canonical `blocking_decision`; post-handoff review delivery updates its review job.
@@ -66,6 +76,13 @@ Persisted observability keeps the `persisted_issue.state` response key for its e
 shape. `SymphonyElixir.ObservabilityHistory` projects that value from the same row's
 `snapshot["state"]`. The inactive issue response uses that projection for top-level `status`, so the
 API and Issue Detail expose the same last-poll evidence.
+
+New supported-surface admissions set `execution_evidence_recorded=true` together with the immutable requirement/surface fields.
+The additive presence column defaults to false. Its forward migration marks an existing run only when a persisted
+`task.accepted` event carries the same requirement and surface, retaining explicit HP-1 evidence while legacy schema defaults
+remain unrecorded. History/API/UI read the presence bit and never infer evidence from `execution_mode`, workspace paths, worker
+names, raw labels, or column defaults. The rollback boundary may stop projecting the new fields; it does not update old issue
+snapshots, run values, or events.
 
 ## Schema and cutover
 
